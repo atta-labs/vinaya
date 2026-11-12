@@ -3,7 +3,14 @@ import { ROLE_VALUES } from '../../../../../kernel/log/schema'
 import { DEV_TOOL_NAMES } from '../../../../../kernel/tools/dev-tools-server.js'
 import { isToolGranted } from '../../../../../kernel/tools/role-grants.js'
 import { AGENT_TOOL_CATALOG } from '../../../../../kernel/tools/tool-catalog.js'
-import { OPERATOR_SEAT, PLANNER_SEAT, createTaskToolsMcpServer } from '../../../integration/server.js'
+import {
+  OPERATOR_SEAT,
+  PLANNER_SEAT,
+  ARCHITECT_SEAT,
+  TRANCHE_ARCHIVIST_SEAT,
+  createTaskToolsMcpServer
+} from '../../../integration/server.js'
+import { ARCHITECT_TOOL_GRANT, TRANCHE_ARCHIVIST_TOOL_GRANT } from '../../../integration/policies/roles.js'
 import { PLANNER_TOOL_NAMES } from '../../../thinking/planner/tools/planner-tools.js'
 import {
   GRANTED_ROLES,
@@ -146,4 +153,38 @@ describe("the Planner seat's grant", () => {
   it('refuses a tool outside both catalogs on the Planner seat', async () => {
     expect((await call(PLANNER_SEAT, 'merge')).isError).toBe(true)
   })
+})
+
+describe('Milestone seat isolation', () => {
+  const grants = {
+    [OPERATOR_SEAT]: [...OPERATOR_TOOL_GRANT],
+    [PLANNER_SEAT]: [...PLANNER_TOOL_GRANT],
+    [ARCHITECT_SEAT]: [
+      'milestone_create',
+      'milestone_edit',
+      'milestone_delete',
+      'milestone_adopt',
+      'milestone_status',
+      'milestone_close'
+    ],
+    [TRANCHE_ARCHIVIST_SEAT]: ['milestone_status', 'milestone_close']
+  }
+  it('grants exactly six to the Architect and two to the Tranche Archivist', () => {
+    expect([...ARCHITECT_TOOL_GRANT] as string[]).toEqual(grants[ARCHITECT_SEAT])
+    expect([...TRANCHE_ARCHIVIST_TOOL_GRANT] as string[]).toEqual(grants[TRANCHE_ARCHIVIST_SEAT])
+  })
+  for (const [seat, grant] of Object.entries(grants)) {
+    it(`${seat} serves exactly its grant and refuses every other seat tool`, async () => {
+      const server = createTaskToolsMcpServer({ serverVersion: 'test', seat })
+      const listed = await server.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }))
+      expect(JSON.parse(listed ?? '{}').result.tools.map((t: { name: string }) => t.name)).toEqual(grant)
+      for (const name of new Set([...Object.values(grants).flat(), 'merge', 'shell'])) {
+        if (grant.includes(name as never)) continue
+        const response = await server.handleLine(
+          JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: {} } })
+        )
+        expect(JSON.parse(response ?? '{}').result.isError).toBe(true)
+      }
+    })
+  }
 })
