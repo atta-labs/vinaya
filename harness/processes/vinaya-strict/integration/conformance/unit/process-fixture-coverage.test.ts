@@ -906,7 +906,6 @@ const GRANDFATHERED_FILES: readonly string[] = [
   'harness/processes/vinaya-strict/tests/lib/forge-write.test.ts',
   'harness/processes/vinaya-strict/integration/test-selector-repository-policy.test.ts',
   'scripts/test-suites/turbo-test-task-uncached.test.ts',
-  'apps/cli/tests/milestone.test.ts',
   'apps/cli/tests/new-check.test.ts',
   'apps/cli/tests/new-noop-check.test.ts',
   'apps/cli/tests/new-role.test.ts',

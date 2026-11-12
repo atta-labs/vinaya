@@ -3671,7 +3671,7 @@
       "scenarios": ["happy-path"],
       "sources": [
         {
-          "path": "apps/cli/src/commands/issue.ts"
+          "path": "harness/processes/vinaya-strict/thinking/planner/tools/planner-operations.ts"
         },
         {
           "path": "harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts",
@@ -4493,7 +4493,7 @@
       "id": "DEF-51",
       "summary": "Planner doctrine names a command for editing edges that does not exist and forbids attaching a Milestone that the write path attaches automatically; planner doctrine names only commands that exist.",
       "code": {
-        "path": "apps/cli/src/commands/issue.ts"
+        "path": "harness/processes/vinaya-strict/thinking/planner/tools/planner-operations.ts"
       },
       "spec": {
         "path": "harness/processes/vinaya-strict/thinking/planner/reference.md",

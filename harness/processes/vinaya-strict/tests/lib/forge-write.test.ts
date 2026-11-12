@@ -1173,9 +1173,9 @@ describe('the Developer-runnable rule reads the command reference, never a typed
   })
 
   it.each([
-    'bun apps/cli/src/index.ts brief render loop-determinism-cleanup-v1 4',
     'bun apps/cli/src/index.ts task status',
-    'bun apps/cli/src/index.ts issue create --validate-only --body-file x.md'
+    'bun apps/cli/src/index.ts task run --issue 123',
+    'bun apps/cli/src/index.ts pr rule 123 --file ruling.md'
   ])('refuses `%s`, naming the need', (line) => {
     const result = verdict(line)
     expect(result.status).toBe('fail')
