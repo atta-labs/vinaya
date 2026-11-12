@@ -55,6 +55,24 @@ describe('generated artifact sources', () => {
     }
   })
 
+  // This repository installs its hooks under `.vinaya/hooks` and has no `.husky` folder. A generated file the
+  // repository does not have cannot drift, and Surface cannot name a folder with no tracked file, so the rule
+  // must not ask for one: asking would refuse every task that pins the installer whatever its Surface says.
+  it('lists only generated files the repository has', () => {
+    const paths = readGeneratedArtifactSources(ROOT).map((a) => a.path)
+    for (const path of paths) expect({ path, exists: existsSync(resolve(ROOT, path)) }).toEqual({ path, exists: true })
+    expect(paths.some((path) => path.startsWith('.husky/'))).toBe(false)
+    expect(paths).toContain('.vinaya/hooks/pre-push')
+  })
+
+  it('does not ask a task that pins the installer to reach a generated file the repository lacks', () => {
+    const result = checkGeneratedArtifactsCovered(
+      body([`${P}integration/artifacts.ts`], [`${P}integration`, '*', '.github/workflows', '.gemini', '.vinaya/hooks']),
+      readGeneratedArtifactSources(ROOT)
+    )
+    expect(result).toEqual({ status: 'pass', errors: [] })
+  })
+
   // The modules a review found writing content into generated files, each checked against what the rule now reads.
   it("counts the constants a writer emits as sources, and leaves a role's doctrine prose out", () => {
     const byPath = new Map(readGeneratedArtifactSources(ROOT).map((a) => [a.path, new Set(a.sources)]))
