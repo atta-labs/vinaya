@@ -45,6 +45,7 @@ import {
   createSeatHost,
   dispatchSeatCall,
   readSeatArgument,
+  type SeatHandler,
   type SeatTable,
   selectSeat,
   validateSeatTable
@@ -57,6 +58,8 @@ import { createMcpServerCore, MCP_PROTOCOL_VERSION, type McpServerCore } from '.
 import { taskPrReadHandler } from '../loops/dev-review/run-control/pr-read.js'
 import { createTaskToolRouter } from '../../../kernel/tools/host/router.js'
 import { vinayaRouterPolicies } from './policies/vinaya-policies.js'
+import { VINAYA_PLANNER_ROUTER_ROLES } from './policies/roles.js'
+import { PLANNER_TOOL_ENTRIES, plannerToolHandlers } from '../thinking/planner/tools/planner-tools.js'
 import { defaultTaskResumeHandler } from '../loops/dev-review/run-control/resume.js'
 import { defaultTaskStartHandler } from '../loops/dev-review/run-control/start.js'
 
@@ -145,17 +148,28 @@ export async function dispatchToolCall(
 /** The Operator's seat — what `--seat` names, and the seat a launch with no seat argument serves. */
 export const OPERATOR_SEAT = 'operator'
 
+/** The Planner's seat — what `--seat planner` names. */
+export const PLANNER_SEAT = 'planner'
+
+/** The MCP server name the generated configurations register the Planner's seat under. */
+export const PLANNER_TOOLS_MCP_SERVER_NAME = 'vinaya-planner-tools'
+
 /**
  * Vinaya's seat table — the one place it declares which seats its tool server
- * serves and, for each, the catalog entries, the handlers and the grant. Today
- * it declares the Operator's seat only: the six task tools, their handlers,
- * and `VINAYA_ROUTER_ROLES` (the Operator's grant). The Operator's seat is the
- * default, and it keeps the server name every generated configuration already
- * registers, so a server started with no seat argument still serves it.
- * `handlers` is injectable so a fixture drives the real seat host with
+ * serves and, for each, the catalog entries, the handlers and the grant. It
+ * declares two: the Operator's seat — the six task tools, their handlers, and
+ * `VINAYA_ROUTER_ROLES` (the Operator's grant) — and the Planner's — its six
+ * Issue, objectives and brief tools, their handlers, and
+ * `VINAYA_PLANNER_ROUTER_ROLES`. The Operator's seat is the default, and it
+ * keeps the server name every generated configuration already registers, so a
+ * server started with no seat argument still serves it. `handlers` and
+ * `plannerHandlers` are injectable so a fixture drives the real seat host with
  * recording handlers.
  */
-export function vinayaToolSeats(handlers: TaskToolHandlers = defaultTaskToolHandlers): SeatTable<CallerContext> {
+export function vinayaToolSeats(
+  handlers: TaskToolHandlers = defaultTaskToolHandlers,
+  plannerHandlers: Record<string, SeatHandler<CallerContext>> = plannerToolHandlers()
+): SeatTable<CallerContext> {
   return validateSeatTable({
     defaultSeat: OPERATOR_SEAT,
     seats: [
@@ -165,6 +179,13 @@ export function vinayaToolSeats(handlers: TaskToolHandlers = defaultTaskToolHand
         entries: TASK_TOOL_CATALOG.map((def) => toolListEntry(def)),
         handlers,
         grant: vinayaRouterPolicies().roles
+      },
+      {
+        name: PLANNER_SEAT,
+        serverName: PLANNER_TOOLS_MCP_SERVER_NAME,
+        entries: PLANNER_TOOL_ENTRIES,
+        handlers: plannerHandlers,
+        grant: VINAYA_PLANNER_ROUTER_ROLES
       }
     ]
   })

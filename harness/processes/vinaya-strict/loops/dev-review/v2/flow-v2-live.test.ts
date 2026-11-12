@@ -1160,6 +1160,7 @@ describe('runRoundTestsLive', () => {
     name?: string
     events?: string
     pidFile?: string
+    argvFile?: string
     failedRecord?: boolean
     result?: {
       outcome: 'passed' | 'failed'
@@ -1187,6 +1188,7 @@ if (process.argv[2] === 'select') {
   process.exit(0)
 }
 note('in ' + (cfg.name ?? ''))
+if (cfg.argvFile) writeFileSync(cfg.argvFile, JSON.stringify(process.argv.slice(2)))
 mkdirSync(dir, { recursive: true })
 if (cfg.pidFile) writeFileSync(cfg.pidFile, String(process.pid))
 if (cfg.failedRecord)
@@ -1501,6 +1503,15 @@ process.exit(cfg.exit ?? 0)
       expect((await runRoundTestsLive({ ...common(dir), head })).outcome).toBe('passed')
       expect(existsSync(progress.logPath)).toBe(false)
     }, 30_000)
+  })
+
+  test('the round tests ask the adapter to run every group, so a failing group never leaves the rest unconfirmed', async () => {
+    const argvFile = join(fixtureDir('round-argv-'), 'argv.json')
+    const { dir, head } = repoWith({ selected: ['a.test.ts'], argvFile, result: { outcome: 'passed' } })
+    expect((await runRoundTestsLive({ ...common(dir), head })).outcome).toBe('passed')
+    const argv = JSON.parse(readFileSync(argvFile, 'utf8')) as string[]
+    expect(argv[0]).toBe('run')
+    expect(argv).toContain('--all-groups')
   })
 
   test('the live function bag binds runRoundTests', () => {

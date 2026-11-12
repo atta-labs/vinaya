@@ -33,16 +33,21 @@ ssh dev@<vps> "bash -ic 'cd <checkout> && git checkout main && git pull --ff-onl
 ## 3. Launch
 
 Launch one task as a user `systemd` unit named `vinaya-task-<issue>`, with
-memory caps. Never set `MemoryHigh`: Node sizes its heap from it, and at
-`MemoryHigh=1500M` the heap stops at about 811 MB, so the commit hook's
-`tsc --noEmit` runs out of memory (it needs more than 1.2 GB). `MemoryMax=3000M`
-alone gives Node about 1.6 GB. A unit never sources the shell profile, so every variable the
+no hard memory cap. A `MemoryMax` never saves a run: when the unit reaches it,
+systemd kills the whole loop at that point (a round's test run on the 4 GB box
+peaks near 3 GB, on top of the driver and its agents). Without it the loop uses
+swap and finishes. Never set `MemoryHigh` either: Node sizes its heap from it,
+and at `MemoryHigh=1500M` the heap stops at about 811 MB, so the commit hook's
+`tsc --noEmit` runs out of memory (it needs more than 1.2 GB). `MemorySwapMax`
+bounds how much swap one loop may take, and `OOMScoreAdjust=500` makes the loop
+the first thing the kernel stops if the whole box ever runs out, never ssh or
+the system. A unit never sources the shell profile, so every variable the
 loop needs is set explicitly on the command line:
 
 ```bash
 ssh dev@<vps> "bash -ic 'systemd-run --user --unit=vinaya-task-<issue> \
   --working-directory=<checkout> \
-  -p MemoryMax=3000M -p MemorySwapMax=1500M \
+  -p MemorySwapMax=2000M -p OOMScoreAdjust=500 \
   --setenv=PATH=\"\$PATH\" \
   --setenv=VINAYA_LOG_TOKEN=\"\$VINAYA_LOG_TOKEN\" \
   --setenv=VINAYA_LINUX_SANDBOX_ALLOW_UNIX_SOCKETS=1 \

@@ -94,8 +94,12 @@ import {
   ROLE_HOST_BRIDGES,
   liveForge,
   retryForgeRead,
-  retryingForge
+  retryingForge,
+  runDirectory,
+  type EngineArgs,
+  withLoadedFlow
 } from '../bin/run-engine'
+import { stagedPullRequestStore } from '../loops/dev-review/v2/flow-v2-live'
 import {
   ENGINE_FORGE_RETRY_MAX_ATTEMPTS,
   ENGINE_FORGE_RETRY_WAIT_MS
@@ -1048,6 +1052,39 @@ describe('agent-step failures and the live task context', () => {
     expect(untitled.branch).toBe('task/issue-11')
     expect('title' in untitled.loopState.config).toBe(false)
     expect(reads).toEqual([1564, 9, 11])
+  })
+
+  test('a fresh run that names no flow hands its reviewers the pull request body the Developer staged', async () => {
+    // A fake task: a fresh run of task 9001 started with no --flow, no pull request open yet, and a body the
+    // Developer staged. The process's default flow is v2, so the reviewers must read that staged body.
+    const root = realpathSync(fixtureDir('engine-repo-'))
+    const runtimeDir = realpathSync(fixtureDir('engine-runtime-'))
+    const git = (...a: string[]) =>
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: root, encoding: 'utf8' }).trim()
+    git('init', '-q')
+    writeFileSync(join(root, 'a.txt'), 'a\n')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'base')
+    git('worktree', 'add', '-q', '-b', 'task/issue-9001', join(root, '.worktrees', 'task', 'issue-9001'))
+    const body = 'Closes #9001\n\nThe body the Developer staged.\n'
+    stagedPullRequestStore(runDirectory(runtimeDir, 9001)).write({ title: 'Fake task 9001', body })
+    const processFolder = resolve(import.meta.dir, '..')
+    const prBodyFor = async (args: EngineArgs): Promise<string> => {
+      const input = await liveTaskInput(args, root, runtimeDir, 'l', {
+        policy: () => ({ maxRounds: 4, maxTaskMinutes: 90 }) as never,
+        fetchLabels: () => [],
+        fetchTitle: () => 'Fake task 9001',
+        forge: { findOpenPrForBranch: () => null },
+        reviewSources: { baseOf: () => 'base', brief: () => 'brief', diff: () => 'diff' }
+      })
+      const staged = input.stageReviewInput(1)
+      return readFileSync(staged?.paths?.prBody as string, 'utf8')
+    }
+    const fresh: EngineArgs = { task: 9001, agent: 'codex', dryRun: false }
+    const { args, loaded } = withLoadedFlow(fresh, processFolder)
+    expect(loaded.flowKey).toBe('v2')
+    expect(args.flow).toBe('v2')
+    expect(await prBodyFor(args)).toBe(body)
   })
 
   test('staging the review input writes run files under the runtime directory, nothing under the repository', async () => {

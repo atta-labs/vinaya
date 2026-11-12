@@ -1133,7 +1133,16 @@ async function runRoundTestsLocked(
       }
       try {
         return await child(
-          ['sh', '-c', '"$1" "$2" run --log "$3" > "$3" 2>&1', 'sh', process.execPath, REPOSITORY_LOCAL_RUN, capture],
+          // Every group runs, a failing one included, so the next round re-runs only what failed or never ran.
+          [
+            'sh',
+            '-c',
+            '"$1" "$2" run --all-groups --log "$3" > "$3" 2>&1',
+            'sh',
+            process.execPath,
+            REPOSITORY_LOCAL_RUN,
+            capture
+          ],
           'round-tests run'
         )
       } finally {

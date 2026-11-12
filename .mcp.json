@@ -3,7 +3,18 @@
     "vinaya-task-tools": {
       "type": "stdio",
       "command": "bun",
-      "args": ["harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts"]
+      "args": [
+        "harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts"
+      ]
+    },
+    "vinaya-planner-tools": {
+      "type": "stdio",
+      "command": "bun",
+      "args": [
+        "harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts",
+        "--seat",
+        "planner"
+      ]
     }
   }
 }

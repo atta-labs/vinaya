@@ -106,6 +106,33 @@ export function isOperatorGranted(tool: string): tool is OperatorGrantedTool {
   return (OPERATOR_TOOL_GRANT as readonly string[]).includes(tool)
 }
 
+// --- the Planner's tool grant, the boundary its seat enforces -----------------
+
+/**
+ * The complete, closed set of tools the Planner seat is granted — the six
+ * Planner tools (`thinking/planner/tools/planner-tools.ts`), and nothing else.
+ * The Planner is granted no task tool and the Operator no Planner tool: each
+ * seat serves only its own catalog entries, and a test binds the two grants
+ * in both directions.
+ */
+export const PLANNER_TOOL_GRANT = [
+  'task_issue_create',
+  'task_issue_edit',
+  'task_issue_surface',
+  'task_objectives_edit',
+  'brief_render',
+  'task_issue_validate'
+] as const
+
+export type PlannerGrantedTool = (typeof PLANNER_TOOL_GRANT)[number]
+
+/** The Planner seat's grant: what its refusals name the seat, and who an ungranted act is asked of. */
+export const VINAYA_PLANNER_ROUTER_ROLES: RouterRolePolicy = {
+  grantedTools: PLANNER_TOOL_GRANT,
+  seat: 'the Planner',
+  askedOf: 'the Principal'
+}
+
 // --- the task-tool router -----------------------------------------------------
 
 /**
