@@ -15,6 +15,24 @@
         "--seat",
         "planner"
       ]
+    },
+    "vinaya-architect-tools": {
+      "type": "stdio",
+      "command": "bun",
+      "args": [
+        "harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts",
+        "--seat",
+        "architect"
+      ]
+    },
+    "vinaya-tranche-archivist-tools": {
+      "type": "stdio",
+      "command": "bun",
+      "args": [
+        "harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts",
+        "--seat",
+        "tranche-archivist"
+      ]
     }
   }
 }
