@@ -20,7 +20,7 @@
  *     freezes the push's plan into the selection note under the worktree's git
  *     directory and prints one absolute test path per line (none: nothing
  *     selected). Exits 1, with the reason, when no plan can be made.
- *   bun scripts/test-suites/local-run.ts run --log <capture>
+ *   bun scripts/test-suites/local-run.ts run [--all-groups] --log <capture>
  *     runs exactly the frozen plan for the current head, leaves after each
  *     runner group the failed record a stop there would need, then records the
  *     head-bound result, the passing or failed record and, on a complete green
@@ -434,6 +434,11 @@ export function failedOf(result: RunResult, completion: NativeCompletion): strin
  * round's tests run every group, so the record confirms every group that passed and the next round re-runs only
  * what failed or never ran.
  */
+/** The `run` command's options: its capture path and whether a failing group lets the later ones run. */
+export function parseRunArgs(argv: readonly string[]): { log: string | undefined; allGroups: boolean } {
+  return { log: argValue(argv, '--log'), allGroups: argv.includes('--all-groups') }
+}
+
 export function frozenPlanRunOptions(input: { allGroups: boolean }): { stopAfterFailedGroup: boolean } {
   return { stopAfterFailedGroup: !input.allGroups }
 }
@@ -467,6 +472,8 @@ export function runFrozenPlan(
     now?: () => Date
     /** Run every group even after one fails, so each passing group is confirmed; a push stops at the first. */
     allGroups?: boolean
+    /** The scheduler the default `run` calls; tests substitute it to see the options it receives. */
+    runGroups?: typeof runGroups
   } = {}
 ): LocalRunOutcome {
   const state = deps.state ?? (() => trackedState(repoRoot))
@@ -517,7 +524,7 @@ export function runFrozenPlan(
   const run =
     deps.run ??
     ((groups: readonly NativeGroup[], onEnd: (outcome: GroupOutcome) => void) =>
-      runGroups(repoRoot, groups, {
+      (deps.runGroups ?? runGroups)(repoRoot, groups, {
         env: cleanGitEnv(),
         log: (line) => process.stderr.write(`${line}\n`),
         announce: true,
@@ -846,7 +853,10 @@ function exactCommand(repoRoot: string, argv: readonly string[]): number {
 async function main(argv: readonly string[]): Promise<number> {
   const repoRoot = repositoryRoot()
   if (argv[0] === 'select') return selectCommand(repoRoot)
-  if (argv[0] === 'run') return runCommand(repoRoot, argValue(argv, '--log'), argv.includes('--all-groups'))
+  if (argv[0] === 'run') {
+    const { log, allGroups } = parseRunArgs(argv)
+    return runCommand(repoRoot, log, allGroups)
+  }
   if (argv[0] === 'exact') return exactCommand(repoRoot, argv)
   process.stderr.write(
     'usage: local-run.ts select | run [--all-groups] --log <capture> | exact --context <digest> -- <test@configuration>...\n'
