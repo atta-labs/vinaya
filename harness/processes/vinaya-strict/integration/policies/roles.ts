@@ -133,6 +133,27 @@ export const VINAYA_PLANNER_ROUTER_ROLES: RouterRolePolicy = {
   askedOf: 'the Principal'
 }
 
+/** Closed Milestone grants; neither seat gains task or Planner tools. */
+export const ARCHITECT_TOOL_GRANT = [
+  'milestone_create',
+  'milestone_edit',
+  'milestone_delete',
+  'milestone_adopt',
+  'milestone_status',
+  'milestone_close'
+] as const
+export const TRANCHE_ARCHIVIST_TOOL_GRANT = ['milestone_status', 'milestone_close'] as const
+export const VINAYA_ARCHITECT_ROUTER_ROLES: RouterRolePolicy = {
+  grantedTools: ARCHITECT_TOOL_GRANT,
+  seat: 'the Architect',
+  askedOf: 'the Planner or Principal'
+}
+export const VINAYA_TRANCHE_ARCHIVIST_ROUTER_ROLES: RouterRolePolicy = {
+  grantedTools: TRANCHE_ARCHIVIST_TOOL_GRANT,
+  seat: 'the Tranche Archivist',
+  askedOf: 'the Architect or Principal'
+}
+
 // --- the task-tool router -----------------------------------------------------
 
 /**

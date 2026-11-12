@@ -58,7 +58,13 @@ import { createMcpServerCore, MCP_PROTOCOL_VERSION, type McpServerCore } from '.
 import { taskPrReadHandler } from '../loops/dev-review/run-control/pr-read.js'
 import { createTaskToolRouter } from '../../../kernel/tools/host/router.js'
 import { vinayaRouterPolicies } from './policies/vinaya-policies.js'
-import { VINAYA_PLANNER_ROUTER_ROLES } from './policies/roles.js'
+import {
+  VINAYA_ARCHITECT_ROUTER_ROLES,
+  VINAYA_TRANCHE_ARCHIVIST_ROUTER_ROLES,
+  VINAYA_PLANNER_ROUTER_ROLES
+} from './policies/roles.js'
+import { ARCHITECT_TOOL_ENTRIES, architectToolHandlers } from '../thinking/architect/tools/architect-tools.js'
+import { MILESTONE_TOOL_ENTRIES, milestoneToolHandlers } from '../tools/milestone/milestone-tools.js'
 import { PLANNER_TOOL_ENTRIES, plannerToolHandlers } from '../thinking/planner/tools/planner-tools.js'
 import { defaultTaskResumeHandler } from '../loops/dev-review/run-control/resume.js'
 import { defaultTaskStartHandler } from '../loops/dev-review/run-control/start.js'
@@ -150,6 +156,10 @@ export const OPERATOR_SEAT = 'operator'
 
 /** The Planner's seat — what `--seat planner` names. */
 export const PLANNER_SEAT = 'planner'
+export const ARCHITECT_SEAT = 'architect'
+export const TRANCHE_ARCHIVIST_SEAT = 'tranche-archivist'
+export const ARCHITECT_TOOLS_MCP_SERVER_NAME = 'vinaya-architect-tools'
+export const TRANCHE_ARCHIVIST_TOOLS_MCP_SERVER_NAME = 'vinaya-tranche-archivist-tools'
 
 /** The MCP server name the generated configurations register the Planner's seat under. */
 export const PLANNER_TOOLS_MCP_SERVER_NAME = 'vinaya-planner-tools'
@@ -157,7 +167,8 @@ export const PLANNER_TOOLS_MCP_SERVER_NAME = 'vinaya-planner-tools'
 /**
  * Vinaya's seat table — the one place it declares which seats its tool server
  * serves and, for each, the catalog entries, the handlers and the grant. It
- * declares two: the Operator's seat — the six task tools, their handlers, and
+ * declares four seats. The Architect holds all six Milestone tools and the
+ * Tranche Archivist holds status and close. The Operator's seat — the six task tools, their handlers, and
  * `VINAYA_ROUTER_ROLES` (the Operator's grant) — and the Planner's — its six
  * Issue, objectives and brief tools, their handlers, and
  * `VINAYA_PLANNER_ROUTER_ROLES`. The Operator's seat is the default, and it
@@ -170,7 +181,7 @@ export function vinayaToolSeats(
   handlers: TaskToolHandlers = defaultTaskToolHandlers,
   plannerHandlers: Record<string, SeatHandler<CallerContext>> = plannerToolHandlers()
 ): SeatTable<CallerContext> {
-  return validateSeatTable({
+  return validateSeatTable<CallerContext>({
     defaultSeat: OPERATOR_SEAT,
     seats: [
       {
@@ -186,6 +197,20 @@ export function vinayaToolSeats(
         entries: PLANNER_TOOL_ENTRIES,
         handlers: plannerHandlers,
         grant: VINAYA_PLANNER_ROUTER_ROLES
+      },
+      {
+        name: ARCHITECT_SEAT,
+        serverName: ARCHITECT_TOOLS_MCP_SERVER_NAME,
+        entries: [...ARCHITECT_TOOL_ENTRIES, ...MILESTONE_TOOL_ENTRIES],
+        handlers: { ...architectToolHandlers(), ...milestoneToolHandlers() },
+        grant: VINAYA_ARCHITECT_ROUTER_ROLES
+      },
+      {
+        name: TRANCHE_ARCHIVIST_SEAT,
+        serverName: TRANCHE_ARCHIVIST_TOOLS_MCP_SERVER_NAME,
+        entries: MILESTONE_TOOL_ENTRIES,
+        handlers: milestoneToolHandlers(),
+        grant: VINAYA_TRANCHE_ARCHIVIST_ROUTER_ROLES
       }
     ]
   })

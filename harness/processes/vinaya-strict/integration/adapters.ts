@@ -4,7 +4,8 @@
  * the server; the server, the protocol, and the tools are identical across
  * both. Each registers one server per seat Vinaya's seat table declares
  * (`seatServerRegistrations`) — the Operator's, under the name and arguments it
- * has always had, and the Planner's, under its own name with `--seat planner`:
+ * has always had, plus the Planner, Architect and Tranche Archivist under
+ * their own names with explicit `--seat` launch arguments:
  *
  *   - **Claude** registers a stdio MCP server in the project-root `.mcp.json`
  *     (`mcpServers.<name>.command`/`args`), generated through `artifacts.ts`

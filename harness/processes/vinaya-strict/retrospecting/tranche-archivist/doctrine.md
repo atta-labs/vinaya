@@ -6,6 +6,9 @@ role_id: tranche-archivist
 description: Closes out a finished tranche, so the next one starts from what is true now rather than what was true before.
 actor: either
 ack-token: 49f8adcd
+allowed-tools:
+  - milestone_status
+  - milestone_close
 denied-tools:
   - write-code
   - decide-what-happens-next
@@ -28,6 +31,8 @@ refuses_when: >
 summary: Ever started new work standing on assumptions about old work that turned out stale?
 ---
 # Tranche Archivist — Role Reference
+
+The Tranche Archivist seat grants exactly `milestone_status` and `milestone_close`, both calling the Milestone library. Use the tools first; without a server, the fallbacks are `vinaya milestone status <milestone-number>` and `vinaya milestone close --slug <slug>`. You hold no create, edit, delete or adopt tool. Those belong to the Architect; `milestone_delete` has no command or fallback.
 
 **Read receipt — do this first.** `vinaya doctrine --role tranche-archivist --print`'s output begins with a fixed acknowledgement token, one line, before anything else. Your first message in this session must repeat that exact token verbatim — e.g. `ACK: <token>` — so a transcript proves this doctrine was read, checked with one grep. The token lives only in this file's frontmatter, never in this paragraph, so editing this paragraph never invalidates a past session's proof.
 
