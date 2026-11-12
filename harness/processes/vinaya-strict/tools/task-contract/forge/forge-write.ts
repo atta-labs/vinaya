@@ -22,6 +22,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { readGeneratedArtifactSources } from '../generated-artifacts'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { readFileSync } from 'node:fs'
@@ -58,6 +59,7 @@ import {
   checkPinnedFileImportersCovered,
   type PinnedFileChecks,
   checkNewTestFilesCoverShards,
+  checkGeneratedArtifactsCovered,
   checkNewLoopFilesCoverInvariantMap,
   checkDocumentationReadable,
   checkDocumentationPathsExist,
@@ -1736,6 +1738,8 @@ export function readCheckoutFile(path: string, root: string = repoRoot()): strin
 const CHECK_ISSUE_CONTENT = 'issue-content'
 
 const ISSUE_CONTENT_RECOVERY = {
+  generatedArtifacts:
+    'Add the named directory glob to `in:` and regenerate the named file with `vinaya upgrade`, then re-run `{cmd}`.',
   blastRadius:
     'Add a second registered `Project(s)` this task also touches, or a `blast-radius-ack: <why one lens is enough>` line, then re-run `{cmd}`.',
   projectsRegistered:
@@ -1822,6 +1826,7 @@ export type IssueContentInput = {
    * and O1's premise check needs the checkout's real bytes.
    */
   readFile: (path: string) => string | null
+  generatedArtifacts?: import('../generated-artifacts').GeneratedArtifactSources[]
   docOwnersContent: string | null
   /**
    * O5's sibling task set, already resolved by the caller from the live
@@ -1928,6 +1933,7 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
       'introducedConfigKeys'
     ],
     [checkPinnedFileImportersCovered(input.body, input.pinnedFileImporters).errors, 'pinnedFileImporters'],
+    [checkGeneratedArtifactsCovered(input.body, input.generatedArtifacts ?? []).errors, 'generatedArtifacts'],
     [checkPinnedFileChecksDecided(input.body, input.pinnedFileChecks ?? []).errors, 'pinnedFileChecks'],
     [checkNewTestFilesCoverShards(input.body, input.trackedFiles ?? []).errors, 'newTestFilesCoverShards'],
     [checkNewLoopFilesCoverInvariantMap(input.body, input.trackedFiles ?? []).errors, 'newLoopFilesCoverInvariantMap'],
@@ -3041,6 +3047,7 @@ export async function collectTaskIssueErrors(
       briefSectionsSinceIssue: resolveGateCutovers(loadConfig()).briefSectionsSinceIssue,
       resolvesToFile: (glob) => expandGlob(glob).length > 0,
       readFile: readCheckoutFile,
+      generatedArtifacts: readGeneratedArtifactSources(repoRoot()),
       docOwnersContent: readDocOwnersContent(),
       milestoneSiblings,
       subjectRef: issueNumber !== null ? String(issueNumber) : '',

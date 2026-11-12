@@ -143,13 +143,27 @@ describe('extractBoundaryFilePaths (task 5, Issue #447, O3)', () => {
     expect(extractBoundaryFilePaths('the renderer discards `n` instead of returning it')).toEqual([])
   })
 
-  it('extracts a bare filename with no directory prefix, elided from a shared list', () => {
+  it('uses the gate grammar, which ignores bare filenames in Boundary text', () => {
     const text = 'the Step 0 line — `aeg-root/aeg-manual-flow.md`, `process.md`, `roles/developer.md`'
-    expect(extractBoundaryFilePaths(text)).toEqual(['aeg-root/aeg-manual-flow.md', 'process.md', 'roles/developer.md'])
+    expect(extractBoundaryFilePaths(text)).toEqual(['aeg-root/aeg-manual-flow.md', 'roles/developer.md'])
   })
 })
 
 describe('renderBrief', () => {
+  it('renders a new pinned path under Create while Modify contains only tracked files', () => {
+    const facts = baseFacts({
+      surface: { in: ['packages/widgets/src', 'apps/cli/src'], out: [] },
+      surfaceFiles: [
+        { path: 'packages/widgets/src/old.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/widgets' },
+        { path: 'packages/widgets/src/new.ts', sha256: null, packageName: '@attalabs/widgets' }
+      ]
+    })
+    const result = renderBrief(facts, TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(/\*\*Create:\*\*\n([\s\S]*?)\n\n/.exec(result.brief)?.[1]).toBe('- packages/widgets/src/new.ts')
+    expect(/\*\*Modify:\*\*\n([\s\S]*?)\n\n/.exec(result.brief)?.[1]).toBe('- packages/widgets/src/old.ts')
+  })
   it("carries the template's own Developer intro line, not the hard-coded fallback", () => {
     const templateLine = TEMPLATE.match(/^You are the Vinaya Developer\.[^\n]*$/m)?.[0] ?? ''
     expect(templateLine).not.toBe('')
@@ -466,8 +480,8 @@ describe('renderBrief', () => {
     })
   })
 
-  describe('a narrowed Boundary lists Surface in: directories under Modify, never just the file the rationale named (task 8, #506, O7)', () => {
-    it('a one-file Boundary with a three-directory Surface renders three directory entries under Modify', () => {
+  describe('Modify lists pinned files independently of the Surface directory count', () => {
+    it('keeps the pinned file under Modify and displays the wider Surface separately', () => {
       const facts = baseFacts({
         surface: { in: ['packages/aeg-core/src', 'apps/cli/src/lib', 'apps/cli/src/commands'], out: [] },
         surfaceFiles: [
@@ -482,14 +496,10 @@ describe('renderBrief', () => {
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean)
-      expect(modifyLines).toEqual(['- packages/aeg-core/src', '- apps/cli/src/lib', '- apps/cli/src/commands'])
-      // The one named file is not what a developer reads as the scope — it
-      // still appears in Premise pins (proof-of-revision), never as the
-      // Modify bullet on its own.
-      expect(modifyBlock).not.toContain('fixture.ts')
+      expect(modifyLines).toEqual(['- packages/aeg-core/src/fixture.ts'])
+      expect(result.brief).toContain('**Surface in:**')
+      expect(modifyBlock).toContain('fixture.ts')
 
-      // Directory-shaped Modify entries are still a brief checkBriefSections
-      // accepts — the narrowing fallback does not break mechanical validation.
       const { errors } = checkBriefSections(result.brief, readTierFromPrBody, {
         requireClosesN: true,
         consumersOf: () => []
@@ -511,12 +521,12 @@ describe('renderBrief', () => {
       expect(modifyBlock.trim()).toBe('- packages/aeg-core/src/fixture.ts')
     })
 
-    it('matching counts still narrow when both Boundary files land in the SAME in: directory, leaving the other uncovered (#526 round 2 MINOR)', () => {
+    it('keeps files when both pins land in one directory and the Surface also allows another', () => {
       const facts = baseFacts({
-        surface: { in: ['packages/aeg-core/src', 'apps/cli/src/lib'], out: [] },
+        surface: { in: ['packages/widgets/src', 'apps/cli/src/lib'], out: [] },
         surfaceFiles: [
-          { path: 'packages/aeg-core/src/a.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' },
-          { path: 'packages/aeg-core/src/b.ts', sha256: 'b'.repeat(64), packageName: '@attalabs/aeg-core' }
+          { path: 'packages/widgets/src/a.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/widgets' },
+          { path: 'packages/widgets/src/b.ts', sha256: 'b'.repeat(64), packageName: '@attalabs/widgets' }
         ]
       })
       const result = renderBrief(facts, TEMPLATE)
@@ -527,12 +537,10 @@ describe('renderBrief', () => {
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean)
-      // A bare count comparison (2 files, 2 dirs) would have kept the file
-      // list — `apps/cli/src/lib` would never appear anywhere in Modify.
-      expect(modifyLines).toEqual(['- packages/aeg-core/src', '- apps/cli/src/lib'])
+      expect(modifyLines).toEqual(['- packages/widgets/src/a.ts', '- packages/widgets/src/b.ts'])
     })
 
-    it('an in: entry carrying a glob suffix renders as a clean directory path, not the raw glob (#526 round 2 MINOR)', () => {
+    it('keeps glob entries out of Modify', () => {
       const facts = baseFacts({
         surface: { in: ['packages/aeg-core/src/**', 'apps/cli/src/lib/*'], out: [] },
         surfaceFiles: [
@@ -547,7 +555,7 @@ describe('renderBrief', () => {
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean)
-      expect(modifyLines).toEqual(['- packages/aeg-core/src', '- apps/cli/src/lib'])
+      expect(modifyLines).toEqual(['- packages/aeg-core/src/fixture.ts'])
     })
   })
 
@@ -715,11 +723,7 @@ describe('renderBrief', () => {
     expect(result.brief).toMatch(/consumer-tests: none —/)
   })
 
-  // task 17, O6 — a directory-only §4 (Modify lists Surface directories, not
-  // files, because the Boundary named fewer files than `## Surface` `in:`
-  // declares) must never produce a brief `checkConsumerTests` itself rejects
-  // (a real frozen brief: exactly this shape refused on `pr create`).
-  it('a covered consumer names its covering test DIRECTORY, not a file, when the Boundary narrows the Surface — and the rendered §4 passes checkConsumerTests', () => {
+  it('a covered consumer gets a separate test coverage line and the rendered surface passes checkConsumerTests', () => {
     const result = renderBrief(
       baseFacts({
         surface: { in: ['packages/aeg-core/src', 'packages/aeg-core/bin', 'apps/cli/tests'], out: [] },
@@ -735,14 +739,8 @@ describe('renderBrief', () => {
     if (!result.ok) return
     const section4 = /## 4\. Technical surface map[\s\S]*?(?=\n## 5\.)/.exec(result.brief)?.[0] ?? ''
     const modifyBlock = /\*\*Modify:\*\*\n([\s\S]*?)\n\n/.exec(section4)?.[1] ?? ''
-    // boundaryNarrowsSurface: `packages/aeg-core/bin` has no covering file,
-    // so the Modify LIST ITSELF names directories, never the covering file
-    // (which can still legitimately appear elsewhere in §4, e.g. Premise
-    // pins for an already-existing file — the explicit consumer-tests line
-    // below is what makes coverage independently, robustly visible rather
-    // than relying on that incidental side channel).
-    expect(modifyBlock).toContain('packages/aeg-core/bin')
-    expect(modifyBlock).not.toContain('apps/cli/tests/checks/fixture.test.ts')
+    expect(modifyBlock).not.toContain('- packages/aeg-core/bin\n')
+    expect(modifyBlock).toContain('apps/cli/tests/checks/fixture.test.ts')
     expect(section4).toMatch(/consumer-tests: apps\/cli\/tests \(covers @attalabs\/aeg-core\)/)
     expect(section4).not.toMatch(/consumer-tests: none —/)
 
