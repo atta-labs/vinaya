@@ -72,8 +72,8 @@ async function main(): Promise<void> {
       const tranche = await source.getTranche(slug)
       files.push({ slug, archived: false, tranche })
     } catch {
-      // Forge unavailable — checkClosesNTopology reports "no topology file found"
-      // for this branch's own tranche below, the correct, honest failure
+      // Forge unavailable — checkClosesNTopology reports "the tranche could not
+      // be read from the forge" for this branch's own tranche below, the correct, honest failure
       // when the forge can't be reached at all.
     }
   }

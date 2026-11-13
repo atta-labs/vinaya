@@ -99,16 +99,19 @@ describe('checkClosesNTopology', () => {
     expect(r.expectedIssue).toBe(264)
   })
 
-  it('fail — no topology file found for the branch tranche', () => {
+  it('fail — the branch tranche could not be read from the forge', () => {
     const r = checkClosesNTopology('task/unknown-iter/2', 'Closes #1', [])
     expect(r.ok).toBe(false)
-    expect(r.message).toMatch(/no topology file found/)
+    expect(r.message).toContain('the tranche could not be read from the forge')
+    expect(r.message).toContain('`vinaya/tranche:unknown-iter`')
+    expect(r.message).toContain('the forge was unreachable')
+    expect(r.message).not.toMatch(/topology file|tranches\/unknown-iter\.md/)
   })
 
-  // A backlog Issue's task/issue-<n> branch — no
-  // tranche, no topology file, ever — resolves entirely off the branch's
-  // own issue number, never falling into the "no topology file found"
-  // failure a tranche-shaped branch with an unresolvable slug would hit.
+  // A backlog Issue's task/issue-<n> branch — no tranche, ever — resolves
+  // entirely off the branch's own issue number, never falling into the
+  // "tranche could not be read from the forge" failure a tranche-shaped
+  // branch with an unresolvable slug would hit.
   it('ok — backlog Issue branch (task/issue-<n>) with matching Closes #N, no topology file needed at all', () => {
     const r = checkClosesNTopology('task/issue-541', 'Summary\n\nCloses #541\n', [])
     expect(r).toEqual({ ok: true, expectedIssue: 541 })

@@ -4,6 +4,9 @@ import { spawn } from 'node:child_process'
 import { accessSync, constants, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { delimiter, join, resolve as resolvePath } from 'node:path'
 import type { Writable } from 'node:stream'
+import { gitToplevel } from '../tools/doctrine/resolve-doctrine'
+import { briefCliInvocation } from '../tools/own-version'
+import { detectVendoredVinaya } from '../tools/self-host'
 import { hostname } from 'node:os'
 import {
   type ControlStoreDeps,
@@ -763,9 +766,20 @@ export function claimResume(root: string, request: ResumeRequest, deps: ResumeDe
   }
 }
 
-/** The command that sets a task's checkpoint aside so the next run starts on `agent`. */
+/**
+ * The command that sets a task's checkpoint aside so the next run starts on `agent`, in the form the repository
+ * can run: the repository root is the git top level of the working directory, else the working directory itself,
+ * and `briefCliInvocation` picks the command-line form for that root exactly as it does for a brief.
+ */
 export const taskSwitchCommand = (task: number, agent: string): string =>
-  `bun apps/cli/src/index.ts task switch --issue ${task} --agent ${agent}`
+  `${repositoryCliInvocation()} task switch --issue ${task} --agent ${agent}`
+
+/** The command-line form the repository the working directory belongs to can run. */
+function repositoryCliInvocation(): string {
+  const cwd = process.cwd()
+  const repoRoot = gitToplevel(cwd) ?? cwd
+  return briefCliInvocation(detectVendoredVinaya(repoRoot), repoRoot)
+}
 
 /** The model a resume runs with: the one `--model` names, else the one the run's checkpoint recorded, else the vendor's default. */
 export function resumeModel(explicit: string | undefined, recorded: string | undefined): string | undefined {

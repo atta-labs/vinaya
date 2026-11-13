@@ -71,6 +71,14 @@ describe('the Planner tool entries', () => {
       expect(entry.outputSchema?.type).toBe('object')
     }
   })
+
+  it('describe the Issue create and edit tools without a retired command word', () => {
+    for (const name of ['task_issue_create', 'task_issue_edit']) {
+      const description = PLANNER_TOOL_ENTRIES.find((e) => e.name === name)?.description ?? ''
+      expect(description).toContain('Issue write gate')
+      expect(description).not.toMatch(/vinaya issue|issue create|issue edit/)
+    }
+  })
 })
 
 describe('success returns the library’s outcome', () => {

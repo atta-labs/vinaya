@@ -1,6 +1,7 @@
 import { initialLoopState } from '../../tools/dev-review-policy/types'
 import { afterAll, describe, expect, test } from 'bun:test'
 import net from 'node:net'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -30,6 +31,7 @@ import {
   type TaskInput
 } from '../../executing/actions'
 import { createV2Actions, V2_DECISIONS } from '../../loops/dev-review/v2/v2-actions'
+import { ownVersion } from '../../tools/own-version'
 import {
   crossAgentResumeRefusal,
   MAX_TOOL_HOST_LOSSES,
@@ -286,6 +288,24 @@ describe('engine resume', () => {
     expect(legacy).toContain('start the task fresh')
     expect(crossAgentResumeRefusal(null, 7, 'codex', '/run/checkpoints.sqlite')).toContain('start the task fresh')
     expect(crossAgentResumeRefusal(provenanceFor('codex'), 7, 'codex', '/run/checkpoints.sqlite')).toBeNull()
+  })
+
+  test('in a repository that does not vendor the command line, the refusal names the published command', () => {
+    const adopter = mkdtempSync(join(tmpdir(), 'task-switch-adopter-'))
+    const nested = join(adopter, 'packages', 'app')
+    mkdirSync(nested, { recursive: true })
+    writeFileSync(join(adopter, 'package.json'), JSON.stringify({ name: 'adopter', workspaces: ['packages/*'] }))
+    execFileSync('git', ['init', '--quiet', adopter])
+    const home = process.cwd()
+    try {
+      process.chdir(nested)
+      const crossed = crossAgentResumeRefusal(provenanceFor('codex'), 7, 'claude', '/run/checkpoints.sqlite')
+      expect(crossed).toContain(`\`npx --yes @attalabs/vinaya@${ownVersion()} task switch --issue 7 --agent claude\``)
+      expect(crossed).not.toContain('apps/cli/src/index.ts')
+    } finally {
+      process.chdir(home)
+      rmSync(adopter, { recursive: true, force: true })
+    }
   })
 
   for (const [name, recorded] of [

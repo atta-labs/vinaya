@@ -314,8 +314,9 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       // baseline env, so without explicit forwarding this check has no way
       // to auth to GitHub on a CI runner (found live: passed locally under
       // a developer's own `gh auth login`, failed deterministically in CI
-      // with "no topology file found" — a misleading message, since the
-      // real cause was an unauthenticated forge read, not a missing file).
+      // with a message that blamed a missing tranche file, when the real
+      // cause was an unauthenticated forge read; the message now names the
+      // forge read).
       env: {
         BRANCH: { optional: true },
         PR_BODY: { optional: true },
