@@ -106,9 +106,18 @@ export type Adapter = (typeof ADAPTERS)[number]
 export const SPLITS = ['development', 'held-out'] as const
 export type Split = (typeof SPLITS)[number]
 
-/** Every tool the suite evaluates: the tools some dispatched role is granted, in catalog order. */
-export const EVALUATED_TOOLS: readonly string[] = AGENT_TOOL_CATALOG.map((tool) => tool.name).filter((name) =>
-  Object.values(ROLE_TOOL_GRANTS).some((granted) => granted.includes(name))
+/** New tools need a versioned corpus, never a silent edit of the frozen splits. */
+export const PENDING_TOOL_SELECTION = {
+  repair_plan: {
+    reason: 'The frozen tool-selection corpus predates plan repair; live selection cases require a new suite version.',
+    regression: 'harness/processes/vinaya-strict/loops/dev-review/v2/flow-v2-live.test.ts'
+  }
+} as const
+
+/** Tools covered by this frozen suite, in catalog order; pending tools are reported separately. */
+export const EVALUATED_TOOLS: readonly string[] = AGENT_TOOL_CATALOG.map((tool) => tool.name).filter(
+  (name) =>
+    Object.values(ROLE_TOOL_GRANTS).some((granted) => granted.includes(name)) && !(name in PENDING_TOOL_SELECTION)
 )
 
 export const CASES_PATH = join(import.meta.dir, 'tool-selection-cases.json')
@@ -1276,6 +1285,7 @@ export interface ToolSelectionRunReport {
   adapters: AdapterSummary[]
   failures: FailedTrial[]
   floorHolds: boolean
+  pendingTools: typeof PENDING_TOOL_SELECTION
 }
 
 /**
@@ -1406,7 +1416,8 @@ export async function runToolSelection(options: RunOptions): Promise<ToolSelecti
     trialsPerTask: options.trials,
     adapters: summaries,
     failures,
-    floorHolds: summaries.every((s) => s.tools.every((t) => t.meetsFloor))
+    floorHolds: summaries.every((s) => s.tools.every((t) => t.meetsFloor)),
+    pendingTools: PENDING_TOOL_SELECTION
   }
 }
 
@@ -1488,6 +1499,8 @@ export function formatRun(run: ToolSelectionRunReport): string {
   const lines = [
     `${run.report.suite.name}@${run.report.suite.version} — split ${run.split}, mode ${run.mode}: ${run.taskCount} tasks × ${run.trialsPerTask} trials per adapter; floor ${run.floor} per tool`
   ]
+  for (const [tool, pending] of Object.entries(run.pendingTools))
+    lines.push(`NOT EVALUATED ${tool}: ${pending.reason} Deterministic coverage: ${pending.regression}`)
   for (const a of run.adapters) {
     lines.push(`${a.adapter}:`)
     for (const t of a.tools) {

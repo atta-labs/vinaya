@@ -173,9 +173,9 @@ function receipts(path: string): Record<string, unknown>[] {
 
 const html = { 'content-type': 'text/html; charset=utf-8' }
 
-describe('O1: a seventh dev tool both agents call through the dev-tools server', () => {
+describe('O1: a documentation tool both agents call through the dev-tools server', () => {
   it('the catalog lists fetch_documentation with an input and an output schema', () => {
-    expect(DEV_TOOL_NAMES).toHaveLength(7)
+    expect(DEV_TOOL_NAMES).toHaveLength(8)
     expect(DEV_TOOL_NAMES).toContain(FETCH_DOCUMENTATION_TOOL)
     const def = DEV_TOOL_CATALOG.find((d) => d.name === FETCH_DOCUMENTATION_TOOL)
     expect(def?.inputSchema).toMatchObject({ type: 'object', required: ['url'] })

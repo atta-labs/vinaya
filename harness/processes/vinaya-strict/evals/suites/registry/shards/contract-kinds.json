@@ -346,7 +346,7 @@
       "backends": ["standalone", "engine"],
       "decisionRule": "Deterministic repair and refusal cases pass; the live tool-selection suite meets the module's absolute floor on both adapters.",
       "cadence": ["every-affected-change", "scheduled-live"],
-      "migrationGate": "Engine repair and refusal scenarios pass before cutover; older hosts explicitly refuse the unavailable tool rather than claiming a repair."
+      "migrationGate": "Engine repair and refusal scenarios pass before cutover; older hosts explicitly refuse the unavailable tool rather than claiming a repair. Live tool-selection cases remain owed until a new versioned corpus includes repair_plan; the frozen suite reports that tool as not evaluated."
     },
     {
       "id": "effect:repair_plan",
