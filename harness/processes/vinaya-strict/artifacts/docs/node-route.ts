@@ -1,6 +1,6 @@
 /**
  * The single node → `/docs` route derivation. Nav construction
- * (`the docs loader`), the "Read more" resolver (`read-more.ts`), and the
+ * (the docs site's nav loader), the "Read more" resolver (`read-more.ts`), and the
  * harness map (`/docs` `page.tsx`) all resolve a `DiagramNode` to its docs
  * location through THIS function — one source of truth, so a card's deep-link,
  * a "Read more" anchor, and a ring/action page's heading `id` can never point
