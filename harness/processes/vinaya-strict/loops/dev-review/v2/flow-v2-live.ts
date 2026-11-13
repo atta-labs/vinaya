@@ -217,6 +217,7 @@ import { detectVendoredVinaya } from '../../../tools/self-host'
 import {
   type ExplicitCommandsResult,
   isTestRunLine,
+  MAX_OTHER_FAILURES,
   type ReadyGateResult,
   readyTestPlanCommand,
   type RoundTestsResult,
@@ -1050,6 +1051,25 @@ export async function runReadyGateLive(input: {
 const ROUND_TEST_CAPTURE_CHARS = 400_000
 /** The longest failure excerpt a round-test result carries. */
 const ROUND_TEST_EXCERPT_CHARS = 2_000
+/** The longest excerpt each further failing file carries, and the most all of them carry together. */
+const ROUND_TEST_OTHER_EXCERPT_CHARS = 1_200
+const ROUND_TEST_OTHER_EXCERPTS_TOTAL = 8_000
+
+/** The output block of one test file: from its own `path:` header line up to the next test file's header. */
+function testFileBlock(output: string, test: string): string {
+  const lines = output.split('\n')
+  const start = lines.findIndex((line) => line.trim() === `${test}:` || line.trim().endsWith(`/${test}:`))
+  if (start < 0) return ''
+  let end = lines.length
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/\.test\.[cm]?[jt]sx?:\s*$/.test(lines[i] ?? '')) {
+      end = i
+      break
+    }
+  }
+  return lines.slice(start, end).join('\n')
+}
+
 /** A source frame: `path.ts:12` or `path.ts:12:5`. */
 const SOURCE_FRAME = /([^\s():'"]+\.[cm]?[jt]sx?):(\d+)(?::\d+)?/g
 
@@ -1310,8 +1330,23 @@ async function runRoundTestsLocked(
     } catch {
       output = ''
     }
-    const test = first.startsWith(`${input.worktreePath}/`) ? first.slice(input.worktreePath.length + 1) : first
+    const relative = (file: string) =>
+      file.startsWith(`${input.worktreePath}/`) ? file.slice(input.worktreePath.length + 1) : file
+    const test = relative(first)
+    let budget = ROUND_TEST_OTHER_EXCERPTS_TOTAL
+    const otherFailures = named.slice(1, 1 + MAX_OTHER_FAILURES).map((file) => {
+      const other = relative(file)
+      const excerpt =
+        budget > 0
+          ? extractFailureExcerpt(testFileBlock(output, other), Math.min(ROUND_TEST_OTHER_EXCERPT_CHARS, budget))
+          : ''
+      budget -= excerpt.length
+      return { test: other, location: failureLocation(output, input.worktreePath, other), excerpt }
+    })
+    const otherFailuresOmitted = Math.max(0, named.length - 1 - MAX_OTHER_FAILURES)
     const failedResult = done('failed', {
+      ...(otherFailures.length > 0 ? { otherFailures } : {}),
+      ...(otherFailuresOmitted > 0 ? { otherFailuresOmitted } : {}),
       firstFailure: {
         test,
         location: failureLocation(output, input.worktreePath, test),
@@ -1319,7 +1354,7 @@ async function runRoundTestsLocked(
       }
     })
     ctx.log(
-      `round tests failed: ${failedResult.firstFailure?.location}; ${fileCount} selected test file(s); wall time ${failedResult.wallMs} ms`
+      `round tests failed: ${[failedResult.firstFailure?.location, ...otherFailures.map((other) => other.location)].join(', ')}${otherFailuresOmitted > 0 ? ` and ${otherFailuresOmitted} more` : ''}; ${fileCount} selected test file(s); wall time ${failedResult.wallMs} ms`
     )
     return failedResult
   } finally {

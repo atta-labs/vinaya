@@ -1587,6 +1587,26 @@ process.exit(cfg.exit ?? 0)
     expect(result.firstFailure?.excerpt).toContain('expected 1 to be 2')
   })
 
+  test('a red run with several failing files names every one, the first with its excerpt and the rest as files', async () => {
+    const { dir, head } = repoWith({
+      selected: ['a.test.ts', 'b.test.ts', 'c.test.ts'],
+      exit: 1,
+      output:
+        'a.test.ts:\nerror: expected 1 to be 2\n      at __DIR__/src/thing.ts:12:3\n' +
+        'b.test.ts:\nerror: expected b to hold\n      at __DIR__/src/b.ts:7:1\n' +
+        'c.test.ts:\nerror: expected c to hold\n      at __DIR__/src/c.ts:9:2\n 0 pass\n 3 fail',
+      result: { outcome: 'failed', failed: ['__DIR__/a.test.ts', '__DIR__/b.test.ts', '__DIR__/c.test.ts'] }
+    })
+    const result = await runRoundTestsLive({ ...common(dir), head })
+    expect(result.outcome).toBe('failed')
+    expect(result.firstFailure?.test).toBe('a.test.ts')
+    expect(result.otherFailures?.map((other) => other.test)).toEqual(['b.test.ts', 'c.test.ts'])
+    expect(result.otherFailures?.map((other) => other.location)).toEqual(['src/b.ts:7', 'src/c.ts:9'])
+    expect(result.otherFailures?.[0]?.excerpt).toContain('expected b to hold')
+    expect(result.otherFailures?.[1]?.excerpt).toContain('expected c to hold')
+    expect(result.otherFailuresOmitted).toBeUndefined()
+  })
+
   test('a failing test with no frame inside the repository names the file alone', async () => {
     const { dir, head } = repoWith({
       selected: ['a.test.ts'],
