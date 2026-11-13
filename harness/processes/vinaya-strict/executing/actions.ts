@@ -1017,6 +1017,10 @@ export interface RecordedRoundTests {
     outcome: 'passed' | 'failed' | 'none' | 'timed_out' | 'unavailable'
     /** Set with `failed`: the first failing test, its `file:line` and its failure lines, all sanitized. */
     firstFailure?: { test: string; location: string; excerpt: string }
+    /** Every other test file the run reported failing, each with its location and excerpt, sanitized. */
+    otherFailures?: Array<{ test: string; location: string; excerpt: string }>
+    /** Failing files past the carried list, counted. */
+    otherFailuresOmitted?: number
     detail?: string
     wallMs?: number
   }
@@ -1042,14 +1046,26 @@ export function recordedRoundTests(results: Results): RecordedRoundTests | null 
  * The red test the judged head carries: the round-test result when it is `failed` and was recorded for the head and
  * round the newest reviewer dispatch took its inputs at. A result for another head or round is absent.
  */
-export function failedRoundTest(results: Results): { test: string; location: string; excerpt: string } | null {
+export function failedRoundTest(results: Results): {
+  test: string
+  location: string
+  excerpt: string
+  otherFailures: Array<{ test: string; location: string; excerpt: string }>
+  otherFailuresOmitted: number
+} | null {
   const recorded = recordedRoundTests(results)
   const dispatch = recordedDispatch(results)
   const judged = dispatch?.inputs?.manifest.headSha
   if (recorded === null || dispatch === null || judged === undefined) return null
   if (recorded.round !== dispatch.round || recorded.head !== judged) return null
   const failure = recorded.result.outcome === 'failed' ? recorded.result.firstFailure : undefined
-  return failure ?? null
+  return failure
+    ? {
+        ...failure,
+        otherFailures: recorded.result.otherFailures ?? [],
+        otherFailuresOmitted: recorded.result.otherFailuresOmitted ?? 0
+      }
+    : null
 }
 
 /** The first line of a failure excerpt that is not blank. */
@@ -1066,11 +1082,22 @@ const firstFailureLine = (excerpt: string): string =>
  */
 function foldRoundTestFailure(
   verdicts: VerdictObservation[],
-  failure: { test: string; location: string; excerpt: string }
+  failure: {
+    test: string
+    location: string
+    excerpt: string
+    otherFailures: Array<{ test: string }>
+    otherFailuresOmitted: number
+  }
 ): VerdictObservation[] {
   if (verdicts.some((verdict) => verdict.verdict === 'ESCALATE')) return verdicts
   const line = firstFailureLine(failure.excerpt)
-  const description = `The selected test ${failure.test} fails${line ? `: ${line}` : ''}`
+  const omitted = failure.otherFailuresOmitted > 0 ? ` and ${failure.otherFailuresOmitted} more` : ''
+  const others =
+    failure.otherFailures.length > 0
+      ? `; these selected tests fail too: ${failure.otherFailures.map((other) => other.test).join(', ')}${omitted}`
+      : ''
+  const description = `The selected test ${failure.test} fails${line ? `: ${line}` : ''}${others}`
   return verdicts.map((verdict) =>
     verdict.role !== 'reviewer'
       ? verdict

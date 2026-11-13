@@ -1779,6 +1779,28 @@ describe('the round runs its selected tests beside both reviewers', () => {
     expect(JSON.stringify(observed.published)).not.toContain('expected 1 to be 2')
   })
 
+  test('a red head with several failing files tells the Developer every one in its prompt', async () => {
+    const several = (head: string): RoundTestsResult => ({
+      ...red(head),
+      otherFailures: [
+        { test: 'b.test.ts', location: 'src/b.ts:7', excerpt: 'error: expected b to hold' },
+        { test: 'c.test.ts', location: 'src/c.ts:9', excerpt: 'error: expected c to hold' }
+      ]
+    })
+    const observed = await runV2('claude', {
+      roundTests: (call, head) => (call === 1 ? several(head) : result(head, 'passed'))
+    })
+    expect(observed.outcome).toBe('completed')
+    const prompt = observed.prompts.developer[1] ?? ''
+    expect(prompt).toContain('/repo/a.test.ts:12')
+    expect(prompt).toContain('`b.test.ts`')
+    expect(prompt).toContain('`c.test.ts`')
+    expect(prompt).toContain('fix every one in this turn')
+    expect(prompt).toContain('src/b.ts:7')
+    expect(prompt).toContain('expected b to hold')
+    expect(prompt).toContain('expected c to hold')
+  })
+
   test('the handoff list carries the test finding beside the reviewers', async () => {
     const observed = await runV2('claude', {
       roundTests: (call, head) => (call === 1 ? red(head) : result(head, 'passed')),

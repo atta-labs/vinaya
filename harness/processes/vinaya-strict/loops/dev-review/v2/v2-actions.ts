@@ -126,12 +126,29 @@ export interface ReadyGateResult {
 }
 
 /** What one round-test run reported: the head it judged, how it ended, and the first failing test when it failed. */
+/** How many other failing test files a round-test result carries; the rest are counted in `otherFailuresOmitted`. */
+export const MAX_OTHER_FAILURES = 50
+
+/** One more failing test file of a red round: its path, `file:line` and its own failure lines (empty past the cap). */
+export interface RoundTestFailure {
+  test: string
+  location: string
+  excerpt: string
+}
+
 export interface RoundTestsResult {
   head: string
   /** `failed` only for a verified red run; every infrastructure problem is `none`, `timed_out` or `unavailable`. */
   outcome: 'passed' | 'failed' | 'none' | 'timed_out' | 'unavailable'
   /** The first failing test, set with `failed`: its path, `file:line` (the file alone when no frame is found) and the failure lines. */
   firstFailure?: { test: string; location: string; excerpt: string }
+  /**
+   * Every other test file the run reported failing, set with `failed`, each with its own location and excerpt. The
+   * Developer is told all of them at once, so one round fixes every red file instead of one per round.
+   */
+  otherFailures?: RoundTestFailure[]
+  /** Failing files past {@link MAX_OTHER_FAILURES}: counted so none is dropped without a trace. */
+  otherFailuresOmitted?: number
   wallMs: number
   /** Why the run did not give a verdict (set with `none`, `timed_out` and `unavailable`). */
   detail?: string
@@ -366,6 +383,21 @@ export async function runRoundTestsStep(
               location: sanitizeForgeText(failure.location, 200),
               excerpt: sanitizeForgeText(failure.excerpt, MAX_FAILURE_EXCERPT_CHARS)
             }
+          }
+        : {}),
+      ...(failure && ran.otherFailures && ran.otherFailures.length > 0
+        ? {
+            otherFailures: ran.otherFailures.slice(0, MAX_OTHER_FAILURES).map((other) => ({
+              test: sanitizeForgeText(other.test, 200),
+              location: sanitizeForgeText(other.location, 200),
+              excerpt: sanitizeForgeText(other.excerpt, MAX_FAILURE_EXCERPT_CHARS)
+            })),
+            ...(ran.otherFailures.length > MAX_OTHER_FAILURES || (ran.otherFailuresOmitted ?? 0) > 0
+              ? {
+                  otherFailuresOmitted:
+                    Math.max(0, ran.otherFailures.length - MAX_OTHER_FAILURES) + (ran.otherFailuresOmitted ?? 0)
+                }
+              : {})
           }
         : {}),
       ...(ran.detail !== undefined ? { detail: sanitizeForgeText(ran.detail, 300) } : {}),
