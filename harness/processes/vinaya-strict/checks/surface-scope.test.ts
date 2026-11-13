@@ -89,16 +89,16 @@ function runIssueBranch(fixture: { root: string; binDir: string }, prBody: strin
 }
 
 describe('surface-scope check-bin — a beyond-Surface path passes only when the body block records it', () => {
-  const surface = '## Surface\n\nin: apps/cli/src\nout: packages/aeg-forge-state\n'
+  const surface = '## Surface\n\nin: apps/cli/src\nout: packages/forge-state\n'
 
   it('passes when every beyond-Surface path is listed in the body block', () => {
     const fixture = issueBranchFixture(
-      ['apps/cli/src/in-scope.ts', 'packages/aeg-forge-state/crossed.ts', 'docs/missed.md'],
+      ['apps/cli/src/in-scope.ts', 'packages/forge-state/crossed.ts', 'docs/missed.md'],
       surface
     )
     try {
       const body = `## Scope\n\n${renderBeyondSurfaceBlock([
-        { path: 'packages/aeg-forge-state/crossed.ts', reason: 'out', glob: 'packages/aeg-forge-state' },
+        { path: 'packages/forge-state/crossed.ts', reason: 'out', glob: 'packages/forge-state' },
         { path: 'docs/missed.md', reason: 'in', glob: null }
       ])}\n`
       const result = runIssueBranch(fixture, body)
@@ -111,7 +111,7 @@ describe('surface-scope check-bin — a beyond-Surface path passes only when the
   })
 
   it('fails naming the first changed beyond-Surface path the block does not list', () => {
-    const fixture = issueBranchFixture(['docs/missed.md', 'packages/aeg-forge-state/crossed.ts'], surface)
+    const fixture = issueBranchFixture(['docs/missed.md', 'packages/forge-state/crossed.ts'], surface)
     try {
       const body = `## Scope\n\n${renderBeyondSurfaceBlock([{ path: 'docs/missed.md', reason: 'in', glob: null }])}\n`
       const result = runIssueBranch(fixture, body)
@@ -120,8 +120,8 @@ describe('surface-scope check-bin — a beyond-Surface path passes only when the
       expect(lines).toHaveLength(1)
       const error = JSON.parse(lines[0] ?? '')
       expect(error.check).toBe('surface-scope')
-      expect(error.file).toBe('packages/aeg-forge-state/crossed.ts')
-      expect(error.message).toContain('`out:` glob `packages/aeg-forge-state`')
+      expect(error.file).toBe('packages/forge-state/crossed.ts')
+      expect(error.message).toContain('`out:` glob `packages/forge-state`')
       expect(error.message).toContain('does not record it')
     } finally {
       rmSync(fixture.root, { recursive: true, force: true })
@@ -148,7 +148,7 @@ describe('surface-scope check-bin — a protected administrative path the Surfac
   it('fails even when the body block records it, saying the Surface must name it', () => {
     const fixture = issueBranchFixture(
       ['harness/processes/vinaya-strict/doctrine/enforcement.md'],
-      '## Surface\n\nin: apps/cli/src\nout: packages/aeg-forge-state\n'
+      '## Surface\n\nin: apps/cli/src\nout: packages/forge-state\n'
     )
     try {
       const body = `## Scope\n\n${renderBeyondSurfaceBlock([{ path: 'harness/processes/vinaya-strict/doctrine/enforcement.md', reason: 'in', glob: null }])}\n`
@@ -166,9 +166,9 @@ describe('surface-scope check-bin — a protected administrative path the Surfac
 })
 
 describe('surface-scope check-bin — a changed path whose content equals the base is not counted', () => {
-  const surface = '## Surface\n\nin: apps/cli/src\nout: packages/aeg-forge-state\n'
+  const surface = '## Surface\n\nin: apps/cli/src\nout: packages/forge-state\n'
 
-  /** The fixture's branch changed `aeg-root/enforcement.md`; the default branch then lands `mainContent` there. */
+  /** The fixture's branch changed `harness/processes/vinaya-strict/doctrine/enforcement.md`; the default branch then lands `mainContent` there. */
   function withMainChange(files: string[], mainContent: string): { root: string; binDir: string } {
     const fixture = issueBranchFixture(files, surface)
     execFileSync('git', ['checkout', '-q', 'main'], { cwd: fixture.root })
@@ -253,15 +253,15 @@ describe('surface-scope check-bin — a backlog Issue branch (task/issue-<n>) re
       execFileSync('git', ['add', 'README.md'], { cwd: root })
       execFileSync('git', ['commit', '-q', '-m', 'Chore: initial commit'], { cwd: root })
       execFileSync('git', ['checkout', '-q', '-b', 'task/issue-541'], { cwd: root })
-      mkdirSync(join(root, 'packages', 'aeg-forge-state'), { recursive: true })
-      writeFileSync(join(root, 'packages', 'aeg-forge-state', 'out-of-scope.ts'), 'export {}\n')
+      mkdirSync(join(root, 'packages', 'forge-state'), { recursive: true })
+      writeFileSync(join(root, 'packages', 'forge-state', 'out-of-scope.ts'), 'export {}\n')
       execFileSync('git', ['add', '-A'], { cwd: root })
       execFileSync('git', ['commit', '-q', '-m', 'Feat: an out-of-scope change'], { cwd: root })
 
       writeFakeGh(
         binDir,
         JSON.stringify({
-          body: '## Surface\n\nin: apps/cli/src\nout: packages/aeg-forge-state\n'
+          body: '## Surface\n\nin: apps/cli/src\nout: packages/forge-state\n'
         })
       )
 
@@ -287,7 +287,7 @@ describe('surface-scope check-bin — a backlog Issue branch (task/issue-<n>) re
       // Names Issue #541 — the branch's OWN number — never a topology-
       // resolved one (there is no topology involved at all on this path).
       expect(error.message).toContain("Issue #541's `## Surface` `out:` glob")
-      expect(error.message).toContain('packages/aeg-forge-state/out-of-scope.ts')
+      expect(error.message).toContain('packages/forge-state/out-of-scope.ts')
     } finally {
       rmSync(root, { recursive: true, force: true })
       rmSync(binDir, { recursive: true, force: true })
@@ -318,7 +318,7 @@ describe('surface-scope check-bin — a backlog Issue branch (task/issue-<n>) re
       writeFakeGh(
         binDir,
         JSON.stringify({
-          body: '## Surface\n\nin: apps/cli/src\nout: packages/aeg-forge-state\n'
+          body: '## Surface\n\nin: apps/cli/src\nout: packages/forge-state\n'
         })
       )
 

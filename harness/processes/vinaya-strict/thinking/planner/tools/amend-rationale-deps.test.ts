@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { amendRationaleDeps } from './amend-rationale-deps'
 import { parseRationaleDeps } from '../../../tools/task-contract/forge/parse-rationale-deps'
+import { COMMENT_MARKER_PREFIX } from '../../../tools/legacy-markers'
 
 const FIXTURES = join(__dirname, '../../../tools/task-contract/forge/fixtures')
 
@@ -15,6 +16,9 @@ function readBody(number: 429 | 388 | 382 | 383): string {
 }
 
 const DATE = '2026-07-13'
+
+/** The tranche slug the recorded Issue bodies carry, composed so the retired prefix stays spelled in one module. */
+const RECORDED_SLUG = `${COMMENT_MARKER_PREFIX.old}-governance-hardening`
 
 describe('amendRationaleDeps — round-trip against real drifted bodies', () => {
   it('#429: single labeled span + bare continuations — rewrites to the requested set', () => {
@@ -36,17 +40,17 @@ describe('amendRationaleDeps — round-trip against real drifted bodies', () => 
   it('#382: preserves slug-qualified ids through a round-trip', () => {
     const body = readBody(382)
     expect(parseRationaleDeps(body)).toEqual({
-      dependsOn: ['aeg-governance-hardening #372'],
-      conflictsWith: ['aeg-governance-hardening 25']
+      dependsOn: [`${RECORDED_SLUG} #372`],
+      conflictsWith: [`${RECORDED_SLUG} 25`]
     })
     const out = amendRationaleDeps(body, {
-      dependsOn: ['aeg-governance-hardening #372'],
+      dependsOn: [`${RECORDED_SLUG} #372`],
       note: 'One edge dropped.',
       date: DATE
     })
     expect(parseRationaleDeps(out)).toEqual({
-      dependsOn: ['aeg-governance-hardening #372'],
-      conflictsWith: ['aeg-governance-hardening 25']
+      dependsOn: [`${RECORDED_SLUG} #372`],
+      conflictsWith: [`${RECORDED_SLUG} 25`]
     })
   })
 
@@ -56,7 +60,7 @@ describe('amendRationaleDeps — round-trip against real drifted bodies', () => 
     // conflicts-with cleared to the empty marker; depends-on spans untouched,
     // so it still reads exactly its own labeled span.
     expect(parseRationaleDeps(out)).toEqual({
-      dependsOn: ['aeg-governance-hardening #372'],
+      dependsOn: [`${RECORDED_SLUG} #372`],
       conflictsWith: []
     })
   })

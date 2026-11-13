@@ -4,6 +4,7 @@
  */
 
 import { isDoctrineRepoPath } from './doctrine/doctrine-map'
+import { LEGACY_PROJECT_DIR } from './legacy-paths'
 
 /**
  * Decision archives: frozen records of what was decided, not documentation.
@@ -30,8 +31,8 @@ export function isFrozenArchive(p: string): boolean {
 export function isDocFile(p: string): boolean {
   return (
     isDoctrineRepoPath(p) ||
-    (p.startsWith('aeg-project/') && p.endsWith('.md')) ||
-    (p.includes('/aeg-project/') && p.endsWith('.md')) ||
+    (p.startsWith(`${LEGACY_PROJECT_DIR}/`) && p.endsWith('.md')) ||
+    (p.includes(`/${LEGACY_PROJECT_DIR}/`) && p.endsWith('.md')) ||
     (p.startsWith('.vinaya/') && p.endsWith('.md')) ||
     (p.startsWith('docs/') && p.endsWith('.md') && !isFrozenArchive(p)) ||
     (p.startsWith('apps/') && p.includes('/specs/') && p.endsWith('.md') && !isFrozenArchive(p)) ||

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { blockingVerdict, cleanVerdict, fakeGate, fakeVerdicts, runScenario } from '../dev-review-policy/fakes'
 import { initialLoopState } from '../dev-review-policy/types'
+import { COMMENT_MARKER_PREFIX } from '../legacy-markers'
 import { deriveReviewStatus, parseDeveloperRoundMarker, renderReviewStatus } from './review-status'
 
 const ALLOWLIST = ['daniboomerang']
+// The round marker is still read in its retired spelling.
+const OLD = COMMENT_MARKER_PREFIX.old
 const HEAD = 'abc1234def5678901234567890abcdef12345678'
 const OLD_HEAD = '9999999888888887777777766666665555555544'
 
@@ -26,7 +29,7 @@ function finding(n: number, state: string | null, severity = 'MAJOR'): string {
 }
 
 function roundComment(n: number): { body: string; author: string } {
-  return { body: `Head: ${HEAD}\n\n<!-- aeg:developer:round-${n} -->\n\nAll green.`, author: 'daniboomerang' }
+  return { body: `Head: ${HEAD}\n\n<!-- ${OLD}:developer:round-${n} -->\n\nAll green.`, author: 'daniboomerang' }
 }
 
 function principal(body: string): { body: string; author: string } {
@@ -35,11 +38,11 @@ function principal(body: string): { body: string; author: string } {
 
 describe('parseDeveloperRoundMarker', () => {
   it('reads the round number from the marker', () => {
-    expect(parseDeveloperRoundMarker('Head: abc\n\n<!-- aeg:developer:round-2 -->')).toBe(2)
+    expect(parseDeveloperRoundMarker(`Head: abc\n\n<!-- ${OLD}:developer:round-2 -->`)).toBe(2)
   })
 
   it('tolerates the whitespace variants an HTML comment can carry', () => {
-    expect(parseDeveloperRoundMarker('<!--aeg:developer:round-11-->')).toBe(11)
+    expect(parseDeveloperRoundMarker(`<!--${OLD}:developer:round-11-->`)).toBe(11)
   })
 
   it('returns null for a comment carrying no marker — never a guessed round', () => {
@@ -163,7 +166,7 @@ describe('deriveReviewStatus — PAUSE: stale', () => {
     const status = deriveReviewStatus({
       comments: [
         principal(verdict(OLD_HEAD, [finding(1, null)])),
-        { body: `Head: ${HEAD}\n\n<!-- aeg:developer:round-2 -->`, author: 'drive-by-stranger' }
+        { body: `Head: ${HEAD}\n\n<!-- ${OLD}:developer:round-2 -->`, author: 'drive-by-stranger' }
       ],
       headSha: HEAD,
       principalAllowlist: ALLOWLIST,

@@ -3,15 +3,16 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { checkBranchTopology } from './branch-topology-gate'
+import { LEGACY_TRANCHES_DIR } from '../tools/legacy-paths'
 import { describe, expect, it } from 'bun:test'
 
 // Task `vinaya-adopter-portability-v1` 2 (Issue #232): `check-branch-topology.ts`
-// used to construct `topoPath` as the literal `aeg-root/tranches/<tranche>.md`
+// used to construct `topoPath` as the literal path of a retired per-tranche topology file
 // — never read from disk by anything (`checkBranchTopology`, above, only
 // splices `topoPath` into its own human-readable messages; the real topology
 // comes from a live forge read, `createForgeSource(...).getTranche()`). That
 // literal is a pre-forge-migration artifact stale even in THIS repo (there is
-// no `aeg-root/tranches/` directory here any more), so it sent a reader
+// no retired tranche-file directory here any more), so it sent a reader
 // hunting for a markdown file that cannot exist in any repository, adopter or
 // author. The fix changes only the STRING the bin passes as `topoPath`; this
 // suite proves the resulting message is honest by exercising the real,
@@ -31,7 +32,7 @@ describe('branch-topology — task vinaya-adopter-portability-v1 2 (Issue #232)'
       topology: null
     })
     expect(result.verdict).toBe('refuse')
-    expect(result.reason).not.toContain('aeg-root/tranches')
+    expect(result.reason).not.toContain(LEGACY_TRANCHES_DIR)
     expect(result.reason).not.toContain('.md')
     expect(result.reason).toContain('the forge-registered topology for tranche "fixture-tranche"')
   })
@@ -45,13 +46,12 @@ describe('branch-topology — task vinaya-adopter-portability-v1 2 (Issue #232)'
       topology: { name: 'fixture-tranche', lifecycle: 'active', goal: '', tasks: [{ id: '1' } as never], backlog: [] }
     })
     expect(result.verdict).toBe('refuse')
-    expect(result.reason).not.toContain('aeg-root/tranches')
+    expect(result.reason).not.toContain(LEGACY_TRANCHES_DIR)
   })
 
-  it('the shipped bin file no longer CONSTRUCTS a topoPath from the stale aeg-root/tranches literal (module doc may still name it historically)', () => {
+  it('the shipped bin file no longer CONSTRUCTS a topoPath from the stale retired tranche-file literal (module doc may still name it historically)', () => {
     const source = readFileSync(BIN_PATH, 'utf8')
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting the OLD literal source expression is absent, not writing a template string
-    expect(source).not.toContain('aeg-root/tranches/${fields.tranche}.md')
+    expect(source).not.toContain(`${LEGACY_TRANCHES_DIR}/\${fields.tranche}.md`)
     expect(source).toContain('function topologyLabel(')
   })
 

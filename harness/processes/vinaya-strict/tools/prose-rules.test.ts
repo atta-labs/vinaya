@@ -71,7 +71,7 @@ describe('default prose rules content', () => {
 const SPEC = { path: 'SPEC.md', content: 'Shipped in #123 by the alpha-v2 batch.\n' }
 const PRODUCT = { path: 'apps/cli/src/x.md', content: 'Built during alpha-v2.\n' }
 const sweep = (files: { path: string; content: string }[], config?: Parameters<typeof resolveProseRules>[0]) =>
-  checkUnresolvableReferences(files, '/none/', '/page.tsx', [], 'aeg-root/', [], undefined, {
+  checkUnresolvableReferences(files, '/none/', '/page.tsx', [], 'docs-root/', [], undefined, {
     rules: resolveProseRules(config)
   })
 
@@ -114,14 +114,14 @@ describe('configured rule set', () => {
       'tranche-slug'
     ])
     const absolute = checkUnresolvableReferences(
-      [{ path: '/repo/aeg-root/a.md', content: 'see #123\n' }],
+      [{ path: '/repo/docs-root/a.md', content: 'see #123\n' }],
       '/none/',
       '/page.tsx',
       [],
-      '/repo/aeg-root/',
+      '/repo/docs-root/',
       [],
       undefined,
-      { rules: resolveProseRules({ exempt: ['aeg-root'] }, { repoRoot: '/repo' }) }
+      { rules: resolveProseRules({ exempt: ['docs-root'] }, { repoRoot: '/repo' }) }
     )
     expect(absolute).toEqual([])
   })
@@ -156,7 +156,7 @@ describe('configured rule set', () => {
     const findings = sweep(
       [
         { path: 'SPEC.md', content: 'a TODO here\n' },
-        { path: 'aeg-root/p.md', content: 'no match here\n' }
+        { path: 'docs-root/p.md', content: 'no match here\n' }
       ],
       config
     )
@@ -187,13 +187,13 @@ describe('configured rule set', () => {
   it('productPaths replaces the product class file set', () => {
     const file = { path: 'lib/core/a.md', content: 'alpha-v2\n' }
     const run = (productPaths?: readonly string[]) =>
-      checkReaderResolvableProse([file], [], '/none/', '/page.tsx', [], 'aeg-root/', [], undefined, { productPaths })
+      checkReaderResolvableProse([file], [], '/none/', '/page.tsx', [], 'docs-root/', [], undefined, { productPaths })
     expect(run()).toEqual([])
     expect(run(['lib/core']).map((f) => f.rule)).toEqual(['tranche-slug'])
   })
 
   it('the retired group runs custom repository rules and honours a default switched off or softened', () => {
-    const files = [{ path: 'aeg-root/a.md', content: 'one\nthe Lock: YES flag\nlegacy widget\n' }]
+    const files = [{ path: 'docs-root/a.md', content: 'one\nthe Lock: YES flag\nlegacy widget\n' }]
     expect(scanRetiredVocabulary(files).map((f) => f.rule)).toEqual(['retired-vocabulary-15'])
     const configured = resolveProseRules({
       defaults: { 'retired-vocabulary-15': { severity: 'warning' } },
@@ -237,14 +237,14 @@ describe('proseGates.published.allow', () => {
 
 describe('decision-record-citation', () => {
   const files = [
-    { path: 'aeg-root/roles/x.md', content: 'As ADR-7 decided, the loop retries.\n' },
+    { path: 'docs-root/roles/x.md', content: 'As ADR-7 decided, the loop retries.\n' },
     { path: 'SPEC.md', content: 'Intro.\nSee [the record](records/0003-retire-locks.md).\n' },
     { path: 'records/0004-new.md', content: 'Supersedes ADR 3 and records/0003-retire-locks.md.\n' },
     { path: 'apps/cli/src/x.ts', content: '// keeps ADR-12 alive\nexport const x = 1\n' }
   ]
   const specPaths = ['SPEC.md', 'records']
   const sweep = (set = resolveProseRules()) =>
-    checkUnresolvableReferences(files, '/none/', '/none.tsx', [], 'aeg-root/', [], specPaths, {
+    checkUnresolvableReferences(files, '/none/', '/none.tsx', [], 'docs-root/', [], specPaths, {
       rules: set,
       productPaths: ['apps/cli/src']
     }).filter((f) => f.rule === 'decision-record-citation')
@@ -262,7 +262,7 @@ describe('decision-record-citation', () => {
   it('blocks a numbered citation in the doctrine, specs and product code, but never inside the folder', () => {
     const set = resolveProseRules(undefined, { decisionRecordsPath: './records/' })
     expect(sweep(set).map((f) => [f.file, f.line, f.blocking])).toEqual([
-      ['aeg-root/roles/x.md', 1, true],
+      ['docs-root/roles/x.md', 1, true],
       ['SPEC.md', 2, true],
       ['apps/cli/src/x.ts', 1, true]
     ])
@@ -281,7 +281,7 @@ describe('decision-record-citation', () => {
     const set = resolveProseRules(undefined, { decisionRecordsPath: 'records' })
     const plain = [{ path: 'SPEC.md', content: 'We keep ADRs in records/README.md; see ADRS.\n' }]
     expect(
-      checkUnresolvableReferences(plain, '/none/', '/none.tsx', [], 'aeg-root/', [], specPaths, { rules: set }).filter(
+      checkUnresolvableReferences(plain, '/none/', '/none.tsx', [], 'docs-root/', [], specPaths, { rules: set }).filter(
         (f) => f.rule === 'decision-record-citation'
       )
     ).toEqual([])

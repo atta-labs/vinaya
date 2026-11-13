@@ -161,7 +161,7 @@ describe('isProseLocation (#543 O5)', () => {
     // substring `pr-body` in its own name — a source/test-file location, not
     // the PR body itself, so the `\bpr\s*body\b` pattern must never cap it
     // either, the same guarantee the "comment" pattern already had.
-    expect(isProseLocation('packages/aeg-core/tests/fixtures/pr-body-394-as-opened.md')).toBe(false)
+    expect(isProseLocation('packages/core/tests/fixtures/pr-body-394-as-opened.md')).toBe(false)
     expect(isProseLocation('harness/processes/vinaya-strict/fixtures/pr-body-473.md:1')).toBe(false)
   })
 })

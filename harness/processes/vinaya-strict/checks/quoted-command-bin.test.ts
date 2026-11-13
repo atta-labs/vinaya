@@ -4,9 +4,10 @@ import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import type { CheckError } from '../../../kernel/gates/checks/contract'
+import { QUOTES_FILE_ANCHOR } from '../tools/legacy-markers'
 
 // Bin-level tests for check-quoted-command.ts's own I/O wiring — the pure
-// evaluator (quoted-command.ts, aeg-core) has its own dedicated,
+// evaluator (quoted-command.ts, in the process's checks) has its own dedicated,
 // corpus-tested unit suite that only ever sees relative fixture paths; this
 // file exercises the real `fs`/path-resolution glue the pure suite can't
 // see. Review finding (this check's own first PR): the bin resolved
@@ -85,7 +86,7 @@ describe('check-quoted-command (bin) — path relativization', () => {
     initRepo(root)
     scaffoldFixture(
       root,
-      '<!-- AEG:QUOTES-FILE:START:cited.txt -->`hello world`<!-- AEG:QUOTES-FILE:END -->',
+      `<!-- ${QUOTES_FILE_ANCHOR.old}:START:cited.txt -->\`hello world\`<!-- ${QUOTES_FILE_ANCHOR.old}:END -->`,
       'hello there'
     )
 
@@ -104,7 +105,7 @@ describe('check-quoted-command (bin) — path relativization', () => {
     initRepo(root)
     scaffoldFixture(
       root,
-      '<!-- AEG:QUOTES-FILE:START:cited.txt -->`hello world`<!-- AEG:QUOTES-FILE:END -->',
+      `<!-- ${QUOTES_FILE_ANCHOR.old}:START:cited.txt -->\`hello world\`<!-- ${QUOTES_FILE_ANCHOR.old}:END -->`,
       'hello world'
     )
 
@@ -138,7 +139,7 @@ describe('check-quoted-command (bin) — path-traversal file-content oracle is c
     const traversalPath = relative(root, secretPath)
     scaffoldFixture(
       root,
-      `<!-- AEG:QUOTES-FILE:START:${traversalPath} -->\`this text does not appear in the target file\`<!-- AEG:QUOTES-FILE:END -->`,
+      `<!-- ${QUOTES_FILE_ANCHOR.old}:START:${traversalPath} -->\`this text does not appear in the target file\`<!-- ${QUOTES_FILE_ANCHOR.old}:END -->`,
       'irrelevant — this fixture asserts the traversal target is never touched, not the in-repo cited.txt'
     )
 

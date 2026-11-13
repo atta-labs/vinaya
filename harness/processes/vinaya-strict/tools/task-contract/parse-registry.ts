@@ -36,7 +36,7 @@ export function parseRegistry(md: string): Registry {
 function parseStateCell(cell: string): string | null {
   if (!cell) return null
   // Prose state cell — anything that doesn't look like a backtick-wrapped path.
-  // The live file uses `apps/<x>/aeg-project/` for tracked state and
+  // The live file uses `apps/<x>/<notes-dir>/` for tracked state and
   // parenthesized prose like "(state tracked globally for now)" otherwise.
   const stripped = stripBackticks(cell).trim()
   // If we stripped backticks and got a path-shaped string, return it.

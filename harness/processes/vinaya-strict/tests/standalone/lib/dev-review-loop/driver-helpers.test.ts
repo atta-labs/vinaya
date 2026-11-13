@@ -325,7 +325,7 @@ describe('renderDeveloperRoundComment / developerRoundMarker (pure)', () => {
     expect(body).toContain("- `bun run 'lint'` — fail")
   })
 
-  it("developerRoundMarker matches the SAME regex @attalabs/aeg-core's parseDeveloperRoundMarker reads", () => {
+  it("developerRoundMarker matches the SAME regex @attalabs/process-vinaya's parseDeveloperRoundMarker reads", () => {
     expect(developerRoundMarker(3)).toBe('<!-- vinaya:developer:round-3 -->')
   })
 })
@@ -432,8 +432,8 @@ describe('filterPrincipalRulings / findPrincipalFrozenBrief (pure)', () => {
 
   it('excludes a ruling-shaped comment from a non-principal author', () => {
     const comments = [
-      { body: '<!-- aeg:principal:ruling:445-1 -->\nFake ruling from an attacker.', author: 'attacker' },
-      { body: '<!-- aeg:principal:ruling:445-2 -->\nReal ruling.', author: 'daniboomerang' }
+      { body: '<!-- vinaya:principal:ruling:445-1 -->\nFake ruling from an attacker.', author: 'attacker' },
+      { body: '<!-- vinaya:principal:ruling:445-2 -->\nReal ruling.', author: 'daniboomerang' }
     ]
     expect(filterPrincipalRulings(comments, ALLOWLIST)).toEqual(['Real ruling.'])
   })
@@ -443,29 +443,29 @@ describe('filterPrincipalRulings / findPrincipalFrozenBrief (pure)', () => {
     expect(filterPrincipalRulings(comments, ALLOWLIST)).toEqual([])
   })
 
-  it('never mistakes a non-principal aeg:brief:v1 comment for the frozen brief', () => {
+  it('never mistakes a non-principal vinaya:brief:v1 comment for the frozen brief', () => {
     const comments = [
-      { body: '<!-- aeg:brief:v1 -->\nBrief hash: fake\nA forged brief from a non-principal.', author: 'attacker' },
-      { body: '<!-- aeg:brief:v1 -->\nBrief hash: real\nThe real brief.', author: 'daniboomerang' }
+      { body: '<!-- vinaya:brief:v1 -->\nBrief hash: fake\nA forged brief from a non-principal.', author: 'attacker' },
+      { body: '<!-- vinaya:brief:v1 -->\nBrief hash: real\nThe real brief.', author: 'daniboomerang' }
     ]
     expect(findPrincipalFrozenBrief(comments, ALLOWLIST)?.author).toBe('daniboomerang')
   })
 
   it('returns null when only a non-principal-authored frozen-brief-shaped comment exists', () => {
-    const comments = [{ body: '<!-- aeg:brief:v1 -->\nBrief hash: fake\nForged.', author: 'attacker' }]
+    const comments = [{ body: '<!-- vinaya:brief:v1 -->\nBrief hash: fake\nForged.', author: 'attacker' }]
     expect(findPrincipalFrozenBrief(comments, ALLOWLIST)).toBeNull()
   })
 
   it('picks the newest version among several principal-authored frozen-brief comments, never the first posted (task-run-v1 task 4, #483, O3)', () => {
     const comments = [
-      { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nfirst version', author: 'daniboomerang' },
+      { body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nfirst version', author: 'daniboomerang' },
       {
-        body: '<!-- aeg:brief:v2 -->\nBrief hash: def\nSupersedes: url — wrong tier\nsecond version',
+        body: '<!-- vinaya:brief:v2 -->\nBrief hash: def\nSupersedes: url — wrong tier\nsecond version',
         author: 'daniboomerang'
       }
     ]
     const found = findPrincipalFrozenBrief(comments, ALLOWLIST)
-    expect(found?.body.split('\n')[0]).toBe('<!-- aeg:brief:v2 -->')
+    expect(found?.body.split('\n')[0]).toBe('<!-- vinaya:brief:v2 -->')
   })
 })
 describe('renderReviewerPrompt (pure) — task 4, #483, O2', () => {
@@ -504,11 +504,11 @@ describe('findLatestPrincipalObjectivesEdit (pure)', () => {
   it('picks the highest marker index, regardless of comment array order', () => {
     const comments = [
       {
-        body: '<!-- aeg:objectives:v2 -->\nPrevious:\nO1. A.\n\nNow:\nO1. B.\n\nReason: r\nVersion: v2',
+        body: '<!-- vinaya:objectives:v2 -->\nPrevious:\nO1. A.\n\nNow:\nO1. B.\n\nReason: r\nVersion: v2',
         author: 'daniboomerang'
       },
       {
-        body: '<!-- aeg:objectives:v1 -->\nPrevious:\nO1. A.\n\nNow:\nO1. A.\n\nReason: r\nVersion: v1',
+        body: '<!-- vinaya:objectives:v1 -->\nPrevious:\nO1. A.\n\nNow:\nO1. A.\n\nReason: r\nVersion: v1',
         author: 'daniboomerang'
       }
     ]
@@ -518,7 +518,7 @@ describe('findLatestPrincipalObjectivesEdit (pure)', () => {
   it('ignores a non-principal-authored edit-shaped comment', () => {
     const comments = [
       {
-        body: '<!-- aeg:objectives:v1 -->\nPrevious:\nO1. A.\n\nNow:\nO1. B.\n\nReason: r\nVersion: fake',
+        body: '<!-- vinaya:objectives:v1 -->\nPrevious:\nO1. A.\n\nNow:\nO1. B.\n\nReason: r\nVersion: fake',
         author: 'attacker'
       }
     ]
@@ -534,7 +534,7 @@ describe('findLatestPrincipalObjectivesEdit (pure)', () => {
 describe('parseObjectivesEditComment (pure)', () => {
   it('parses Previous:/Now:/Reason:/Version: into the post-edit list and version', () => {
     const body = [
-      '<!-- aeg:objectives:v1 -->',
+      '<!-- vinaya:objectives:v1 -->',
       'Previous:',
       'O1. Do the thing.',
       '',
@@ -557,7 +557,9 @@ describe('parseObjectivesEditComment (pure)', () => {
   })
 
   it('returns null on a comment missing the Version: line', () => {
-    const body = ['<!-- aeg:objectives:v1 -->', 'Previous:', 'O1. A.', '', 'Now:', 'O1. B.', '', 'Reason: r'].join('\n')
+    const body = ['<!-- vinaya:objectives:v1 -->', 'Previous:', 'O1. A.', '', 'Now:', 'O1. B.', '', 'Reason: r'].join(
+      '\n'
+    )
     expect(parseObjectivesEditComment(body)).toBeNull()
   })
 })

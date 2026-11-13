@@ -283,7 +283,7 @@ function isDriverPidAlive(pid: number): boolean {
 
 /**
  * The `{owner,repo}` `loopLogPathFor` needs, resolved synchronously and
- * locally rather than via `@attalabs/aeg-forge-state`'s own `resolveRepo`
+ * locally rather than via the forge-state modules' own `resolveRepo`
  * (which this file's `sh()`-based, synchronous read style deliberately
  * mirrors instead of importing — `resolveRepo` is `async`, and this file's
  * two command-facing entry points are called synchronously today by
@@ -1420,7 +1420,7 @@ const CELL_DISPLAY_MAX = 200
  *
  * 1. `sanitizeForgeText` — strip terminal colouring, redact secrets through this
  *    codebase's single `redact()` chokepoint, defang the two grammars that carry
- *    authority here (an AEG control comment's `<!--` opener, a line-anchored
+ *    authority here (a Vinaya control comment's `<!--` opener, a line-anchored
  *    `VERDICT:` label), and cap. Without the defang, a label beginning `<!--`
  *    swallowed every cell and row after it in any markdown or HTML renderer —
  *    hiding columns from a reader while the Operator believed it had relayed the

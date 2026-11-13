@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: doc-coverage-push. Thin adapter over `@attalabs/aeg-core`'s C5
+ * Core check: doc-coverage-push. Thin adapter over `@attalabs/process-vinaya`'s C5
  * evaluator (`evaluateC5`) run with PUSH semantics — mirrors
  * `harness/processes/vinaya-strict/checks/standalone/verify-docs.ts --push`'s `runPushMode` exactly:
  * `vinaya/override:docs`/`OVERRIDE_DOCS=1` is honored (via `overrideActive`)

@@ -79,7 +79,7 @@ describe('ACTIONS — real-file cross-check', () => {
     }
   })
 
-  it('every performedBy role_id exists in aeg-root/roles/*.md frontmatter', () => {
+  it('every performedBy role_id exists in the role doctrine files frontmatter', () => {
     const roleIds = new Set<string>()
     for (const file of ROLE_FILES) {
       const { data } = matter(readFileSync(file, 'utf8'))
@@ -97,7 +97,7 @@ describe('ACTIONS — real-file cross-check', () => {
 /**
  * `/docs/actions` is rendered entirely from `ACTIONS` — label, summary and
  * description all reach a reader. Because that prose lives in TypeScript
- * rather than in a markdown file under `aeg-root/`, `evaluatePublishedProse`
+ * rather than in a markdown file under the doctrine folder, `evaluatePublishedProse`
  * never sees it, so C7 guarded every other published page and not this one.
  * Same rules, applied where the text actually lives.
  */

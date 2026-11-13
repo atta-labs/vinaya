@@ -3,15 +3,16 @@ import { describe, it } from 'bun:test'
 import { deriveTrancheFromForge } from '../../tools/task-contract/forge/derive-from-forge'
 import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
 import { parseTranche } from '../../tools/task-contract/parse-tranche'
+import { LEGACY_TRANCHES_DIR } from '../../tools/legacy-paths'
 
 /**
- * Golden comparison (aeg-forge-state-v1 3b, #437, Part 3): proves the
+ * Golden comparison: proves the
  * forge-derived `id`/`issue` `loadTrancheFiles` now uses for every
  * non-touched tranche matches the pre-3b file-parsed topology table, for
  * every currently active tranche — not a fixture, the live repo.
  *
  * Scoped to `id`/`issue` only (NOT `dependsOn`/`conflictsWith`) — a
- * deliberate narrowing per the Planner's triage on Issue #437. The original,
+ * deliberate narrowing. The original,
  * unscoped version of this test (comparing `dependsOn` too) found real
  * divergence across all 5 active tranches: legacy Issues predating the
  * "Dependency rationale" grammar carry no forge-parseable dependency
@@ -30,9 +31,9 @@ import { parseTranche } from '../../tools/task-contract/parse-tranche'
  * `derive-from-forge.ts`'s own docstring), and neither field is read by any
  * coherence check (confirmed by inspection of `coherence-checks.ts`).
  *
- * Lives here in aeg-core, not in aeg-forge-state, per this task's own
- * constraint (a prior cross-package version of this test was deleted in
- * task 3a — see that task's PR #440 — specifically because it belonged with
+ * Lives with the coverage checks, not with the forge-state modules, per this test's own
+ * constraint (a prior cross-package version of this test was deleted
+ * specifically because it belonged with
  * the consumer, not the standalone adapter).
  *
  * Requires live `gh`/forge access (a real `resolveRepo()` + working `gh`
@@ -45,7 +46,7 @@ import { parseTranche } from '../../tools/task-contract/parse-tranche'
 function activeTrancheSlugs(): string[] {
   // --full-tree: `<rev>:<path>` resolves relative to CWD by default for
   // `ls-tree` (unlike `git show`, which already resolves from repo root) —
-  // this test runs from `packages/aeg-core`, not the repo root.
+  // this test runs from a package folder, not the repo root.
   //
   // The path is read from `origin/main`, so a branch that MOVES the directory
   // sees it missing there until it merges — `ls-tree` exits non-zero rather
@@ -65,7 +66,7 @@ function activeTrancheSlugs(): string[] {
   // unfetched or broken ref and must surface, not be read as "no tranches".
   let listing: string
   try {
-    listing = execSync('git ls-tree --full-tree --name-only origin/main:aeg-root/tranches', {
+    listing = execSync(`git ls-tree --full-tree --name-only origin/main:${LEGACY_TRANCHES_DIR}`, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     })
@@ -77,7 +78,7 @@ function activeTrancheSlugs(): string[] {
         `[golden-comparison] origin/main does not resolve — the golden comparison cannot be trusted as "nothing to compare". Fetch it and re-run. Original: ${(err as Error).message}`
       )
     }
-    console.warn('[golden-comparison] no aeg-root/tranches on origin/main — nothing to compare, passing.')
+    console.warn('[golden-comparison] no retired tranche-file directory on origin/main — nothing to compare, passing.')
     return []
   }
   return listing
@@ -105,7 +106,7 @@ function normalizeTasks(tasks: readonly { id: string; issue: number | null }[]):
     .sort((a, b) => a.id.localeCompare(b.id))
 }
 
-describe('golden comparison: forge-derived vs file-derived id/issue (aeg-forge-state-v1 3b, #437)', () => {
+describe('golden comparison: forge-derived vs file-derived id/issue', () => {
   it('produces identical id/issue for every active tranche', async () => {
     const repo = await resolveRepo()
     if (!repo) {
@@ -132,7 +133,7 @@ describe('golden comparison: forge-derived vs file-derived id/issue (aeg-forge-s
     let comparedCount = 0
 
     for (const slug of slugs) {
-      const raw = execSync(`git show origin/main:aeg-root/tranches/${slug}.md`, { encoding: 'utf8' })
+      const raw = execSync(`git show origin/main:${LEGACY_TRANCHES_DIR}/${slug}.md`, { encoding: 'utf8' })
       const fileTasks = normalizeTasks(parseTranche(raw).tasks)
 
       let forgeTasks: ComparableTask[]

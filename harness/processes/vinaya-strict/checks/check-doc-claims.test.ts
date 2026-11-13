@@ -7,7 +7,7 @@ import type { CheckError } from '../../../kernel/gates/checks/contract'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
 
 // Bin-level tests for check-doc-claims.ts — the pure evaluator
-// (`checkDocClaims`, aeg-core) has its own unit suite fed hand-built file
+// (`checkDocClaims`, the process package) has its own unit suite fed hand-built file
 // lists; this file exercises the bin's own I/O: `git ls-files` corpus
 // discovery, the tracked-only cited-file reader, and the exit code a real
 // spawn reports to the runner.
@@ -60,7 +60,7 @@ afterEach(() => {
 describe('check-doc-claims bin', () => {
   it('passes a binding whose cited file holds its literal, noting the verified count', async () => {
     const root = newRepo(
-      "The greeting is hello.\n<!-- AEG:CLAIM: apps/demo/code.ts contains:greeting = 'hello' -->\n",
+      "The greeting is hello.\n<!-- VINAYA:CLAIM: apps/demo/code.ts contains:greeting = 'hello' -->\n",
       CITED
     )
     const { exitCode, stderr, stdout } = await runBin(root)
@@ -71,7 +71,7 @@ describe('check-doc-claims bin', () => {
 
   it('fails a stale binding whose cited file no longer holds its literal', async () => {
     const root = newRepo(
-      "The greeting is goodbye.\n<!-- AEG:CLAIM: apps/demo/code.ts contains:greeting = 'goodbye' -->\n",
+      "The greeting is goodbye.\n<!-- VINAYA:CLAIM: apps/demo/code.ts contains:greeting = 'goodbye' -->\n",
       CITED
     )
     const { exitCode, stderr } = await runBin(root)
@@ -87,7 +87,7 @@ describe('check-doc-claims bin', () => {
 
   it('fails a malformed marker that parses as neither form', async () => {
     const root = newRepo(
-      "The greeting is hello.\n<!-- AEG:CLAIM: apps/demo/code.ts holds:greeting = 'hello' -->\n",
+      "The greeting is hello.\n<!-- VINAYA:CLAIM: apps/demo/code.ts holds:greeting = 'hello' -->\n",
       CITED
     )
     const { exitCode, stderr } = await runBin(root)
@@ -100,7 +100,7 @@ describe('check-doc-claims bin', () => {
 
   it('fails a marker with prose after the closing comment on its own line', async () => {
     const root = newRepo(
-      "<!-- AEG:CLAIM: apps/demo/code.ts contains:greeting = 'hello' --> The greeting is hello.\n",
+      "<!-- VINAYA:CLAIM: apps/demo/code.ts contains:greeting = 'hello' --> The greeting is hello.\n",
       CITED
     )
     const { exitCode } = await runBin(root)
@@ -108,19 +108,19 @@ describe('check-doc-claims bin', () => {
   })
 
   it('never reads a cited file git does not track', async () => {
-    const root = newRepo('<!-- AEG:CLAIM: apps/demo/secret.ts contains:token -->\n', CITED)
+    const root = newRepo('<!-- VINAYA:CLAIM: apps/demo/secret.ts contains:token -->\n', CITED)
     writeFileSync(join(root, 'apps', 'demo', 'secret.ts'), 'const token = 1\n')
     const { exitCode, stderr } = await runBin(root)
     expect(exitCode).toBe(1)
     expect(parseFindings(stderr)[0]?.message).toContain('could not be read')
   })
 
-  it('sweeps the claim markers under a configured doctrine root, not aeg-root', async () => {
+  it('sweeps the claim markers under a configured doctrine root, not the retired doctrine root', async () => {
     const root = newRepo('Nothing claimed here.\n', CITED)
     mkdirSync(join(root, 'governance-docs'), { recursive: true })
     writeFileSync(
       join(root, 'governance-docs', 'page.md'),
-      "The greeting is goodbye.\n<!-- AEG:CLAIM: apps/demo/code.ts contains:greeting = 'goodbye' -->\n"
+      "The greeting is goodbye.\n<!-- VINAYA:CLAIM: apps/demo/code.ts contains:greeting = 'goodbye' -->\n"
     )
     writeFileSync(join(root, 'vinaya.config.json'), JSON.stringify({ proseGates: { doctrineRoot: 'governance-docs' } }))
     git(root, ['add', '-A'])
@@ -131,7 +131,7 @@ describe('check-doc-claims bin', () => {
 
   it('leaves the doctrine half empty for a configured root outside the repository', async () => {
     const root = newRepo(
-      "The greeting is hello.\n<!-- AEG:CLAIM: apps/demo/code.ts contains:greeting = 'hello' -->\n",
+      "The greeting is hello.\n<!-- VINAYA:CLAIM: apps/demo/code.ts contains:greeting = 'hello' -->\n",
       CITED
     )
     writeFileSync(join(root, 'vinaya.config.json'), JSON.stringify({ proseGates: { doctrineRoot: '../elsewhere' } }))

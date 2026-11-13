@@ -170,7 +170,7 @@ export function resolveShippableArgs(
   if (bodyResult?.source.kind !== 'file') {
     return { finalArgs: args, cleanup: () => {} }
   }
-  const dir = mkdtempSync(join(tmpdir(), 'aeg-open-issue-body-'))
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-open-issue-body-'))
   const tempPath = join(dir, 'body.md')
   writeFileSync(tempPath, bodyResult.body, 'utf8')
   const finalArgs = [...args]
@@ -375,8 +375,8 @@ export function printLeftoverStatus(
 }
 
 /**
- * Milestone auto-attach on Issue CREATE (aeg-review-gate-v1 task 1 follow-up).
- * `deriveTrancheFromForge`/`listActiveTrancheSlugs` (`@attalabs/aeg-forge-state`)
+ * Milestone auto-attach on Issue CREATE.
+ * `deriveTrancheFromForge`/`listActiveTrancheSlugs` (the forge-state modules)
  * never read an Issue's GitHub-native milestone field — only the
  * `vinaya/tranche:<slug>` label — so this drift was never functionally
  * load-pathing; it is pure GitHub-view hygiene (a Milestone showing
@@ -389,7 +389,7 @@ export function printLeftoverStatus(
  * intent-declared Milestone (vinaya-milestone-model-v1) is titled something
  * else entirely, and `gh` handed a slug it does not match fails outright.
  * `lookupAttachTarget` (`resolveMilestoneAttachTarget`'s forge-fetching
- * sibling, `@attalabs/aeg-forge-state`) resolves both cases; it is injected
+ * sibling, the forge-state modules) resolves both cases; it is injected
  * here so this stays testable without a real `gh` call.
  *
  * Not a hard failure when no matching open Milestone exists yet — a
@@ -617,7 +617,7 @@ function listWorkspaceChildDirs(dir: string, repoRoot: string = REPO_ROOT): stri
  * `vinaya.config.json`'s `blastRadius.extraDomains` — the sanctioned path for
  * an adopter to declare a collision domain beyond live derivation and the
  * built-in defaults (a `migrations/` folder, a codegen output dir). Read as
- * plain JSON, not through `apps/cli`'s zod schema: `aeg-core` cannot depend
+ * plain JSON, not through `apps/cli`'s zod schema: the process package cannot depend
  * on `apps/cli` (the dependency runs the other way), and this is a single
  * optional field, not full config validation.
  */
@@ -639,7 +639,7 @@ function readConfigExtraDomains(repoRoot: string = REPO_ROOT): string[] {
  * built-in cross-cutting defaults (lockfile/monorepo-config/CI/git-hooks
  * presence-checks, §Part 2), and `vinaya.config.json`'s
  * `blastRadius.extraDomains` (the sanctioned "one more domain" path). No
- * knowledge of the legacy `.aeg/packages` file — retired, zero backward
+ * knowledge of the legacy retired static packages file — retired, zero backward
  * compatibility, same wave as `apps/cli`'s equivalent removal. A fresh
  * adopter with none of the optional inputs still gets a live, non-empty
  * list from derivation + defaults alone. `repoRoot` is injectable for

@@ -31,11 +31,11 @@ Goal (execution): prove grep/parseTranche parity for the gate.
 
 | #  | Task                  | Issue | Project(s) | Depends-on | Conflicts-with |
 |----|-----------------------|-------|------------|------------|----------------|
-| 1  | Standard row          | #100  | aeg        | —          | —              |
-|2|No-space row|#101|aeg|—|—|
-|   7a   | Wide-space suffix row | #102 | aeg | — | — |
-|\t9\t| Tab-padded row | #104 | aeg | — | — |
-| 320 | Prefix-collision row | #103 | aeg | — | — |
+| 1  | Standard row          | #100  | core         | —          | —              |
+|2|No-space row|#101|core|—|—|
+|   7a   | Wide-space suffix row | #102 | core  | — | — |
+|\t9\t| Tab-padded row | #104 | core  | — | — |
+| 320 | Prefix-collision row | #103 | core  | — | — |
 
 ### Task 1 — Standard row
 
@@ -53,7 +53,7 @@ function evaluatorAccepts(id: string, md: string | null = TOPOLOGY_MD): boolean 
     branch: `task/parity-fixture/${id}`,
     tranche: 'parity-fixture',
     taskId: id,
-    topoPath: 'aeg-root/tranches/parity-fixture.md',
+    topoPath: 'topology/parity-fixture.md',
     topology: md === null ? null : parseTranche(md)
   })
   return result.verdict === 'allow'
@@ -84,12 +84,12 @@ describe('checkBranchTopology refusal messages are byte-identical to the old hoo
       branch: 'task/ghost-iter/5',
       tranche: 'ghost-iter',
       taskId: '5',
-      topoPath: 'aeg-root/tranches/ghost-iter.md',
+      topoPath: 'topology/ghost-iter.md',
       topology: null
     })
     expect(result.verdict).toBe('refuse')
     expect(result.reason).toBe(
-      '✖ pre-push: branch `task/ghost-iter/5` names tranche `ghost-iter`, but aeg-root/tranches/ghost-iter.md does not exist.\n' +
+      '✖ pre-push: branch `task/ghost-iter/5` names tranche `ghost-iter`, but topology/ghost-iter.md does not exist.\n' +
         '  A task branch must belong to a real tranche.'
     )
   })
@@ -99,12 +99,12 @@ describe('checkBranchTopology refusal messages are byte-identical to the old hoo
       branch: 'task/parity-fixture/999',
       tranche: 'parity-fixture',
       taskId: '999',
-      topoPath: 'aeg-root/tranches/parity-fixture.md',
+      topoPath: 'topology/parity-fixture.md',
       topology: parseTranche(TOPOLOGY_MD)
     })
     expect(result.verdict).toBe('refuse')
     expect(result.reason).toBe(
-      '✖ pre-push: branch `task/parity-fixture/999` — no row with `#` = `999` in aeg-root/tranches/parity-fixture.md.\n' +
+      '✖ pre-push: branch `task/parity-fixture/999` — no row with `#` = `999` in topology/parity-fixture.md.\n' +
         "  The branch suffix must literal-match the topology's # column.\n" +
         "  If the plan PR adding this row hasn't merged yet, merge it first."
     )
@@ -115,7 +115,7 @@ describe('checkBranchTopology refusal messages are byte-identical to the old hoo
       branch: 'task/parity-fixture/7a',
       tranche: 'parity-fixture',
       taskId: '7a',
-      topoPath: 'aeg-root/tranches/parity-fixture.md',
+      topoPath: 'topology/parity-fixture.md',
       topology: parseTranche(TOPOLOGY_MD)
     })
     expect(result.verdict).toBe('allow')
@@ -136,7 +136,7 @@ describe('known theoretical divergences — synthetic-only, characterized so dri
   })
 
   it('an indented Tasks-table row: grep (anchored at column 0) missed it, the parser tolerates it', () => {
-    const md = TOPOLOGY_MD.replace('| 320 |', '  | 44 | Indented row | #105 | aeg | — | — |\n| 320 |')
+    const md = TOPOLOGY_MD.replace('| 320 |', '  | 44 | Indented row | #105 | core  | — | — |\n| 320 |')
     writeFileSync(join(tmp, 'indented.md'), md)
     expect(grepAccepts(join(tmp, 'indented.md'), '44')).toBe(false)
     expect(evaluatorAccepts('44', md)).toBe(true)
@@ -153,8 +153,8 @@ describe('known theoretical divergences — synthetic-only, characterized so dri
 
 describe('taskBranchTopologyFields mirrors the hook’s case-pattern + cut extraction', () => {
   it('extracts tranche and task id from a canonical task branch', () => {
-    expect(taskBranchTopologyFields('task/aeg-governance-hardening/32')).toEqual({
-      tranche: 'aeg-governance-hardening',
+    expect(taskBranchTopologyFields('task/sample-tranche-v1/32')).toEqual({
+      tranche: 'sample-tranche-v1',
       taskId: '32'
     })
   })
@@ -166,7 +166,7 @@ describe('taskBranchTopologyFields mirrors the hook’s case-pattern + cut extra
   it('returns null for branches the hook’s `task/*/*` case never matched', () => {
     expect(taskBranchTopologyFields('main')).toBeNull()
     expect(taskBranchTopologyFields('task/only-two')).toBeNull()
-    expect(taskBranchTopologyFields('fix/aeg/thing')).toBeNull()
+    expect(taskBranchTopologyFields('fix/sample/thing')).toBeNull()
   })
 
   it('preserves the shell pattern’s empty-segment tolerance (`*` matches empty)', () => {

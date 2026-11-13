@@ -12,7 +12,7 @@
  * could drift out of sync.
  *
  * The label strings themselves are read from the code-owned vocabulary in
- * `@attalabs/aeg-forge-state`'s `labels.ts`, never written as literals here — a
+ * the forge-state `labels.ts`, never written as literals here — a
  * namespace change lands in one file (discipline).
  */
 

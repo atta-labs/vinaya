@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 
 /**
- * dead-branch-audit — daily-drift's dead-branch-push check (aeg-governance-
- * hardening task 24, #364, Part 4 — item 2). Thin I/O shim: lists every
+ * dead-branch-audit — daily-drift's dead-branch-push check.
+ * Thin I/O shim: lists every
  * remote `task/*` branch, resolves each one's most recent PR (any state)
  * plus that PR's resolution timestamp and the branch's current tip commit
- * date, and calls the pure `findDeadBranchPushes` (`@attalabs/aeg-core`).
+ * date, and calls the pure `findDeadBranchPushes` (`gates/ring2-audits/audit.ts`).
  *
  * Extends task 23's `daily-drift` job (`.github/workflows/archivist.yml`) —
  * never-red discipline: this script always exits 0; the job step also wraps
@@ -29,7 +29,7 @@ process.chdir(REPO_ROOT)
 
 // Same discipline as `check-direct-main-push.ts`: the name is read from the
 // code-owned vocabulary, because this bin mints the label on first fire and a
-// literal would have created a retired `aeg:`-named one. The marker is
+// literal would have created a retired old-style one. The marker is
 // derived from the label so the two can never disagree.
 const LABEL = label('dead-branch-push')
 const MARKER = `<!-- ${LABEL} -->`

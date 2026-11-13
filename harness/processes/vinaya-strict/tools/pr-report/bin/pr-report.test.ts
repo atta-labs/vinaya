@@ -169,7 +169,7 @@ describe('buildReport', () => {
         {
           name: 'evidence-fresh',
           status: 'fail',
-          errors: [{ severity: 'error', message: 'the AEG:EVIDENCE block is malformed' }]
+          errors: [{ severity: 'error', message: 'the VINAYA:EVIDENCE block is malformed' }]
         }
       ],
       failed: true
@@ -917,14 +917,14 @@ describe('pr report --write then pr create --validate-only — the written body 
   // (non-tranche) task whose brief rides in the PR body itself, rather than
   // short-circuiting on the "not brief-shaped, nothing to grade" bypass.
   const DRAFT_BODY = [
-    '<!-- AEG:CLOSES:START -->',
+    '<!-- VINAYA:CLOSES:START -->',
     'Closes #715',
-    '<!-- AEG:CLOSES:END -->',
+    '<!-- VINAYA:CLOSES:END -->',
     '',
     '**For:** `Sonnet` (coding-agent CLI, dispatched locally)',
-    '<!-- AEG:PROJECT:START -->',
+    '<!-- VINAYA:PROJECT:START -->',
     '**Project:** cli',
-    '<!-- AEG:PROJECT:END -->',
+    '<!-- VINAYA:PROJECT:END -->',
     '',
     '## Decisions',
     '',
@@ -938,11 +938,11 @@ describe('pr report --write then pr create --validate-only — the written body 
     '',
     '## Test plan',
     '',
-    '<!-- AEG:TEST-PLAN:START -->',
+    '<!-- VINAYA:TEST-PLAN:START -->',
     '```',
     'echo fixture-command → passes',
     '```',
-    '<!-- AEG:TEST-PLAN:END -->',
+    '<!-- VINAYA:TEST-PLAN:END -->',
     '',
     '## Technical surface map',
     '',
@@ -954,9 +954,9 @@ describe('pr report --write then pr create --validate-only — the written body 
     '',
     '## Evidence',
     '',
-    '<!-- AEG:EVIDENCE:START -->',
+    '<!-- VINAYA:EVIDENCE:START -->',
     '[run the report writer to populate — do not type this block by hand]',
-    '<!-- AEG:EVIDENCE:END -->',
+    '<!-- VINAYA:EVIDENCE:END -->',
     '',
     '## Stop conditions',
     '',
@@ -970,9 +970,9 @@ describe('pr report --write then pr create --validate-only — the written body 
     '',
     'Fixture body for a fixture task.',
     '',
-    '<!-- AEG:TIER:START -->',
+    '<!-- VINAYA:TIER:START -->',
     '**Tier:** 1',
-    '<!-- AEG:TIER:END -->',
+    '<!-- VINAYA:TIER:END -->',
     ''
   ].join('\n')
 
@@ -1591,9 +1591,9 @@ describe('replaceEvidenceBlock', () => {
       '',
       'why this shape.',
       '',
-      '<!-- AEG:EVIDENCE:START -->',
+      '<!-- VINAYA:EVIDENCE:START -->',
       'stale content',
-      '<!-- AEG:EVIDENCE:END -->',
+      '<!-- VINAYA:EVIDENCE:END -->',
       '',
       '## Scope'
     ].join('\n')
@@ -1621,16 +1621,16 @@ describe('replaceEvidenceBlock', () => {
       '- [x] example output:',
       '',
       '  ```',
-      '  <!-- AEG:EVIDENCE:START -->',
+      '  <!-- VINAYA:EVIDENCE:START -->',
       '  decoy — quoted example, not the real field',
-      '  <!-- AEG:EVIDENCE:END -->',
+      '  <!-- VINAYA:EVIDENCE:END -->',
       '  ```',
       '',
       '## Evidence',
       '',
-      '<!-- AEG:EVIDENCE:START -->',
+      '<!-- VINAYA:EVIDENCE:START -->',
       'stale content',
-      '<!-- AEG:EVIDENCE:END -->',
+      '<!-- VINAYA:EVIDENCE:END -->',
       '',
       '## Scope'
     ].join('\n')
@@ -1749,9 +1749,9 @@ describe('prReportExitCode', () => {
   })
 })
 
-// A live body of the shape `aeg-root/templates/pr-report-template.md`
-// produces: a real (non-fenced) `AEG:EVIDENCE` pair, plus — on a pull request
-// opened before the token table was retired — an older run's `AEG:TOKENS`
+// A live body of the shape `artifacts/templates/pr-report-template.md`
+// produces: a real (non-fenced) `VINAYA:EVIDENCE` pair, plus — on a pull request
+// opened before the token table was retired — an older run's `VINAYA:TOKENS`
 // block that nothing writes any more. `spliceIntoLiveBody` must leave
 // everything outside the Evidence pair byte-for-byte untouched, that stale
 // table included.
@@ -1762,9 +1762,9 @@ const LIVE_BODY = [
   '',
   '## Evidence',
   '',
-  '<!-- AEG:EVIDENCE:START -->',
+  '<!-- VINAYA:EVIDENCE:START -->',
   'stale Head: deadbeef',
-  '<!-- AEG:EVIDENCE:END -->',
+  '<!-- VINAYA:EVIDENCE:END -->',
   '',
   '## Scope',
   '',
@@ -1772,16 +1772,16 @@ const LIVE_BODY = [
   '',
   '## Token report',
   '',
-  '<!-- AEG:TOKENS:START -->',
+  '<!-- VINAYA:TOKENS:START -->',
   '| Phase | Role | Agent/Model | Tokens in | Tokens out | Cost | Date |',
   '|---|---|---|---|---|---|---|',
   '| 3: develop | Developer | claude-sonnet-5 | 100 | 50 | — | 2026-09-03 |',
-  '<!-- AEG:TOKENS:END -->',
+  '<!-- VINAYA:TOKENS:END -->',
   ''
 ].join('\n')
 
 describe('spliceIntoLiveBody', () => {
-  it('keeps every byte outside the AEG:EVIDENCE region, replacing only the block content', () => {
+  it('keeps every byte outside the VINAYA:EVIDENCE region, replacing only the block content', () => {
     const updated = spliceIntoLiveBody(LIVE_BODY, 'Head: freshsha')
     expect(updated).toContain('## Summary')
     expect(updated).toContain('why this shipped, in the author’s own words.')
@@ -1793,29 +1793,29 @@ describe('spliceIntoLiveBody', () => {
 
   // O3: an old body's token table is data this command no longer owns — it is
   // neither refreshed nor removed, and a byte of it never moves.
-  it('leaves an older run’s AEG:TOKENS block byte-for-byte intact', () => {
+  it('leaves an older run’s VINAYA:TOKENS block byte-for-byte intact', () => {
     const updated = spliceIntoLiveBody(LIVE_BODY, 'Head: freshsha')
     const region = (body: string) =>
-      body.slice(body.indexOf('<!-- AEG:TOKENS:START -->'), body.indexOf('<!-- AEG:TOKENS:END -->'))
+      body.slice(body.indexOf('<!-- VINAYA:TOKENS:START -->'), body.indexOf('<!-- VINAYA:TOKENS:END -->'))
     expect(region(updated)).toBe(region(LIVE_BODY))
     expect(updated).toContain('| 3: develop | Developer | claude-sonnet-5 | 100 | 50 | — | 2026-09-03 |')
   })
 
-  it('refuses (throws, writes nothing) on a live body with no real AEG:EVIDENCE pair — never appends one', () => {
+  it('refuses (throws, writes nothing) on a live body with no real VINAYA:EVIDENCE pair — never appends one', () => {
     const noPair = '## Summary\n\nwhy.\n\n## Scope\n\n**Tier:** 1'
     expect(() => spliceIntoLiveBody(noPair, 'Head: freshsha')).toThrow(MissingEvidenceAnchorError)
   })
 
-  it('refuses on a live body whose only AEG:EVIDENCE pair sits inside a fenced code block', () => {
+  it('refuses on a live body whose only VINAYA:EVIDENCE pair sits inside a fenced code block', () => {
     const fencedOnly = [
       '## Summary',
       '',
       'why.',
       '',
       '```',
-      '<!-- AEG:EVIDENCE:START -->',
+      '<!-- VINAYA:EVIDENCE:START -->',
       'example only, never real',
-      '<!-- AEG:EVIDENCE:END -->',
+      '<!-- VINAYA:EVIDENCE:END -->',
       '```',
       '',
       '## Scope'
@@ -1825,18 +1825,18 @@ describe('spliceIntoLiveBody', () => {
 
   // O1: a body with no token table never grows one — the anchor pair this
   // command used to create for a fresh draft is gone with the table.
-  it('never creates an AEG:TOKENS pair in a body that has none', () => {
+  it('never creates an VINAYA:TOKENS pair in a body that has none', () => {
     const noTokensPair =
-      '## Summary\n\nwhy.\n\n<!-- AEG:EVIDENCE:START -->\nstale\n<!-- AEG:EVIDENCE:END -->\n\n## Scope'
+      '## Summary\n\nwhy.\n\n<!-- VINAYA:EVIDENCE:START -->\nstale\n<!-- VINAYA:EVIDENCE:END -->\n\n## Scope'
     const updated = spliceIntoLiveBody(noTokensPair, 'Head: freshsha')
-    expect(updated).not.toContain('AEG:TOKENS')
+    expect(updated).not.toContain('VINAYA:TOKENS')
     expect(updated).not.toContain('Token report')
     expect(updated).toContain('Head: freshsha')
   })
 })
 
 describe('bodiesAgreeOutsideRegions', () => {
-  it('is true when only the AEG:EVIDENCE region was regenerated', () => {
+  it('is true when only the VINAYA:EVIDENCE region was regenerated', () => {
     const before = LIVE_BODY
     const after = spliceIntoLiveBody(before, 'Head: freshsha')
     expect(bodiesAgreeOutsideRegions(before, after)).toBe(true)
@@ -1938,7 +1938,7 @@ describe('prReportCommand — --push --body-file writes the whole local body (#5
     }
   }
 
-  it("pushes the local body-file's own Decisions bullet — a section outside the AEG:EVIDENCE block — to the forge fake, not only the regenerated block", async () => {
+  it("pushes the local body-file's own Decisions bullet — a section outside the VINAYA:EVIDENCE block — to the forge fake, not only the regenerated block", async () => {
     const dir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-bodyfile-'))
     const binDir = mkdtempSync(join(tmpdir(), 'vinaya-pr-report-push-bodyfile-bin-'))
     const forgeStore = join(dir, 'forge-body.txt')

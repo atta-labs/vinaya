@@ -116,11 +116,11 @@ describe('checkG2', () => {
   })
 
   // O14 — twin-form recognition: the same mechanism ships as two physical
-  // files (a packages/aeg-core/bin standalone form and an apps/cli check-bin
+  // files (a checks/standalone form and an apps/cli check-bin
   // CLI-registered form), and a row names only one. The candidate's own
   // claimed check name(s) overlapping some OTHER row's claimed name(s) is
   // enough — no second row is invented for the same fact.
-  it('a shipped-bin candidate whose own name is claimed by a DIFFERENT row (its aeg-core twin) passes', () => {
+  it('a shipped-bin candidate whose own name is claimed by a DIFFERENT row (its standalone twin) passes', () => {
     const rows: GateRow[] = [
       makeRow({ implementation: 'harness/processes/vinaya-strict/checks/standalone/verify-brief.ts' })
     ]
@@ -129,7 +129,7 @@ describe('checkG2', () => {
     expect(result.findings).toHaveLength(0)
   })
 
-  it('an aeg-core-bin candidate whose own name is claimed by its apps/cli twin row passes, symmetrically', () => {
+  it('a standalone-bin candidate whose own name is claimed by its apps/cli twin row passes, symmetrically', () => {
     const rows: GateRow[] = [
       makeRow({ implementation: 'harness/processes/vinaya-strict/checks/bin/check-brief-shape.ts' })
     ]
@@ -145,7 +145,7 @@ describe('checkG2', () => {
     expect(result.findings).toHaveLength(0)
   })
 
-  it('a NON_GATE_BINS-listed aeg-core bin needs no row at all — the honest fix is the gate stops asking', () => {
+  it('a NON_GATE_BINS-listed standalone bin needs no row at all — the honest fix is the gate stops asking', () => {
     const rows: GateRow[] = [makeRow({ implementation: 'a.ts' })]
     const result = checkG2(rows, ['harness/processes/vinaya-strict/checks/standalone/dead-branch-audit.ts'])
     expect(result.status).toBe('pass')
@@ -168,7 +168,7 @@ describe('checkG2', () => {
     expect(result.findings).toHaveLength(0)
   })
 
-  it('a genuinely unrelated aeg-core bin (not NON_GATE_BINS, no claimed-name overlap) still fails', () => {
+  it('a genuinely unrelated standalone bin (not NON_GATE_BINS, no claimed-name overlap) still fails', () => {
     const rows: GateRow[] = [
       makeRow({ implementation: 'harness/processes/vinaya-strict/checks/standalone/verify-brief.ts' })
     ]
@@ -224,7 +224,7 @@ describe('checkG4', () => {
    * Vacuity demonstration: `enforcement.md`'s own body carries
    * zero forge citations today — G4's real scan surface, not a synthetic
    * proxy string, is empty by policy (task 3 stripped citations from
-   * `aeg-root/**` as doctrine). That leaves an open question the two tests
+   * the retired doctrine root as doctrine). That leaves an open question the two tests
    * above cannot answer on their own: does the check merely happen to be
    * quiet right now, or would it actually fire if the real file carried a
    * fabricated citation? This test appends one fabricated, non-resolving
@@ -315,7 +315,7 @@ describe('checkG6', () => {
     expect(result.status).toBe('fail')
   })
 
-  it('resolves a packages/aeg-core/bin path through GATE_AUDIENCE (multi-name shippedAs)', () => {
+  it('resolves a standalone-bin path through GATE_AUDIENCE (multi-name shippedAs)', () => {
     // `verify-docs` -> shippedAs ['doc-coverage', 'doc-coverage-push'] — either name registered is enough.
     const rows: GateRow[] = [
       makeRow({
@@ -329,7 +329,7 @@ describe('checkG6', () => {
     expect(checkG6(rows, new Set(['unrelated'])).status).toBe('fail')
   })
 
-  it('fails a product row whose packages/aeg-core/bin path is doctrine-declared internal (verify-task)', () => {
+  it('fails a product row whose standalone-bin path is doctrine-declared internal (verify-task)', () => {
     // GATE_AUDIENCE marks `verify-task` internal — no shippedAs to resolve, regardless of the injected set.
     const rows: GateRow[] = [
       makeRow({
@@ -354,7 +354,7 @@ describe('checkG6', () => {
     expect(checkG6(rows, new Set(['some-other-check'])).status).toBe('fail')
   })
 
-  it('resolves a process checks/standalone path through GATE_AUDIENCE like packages/aeg-core/bin', () => {
+  it('resolves a process checks/standalone path through GATE_AUDIENCE like a standalone-bin path', () => {
     const rows: GateRow[] = [
       makeRow({
         action: 'Documentation gate',
@@ -389,7 +389,7 @@ describe('checkG6', () => {
 
 describe('findUnshippedHookRefs / checkG1 hook references', () => {
   const shipped = new Set(['.claude/hooks/track-transcript.sh', '.husky/pre-push', '.vinaya/hooks/pre-push'])
-  const doc = (content: string) => [{ path: 'aeg-root/x.md', content }]
+  const doc = (content: string) => [{ path: 'doctrine/x.md', content }]
 
   it('passes a shipped hook path and a path under no hook directory', () => {
     const docs = doc('Runs `.husky/pre-push` and `.claude/hooks/track-transcript.sh`; see `apps/cli/src/x.ts`.')
@@ -407,7 +407,7 @@ describe('findUnshippedHookRefs / checkG1 hook references', () => {
       '.husky/nope',
       '.git/hooks/nope'
     ])
-    expect(findings[1]?.reason).toContain('aeg-root/x.md:2')
+    expect(findings[1]?.reason).toContain('doctrine/x.md:2')
   })
 
   it('flags a bare check-*.sh name that no shipped path carries, and passes one that does', () => {
@@ -418,7 +418,7 @@ describe('findUnshippedHookRefs / checkG1 hook references', () => {
   })
 
   it('ignores directory and glob tokens, bare names outside the check-* pattern, and unquoted prose', () => {
-    const docs = doc('`.husky/` `.husky/*` `.claude/hooks/*.sh` `aeg.sh` check-forge-gates.sh')
+    const docs = doc('`.husky/` `.husky/*` `.claude/hooks/*.sh` `other.sh` check-forge-gates.sh')
     expect(findUnshippedHookRefs(docs, new Set())).toEqual([])
   })
 
@@ -426,7 +426,7 @@ describe('findUnshippedHookRefs / checkG1 hook references', () => {
     const rows = [makeRow({ implementation: 'real/file.ts' })]
     const result = checkG1(rows, () => true, { docs: doc('`.claude/hooks/gone.sh`'), shipped })
     expect(result.status).toBe('fail')
-    expect(result.findings[0]?.path).toBe('aeg-root/x.md')
+    expect(result.findings[0]?.path).toBe('doctrine/x.md')
   })
 
   it('checkG1 without hook input behaves as before', () => {

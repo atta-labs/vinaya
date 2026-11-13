@@ -1,6 +1,6 @@
 /**
  * The impure half of round-journal reconstruction — gathering the facts the
- * pure rebuild needs (`journal-reconstruction.ts`, `@attalabs/aeg-core`) from
+ * pure rebuild needs (`journal-reconstruction.ts`, `@attalabs/process-vinaya`) from
  * the forge's own principal-authored markers on the pull request, plus the
  * review gate's verdict on its current state:
  *

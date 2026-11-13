@@ -6,7 +6,7 @@
 import type { deriveTrancheFromForge } from '../../tools/task-contract/forge/derive-from-forge'
 import { intentLines, milestoneLifecycleFromTrancheLifecycles } from '../../tools/task-contract/forge/fetch-milestone'
 
-/** The three lifecycles a tranche can be in, read off the one derivation `@attalabs/aeg-forge-state` owns rather than restated here. */
+/** The three lifecycles a tranche can be in, read off the one derivation the forge-state modules own rather than restated here. */
 export type TrancheLifecycle = Awaited<ReturnType<typeof deriveTrancheFromForge>>['lifecycle']
 
 export type DeclaredTranche = { slug: string; lifecycle: TrancheLifecycle }

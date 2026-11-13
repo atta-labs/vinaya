@@ -1,6 +1,5 @@
 /**
- * Brief→Developer brief-validation grammar (aeg-governance-hardening
- * task 2). Pure — no `fs`, no `fetch`, no `process.env`. The CLI shim
+ * Brief→Developer brief-validation grammar. Pure — no `fs`, no `fetch`, no `process.env`. The CLI shim
  * (`bin/verify-brief.ts`) reads `PR_BODY`, then
  * calls `checkBriefSections`.
  *
@@ -70,7 +69,7 @@ function headingCheck(prBody: string, keywordPattern: string, sectionName: strin
   }
 }
 
-/** Tier field — reuses the canonical `@attalabs/aeg-core` parser (do not re-implement). */
+/** Tier field — reuses the canonical `@attalabs/process-vinaya` parser (do not re-implement). */
 export function checkTierField(prBody: string, readTier: (body: string) => 0 | 1 | 3 | null): BriefSectionResult {
   if (readTier(prBody) !== null) return { status: 'pass', errors: [] }
   return {
@@ -237,7 +236,7 @@ export function checkPremiseCoverage(prBody: string, surfaceFiles: string[]): Br
   return {
     status: 'fail',
     errors: [
-      'brief-validation Premise: no `Premise:` assertion found whose path matches a file in the surface map — a brief with a real code surface must pin at least one premise (aeg-governance-hardening task 11).'
+      'brief-validation Premise: no `Premise:` assertion found whose path matches a file in the surface map — a brief with a real code surface must pin at least one premise.'
     ]
   }
 }
@@ -319,7 +318,7 @@ export function checkProjectField(prBody: string): BriefSectionResult {
 
 /**
  * For/model field — the brief's mandatory `For:` header (`brief-authoring`
- * skill: "the `For:` + `Reason:` lines are mandatory"). AEG forbids
+ * skill: "the `For:` + `Reason:` lines are mandatory"). Vinaya forbids
  * commit-trailer attribution, so this line is the provenance block's only
  * source for Model/agent — same headerRegion parity rationale as
  * `checkProjectField`.
@@ -464,7 +463,7 @@ export function checkPlanPrNoCloses(branch: string, prBody: string): BriefSectio
  * were written to grade.
  *
  * Test Plan is deliberately **not** a marker even though it is a required brief
- * section: the canonical PR-body template gives every AEG PR a Test plan with
+ * section: the canonical PR-body template gives every Vinaya PR a Test plan with
  * `**[agent]**` tags, so it is the one section an ordinary non-brief PR
  * plausibly carries. The four kept here are brief grammar and nothing else — a
  * dependency bump has none of them, and needing *two* means one stray phrase

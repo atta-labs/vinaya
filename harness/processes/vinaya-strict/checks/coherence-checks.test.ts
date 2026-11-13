@@ -29,7 +29,7 @@ import type { ForgeFacts, Task } from '../tools/task-contract/types'
 // ---------- fixture helpers ---------------------------------------------------
 
 function makeTask(id: string, issue: number | null = null, dependsOn: string[] = []): Task {
-  return { id, title: `Task ${id}`, issue, projects: ['aeg'], dependsOn, conflictsWith: [], rationaleMarkdown: '' }
+  return { id, title: `Task ${id}`, issue, projects: ['sample'], dependsOn, conflictsWith: [], rationaleMarkdown: '' }
 }
 
 function makeFacts(overrides: Partial<ForgeFacts> = {}): ForgeFacts {
@@ -92,9 +92,9 @@ describe('checkClosesNTopology', () => {
   })
 
   it('ok — task branch with matching Closes #N in body', () => {
-    const files = [makeTrancheFile('aeg-consolidation', false)]
+    const files = [makeTrancheFile('sample-tranche', false)]
     files[0]!.tranche.tasks = [makeTask('2', 264)]
-    const r = checkClosesNTopology('task/aeg-consolidation/2', 'Summary\n\nCloses #264\n', files)
+    const r = checkClosesNTopology('task/sample-tranche/2', 'Summary\n\nCloses #264\n', files)
     expect(r.ok).toBe(true)
     expect(r.expectedIssue).toBe(264)
   })
@@ -122,43 +122,43 @@ describe('checkClosesNTopology', () => {
   })
 
   it('fail — task id not found in topology', () => {
-    const files = [makeTrancheFile('aeg-consolidation', false)]
+    const files = [makeTrancheFile('sample-tranche', false)]
     files[0]!.tranche.tasks = [makeTask('1', 263)]
-    const r = checkClosesNTopology('task/aeg-consolidation/99', 'Closes #1', files)
+    const r = checkClosesNTopology('task/sample-tranche/99', 'Closes #1', files)
     expect(r.ok).toBe(false)
-    expect(r.message).toMatch(/not found in aeg-consolidation topology/)
+    expect(r.message).toMatch(/not found in sample-tranche topology/)
   })
 
   it('fail — task has no Issue number (#TBD)', () => {
-    const files = [makeTrancheFile('aeg-consolidation', false)]
+    const files = [makeTrancheFile('sample-tranche', false)]
     files[0]!.tranche.tasks = [makeTask('2', null)]
-    const r = checkClosesNTopology('task/aeg-consolidation/2', 'Closes #1', files)
+    const r = checkClosesNTopology('task/sample-tranche/2', 'Closes #1', files)
     expect(r.ok).toBe(false)
     expect(r.message).toMatch(/has no Issue number/)
   })
 
   it('fail — PR body does not reference the expected issue', () => {
-    const files = [makeTrancheFile('aeg-consolidation', false)]
+    const files = [makeTrancheFile('sample-tranche', false)]
     files[0]!.tranche.tasks = [makeTask('2', 264)]
-    const r = checkClosesNTopology('task/aeg-consolidation/2', 'Summary\n\nCloses #999\n', files)
+    const r = checkClosesNTopology('task/sample-tranche/2', 'Summary\n\nCloses #999\n', files)
     expect(r.ok).toBe(false)
     expect(r.expectedIssue).toBe(264)
     expect(r.message).toMatch(/does not contain `Closes #264`/)
   })
 
   it('ok — accepts fixes/resolves synonyms and is case-insensitive', () => {
-    const files = [makeTrancheFile('aeg-consolidation', false)]
+    const files = [makeTrancheFile('sample-tranche', false)]
     files[0]!.tranche.tasks = [makeTask('2', 264)]
     for (const phrase of ['Fixes #264', 'RESOLVES #264', 'fix: #264', 'close #264']) {
-      const r = checkClosesNTopology('task/aeg-consolidation/2', phrase, files)
+      const r = checkClosesNTopology('task/sample-tranche/2', phrase, files)
       expect(r.ok).toBe(true)
     }
   })
 
   it('ok — branch with a suffixed task id (e.g. 7a)', () => {
-    const files = [makeTrancheFile('aeg-consolidation', false)]
+    const files = [makeTrancheFile('sample-tranche', false)]
     files[0]!.tranche.tasks = [makeTask('7a', 300)]
-    const r = checkClosesNTopology('task/aeg-consolidation/7a', 'Closes #300', files)
+    const r = checkClosesNTopology('task/sample-tranche/7a', 'Closes #300', files)
     expect(r.ok).toBe(true)
     expect(r.expectedIssue).toBe(300)
   })
@@ -189,22 +189,22 @@ describe('checkClosesNTopology', () => {
   })
 
   it('ok — task branch correctly named for the task Issue it closes (reverse passes trivially)', () => {
-    const files = [makeTrancheFile('aeg-consolidation', false)]
+    const files = [makeTrancheFile('sample-tranche', false)]
     files[0]!.tranche.tasks = [makeTask('2', 264)]
-    const taskIssueRefs = new Map([[264, { trancheSlug: 'aeg-consolidation', taskId: '2' }]])
-    const r = checkClosesNTopology('task/aeg-consolidation/2', 'Closes #264', files, taskIssueRefs)
+    const taskIssueRefs = new Map([[264, { trancheSlug: 'sample-tranche', taskId: '2' }]])
+    const r = checkClosesNTopology('task/sample-tranche/2', 'Closes #264', files, taskIssueRefs)
     expect(r.ok).toBe(true)
     expect(r.expectedIssue).toBe(264)
   })
 
   it('fail — task branch closes a DIFFERENT task Issue than its own name implies', () => {
-    const files = [makeTrancheFile('aeg-consolidation', false)]
+    const files = [makeTrancheFile('sample-tranche', false)]
     files[0]!.tranche.tasks = [makeTask('2', 264), makeTask('3', 265)]
-    const taskIssueRefs = new Map([[265, { trancheSlug: 'aeg-consolidation', taskId: '3' }]])
-    const r = checkClosesNTopology('task/aeg-consolidation/2', 'Closes #265', files, taskIssueRefs)
+    const taskIssueRefs = new Map([[265, { trancheSlug: 'sample-tranche', taskId: '3' }]])
+    const r = checkClosesNTopology('task/sample-tranche/2', 'Closes #265', files, taskIssueRefs)
     expect(r.ok).toBe(false)
     expect(r.message).toMatch(/^closes-n-reverse:/)
-    expect(r.message).toContain('not named "task/aeg-consolidation/3"')
+    expect(r.message).toContain('not named "task/sample-tranche/3"')
   })
 })
 
@@ -575,40 +575,40 @@ describe('T2: orphan-task', () => {
     // Reproduces a real incident: a PR against one tranche
     // must not fail T2 because a different tranche has an unrelated gap.
     const openIssues = new Map([
-      ['aeg-governance-hardening', [19]],
+      ['sample-tranche-v1', [19]],
       ['herald-hardening-v1', [355, 356]]
     ])
     const topology = new Map([
-      ['aeg-governance-hardening', new Set([19])],
+      ['sample-tranche-v1', new Set([19])],
       ['herald-hardening-v1', new Set<number>()] // genuine gap — not this PR's concern
     ])
-    passesWithNoFailures(checkT2(openIssues, topology, 'aeg-governance-hardening'))
+    passesWithNoFailures(checkT2(openIssues, topology, 'sample-tranche-v1'))
   })
 
   it('fail — ciTrancheSlug scopes check: gap in SAME tranche still fails', () => {
     const openIssues = new Map([
-      ['aeg-governance-hardening', [999]],
+      ['sample-tranche-v1', [999]],
       ['herald-hardening-v1', [355]]
     ])
     const topology = new Map([
-      ['aeg-governance-hardening', new Set<number>()], // genuine gap in the scoped tranche
+      ['sample-tranche-v1', new Set<number>()], // genuine gap in the scoped tranche
       ['herald-hardening-v1', new Set<number>()] // also a gap, but out of scope
     ])
-    const r = checkT2(openIssues, topology, 'aeg-governance-hardening')
+    const r = checkT2(openIssues, topology, 'sample-tranche-v1')
     expect(r.status).toBe('fail')
     expect(r.failures).toHaveLength(1)
-    expect(r.failures[0]!.tranche).toBe('aeg-governance-hardening')
+    expect(r.failures[0]!.tranche).toBe('sample-tranche-v1')
     expect(r.failures[0]!.issue).toBe(999)
   })
 })
 
 // ---------- T2 point-of-power relocation --------------------
 
-describe('scopeT2ToPlanPr — T2 relocation (aeg-governance-hardening task 24)', () => {
+describe('scopeT2ToPlanPr — T2 relocation (T2 relocation)', () => {
   it('reproduces the #363 incident, then shows the fix: a failing T2 is demoted to info for a non-plan (task) PR', () => {
-    const openIssues = new Map([['aeg-governance-hardening', [364, 365]]])
-    const topology = new Map([['aeg-governance-hardening', new Set([19])]]) // the two open Issues are not yet in topology
-    const raw = checkT2(openIssues, topology, 'aeg-governance-hardening')
+    const openIssues = new Map([['sample-tranche-v1', [364, 365]]])
+    const topology = new Map([['sample-tranche-v1', new Set([19])]]) // the two open Issues are not yet in topology
+    const raw = checkT2(openIssues, topology, 'sample-tranche-v1')
     expect(raw.status).toBe('fail') // checkT2 itself is untouched — still detects the gap
 
     const scoped = scopeT2ToPlanPr(raw, false) // task PR — cannot cause or cure this gap
@@ -618,9 +618,9 @@ describe('scopeT2ToPlanPr — T2 relocation (aeg-governance-hardening task 24)',
   })
 
   it('leaves a failing T2 blocking for a plan PR (the only PR kind that can fix the gap)', () => {
-    const openIssues = new Map([['aeg-governance-hardening', [364]]])
-    const topology = new Map([['aeg-governance-hardening', new Set<number>()]])
-    const raw = checkT2(openIssues, topology, 'aeg-governance-hardening')
+    const openIssues = new Map([['sample-tranche-v1', [364]]])
+    const topology = new Map([['sample-tranche-v1', new Set<number>()]])
+    const raw = checkT2(openIssues, topology, 'sample-tranche-v1')
     expect(raw.status).toBe('fail')
 
     const scoped = scopeT2ToPlanPr(raw, true)
@@ -628,9 +628,9 @@ describe('scopeT2ToPlanPr — T2 relocation (aeg-governance-hardening task 24)',
   })
 
   it('leaves a passing T2 untouched regardless of PR kind', () => {
-    const openIssues = new Map([['aeg-governance-hardening', [19]]])
-    const topology = new Map([['aeg-governance-hardening', new Set([19])]])
-    const raw = checkT2(openIssues, topology, 'aeg-governance-hardening')
+    const openIssues = new Map([['sample-tranche-v1', [19]]])
+    const topology = new Map([['sample-tranche-v1', new Set([19])]])
+    const raw = checkT2(openIssues, topology, 'sample-tranche-v1')
     expect(raw.status).toBe('pass')
 
     expect(scopeT2ToPlanPr(raw, false)).toEqual(raw)
@@ -643,7 +643,7 @@ describe('scopeT2ToPlanPr — T2 relocation (aeg-governance-hardening task 24)',
 const FULL_RATIONALE_BODY = `
 **Boundary** — test boundary
 **Sizing** — test sizing
-**Project(s) + blast radius** — aeg
+**Project(s) + blast radius** — sample
 **Dependency rationale** — none
 **Traps to avoid** — none
 **Suggested agent-class** — high
@@ -654,7 +654,7 @@ const FULL_RATIONALE_BODY = `
 const MISSING_TRAPS_BODY = `
 **Boundary** — test boundary
 **Sizing** — test sizing
-**Project(s) + blast radius** — aeg
+**Project(s) + blast radius** — sample
 **Dependency rationale** — none
 **Suggested agent-class** — high
 **Stop-and-escalate** — none
@@ -671,14 +671,14 @@ const MISSING_TRAPS_BODY = `
 const UNREGISTERED_PROJECT_BODY = `
 **Boundary** — test boundary
 **Sizing** — test sizing
-**Project(s) + blast radius** — aeg-core, aeg-types, vinaya
+**Project(s) + blast radius** — sample-core, sample-types, vinaya
 **Dependency rationale** — none
 **Traps to avoid** — none
 **Suggested agent-class** — high
 **Stop-and-escalate** — none
 **Docs to keep coherent** — none
 
-**Project:** aeg-core, aeg-types, vinaya
+**Project:** sample-core, sample-types, vinaya
 `
 
 function makeForgeIssue(number: number, body: string, labels: string[] = ['vinaya/tranche:iter-1']): ForgeIssue {
@@ -717,15 +717,15 @@ describe('R1: missing-rationale-field', () => {
   // for Issues edited by an ungated writer or predating the gate.
   it('fail — a complete rationale whose Project: names an unregistered project', () => {
     const issuesBySlug = new Map([['iter-1', [makeForgeIssue(105, UNREGISTERED_PROJECT_BODY)]]])
-    const r = checkR1(issuesBySlug, new Set(), ['aeg-core', 'vinaya'])
+    const r = checkR1(issuesBySlug, new Set(), ['sample-core', 'vinaya'])
     expect(r.status).toBe('fail')
     expect(r.failures[0]!.issue).toBe(105)
-    expect(r.failures[0]!.reason).toMatch(/aeg-types/)
+    expect(r.failures[0]!.reason).toMatch(/sample-types/)
   })
 
   it('pass — the same body once every declared project is registered', () => {
     const issuesBySlug = new Map([['iter-1', [makeForgeIssue(105, UNREGISTERED_PROJECT_BODY)]]])
-    passesWithNoFailures(checkR1(issuesBySlug, new Set(), ['aeg-core', 'aeg-types', 'vinaya']))
+    passesWithNoFailures(checkR1(issuesBySlug, new Set(), ['sample-core', 'sample-types', 'vinaya']))
   })
 
   it('registry half is dormant when no registry is passed — prior R1 behaviour is unchanged', () => {
@@ -925,12 +925,12 @@ describe('T3: tbd-in-active-tranche', () => {
   it('pass — ciTrancheSlug scopes check: null issue in OTHER tranche is skipped', () => {
     const entries = [makeEntry('vada-production-v1', '6a', null, undefined, false)]
     // Running CI gate for this tranche → only this tranche's T3 matters
-    passesWithNoFailures(checkT3(entries, 'aeg-coherence-v1'))
+    passesWithNoFailures(checkT3(entries, 'example-tranche-v1'))
   })
 
   it('fail — ciTrancheSlug scopes check: null issue in SAME tranche still fails', () => {
-    const entries = [makeEntry('aeg-coherence-v1', '99', null, undefined, false)]
-    const r = checkT3(entries, 'aeg-coherence-v1')
+    const entries = [makeEntry('example-tranche-v1', '99', null, undefined, false)]
+    const r = checkT3(entries, 'example-tranche-v1')
     expect(r.status).toBe('fail')
     expect(r.failures[0]!.task).toBe('99')
   })
@@ -1255,8 +1255,8 @@ describe('L3: active-tranche-count', () => {
 describe('L4: Issue-level Milestone-attachment drift', () => {
   it('info, clean — every open Issue in an active tranche is attached to the matching Milestone', () => {
     const r = checkL4(
-      ['aeg-review-gate-v1'],
-      [{ tranche: 'aeg-review-gate-v1', issue: 1, milestoneTitle: 'aeg-review-gate-v1' }]
+      ['review-sample-v1'],
+      [{ tranche: 'review-sample-v1', issue: 1, milestoneTitle: 'review-sample-v1' }]
     )
     expect(r.status).toBe('info')
     expect(r.failures).toHaveLength(0)
@@ -1280,8 +1280,8 @@ describe('L4: Issue-level Milestone-attachment drift', () => {
 
   it('flags an Issue attached to the WRONG Milestone, naming which one', () => {
     const r = checkL4(
-      ['aeg-review-gate-v1'],
-      [{ tranche: 'aeg-review-gate-v1', issue: 5, milestoneTitle: 'some-other-tranche' }]
+      ['review-sample-v1'],
+      [{ tranche: 'review-sample-v1', issue: 5, milestoneTitle: 'some-other-tranche' }]
     )
     expect(r.status).toBe('info')
     expect(r.failures).toHaveLength(1)
@@ -1290,8 +1290,8 @@ describe('L4: Issue-level Milestone-attachment drift', () => {
 
   it('never flags an Issue in a NON-active tranche (no open Milestone) — closed/archived tranches are out of scope', () => {
     const r = checkL4(
-      ['aeg-review-gate-v1'], // only this one is active
-      [{ tranche: 'aeg-forge-state-v1', issue: 99, milestoneTitle: null }]
+      ['review-sample-v1'], // only this one is active
+      [{ tranche: 'other-sample-v1', issue: 99, milestoneTitle: null }]
     )
     expect(r.status).toBe('info')
     expect(r.failures).toHaveLength(0)
@@ -1359,8 +1359,8 @@ describe('extractClosesReferences', () => {
   it('ignores a Closes #N inside a fenced block but keeps a real bare one', () => {
     expect([...extractClosesReferences('Closes #5\n\n```\nExample: Closes #99\n```\n')]).toEqual([5])
   })
-  it('reads only the AEG:CLOSES anchor and strips code within it', () => {
-    const body = '<!-- AEG:CLOSES:START -->\nCloses #5\n<!-- AEG:CLOSES:END -->\n\nProse: Closes #99'
+  it('reads only the VINAYA:CLOSES anchor and strips code within it', () => {
+    const body = '<!-- VINAYA:CLOSES:START -->\nCloses #5\n<!-- VINAYA:CLOSES:END -->\n\nProse: Closes #99'
     expect([...extractClosesReferences(body)]).toEqual([5])
   })
   it('ignores a double-backtick code span but keeps a real bare ref (PR #617 review)', () => {

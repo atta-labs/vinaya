@@ -14,7 +14,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     id: '12',
     title: 'Some task',
     issue: 326,
-    projects: ['aeg'],
+    projects: ['app'],
     dependsOn: [],
     conflictsWith: [],
     rationaleMarkdown: '',
@@ -24,7 +24,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 
 function makeInput(overrides: Partial<DispatchGateInput> = {}): DispatchGateInput {
   return {
-    trancheSlug: 'aeg-governance-hardening',
+    trancheSlug: 'sample-tranche-v1',
     task: makeTask(),
     issue: { number: 326, state: 'open' },
     issueRationalePass: true,
@@ -163,18 +163,18 @@ describe('checkDispatchReadiness', () => {
   it('blocks when a named project has an unarchived prior tranche', () => {
     const result = checkDispatchReadiness(
       makeInput({
-        priorTrancheArchival: [{ project: 'aeg', priorTrancheSlug: 'aeg-consolidation', archived: false }]
+        priorTrancheArchival: [{ project: 'app', priorTrancheSlug: 'example-tranche-v1', archived: false }]
       })
     )
     expect(result.ready).toBe(false)
     expect(result.blockers[0]).toContain('prior-tranche-archival')
-    expect(result.blockers[0]).toContain('aeg-consolidation')
+    expect(result.blockers[0]).toContain('example-tranche-v1')
   })
 
   it('passes when a named project has an archived prior tranche', () => {
     const result = checkDispatchReadiness(
       makeInput({
-        priorTrancheArchival: [{ project: 'aeg', priorTrancheSlug: 'aeg-consolidation', archived: true }]
+        priorTrancheArchival: [{ project: 'app', priorTrancheSlug: 'example-tranche-v1', archived: true }]
       })
     )
     expect(result.ready).toBe(true)
@@ -183,7 +183,7 @@ describe('checkDispatchReadiness', () => {
   it('passes trivially when a named project has no prior tranche at all', () => {
     const result = checkDispatchReadiness(
       makeInput({
-        priorTrancheArchival: [{ project: 'aeg', priorTrancheSlug: null, archived: false }]
+        priorTrancheArchival: [{ project: 'app', priorTrancheSlug: null, archived: false }]
       })
     )
     expect(result.ready).toBe(true)

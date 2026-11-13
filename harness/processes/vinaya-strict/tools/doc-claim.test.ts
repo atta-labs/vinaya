@@ -18,14 +18,14 @@ describe('findClaimBindings — marker discovery', () => {
     const content = [
       'Intro.',
       '',
-      '<!-- AEG:CLAIM: src/a.ts contains:function windows( -->',
+      '<!-- VINAYA:CLAIM: src/a.ts contains:function windows( -->',
       'The bound sentence.'
     ].join('\n')
-    const bindings = findClaimBindings([{ path: 'aeg-root/x.md', content }])
+    const bindings = findClaimBindings([{ path: 'doctrine/x.md', content }])
 
     expect(bindings).toHaveLength(1)
     expect(bindings[0]).toEqual({
-      file: 'aeg-root/x.md',
+      file: 'doctrine/x.md',
       line: 3,
       assertion: { kind: 'contains', path: 'src/a.ts', value: 'function windows(' }
     })
@@ -34,10 +34,10 @@ describe('findClaimBindings — marker discovery', () => {
   it('parses both source-comment forms — a `//` line and a `*` block-comment line', () => {
     const content = [
       '/**',
-      ' * AEG:CLAIM: src/b.ts absent:legacyFlag',
+      ' * VINAYA:CLAIM: src/b.ts absent:legacyFlag',
       ' * The bound sentence.',
       ' */',
-      '// AEG:CLAIM: src/c.ts contains:export function f(',
+      '// VINAYA:CLAIM: src/c.ts contains:export function f(',
       'const x = 1'
     ].join('\n')
     const bindings = findClaimBindings([{ path: 'apps/cli/src/d.ts', content }])
@@ -49,19 +49,19 @@ describe('findClaimBindings — marker discovery', () => {
   })
 
   it('parses a sha256 marker', () => {
-    const content = `<!-- AEG:CLAIM: src/a.ts sha256:${'a'.repeat(64)} -->\nSentence.`
-    const bindings = findClaimBindings([{ path: 'aeg-root/x.md', content }])
+    const content = `<!-- VINAYA:CLAIM: src/a.ts sha256:${'a'.repeat(64)} -->\nSentence.`
+    const bindings = findClaimBindings([{ path: 'doctrine/x.md', content }])
 
     expect(bindings[0]?.assertion).toEqual({ kind: 'sha256', path: 'src/a.ts', value: 'a'.repeat(64) })
   })
 
   it('keeps every marker in a stack of several before one paragraph', () => {
     const content = [
-      '<!-- AEG:CLAIM: src/a.ts contains:firstFiveLines -->',
-      '<!-- AEG:CLAIM: src/b.ts contains:renderEscalationComment -->',
+      '<!-- VINAYA:CLAIM: src/a.ts contains:firstFiveLines -->',
+      '<!-- VINAYA:CLAIM: src/b.ts contains:renderEscalationComment -->',
       'One sentence resting on two facts.'
     ].join('\n')
-    const bindings = findClaimBindings([{ path: 'aeg-root/x.md', content }])
+    const bindings = findClaimBindings([{ path: 'doctrine/x.md', content }])
 
     expect(bindings.map((b) => b.assertion.path)).toEqual(['src/a.ts', 'src/b.ts'])
   })
@@ -71,14 +71,14 @@ describe('findClaimBindings — marker discovery', () => {
       'The grammar is:',
       '',
       '```markdown',
-      '<!-- AEG:CLAIM: <path> contains:<literal> -->',
+      '<!-- VINAYA:CLAIM: <path> contains:<literal> -->',
       '```',
       '',
       'Prose resumes.'
     ].join('\n')
 
-    expect(findClaimBindings([{ path: 'aeg-root/documentation-coherence.md', content }])).toEqual([])
-    expect(findMalformedClaimMarkers([{ path: 'aeg-root/documentation-coherence.md', content }])).toEqual([])
+    expect(findClaimBindings([{ path: 'doctrine/documentation-coherence.md', content }])).toEqual([])
+    expect(findMalformedClaimMarkers([{ path: 'doctrine/documentation-coherence.md', content }])).toEqual([])
   })
 })
 
@@ -119,8 +119,8 @@ describe('findClaimBindings — both anchor spellings', () => {
 
 describe('findMalformedClaimMarkers', () => {
   it('reports a marker announcing itself that parses as neither form', () => {
-    const content = ['<!-- AEG:CLAIM: src/a.ts holds:something -->', 'Sentence.'].join('\n')
-    const findings = findMalformedClaimMarkers([{ path: 'aeg-root/x.md', content }])
+    const content = ['<!-- VINAYA:CLAIM: src/a.ts holds:something -->', 'Sentence.'].join('\n')
+    const findings = findMalformedClaimMarkers([{ path: 'doctrine/x.md', content }])
 
     expect(findings).toHaveLength(1)
     expect(findings[0]?.line).toBe(1)
@@ -129,7 +129,7 @@ describe('findMalformedClaimMarkers', () => {
 
   it('reports a marker missing its literal', () => {
     const findings = findMalformedClaimMarkers([
-      { path: 'apps/cli/src/a.ts', content: '// AEG:CLAIM: src/a.ts contains:' }
+      { path: 'apps/cli/src/a.ts', content: '// VINAYA:CLAIM: src/a.ts contains:' }
     ])
 
     expect(findings).toHaveLength(1)
@@ -137,22 +137,24 @@ describe('findMalformedClaimMarkers', () => {
   })
 
   it('yields no binding for a malformed marker', () => {
-    expect(findClaimBindings([{ path: 'aeg-root/x.md', content: '<!-- AEG:CLAIM: src/a.ts holds:x -->' }])).toEqual([])
+    expect(findClaimBindings([{ path: 'doctrine/x.md', content: '<!-- VINAYA:CLAIM: src/a.ts holds:x -->' }])).toEqual(
+      []
+    )
   })
 })
 
 describe('evaluateClaimBindings — the predicate, through an injected reader', () => {
-  const bindings = (content: string, path = 'aeg-root/x.md') => findClaimBindings([{ path, content }])
+  const bindings = (content: string, path = 'doctrine/x.md') => findClaimBindings([{ path, content }])
 
   it('passes when the cited file still holds the literal', () => {
-    const found = bindings('<!-- AEG:CLAIM: src/a.ts contains:function firstFiveLines( -->\nReads five lines.')
+    const found = bindings('<!-- VINAYA:CLAIM: src/a.ts contains:function firstFiveLines( -->\nReads five lines.')
     const findings = evaluateClaimBindings(found, reader({ 'src/a.ts': 'function firstFiveLines(c: string) {}' }))
 
     expect(findings).toEqual([])
   })
 
   it('reports when the cited file no longer holds the literal', () => {
-    const found = bindings('<!-- AEG:CLAIM: src/a.ts contains:function firstThreeLines( -->\nReads three lines.')
+    const found = bindings('<!-- VINAYA:CLAIM: src/a.ts contains:function firstThreeLines( -->\nReads three lines.')
     const findings = evaluateClaimBindings(found, reader({ 'src/a.ts': 'function firstFiveLines(c: string) {}' }))
 
     expect(findings).toHaveLength(1)
@@ -161,7 +163,7 @@ describe('evaluateClaimBindings — the predicate, through an injected reader', 
   })
 
   it('reports a missing cited file rather than passing it silently', () => {
-    const found = bindings('<!-- AEG:CLAIM: src/gone.ts contains:anything -->\nSentence.')
+    const found = bindings('<!-- VINAYA:CLAIM: src/gone.ts contains:anything -->\nSentence.')
     const findings = evaluateClaimBindings(found, reader({}))
 
     expect(findings).toHaveLength(1)
@@ -169,38 +171,38 @@ describe('evaluateClaimBindings — the predicate, through an injected reader', 
   })
 
   it('honours an absent pin, and reports it when the literal reappears', () => {
-    const found = bindings('<!-- AEG:CLAIM: src/a.ts absent:legacyFlag -->\nNo longer supported.')
+    const found = bindings('<!-- VINAYA:CLAIM: src/a.ts absent:legacyFlag -->\nNo longer supported.')
 
     expect(evaluateClaimBindings(found, reader({ 'src/a.ts': 'const x = 1' }))).toEqual([])
     expect(evaluateClaimBindings(found, reader({ 'src/a.ts': 'const legacyFlag = 1' }))).toHaveLength(1)
   })
 
   it('names the pin as stale, and says to update it, when a sha256 binding no longer matches', () => {
-    const found = bindings(`<!-- AEG:CLAIM: src/a.ts sha256:${'b'.repeat(64)} -->\nSentence.`)
+    const found = bindings(`<!-- VINAYA:CLAIM: src/a.ts sha256:${'b'.repeat(64)} -->\nSentence.`)
     const findings = evaluateClaimBindings(found, reader({ 'src/a.ts': 'contents' }))
 
     expect(findings[0]?.message).toContain('update the pin in this same PR')
   })
 
   it('passes a sha256 binding that still matches, hashing the file as it actually is', () => {
-    const body = '<!-- AEG:CLAIM: src/a.ts contains:x -->\ncontents'
+    const body = '<!-- VINAYA:CLAIM: src/a.ts contains:x -->\ncontents'
     const digest = createHash('sha256').update(body).digest('hex')
-    const found = bindings(`<!-- AEG:CLAIM: src/a.ts sha256:${digest} -->\nSentence.`)
+    const found = bindings(`<!-- VINAYA:CLAIM: src/a.ts sha256:${digest} -->\nSentence.`)
 
     expect(evaluateClaimBindings(found, reader({ 'src/a.ts': body }))).toEqual([])
   })
 
   it('refuses a self-satisfying marker whose only evidence is the marker text itself', () => {
-    const content = ['<!-- AEG:CLAIM: aeg-root/x.md contains:AEG:CLAIM -->', 'Markers exist.'].join('\n')
+    const content = ['<!-- VINAYA:CLAIM: doctrine/x.md contains:VINAYA:CLAIM -->', 'Markers exist.'].join('\n')
     const found = bindings(content)
-    const findings = evaluateClaimBindings(found, reader({ 'aeg-root/x.md': content }))
+    const findings = evaluateClaimBindings(found, reader({ 'doctrine/x.md': content }))
 
     expect(findings).toHaveLength(1)
     expect(findings[0]?.message).toContain('no longer holds')
   })
 
   it('refuses a cited path that escapes the repository, without reading anything', () => {
-    const found = bindings('<!-- AEG:CLAIM: ../../etc/hosts contains:localhost -->\nSentence.')
+    const found = bindings('<!-- VINAYA:CLAIM: ../../etc/hosts contains:localhost -->\nSentence.')
     let read = false
     const findings = evaluateClaimBindings(found, () => {
       read = true
@@ -215,17 +217,17 @@ describe('evaluateClaimBindings — the predicate, through an injected reader', 
 describe('checkDocClaims — both phases in one call', () => {
   it('returns malformed markers and broken bindings together', () => {
     const files: DocClaimSourceFile[] = [
-      { path: 'aeg-root/x.md', content: '<!-- AEG:CLAIM: src/a.ts holds:x -->' },
-      { path: 'aeg-root/y.md', content: '<!-- AEG:CLAIM: src/a.ts contains:gone -->' }
+      { path: 'doctrine/x.md', content: '<!-- VINAYA:CLAIM: src/a.ts holds:x -->' },
+      { path: 'doctrine/y.md', content: '<!-- VINAYA:CLAIM: src/a.ts contains:gone -->' }
     ]
     const { findings, bindingCount } = checkDocClaims(files, reader({ 'src/a.ts': 'present' }))
 
     expect(bindingCount).toBe(1)
-    expect(findings.map((f) => f.file)).toEqual(['aeg-root/x.md', 'aeg-root/y.md'])
+    expect(findings.map((f) => f.file)).toEqual(['doctrine/x.md', 'doctrine/y.md'])
   })
 
   it('is silent on a corpus with no markers at all', () => {
-    expect(checkDocClaims([{ path: 'aeg-root/x.md', content: 'Ordinary prose.' }], reader({}))).toEqual({
+    expect(checkDocClaims([{ path: 'doctrine/x.md', content: 'Ordinary prose.' }], reader({}))).toEqual({
       findings: [],
       bindingCount: 0
     })
@@ -244,8 +246,8 @@ describe('evaluateClaimBindings — the caller-supplied voice', () => {
   }
 
   it('speaks the doc-claim voice by default — unchanged for every existing caller', () => {
-    const [finding] = evaluateClaimBindings([{ ...binding, file: 'aeg-root/x.md' }], reader({ 'src/a.ts': 'present' }))
-    expect(finding?.message).toContain('aeg-root/x.md:2 binds')
+    const [finding] = evaluateClaimBindings([{ ...binding, file: 'doctrine/x.md' }], reader({ 'src/a.ts': 'present' }))
+    expect(finding?.message).toContain('doctrine/x.md:2 binds')
     expect(finding?.message).toContain('The sentence bound here claims')
   })
 

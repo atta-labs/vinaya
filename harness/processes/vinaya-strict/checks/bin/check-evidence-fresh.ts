@@ -226,7 +226,7 @@ function main(): void {
   const resolved = resolveAnchoredRegion(ScanContext.from(body, REGION_PREFIXES), 'EVIDENCE')
 
   if (resolved === null) {
-    // The anchor is opt-in, like every other AEG anchor — a body that
+    // The anchor is opt-in, like every other Vinaya anchor — a body that
     // hasn't adopted it yet is not broken by not adopting it.
     process.exit(0)
   }

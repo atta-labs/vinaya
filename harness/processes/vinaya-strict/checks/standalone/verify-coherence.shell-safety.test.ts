@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { loadTrancheSweep } from './verify-coherence'
+import { LEGACY_DOCTRINE_ROOT, LEGACY_TRANCHES_DIR } from '../../tools/legacy-paths'
 
 /**
  * The two git readers spawn `git` with an argv array, never a shell string
@@ -22,13 +23,13 @@ import { loadTrancheSweep } from './verify-coherence'
  * marker DOES appear, so a green result above cannot be an inert payload.
  */
 
-const marker = (name: string): string => join(tmpdir(), `aeg-shell-safety-${process.pid}-${name}`)
+const marker = (name: string): string => join(tmpdir(), `vinaya-shell-safety-${process.pid}-${name}`)
 
 /** `git`-legal on its own; a command substitution only if something hands it to a shell. */
 const payloadFor = (path: string): string => `$(touch ${path})`
 
 const SLUG = 'zzz-shell-safety-fixture'
-const ACTIVE_PATH = `aeg-root/tranches/${SLUG}.md`
+const ACTIVE_PATH = `${LEGACY_TRANCHES_DIR}/${SLUG}.md`
 
 /** A commit on top of `origin/main` carrying one synthetic topology file. */
 function commitWithTrancheFile(): string {
@@ -47,10 +48,10 @@ function commitWithTrancheFile(): string {
     env: {
       ...process.env,
       GIT_INDEX_FILE: indexFile,
-      GIT_AUTHOR_NAME: 'AEG test fixture',
-      GIT_AUTHOR_EMAIL: 'aeg-test-fixture@localhost',
-      GIT_COMMITTER_NAME: 'AEG test fixture',
-      GIT_COMMITTER_EMAIL: 'aeg-test-fixture@localhost'
+      GIT_AUTHOR_NAME: 'Vinaya test fixture',
+      GIT_AUTHOR_EMAIL: 'vinaya-test-fixture@localhost',
+      GIT_COMMITTER_NAME: 'Vinaya test fixture',
+      GIT_COMMITTER_EMAIL: 'vinaya-test-fixture@localhost'
     }
   }).trim()
   execFileSync('rm', ['-f', indexFile])
@@ -94,7 +95,7 @@ describe('the sweep spawns git, never a shell', () => {
     rmSync(path, { force: true })
 
     try {
-      execSync(`git ls-tree --name-only origin/main${payloadFor(path)}:aeg-root`, { stdio: 'ignore' })
+      execSync(`git ls-tree --name-only origin/main${payloadFor(path)}:${LEGACY_DOCTRINE_ROOT}`, { stdio: 'ignore' })
     } catch {
       // git's own exit code is irrelevant: the substitution runs before git does.
     }

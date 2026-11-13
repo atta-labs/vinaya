@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 
 /**
- * archive-task — post-merge Archivist automation (aeg-governance-hardening
- * task 5d, #309). Thin I/O shim: resolves the merged PR from `MERGE_SHA` via
+ * archive-task — post-merge Archivist automation.
+ * Thin I/O shim: resolves the merged PR from `MERGE_SHA` via
  * `gh`, gathers `MergedPrFacts`, and calls the pure `buildProvenanceBlock` /
- * `taskRefFromBranch` / `hasProvenance` homed in `@attalabs/aeg-core`. Mirrors
+ * `taskRefFromBranch` / `hasProvenance` homed in `@attalabs/process-vinaya`. Mirrors
  * `bin/verify-brief.ts`'s exact shape (chdir to repo root; read env; call the
  * pure function; print; exit).
  *

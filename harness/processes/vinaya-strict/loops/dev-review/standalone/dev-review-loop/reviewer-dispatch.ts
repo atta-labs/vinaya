@@ -2,7 +2,7 @@
  * `dev-review-loop`'s reviewer-dispatch-and-verdict concern — the reviewer's
  * own prompt, the held-verdict outbox, and turning a reviewer's accepted
  * structured ReviewResult (`review-result.ts`) into a rendered verdict via
- * `buildVerdictFromReview` (which calls `@attalabs/aeg-core`'s pure
+ * `buildVerdictFromReview` (which calls `@attalabs/process-vinaya`'s pure
  * evaluator through `deriveCodeReviewVerdict`/`deriveSecurityVerdict` —
  * which severities block is repository policy, never a literal here).
  * Moved out of `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts` verbatim;
@@ -818,7 +818,7 @@ export function readIfExists(path: string): string | null {
 /**
  * Prose never decides a round: a `NOT MET` whose evidence
  * names only a PR body section, a comment, or a role file — reused from
- * `@attalabs/aeg-core`'s `isProseLocation`, the SAME predicate
+ * `@attalabs/process-vinaya`'s `isProseLocation`, the SAME predicate
  * `evaluateReviewFindings`'s body-located `MINOR` cap already applies to a
  * finding's `location` field (that cap is untouched by this task; this is a
  * separate use of the same predicate, over an objective's `evidence` field
@@ -841,7 +841,7 @@ export function reclassifyProseOnlyNotMet(results: readonly ObjectiveResult[]): 
 
 /**
  * The SAME rule `evaluateReviewFindings` applies internally
- * (`@attalabs/aeg-core`) to decide `outcome`/`blockingFindings` — no longer a
+ * (`@attalabs/process-vinaya`) to decide `outcome`/`blockingFindings` — no longer a
  * second copy of the prose cap and threshold check here, but the one shared
  * `classifyFinding` (O1), called over the SAME finding only to attach the
  * resulting fact onto the finding's own observation record, which that

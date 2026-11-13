@@ -257,7 +257,7 @@ export function fetchDeveloperStop(issueNumber: number): { body: string; identit
  * Pure: the NEWEST principal-authored `vinaya:brief:v<k>` comment among
  * `comments`, or `null` — unit-testable with no `gh` call. task
  * 4 widened this from a `v1`-only lookup to
- * `@attalabs/aeg-core`'s `resolveNewestFrozenBrief`, the single resolver
+ * `@attalabs/process-vinaya`'s `resolveNewestFrozenBrief`, the single resolver
  * every frozen-brief reader (this loop, `resolveIssueObjectives` below, and
  * `check-brief-shape.ts`'s own Issue-comment read) now shares — a
  * supersession is an APPENDED comment, never an edit to the one it

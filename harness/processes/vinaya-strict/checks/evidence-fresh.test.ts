@@ -19,7 +19,7 @@ function evidenceBody(head: string, numstat: string): string {
     '',
     'why this shape.',
     '',
-    '<!-- AEG:EVIDENCE:START -->',
+    '<!-- VINAYA:EVIDENCE:START -->',
     `Head: ${head}`,
     `${EVIDENCE_SUMMARY_PREFIX}\`${summariseNumstat(numstat)}\``,
     '',
@@ -38,15 +38,15 @@ function evidenceBody(head: string, numstat: string): string {
     '```',
     'brief-shape: pass',
     '```',
-    '<!-- AEG:EVIDENCE:END -->'
+    '<!-- VINAYA:EVIDENCE:END -->'
   ].join('\n')
 }
 
 /** Resolves through the real, shared path — the same one `check-evidence-fresh` uses. */
 function regionOf(body: string): ResolvedRegion {
   const resolved = resolveAnchoredRegion(ScanContext.from(body, REGION_PREFIXES), 'EVIDENCE')
-  if (resolved === null) throw new Error('fixture body carries no AEG:EVIDENCE block')
-  if (resolved === 'hidden') throw new Error('fixture body hides its AEG:EVIDENCE block in a <details> block')
+  if (resolved === null) throw new Error('fixture body carries no VINAYA:EVIDENCE block')
+  if (resolved === 'hidden') throw new Error('fixture body hides its VINAYA:EVIDENCE block in a <details> block')
   return resolved
 }
 
@@ -78,7 +78,7 @@ describe('compareEvidenceBlock — mutation proofs (fix/pr-report-emitter §9)',
     expect(message).toContain('Group B is stale')
   })
 
-  it('(d) no AEG:EVIDENCE block → pass (caller bypasses before calling compareEvidenceBlock)', () => {
+  it('(d) no VINAYA:EVIDENCE block → pass (caller bypasses before calling compareEvidenceBlock)', () => {
     const body = ['## Summary', '', 'no evidence block here.'].join('\n')
     expect(anchoredRegion(body, 'EVIDENCE', REGION_PREFIXES)).toBeNull()
   })
@@ -98,7 +98,9 @@ describe('compareEvidenceBlock — mutation proofs (fix/pr-report-emitter §9)',
   })
 
   it('malformed block (no Head line) → fail rather than a silent pass', () => {
-    const malformed = ['<!-- AEG:EVIDENCE:START -->', '```', NUMSTAT, '```', '<!-- AEG:EVIDENCE:END -->'].join('\n')
+    const malformed = ['<!-- VINAYA:EVIDENCE:START -->', '```', NUMSTAT, '```', '<!-- VINAYA:EVIDENCE:END -->'].join(
+      '\n'
+    )
     const result = compareEvidenceBlock(regionOf(malformed), HEAD, NUMSTAT)
     expect(result.status).toBe('fail')
   })
@@ -109,9 +111,9 @@ describe('compareEvidenceBlock — the untouched placeholder (O1)', () => {
     return [
       '## Evidence',
       '',
-      '<!-- AEG:EVIDENCE:START -->',
+      '<!-- VINAYA:EVIDENCE:START -->',
       EVIDENCE_PLACEHOLDER_TEXT,
-      '<!-- AEG:EVIDENCE:END -->'
+      '<!-- VINAYA:EVIDENCE:END -->'
     ].join('\n')
   }
 
@@ -141,10 +143,10 @@ describe('compareEvidenceBlock — the untouched placeholder (O1)', () => {
 
   it('a body carrying extra text alongside the placeholder line is NOT treated as the placeholder — still malformed, still fails', () => {
     const body = [
-      '<!-- AEG:EVIDENCE:START -->',
+      '<!-- VINAYA:EVIDENCE:START -->',
       EVIDENCE_PLACEHOLDER_TEXT,
       'plus a hand-typed line',
-      '<!-- AEG:EVIDENCE:END -->'
+      '<!-- VINAYA:EVIDENCE:END -->'
     ].join('\n')
     const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT)
     expect(result.status).toBe('fail')
@@ -229,8 +231,8 @@ function groupCResult(command: string, output: string): GroupCCommandResult {
 
 /** A block carrying a real `renderGroupC` render — appended after Group B, exactly as `pr-report.ts` emits it. */
 function evidenceBodyWithGroupC(head: string, numstat: string, commands: GroupCCommandResult[]): string {
-  const withoutEnd = evidenceBody(head, numstat).replace('<!-- AEG:EVIDENCE:END -->', '')
-  return [withoutEnd, '', renderGroupC({ commands }), '<!-- AEG:EVIDENCE:END -->'].join('\n')
+  const withoutEnd = evidenceBody(head, numstat).replace('<!-- VINAYA:EVIDENCE:END -->', '')
+  return [withoutEnd, '', renderGroupC({ commands }), '<!-- VINAYA:EVIDENCE:END -->'].join('\n')
 }
 
 describe('compareEvidenceBlock — Group C is attested, never re-run (task 12, Principal rulings PR open-1/open-2)', () => {
@@ -331,14 +333,14 @@ describe('the check refuses when the diff cannot be recomputed', () => {
       // An EMPTY Group A fence: the value a failed `git diff` collapses to.
       // Under the soft `git()` this compared equal and passed.
       const body = [
-        '<!-- AEG:EVIDENCE:START -->',
+        '<!-- VINAYA:EVIDENCE:START -->',
         `Head: ${head}`,
         '',
         '### Group A — recomputable',
         '',
         '```',
         '```',
-        '<!-- AEG:EVIDENCE:END -->'
+        '<!-- VINAYA:EVIDENCE:END -->'
       ].join('\n')
       const proc = Bun.spawn(['bun', BIN], {
         cwd: dir,
@@ -408,7 +410,7 @@ exit 1
   }
 
   function placeholderBody(): string {
-    return ['<!-- AEG:EVIDENCE:START -->', EVIDENCE_PLACEHOLDER_TEXT, '<!-- AEG:EVIDENCE:END -->'].join('\n')
+    return ['<!-- VINAYA:EVIDENCE:START -->', EVIDENCE_PLACEHOLDER_TEXT, '<!-- VINAYA:EVIDENCE:END -->'].join('\n')
   }
 
   it('no developer-round comment exists yet — the placeholder passes (a genuinely fresh PR)', async () => {
@@ -438,7 +440,7 @@ exit 1
     const { dir, head } = fixtureRepo()
     try {
       const ghDir = writeGhStub(dir, head, [
-        { body: '<!-- aeg:developer:round-1 --> Head: deadbeef', author: { login: 'daniboomerang' } }
+        { body: '<!-- vinaya:developer:round-1 --> Head: deadbeef', author: { login: 'daniboomerang' } }
       ])
       const proc = Bun.spawn(['bun', BIN], {
         cwd: dir,
@@ -467,7 +469,7 @@ exit 1
     const { dir, head } = fixtureRepo()
     try {
       const ghDir = writeGhStub(dir, head, [
-        { body: '<!-- aeg:developer:round-1 --> Head: deadbeef', author: { login: 'random-commenter' } }
+        { body: '<!-- vinaya:developer:round-1 --> Head: deadbeef', author: { login: 'random-commenter' } }
       ])
       const proc = Bun.spawn(['bun', BIN], {
         cwd: dir,
@@ -495,7 +497,7 @@ exit 1
   it('a marker-shaped comment with no author at all is no signal — the placeholder still passes', async () => {
     const { dir, head } = fixtureRepo()
     try {
-      const ghDir = writeGhStub(dir, head, [{ body: '<!-- aeg:developer:round-1 --> Head: deadbeef' }])
+      const ghDir = writeGhStub(dir, head, [{ body: '<!-- vinaya:developer:round-1 --> Head: deadbeef' }])
       const proc = Bun.spawn(['bun', BIN], {
         cwd: dir,
         env: {

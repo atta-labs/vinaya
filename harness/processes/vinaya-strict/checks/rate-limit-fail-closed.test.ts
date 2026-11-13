@@ -13,11 +13,12 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { checkDispatchReadiness, type DispatchGateInput } from '../tools/dispatch-gate'
 import { clearEdgeCache, dependsOnFactFromEdge, edgeFromIssueJson, resolveEdge } from '../tools/edge-resolve'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
+import { LEGACY_TRANCHES_DIR } from '../tools/legacy-paths'
 
 const REPO_ROOT = join(import.meta.dir, '../../../..')
 const SINGLE_PLAN_BIN = join(REPO_ROOT, 'harness/processes/vinaya-strict/checks/bin/check-single-plan-pr.ts')
 /** The retired tranche-file state the single-plan guard still recognizes. */
-const LEGACY_TRANCHES = 'aeg-root/tranches'
+const LEGACY_TRANCHES = LEGACY_TRANCHES_DIR
 const DISPATCH_BIN = join(REPO_ROOT, 'harness/processes/vinaya-strict/checks/bin/check-dispatch-readiness.ts')
 
 const GRAPHQL_RATE_LIMIT = 'GraphQL: API rate limit exceeded for user ID 1234567.'

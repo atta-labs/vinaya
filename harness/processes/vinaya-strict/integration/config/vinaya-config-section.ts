@@ -124,7 +124,7 @@ const MAX_REPORT_COMMAND_TIMEOUT_MS = 3_600_000
 // `issue` body must carry is expressed HERE, never hardcoded in the command
 // code — this repo's required-section set is just one instance (one
 // derivation, N consumers). Declarative only: a section is either a named
-// battle-tested built-in (backed by an `@attalabs/aeg-core` validator) or a
+// battle-tested built-in (backed by an `@attalabs/process-vinaya` validator) or a
 // generic heading/field/phrase matcher an adopter authors for their own
 // required sections. No conditional grammar (no if/unless/except) —
 // any diff-conditionality (lock-ack, premise coverage) lives inside the
@@ -151,7 +151,7 @@ export const BRIEF_BUILTINS = [
 export type BriefBuiltin = (typeof BRIEF_BUILTINS)[number]
 
 // A single required section. Discriminated by which key is present:
-//   { "builtin": "tier" }             — run the named aeg-core validator
+//   { "builtin": "tier" }             — run the named process-package validator
 //   { "heading": "Rollback Plan" }    — require a matching `## …` heading
 //   { "field": "Ticket" }             — require a `Ticket:` header field
 //   { "phrase": "signed-off-by" }     — require a literal phrase anywhere
@@ -317,7 +317,7 @@ export const VINAYA_CONFIG_FRAGMENT = {
     })
     .optional(),
   // The sanctioned "I need one more blast-radius collision domain" path —
-  // the legacy `.aeg/packages` static file is retired, zero backward
+  // the legacy static packages file is retired, zero backward
   // compatibility, so this is now the ONLY way to declare one beyond
   // derivation. `checkBlastRadiusScope`'s domain list
   // (`harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts`'s `readSharedPackages`, mirroring
@@ -463,7 +463,7 @@ export const VINAYA_CONFIG_FRAGMENT = {
     .optional(),
   // Which severities block is repository policy — two separate thresholds,
   // one per review role's own ordered
-  // severity scale (`@attalabs/aeg-core`'s `CODE_REVIEW_SEVERITY_ORDER`/
+  // severity scale (`@attalabs/process-vinaya`'s `CODE_REVIEW_SEVERITY_ORDER`/
   // `SECURITY_SEVERITY_ORDER`). Typed as a bare string here, deliberately NOT
   // `z.enum(...)`: a `z.enum` failure fails the WHOLE config's schema parse,
   // which both `loadConfig`/`loadTrustAnchorConfig` turn into a `null`
@@ -515,7 +515,7 @@ export const VINAYA_CONFIG_FRAGMENT = {
     .optional(),
   // The five Issue/PR gate cutovers — one Issue/PR number per gate below
   // which that gate is grandfathered (an older Issue/PR passes
-  // unconditionally). These were hardcoded constants in `@attalabs/aeg-core`
+  // unconditionally). These were hardcoded constants in `@attalabs/process-vinaya`
   // (`OBJECTIVES_SINCE_ISSUE` etc.); they are now this optional key so a
   // repository can set its own, and — crucially — an ABSENT key means NO
   // cutover: `resolveGateCutovers` resolves every field to `null`, and each

@@ -31,7 +31,7 @@ import type { TokensCollectTrustEntry, VinayaConfig } from '../../../../integrat
  * that exists only inside this monorepo checkout, never in an adopter that
  * installed `@attalabs/vinaya` as a package. This command imports
  * `resolveMeteringCapability`/`formatTokensLine`/`formatBreakdown` from the
- * INSTALLED `@attalabs/aeg-core` package — no repo-relative path anywhere —
+ * INSTALLED `@attalabs/process-vinaya` package — no repo-relative path anywhere —
  * so the same capability is reachable wherever the package is installed.
  *
  * Three ways to a `Tokens:` line, tried in this order:

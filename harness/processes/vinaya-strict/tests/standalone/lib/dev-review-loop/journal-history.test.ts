@@ -10,7 +10,7 @@ const ALLOWLIST = [PRINCIPAL]
 
 /** A developer round marker comment exactly as `postDeveloperRoundComment` posts it — marker line, then `Head:`. */
 function roundMarker(round: number, author: string = PRINCIPAL): MarkerComment {
-  return { body: `<!-- aeg:developer:round-${round} -->\nHead: head-${round}`, author }
+  return { body: `<!-- vinaya:developer:round-${round} -->\nHead: head-${round}`, author }
 }
 
 const SUMMARY_URL = 'https://forge.example/pr/7#issuecomment-1'

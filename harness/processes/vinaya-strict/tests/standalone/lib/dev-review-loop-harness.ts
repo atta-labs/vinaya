@@ -405,7 +405,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     mergeable: 'MERGEABLE',
     conflictingFiles: [],
     frozenBrief:
-      '<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\n\n## Planner rationale\n\nOut of scope for facts.\n',
+      '<!-- vinaya:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\n\n## Planner rationale\n\nOut of scope for facts.\n',
     objectivesText: 'O1. Do the thing.',
     sourceRevision: '(none — pre-task-4 frozen brief)',
     rulings: [],

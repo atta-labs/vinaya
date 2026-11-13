@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: retired-vocabulary. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: retired-vocabulary. Thin adapter over `@attalabs/process-vinaya`'s
  * `scanRetiredVocabulary` — the genuinely-retired half
  * of `retired-vocabulary.test.ts`'s original scan, "today only a vitest
- * test inside `packages/aeg-core`, executed by no adopter ever."
+ * test inside `the process package`, executed by no adopter ever."
  *
  * Deliberately NOT the forge-number / tranche-slug / legacy-slug class that
  * test file also carries: those ban a LIVE, unexplained citation, and are
@@ -14,13 +14,13 @@
  * reasoning.
  *
  * **Scope: `<doctrineRoot>/**` only, not the whole adopter repo.** What
- * `RETIRED_PATTERNS` bans is AEG's own methodology history (the decision
+ * `RETIRED_PATTERNS` bans is Vinaya's own methodology history (the decision
  * log, the lock, the `team-leader` role, …) — vocabulary that only means
- * anything inside AEG's own doctrine, which is exactly what `vinaya init`
+ * anything inside Vinaya's own doctrine, which is exactly what `vinaya init`
  * installs at `<doctrineRoot>` and nowhere else in an adopter's repo.
  * Sweeping the adopter's own unrelated source (their business logic, their
  * own "decision log" feature, whatever "CONTRADICTION" means to their
- * domain) would misfire on words that carry no AEG meaning there at all.
+ * domain) would misfire on words that carry no Vinaya meaning there at all.
  * This is a narrower scope than the vitest suite's own `PRODUCT = ['.']` —
  * a deliberate scope decision for the adopter-facing adapter, not a change
  * to `RETIRED_PATTERNS`/`RETIRED_EXEMPT_SUBSTRINGS`/`PATTERN_EXEMPT`

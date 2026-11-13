@@ -10,7 +10,7 @@ import { vinayaProcessIntegration } from '../../integration/process/process-inte
 // `harness/processes/vinaya-strict/checks/standalone/dead-branch-audit.ts` (never-red — a notification
 // channel) and `check-direct-main-push.ts` (a real pass/fail), calling the
 // same pure `findDeadBranchPushes` / `checkDirectMainPush` homed in
-// `@attalabs/aeg-core`.
+// `@attalabs/process-vinaya`.
 //
 // Repo/owner resolution goes through this CLI's own `detectGitRepo()`
 // (lib/detect.ts) — the same path every other command uses — never a

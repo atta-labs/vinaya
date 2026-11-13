@@ -9,8 +9,8 @@
  * re-asserts every pin immediately before Step 0: a premise that no longer
  * holds means the surface moved since the brief was written, and the
  * Developer should stop and re-dig rather than execute against a stale
- * mental model (the exact failure of aeg-governance-hardening's live-fire
- * #3 — two briefs described a target architecture a later, uncited migration
+ * mental model (the exact failure of a past live-fire
+ * run — two briefs described a target architecture a later, uncited migration
  * had already superseded).
  *
  * Deliberately minimal — exactly three assertion kinds. This is a pin

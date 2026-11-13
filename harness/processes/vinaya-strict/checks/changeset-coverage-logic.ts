@@ -17,7 +17,7 @@
  * `README.md`) is a finding; the Changesets-release branch itself is exempt
  * by construction (its diff IS the changesets being consumed).
  *
- * Deliberately does NOT reuse `@attalabs/aeg-core`'s `globToRegex`: that
+ * Deliberately does NOT reuse `@attalabs/process-vinaya`'s `globToRegex`: that
  * converter treats `**` as a bare `.*`, which still demands a literal `/`
  * immediately after it — so `!src/**​/*.test.ts` never matches a top-level
  * `src/foo.test.ts` (no directory between `src/` and the filename), only a
@@ -33,9 +33,9 @@
 
 /** One fixed-group member, as resolved live from its own `package.json` — never hardcoded. */
 export type FixedGroupMember = {
-  /** The published package name, e.g. `@attalabs/aeg-core`. */
+  /** The published package name, e.g. `@attalabs/process-vinaya`. */
   name: string
-  /** Repo-relative POSIX workspace directory, e.g. `packages/aeg-core`. */
+  /** Repo-relative POSIX workspace directory, e.g. `the process package`. */
   dir: string
   /** Raw `package.json` `files` entries — positive globs and `!`-negated exclusions, matched relative to `dir`. */
   files: string[]

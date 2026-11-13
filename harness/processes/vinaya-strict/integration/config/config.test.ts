@@ -1887,7 +1887,7 @@ describe('decisionRecords.path', () => {
       refusals({ proseGates: { doctrineRoot: 'doctrine' }, decisionRecords: { path: 'doctrine/records' } })[0]
     ).toContain('must be outside the doctrine tree "doctrine"')
     // Only the configured tree is the doctrine tree once one is configured.
-    expect(refusals({ proseGates: { doctrineRoot: 'doctrine' }, decisionRecords: { path: 'aeg-root-notes' } })).toEqual(
+    expect(refusals({ proseGates: { doctrineRoot: 'doctrine' }, decisionRecords: { path: 'doctrine-notes' } })).toEqual(
       []
     )
   })

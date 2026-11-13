@@ -41,11 +41,11 @@ describe('findMilestoneForSlug', () => {
   it('returns goal + active lifecycle for an open milestone matching the slug exactly', () => {
     mocked(ghApiGet).mockReturnValue([
       { title: 'some-unrelated-slug', description: 'not this one', state: 'open' },
-      { title: 'aeg-forge-state-v1', description: 'Migrate this repo governance state.', state: 'open' }
+      { title: 'sample-tranche-v1', description: 'Migrate this repo governance state.', state: 'open' }
     ])
     mocked(ghIssueListByLabel).mockReturnValue([])
 
-    expect(findMilestoneForSlug(OWNER, REPO, 'aeg-forge-state-v1')).toEqual({
+    expect(findMilestoneForSlug(OWNER, REPO, 'sample-tranche-v1')).toEqual({
       goal: 'Migrate this repo governance state.',
       lifecycle: 'active'
     })
@@ -62,18 +62,18 @@ describe('findMilestoneForSlug', () => {
   })
 
   it('treats a missing description as an empty goal', () => {
-    mocked(ghApiGet).mockReturnValue([{ title: 'aeg-forge-state-v1', description: null, state: 'open' }])
+    mocked(ghApiGet).mockReturnValue([{ title: 'sample-tranche-v1', description: null, state: 'open' }])
     mocked(ghIssueListByLabel).mockReturnValue([])
 
-    expect(findMilestoneForSlug(OWNER, REPO, 'aeg-forge-state-v1')).toEqual({ goal: '', lifecycle: 'active' })
+    expect(findMilestoneForSlug(OWNER, REPO, 'sample-tranche-v1')).toEqual({ goal: '', lifecycle: 'active' })
   })
 
   it('a legacy Milestone with nothing under its label is trusted as-is, no override', () => {
-    mocked(ghApiGet).mockReturnValue([{ title: 'aeg-forge-state-v1', description: null, state: 'open' }])
+    mocked(ghApiGet).mockReturnValue([{ title: 'sample-tranche-v1', description: null, state: 'open' }])
     mocked(ghIssueListByLabel).mockClear()
     mocked(ghIssueListByLabel).mockReturnValue([])
 
-    const result = findMilestoneForSlug(OWNER, REPO, 'aeg-forge-state-v1')
+    const result = findMilestoneForSlug(OWNER, REPO, 'sample-tranche-v1')
 
     expect(ghIssueListByLabel).toHaveBeenCalledTimes(1)
     expect(result?.lifecycle).toBe('active')
@@ -100,7 +100,7 @@ describe('findMilestoneForSlug', () => {
 
   it('an OPEN legacy Milestone is never overridden by its label, even when the label Issues would otherwise resolve complete — the override is gated on closed, adopt never produces an open+labeled legacy Milestone', () => {
     mocked(ghApiGet).mockReturnValue([
-      { title: 'aeg-forge-state-v1', description: 'Migrate this repo governance state.', state: 'open' }
+      { title: 'sample-tranche-v1', description: 'Migrate this repo governance state.', state: 'open' }
     ])
     // Stray manual labeling, or any state the real `adopt` write path never
     // produces — all-closed label Issues under a Milestone that is itself
@@ -108,7 +108,7 @@ describe('findMilestoneForSlug', () => {
     // flip a genuinely active tranche to `complete`.
     mocked(ghIssueListByLabel).mockReturnValue([issue('CLOSED'), issue('CLOSED')])
 
-    expect(findMilestoneForSlug(OWNER, REPO, 'aeg-forge-state-v1')).toEqual({
+    expect(findMilestoneForSlug(OWNER, REPO, 'sample-tranche-v1')).toEqual({
       goal: 'Migrate this repo governance state.',
       lifecycle: 'active'
     })
@@ -118,15 +118,15 @@ describe('findMilestoneForSlug', () => {
     mocked(ghApiGet).mockReturnValue(emptyMilestones)
     mocked(ghIssueListByLabel).mockReturnValue([issue('CLOSED'), issue('OPEN')])
 
-    expect(findMilestoneForSlug(OWNER, REPO, 'aeg-forge-state-v1')).toEqual({ goal: '', lifecycle: 'active' })
-    expect(ghIssueListByLabel).toHaveBeenCalledWith(OWNER, REPO, 'vinaya/tranche:aeg-forge-state-v1')
+    expect(findMilestoneForSlug(OWNER, REPO, 'sample-tranche-v1')).toEqual({ goal: '', lifecycle: 'active' })
+    expect(ghIssueListByLabel).toHaveBeenCalledWith(OWNER, REPO, 'vinaya/tranche:sample-tranche-v1')
   })
 
   it('derives complete from the label’s Issues when every one is closed and no legacy Milestone matches', () => {
     mocked(ghApiGet).mockReturnValue(emptyMilestones)
     mocked(ghIssueListByLabel).mockReturnValue([issue('CLOSED'), issue('CLOSED')])
 
-    expect(findMilestoneForSlug(OWNER, REPO, 'aeg-forge-state-v1')).toEqual({ goal: '', lifecycle: 'complete' })
+    expect(findMilestoneForSlug(OWNER, REPO, 'sample-tranche-v1')).toEqual({ goal: '', lifecycle: 'complete' })
   })
 
   it('derives planned (not complete) when the label carries zero Issues — the at-least-one guard', () => {
@@ -177,10 +177,10 @@ describe('findMilestoneForSlug', () => {
 
 describe('resolveMilestoneAttachTarget', () => {
   it('resolves an open legacy Milestone (title equals slug) by its own number + title', () => {
-    const milestones = [{ number: 9, title: 'aeg-review-gate-v1', description: '', state: 'open' as const }]
-    expect(resolveMilestoneAttachTarget(milestones, 'aeg-review-gate-v1')).toEqual({
+    const milestones = [{ number: 9, title: 'other-tranche-v1', description: '', state: 'open' as const }]
+    expect(resolveMilestoneAttachTarget(milestones, 'other-tranche-v1')).toEqual({
       number: 9,
-      title: 'aeg-review-gate-v1'
+      title: 'other-tranche-v1'
     })
   })
 
@@ -229,19 +229,16 @@ describe('resolveMilestoneAttachTarget', () => {
   })
 
   it('prefers the legacy exact-title match over an intent-declared match, when somehow both exist', () => {
-    const description = [
-      'Sprint goal.',
-      '',
-      '### Tranche intents',
-      '- aeg-review-gate-v1: unrelated intent line.'
-    ].join('\n')
+    const description = ['Sprint goal.', '', '### Tranche intents', '- other-tranche-v1: unrelated intent line.'].join(
+      '\n'
+    )
     const milestones = [
       { number: 1, title: 'sprint-42', description, state: 'open' as const },
-      { number: 9, title: 'aeg-review-gate-v1', description: '', state: 'open' as const }
+      { number: 9, title: 'other-tranche-v1', description: '', state: 'open' as const }
     ]
-    expect(resolveMilestoneAttachTarget(milestones, 'aeg-review-gate-v1')).toEqual({
+    expect(resolveMilestoneAttachTarget(milestones, 'other-tranche-v1')).toEqual({
       number: 9,
-      title: 'aeg-review-gate-v1'
+      title: 'other-tranche-v1'
     })
   })
 
@@ -419,7 +416,7 @@ describe('listActiveTrancheSlugs', () => {
   it('maps every open legacy milestone to its slug + goal, when no tranche labels exist', () => {
     mockGh(
       [
-        { title: 'aeg-forge-state-v1', description: 'Migrate this repo governance state.', state: 'open' },
+        { title: 'sample-tranche-v1', description: 'Migrate this repo governance state.', state: 'open' },
         { title: 'herald-hardening-v1', description: null, state: 'open' }
       ],
       []
@@ -428,7 +425,7 @@ describe('listActiveTrancheSlugs', () => {
 
     expect(listActiveTrancheSlugs(OWNER, REPO)).toEqual(
       expect.arrayContaining([
-        { slug: 'aeg-forge-state-v1', goal: 'Migrate this repo governance state.' },
+        { slug: 'sample-tranche-v1', goal: 'Migrate this repo governance state.' },
         { slug: 'herald-hardening-v1', goal: '' }
       ])
     )
@@ -558,7 +555,7 @@ describe('listArchivedTrancheSlugs', () => {
 
 describe('indexTrancheMilestonesAsync', () => {
   const MILESTONES = [
-    { title: 'aeg-forge-state-v1', description: 'Migrate this repo governance state.', state: 'open' },
+    { title: 'sample-tranche-v1', description: 'Migrate this repo governance state.', state: 'open' },
     { title: 'herald-hardening-v1', description: null, state: 'open' },
     { title: 'vinaya-cli-v1', description: 'Ship the CLI.', state: 'closed' }
   ]
@@ -577,11 +574,11 @@ describe('indexTrancheMilestonesAsync', () => {
     const index = await indexTrancheMilestonesAsync(OWNER, REPO)
 
     expect(index.active).toEqual([
-      { slug: 'aeg-forge-state-v1', goal: 'Migrate this repo governance state.' },
+      { slug: 'sample-tranche-v1', goal: 'Migrate this repo governance state.' },
       { slug: 'herald-hardening-v1', goal: '' }
     ])
     expect(index.archived).toEqual([{ slug: 'vinaya-cli-v1', goal: 'Ship the CLI.' }])
-    expect(index.legacySlugs).toEqual(new Set(['aeg-forge-state-v1', 'herald-hardening-v1', 'vinaya-cli-v1']))
+    expect(index.legacySlugs).toEqual(new Set(['sample-tranche-v1', 'herald-hardening-v1', 'vinaya-cli-v1']))
   })
 
   it('yields, per legacy slug, exactly what findMilestoneForSlug returns for the same data', async () => {
@@ -595,7 +592,7 @@ describe('indexTrancheMilestonesAsync', () => {
 
     const index = await indexTrancheMilestonesAsync(OWNER, REPO)
 
-    for (const slug of ['aeg-forge-state-v1', 'herald-hardening-v1', 'vinaya-cli-v1']) {
+    for (const slug of ['sample-tranche-v1', 'herald-hardening-v1', 'vinaya-cli-v1']) {
       expect(index.facts.get(slug) ?? null).toEqual(findMilestoneForSlug(OWNER, REPO, slug))
     }
   })
@@ -675,7 +672,7 @@ describe('indexTrancheMilestonesAsync', () => {
     expect(index.issuesBySlug?.get('label-only-v1')).toBe(labelOnly)
     expect(index.issuesBySlug?.get('vinaya-cli-v1')).toEqual([])
     expect([...(index.issuesBySlug?.keys() ?? [])].sort()).toEqual(
-      ['aeg-forge-state-v1', 'herald-hardening-v1', 'label-only-v1', 'vinaya-cli-v1'].sort()
+      ['sample-tranche-v1', 'herald-hardening-v1', 'label-only-v1', 'vinaya-cli-v1'].sort()
     )
     const { issuesBySlug: _issues, ...rest } = index
     const retried = await indexTrancheMilestonesAsync(OWNER, REPO, { retryFailedReads: true })

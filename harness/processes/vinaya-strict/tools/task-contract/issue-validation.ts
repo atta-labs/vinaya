@@ -115,7 +115,7 @@ export type IssueRationaleOptions = {
  * amend-deps can edit.
  *
  * `Dependency rationale` carries a second, stricter requirement the other
- * seven fields do not: `amendRationaleDeps` (`@attalabs/aeg-forge-state`, the ONLY
+ * seven fields do not: `amendRationaleDeps` (the forge-state modules, the ONLY
  * sanctioned way to edit `Depends-on`/`Conflicts-with`) locates this section
  * by the exact anchor `SECTION_HEADER` — `**Dependency rationale**` with the
  * bold closing immediately after the label. A body written
@@ -272,7 +272,7 @@ function partWordCount(text: string): number {
 /**
  * A `## Surface` `in:`/`out:` entry — directory-level only, per the grammar's
  * own rule. A trailing `/**`/`/*` glob suffix is stripped before the
- * extension check, so `packages/aeg-core/**` reads as a directory.
+ * extension check, so `packages/core/**` reads as a directory.
  *
  * A dot-prefixed directory (`.claude`, `.github`) must read as a directory,
  * not a file: its last path segment's only `.` sits at index 0, which is a
@@ -1474,7 +1474,7 @@ function forMessage(value: string): string {
 /**
  * The projects a task Issue declares — its body's `**Project:**` field, and
  * only that. Project is a **field, not a label** (doctrine): a real migration dropped the
- * `project:*` labels outright, and `@attalabs/aeg-forge-state`'s `list-tasks.ts`
+ * `project:*` labels outright, and the forge-state `list-tasks.ts`
  * derives a task's project from the same field, so the two agree by
  * construction. `labels` stays in the signature because callers pass it and
  * the applicability question (`isTaskIssueLabelSet`) is label-shaped.
@@ -1498,7 +1498,7 @@ export function declaredProjects(body: string, _labels: string[]): string[] {
  * this as a hard gate — *"Unregistered project or a `Project:` that doesn't
  * resolve against `projects.md` → refuse"* — and until this function nothing
  * mechanized it. Found live on 2026-08-12 on a draft plan declaring
- * `Project: aeg-core, aeg-types, vinaya`; `aeg-types` has no registry row and
+ * `Project: core, types, vinaya`; `types` has no registry row and
  * the plan passed every gate.
  *
  * `.vinaya/projects.md` is the sole authority for valid names ("A `Project:`
@@ -1507,15 +1507,15 @@ export function declaredProjects(body: string, _labels: string[]): string[] {
  * review judgment like the rest of this module.
  *
  * **It calls `projectsFromBody` — the same function, not a matching regex.**
- * `@attalabs/aeg-forge-state`'s `list-tasks.ts` is the repo's authority for what a
+ * The forge-state `list-tasks.ts` is the repo's authority for what a
  * task's project *is*: it is what fills `Task.projects`, and therefore what
  * drives the board, dispatch, and doc fan-out. A gate that decides a project is
  * unregistered must be reading the identical name the derivation resolved, or
  * the two can disagree about what the task even declares — so this shares the
  * parser by construction rather than by agreement. That is the same discipline
  * `parseRationaleDeps`/`SECTION_HEADER` already enforce for dependency edges,
- * and the import direction is the existing one (`aeg-core → aeg-forge-state`,
- * as in `archive-task.ts`); nothing new is layered.
+ * and the import direction is the existing one (the process tools import the forge-state
+ * modules, as in `archive-task.ts`); nothing new is layered.
  *
  * **Never parse the `Project(s) + blast radius` prose heading here.** That
  * heading is narrative that happens to mention project names alongside file
@@ -1706,13 +1706,13 @@ const BLAST_RADIUS_ACK_RE = /(?:\*\*)?blast-radius-ack(?:\*\*)?\s*[:—–-]/i
  * merely declines to be fooled by it, so the two stay independent.
  *
  * **Ownership, not mere listing.** A domain that IS a declared project's own
- * registered path is owned by it — `Project: aeg-core` editing
- * `packages/aeg-core` declares its blast radius exactly, and must not be
+ * registered path is owned by it — `Project: core` editing
+ * `packages/core` declares its blast radius exactly, and must not be
  * failed. Without this, the check would block the legitimately single-project
  * shared edit, which is a gate that blocks valid work.
  *
  * **The declared set is read through `projectsFromBody`** — the same parser
- * `checkProjectsRegistered` and `@attalabs/aeg-forge-state`'s `list-tasks.ts` use,
+ * `checkProjectsRegistered` and the forge-state `list-tasks.ts` use,
  * shared by construction rather than by agreement. It reads the line-anchored
  * project field and only that. The previous body-wide read took the first
  * field-shaped token *anywhere* in the body, which is routinely prose in Sizing
@@ -1773,7 +1773,7 @@ export function checkBlastRadiusScope(
     // Scoped to the two fields that declare the task's OWN surface. Scanning
     // the whole body fails correct plans in bulk: a rationale names packages
     // for many reasons that are not edits — a dependency it imports unchanged
-    // (real tasks name `packages/aeg-core` because Vinaya's CLI imports it), a
+    // (real tasks name `packages/core` because Vinaya's CLI imports it), a
     // trap to avoid, an Origin note. A full-body scan flagged 46 of 166
     // historical task Issues, nearly all of them correctly-scoped work.
     // Boundary and Project(s) + blast radius are where a task states what it
@@ -1997,7 +1997,7 @@ export function checkDocsWithinSurface(
 /** A backticked repo-path token — at least two `/`-separated segments, so a bare identifier or filename in backticks (`` `log()` ``, `` `foo.ts` ``) never matches. Never a URL (filtered by the caller). */
 const RATIONALE_PATH_RE_GLOBAL = /`([\w.@-]+(?:\/[\w.@-]+)+)`/g
 
-/** How many leading `/`-separated segments two paths/globs share — the "nearest" ranking O4's message uses. A trailing `/**`/`/*` is stripped from the glob side first so `packages/aeg-core/**` compares as `packages/aeg-core`. */
+/** How many leading `/`-separated segments two paths/globs share — the "nearest" ranking O4's message uses. A trailing `/**`/`/*` is stripped from the glob side first so `packages/core/**` compares as `packages/core`. */
 function sharedLeadingSegments(path: string, glob: string): number {
   const pathSegs = path.split('/')
   const globSegs = glob.replace(/\/\*\*?$/, '').split('/')
@@ -2144,7 +2144,7 @@ export type TaskIssueFacts = {
 /**
  * True when either side's declared edges name the other — `#NNN`, `NNN` and
  * a bare task id all count, and so does a slug-qualified edge (`<slug> #NNN`,
- * `<slug> NNN`): `splitSlugQualifiedEdge` (`@attalabs/aeg-forge-state`, the
+ * `<slug> NNN`): `splitSlugQualifiedEdge` (the forge-state modules, the
  * same split the dispatch gate's own edge resolver uses) reduces it to its
  * bare id first, one direction only — a bare id is never treated as
  * naming a qualified one back. Structural on `{ ref, conflictsWith }` so
@@ -2171,7 +2171,7 @@ export function edgesNameEachOther(
  * `Conflicts-with` edge are *probably* a missed serialization — but an Issue
  * does not declare a precise file surface, so "names the same domain" is a
  * hint, not a fact. Failing on a hint would make the gate refuse correct plans,
- * so this prints and never blocks. It is also why AEG's conflict rule is
+ * so this prints and never blocks. It is also why Vinaya's conflict rule is
  * declared-and-static in the first place: a real answer needs a live
  * task→changed-files map, the mutable state the model eliminates
  * (`tranche-model.md` §5).
@@ -2248,7 +2248,7 @@ export type TaskSurfaceFacts = {
 /**
  * task 17, O4 — a glob shared by construction is never a real conflict:
  * every path segment of it is inspected for a literal `tests`/`specs`
- * directory name (`apps/cli/tests/**`, `packages/aeg-core/tests/**`,
+ * directory name (`apps/cli/tests/**`, `packages/core/tests/**`,
  * `specs/**` all match; `apps/testsuite/**` does not — segment equality,
  * never a substring test), and separately, a glob every open task in the
  * Milestone (the subject plus the FULL sibling set the caller resolved) also

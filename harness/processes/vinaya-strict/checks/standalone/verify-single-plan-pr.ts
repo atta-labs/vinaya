@@ -1,16 +1,16 @@
 #!/usr/bin/env bun
 
 /**
- * verify-single-plan-pr — ring-1 CI backstop for the single-plan-PR guard
- * (aeg-governance-hardening task 24, #364, Part 1). `open-pr.ts`'s
+ * verify-single-plan-pr — ring-1 CI backstop for the single-plan-PR
+ * guard. `open-pr.ts`'s
  * `checkSinglePlanPrGate` is ring-0 prevention, but it only runs for PRs
  * opened through that wrapper — a PR opened directly via the GitHub web UI
  * bypasses it entirely. This script re-runs the IDENTICAL predicate
- * (`checkSinglePlanPr`, `@attalabs/aeg-core`) forge-side, in CI, on every PR —
+ * (`checkSinglePlanPr`, `tools/single-plan-pr.ts`) forge-side, in CI, on every PR —
  * one implementation per fact (§11 constraint), never a second copy.
  *
  * No-ops (exit 0) for any PR whose diff doesn't touch a tranche topology
- * file — an ordinary task-branch PR never touches `aeg-root/tranches/*.md`,
+ * file — an ordinary task-branch PR never touches a file in the retired tranche-file directory,
  * so this never fires for one (asserted in `verify-single-plan-pr.test.ts`).
  *
  * Usage (CI): PR_NUMBER=<n> bun harness/processes/vinaya-strict/checks/standalone/verify-single-plan-pr.ts

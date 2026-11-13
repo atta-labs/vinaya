@@ -23,7 +23,7 @@
  * that no env-var or git-state signal inside that trigger type closes it.
  * `pull_request_target` closes it: the workflow text assigning `PR_NUMBER`
  * comes from the DEFAULT BRANCH, which a pull request cannot edit — see
- * `isChangesetsReleasePr`'s own doc comment (`@attalabs/aeg-core`) for the
+ * `isChangesetsReleasePr`'s own doc comment (`@attalabs/process-vinaya`) for the
  * full reasoning, and `vinaya-body-checks.yml`'s header for the workflow
  * side of the same boundary `vinaya-review.yml` already established.
  *

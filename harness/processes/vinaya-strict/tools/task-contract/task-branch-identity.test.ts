@@ -20,11 +20,11 @@ describe('parseTaskBranchIdentity', () => {
   })
 
   it('returns null for a single-segment task branch that is not the issue- shape', () => {
-    expect(parseTaskBranchIdentity('task/aeg-governance-hardening')).toBeNull()
+    expect(parseTaskBranchIdentity('task/sample-tranche')).toBeNull()
   })
 
   it('returns null for a branch with more than two segments after task/', () => {
-    expect(parseTaskBranchIdentity('task/aeg-governance-hardening/5d/extra')).toBeNull()
+    expect(parseTaskBranchIdentity('task/sample-tranche/5d/extra')).toBeNull()
   })
 
   it('does not read "issue-<n>" as a tranche name — task/issue-42 is the issue shape, not tranche "issue-42" task "..."', () => {

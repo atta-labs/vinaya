@@ -155,13 +155,13 @@ describe('reconstruction', () => {
       '',
       '- consumer-tests: none — no consumer test path named yet',
       '',
-      '**Out of surface:** packages, aeg-root, .github — a change there is still published.',
+      '**Out of surface:** packages, docs, .github — a change there is still published.',
       '',
       '## 5. Pre-flight checks'
     ].join('\n')
     expect(frozenScope(brief)).toEqual({
       in: ['apps/cli/tests/eval', '.changeset'],
-      out: ['packages', 'aeg-root', '.github']
+      out: ['packages', 'docs', '.github']
     })
     expect(frozenScope('## 4. Technical surface map\n\n## 5. Next')).toBeNull()
     expect(briefRequiredSources(brief)).toEqual(['harness/kernel/evals/evals.md'])
@@ -184,8 +184,8 @@ describe('reconstruction', () => {
     ])
     const vitest =
       '<testsuites><testsuite name="src/x.test.ts"><testcase classname="src/x.test.ts" name="D &gt; t">\n</testcase></testsuite></testsuites>'
-    expect(readJunit(vitest, 'packages/aeg-core')).toEqual([
-      { file: 'packages/aeg-core/src/x.test.ts', name: 'D > t', outcome: 'pass' }
+    expect(readJunit(vitest, 'packages/core')).toEqual([
+      { file: 'packages/core/src/x.test.ts', name: 'D > t', outcome: 'pass' }
     ])
   })
 

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 import { isCodeFile, isDocFile, isSpecFile } from './file-classify'
+import { LEGACY_PROJECT_DIR } from './legacy-paths'
 
 describe('isDocFile', () => {
-  it('matches aeg-root, aeg-project, spec, and skill markdown', () => {
+  it('matches doctrine, the retired per-project notes directory, spec, and skill markdown', () => {
     expect(isDocFile('harness/processes/vinaya-strict/executing/developer/doctrine.md')).toBe(true)
-    expect(isDocFile('aeg-project/state.md')).toBe(true)
-    expect(isDocFile('apps/herald-ai/aeg-project/state.md')).toBe(true)
+    expect(isDocFile(`${LEGACY_PROJECT_DIR}/state.md`)).toBe(true)
+    expect(isDocFile(`apps/herald-ai/${LEGACY_PROJECT_DIR}/state.md`)).toBe(true)
     expect(isDocFile('.vinaya/projects.md')).toBe(true)
     expect(isDocFile('docs/some-guide.md')).toBe(true)
     expect(isDocFile('apps/herald-ai/specs/herald-spec.md')).toBe(true)
@@ -17,7 +18,7 @@ describe('isDocFile', () => {
 
   it('matches a package-level README', () => {
     expect(isDocFile('apps/cli/README.md')).toBe(true)
-    expect(isDocFile('packages/aeg-core/README.md')).toBe(true)
+    expect(isDocFile('packages/core/README.md')).toBe(true)
   })
 
   it('does not match code or unrelated markdown', () => {

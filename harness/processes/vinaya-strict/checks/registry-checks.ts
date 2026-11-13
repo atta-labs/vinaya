@@ -135,7 +135,7 @@ export function checkG1(
  * still flags loud until a human replaces it with the real "why". */
 const SCAFFOLD_PLACEHOLDER = '[undocumented — fill in why]'
 
-/** Every `packages/aeg-core/bin/*` basename (no extension) that implements no gate/refusal/detection mechanism of its own — a forge writer, a one-shot reporter, an eval harness. G2's twin candidate for `NON_GATE_BINS`: a file this list already names has nothing to be named FOR, so asking G2 to find it named by some row is the wrong question, not an unanswered one. */
+/** Every `checks/standalone/*` basename (no extension) that implements no gate/refusal/detection mechanism of its own — a forge writer, a one-shot reporter, an eval harness. G2's twin candidate for `NON_GATE_BINS`: a file this list already names has nothing to be named FOR, so asking G2 to find it named by some row is the wrong question, not an unanswered one. */
 const NON_GATE_BIN_NAMES: readonly string[] = NON_GATE_BINS
 
 /**
@@ -144,7 +144,7 @@ const NON_GATE_BIN_NAMES: readonly string[] = NON_GATE_BINS
  * maintained rather than folded into `GATE_AUDIENCE`, because each would
  * break an existing invariant that map enforces:
  *
- * - `check-dead-branch-push.ts`: its aeg-core twin (`check-push-target.ts`)
+ * - `check-dead-branch-push.ts`: its standalone twin (`check-push-target.ts`)
  *   is genuinely NOT the same mechanism, only a closely related one an
  *   existing row's own prose already cross-references —
  *   `check-push-target.ts` is a lower-level helper `dead-branch-push`'s row
@@ -178,11 +178,11 @@ const NON_GATE_HOOK_SCRIPTS: readonly string[] = ['.claude/hooks/track-transcrip
  * G2 — every candidate hook/CLI file is named by SOME row's `implementation`,
  * AND no row still carries the scaffold's placeholder marker un-replaced.
  * `candidateFiles` is already-globbed by the caller (`.husky/*`,
- * `.claude/hooks/*.sh`, `packages/aeg-core/bin/*.ts`, excluding `.husky/_`).
+ * `.claude/hooks/*.sh`, `harness/processes/vinaya-strict/checks/standalone/*.ts`, excluding `.husky/_`).
  *
  * **Twin-form recognition.** The same enforcement
- * mechanism routinely ships as two physical files — a `packages/aeg-core/
- * bin/*.ts` standalone form and an `harness/processes/vinaya-strict/checks/bin/check-*.ts`
+ * mechanism routinely ships as two physical files — a `checks/standalone/*.ts`
+ * standalone form and an `harness/processes/vinaya-strict/checks/bin/check-*.ts`
  * CLI-registered form — but a row's `implementation` cell holds exactly one
  * path (`GateRow.implementation: string`). Naming only one form orphaned
  * the other on every one of 14 checks this task found live: not a missing
@@ -194,7 +194,7 @@ const NON_GATE_HOOK_SCRIPTS: readonly string[] = ['.claude/hooks/track-transcrip
  * is the one-fact-one-implementation fix — no new row invents a second
  * fact for what is really one, already-documented mechanism.
  *
- * A `NON_GATE_BINS`-listed aeg-core bin (`report-tokens.ts`,
+ * A `NON_GATE_BINS`-listed standalone bin (`report-tokens.ts`,
  * `eval-agent-compliance.ts`, …) and a listed non-gate hook script
  * (`track-transcript.sh`) implement no gate of their own — per the doctrine
  * this task also writes (`enforcement.md`), the honest fix for a candidate
@@ -212,7 +212,7 @@ export function checkG2(rows: GateRow[], candidateFiles: string[]): RegistryChec
   for (const path of candidateFiles) {
     if (implementations.has(path)) continue
     if (
-      AEG_CORE_BIN_PATH_PREFIXES.some((prefix) => path.startsWith(prefix)) &&
+      STANDALONE_BIN_PATH_PREFIXES.some((prefix) => path.startsWith(prefix)) &&
       NON_GATE_BIN_NAMES.includes(basenameNoExt(path))
     )
       continue
@@ -329,7 +329,7 @@ export function checkG5(
 
 const PROCESS_CHECKS_DIRECTORY = ['harness', 'processes', ['vinaya', 'strict'].join('-'), 'checks'].join('/')
 const SHIPPED_BIN_PATH_PREFIXES = [`${PROCESS_CHECKS_DIRECTORY}/bin/check-`]
-const AEG_CORE_BIN_PATH_PREFIXES = [`${PROCESS_CHECKS_DIRECTORY}/standalone/`]
+const STANDALONE_BIN_PATH_PREFIXES = [`${PROCESS_CHECKS_DIRECTORY}/standalone/`]
 
 function basenameNoExt(path: string): string {
   const base = path.slice(path.lastIndexOf('/') + 1)
@@ -341,7 +341,7 @@ function basenameNoExt(path: string): string {
  * could resolve to. Two shapes: a path directly under the shipped bin
  * directory names its own check 1:1 (`harness/processes/vinaya-strict/checks/bin/check-doc-
  * coverage-push.ts` -> `doc-coverage-push`); a path under
- * `packages/aeg-core/bin/` resolves through `GATE_AUDIENCE`, the same map
+ * `checks/standalone/` resolves through `GATE_AUDIENCE`, the same map
  * `shipped-bin-audience.test.ts` (`apps/cli`) already asserts agrees with
  * the registry — reused here rather than re-derived, so doctrine and code
  * cannot silently disagree about what a bin ships as. Neither shape matches
@@ -354,7 +354,7 @@ function claimedCheckNames(implementation: string): string[] {
   if (shippedPrefix !== undefined && implementation.endsWith('.ts')) {
     return [implementation.slice(shippedPrefix.length, -'.ts'.length)]
   }
-  if (AEG_CORE_BIN_PATH_PREFIXES.some((prefix) => implementation.startsWith(prefix))) {
+  if (STANDALONE_BIN_PATH_PREFIXES.some((prefix) => implementation.startsWith(prefix))) {
     const audience = GATE_AUDIENCE[basenameNoExt(implementation)]
     if (audience && isShipped(audience)) {
       return Array.isArray(audience.shippedAs) ? audience.shippedAs : [audience.shippedAs]
@@ -368,7 +368,7 @@ function claimedCheckNames(implementation: string): string[] {
  * `coreCheckRegistry()` entry ("claimed checks must ship" — the parity gate
  * this task exists for). `registeredCheckNames` is caller-injected
  * (`coreCheckRegistry().map(s => s.name)`, from `apps/cli`, which
- * `aeg-core` cannot import without closing a dependency cycle — same
+ * the process package cannot import without closing a dependency cycle — same
  * reasoning `gate-audience.ts` documents for `GATE_AUDIENCE` itself).
  * Blocking. A row left at the default `repo-own` audience makes no shipped
  * claim and is never checked here.

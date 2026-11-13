@@ -2,11 +2,11 @@
 
 /**
  * verify-brief — real, CI-enforced check that a PR-body brief carries every
- * required section (aeg-governance-hardening task 2). Replaces the
+ * required section. Replaces the
  * `brief-validation` stub in `.github/workflows/archivist.yml`.
  *
  * Thin CLI/Action shim: reads `PR_BODY` from env, derives whether the diff
- * homed in `@attalabs/aeg-core`. The grammar itself — including exact wording —
+ * homed in the process's task-contract module. The grammar itself — including exact wording —
  * lives in `src/brief-validation.ts`, not here. Follows `bin/verify-docs.ts`'s
  * exact shape (chdir to repo root; read env; call pure function; print
  * failures; exit).
@@ -17,7 +17,7 @@
  * `Tier:` field is present.
  *
  * Bypass rule: the exemption is for bodies that are **not briefs**, not for
- * branches that are not tasks. An ordinary non-AEG PR (a one-line dependency
+ * branches that are not tasks. An ordinary non-task PR (a one-line dependency
  * bump) carries no brief and must not be forced to grow one — that is what the
  * bypass protects. But the branch name was the wrong proxy for it: a standalone
  * `fix/*` brief is a brief, and under the old branch-only rule it bypassed every

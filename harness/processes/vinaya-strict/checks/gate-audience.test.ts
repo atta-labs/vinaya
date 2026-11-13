@@ -52,7 +52,7 @@ function binBasenames(): string[] {
   return out.sort()
 }
 
-describe('every gate under aeg-core/bin declares who it is for', () => {
+describe('every gate under checks/standalone declares who it is for', () => {
   it('leaves nothing undeclared — a new gate with no audience fails here, by name', () => {
     const declared = new Set([...Object.keys(GATE_AUDIENCE), ...NON_GATE_BINS])
     const undeclared = binBasenames().filter((b) => !declared.has(b))

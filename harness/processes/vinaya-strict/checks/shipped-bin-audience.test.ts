@@ -9,7 +9,7 @@ import { CORE_CHECK_RING, coreCheckRegistry } from './registry.js'
  *
  * `harness/processes/vinaya-strict/checks/bin/*` is where an adopter-runnable check executable
  * actually sits, so it is where "built but not registered" can hide — which is
- * exactly what `reader-resolvable-prose` is. `aeg-core` cannot import
+ * exactly what `reader-resolvable-prose` is. `gate-audience.ts` cannot import
  * `coreCheckRegistry()` without closing a dependency cycle, so the declaration
  * lives there and the assertion lives here, where the registry is in scope.
  *
@@ -145,10 +145,10 @@ describe('every `shippedAs` names a check that exists', () => {
 })
 
 describe('GATE_AUDIENCE.ring mirrors CORE_CHECK_RING — the only place both are in scope at once', () => {
-  // `registry-scaffold.ts` (aeg-core) reads GATE_AUDIENCE's `ring` to place a
-  // stub row for an aeg-core-bin G2 candidate; `registry.ts`'s `REGISTRY`
+  // `registry-scaffold.ts` (the process module) reads GATE_AUDIENCE's `ring` to place a
+  // stub row for a standalone-bin G2 candidate; `registry.ts`'s `REGISTRY`
   // pairing is the actual source of truth `CORE_CHECK_RING` derives from.
-  // aeg-core cannot import `apps/cli` to check this itself (same
+  // the process module cannot import `apps/cli` to check this itself (same
   // dependency-cycle constraint `shippedAs` runs into above), so the
   // duplicated `ring` value is asserted in sync here, same shape as the
   // `crossMapContradictions` check above.
@@ -174,10 +174,10 @@ describe('GATE_AUDIENCE.ring mirrors CORE_CHECK_RING — the only place both are
 })
 
 describe('CLI_CHECK_RING mirrors CORE_CHECK_RING — the only place both are in scope at once', () => {
-  // `registry-scaffold.ts` (aeg-core) reads CLI_CHECK_RING to place a stub row
+  // `registry-scaffold.ts` (the process module) reads CLI_CHECK_RING to place a stub row
   // for an `harness/processes/vinaya-strict/checks/bin/` G2 candidate (Issue #307); `registry.ts`'s
   // `REGISTRY` pairing is the actual source of truth `CORE_CHECK_RING` derives
-  // from. aeg-core cannot import `apps/cli` to check this itself (same
+  // from. The process module cannot import `apps/cli` to check this itself (same
   // dependency-cycle constraint `GATE_AUDIENCE.ring` runs into above), so the
   // duplicated table is asserted in sync here, same shape as that check.
   it('every CLI_CHECK_RING entry agrees with CORE_CHECK_RING on its ring', () => {

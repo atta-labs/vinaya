@@ -1,14 +1,14 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: branch-topology. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: branch-topology. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkBranchTopology` — mirrors `harness/processes/vinaya-strict/checks/standalone/check-branch-topology.ts`'s
  * input assembly (branch-derived tranche/task id, forge-derived topology)
  * exactly, emitting the check contract instead of human text.
  *
  * Uses `createForgeSource` (`@attalabs/vinaya-sources`) rather than importing
- * `deriveTrancheFromForge`/`resolveRepo` from `@attalabs/aeg-forge-state`
- * directly — the same `@attalabs/aeg-core` + `@attalabs/vinaya-sources`-only
+ * `deriveTrancheFromForge`/`resolveRepo` from the forge-state modules
+ * directly — the same `@attalabs/process-vinaya` + `@attalabs/vinaya-sources`-only
  * dependency boundary `check-coherence.ts`/`check-dispatch-readiness.ts`
  * already establish for this CLI's checks.
  *
@@ -23,13 +23,13 @@ import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/ker
 const CHECK_NAME = 'branch-topology'
 
 /**
- * The `topoPath` string `checkBranchTopology` (`@attalabs/aeg-core`) splices
+ * The `topoPath` string `checkBranchTopology` (`@attalabs/process-vinaya`) splices
  * into its own human-readable messages ("branch X names tranche Y, but
  * <topoPath> does not exist") — never read from disk by anything: topology
  * itself comes from `createForgeSource(...).getTranche()`, a live forge
- * read. `aeg-root/tranches/<tranche>.md` was the pre-forge-migration literal
+ * read. the retired tranche-file directory's per-tranche file was the pre-forge-migration literal
  * this repo used before that source moved to the forge — a path that does
- * not exist even in this repo's own tree any more (verified: no `aeg-root/tranches/`
+ * not exist even in this repo's own tree any more (verified: no retired tranche-file
  * directory here), let alone an adopter's. Kept as a label, not a claim
  * that a file must exist there — described as what it is (a forge-derived
  * topology row for the tranche), so a failure message never sends an

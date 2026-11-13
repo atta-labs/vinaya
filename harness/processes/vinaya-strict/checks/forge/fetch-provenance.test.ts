@@ -22,7 +22,7 @@ mock.module('@octokit/graphql', () => ({
 
 const { fetchProvenance } = await import('./fetch-provenance')
 
-const PROVENANCE_BODY = '### AEG provenance\n- Issue:        #42\n'
+const PROVENANCE_BODY = `${PROVENANCE_HEADING.old}\n- Issue:        #42\n`
 const CURRENT_PROVENANCE_BODY = `${PROVENANCE_HEADING.current}\n- Issue:        #42\n`
 
 describe('fetchProvenance', () => {
@@ -116,7 +116,13 @@ describe('fetchProvenance', () => {
             timelineItems: {
               nodes: [
                 // Mentions this issue but its own provenance targets a different issue — must not match.
-                { source: { number: 200, body: '### AEG provenance\n- Issue:        #99\n', comments: { nodes: [] } } },
+                {
+                  source: {
+                    number: 200,
+                    body: `${PROVENANCE_HEADING.old}\n- Issue:        #99\n`,
+                    comments: { nodes: [] }
+                  }
+                },
                 { source: { number: 201, body: PROVENANCE_BODY, comments: { nodes: [] } } }
               ]
             }

@@ -3,10 +3,10 @@ import { join } from 'node:path'
 
 /**
  * `vinaya.config.json`'s `gateCutovers.objectivesSinceIssue` — the Objectives
- * gate's cutover, read as plain JSON because aeg-core cannot depend on
+ * gate's cutover, read as plain JSON because the process tools cannot depend on
  * `apps/cli`'s zod resolver (`resolveGateCutovers`). Kept impure and OUT of
  * `gate-cutovers.ts` (which is deliberately pure — the caller resolves config
- * and passes the value in); the two aeg-core authoring bins (`open-issue.ts`,
+ * and passes the value in); the two authoring bins (`open-issue.ts`,
  * `verify-brief.ts`) ARE such callers and share this one reader rather than
  * each declaring their own (the symbol-collision gate refuses a name that
  * resolves to two source files).

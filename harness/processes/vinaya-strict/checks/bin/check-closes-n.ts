@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: closes-n. Thin adapter over `@attalabs/aeg-core`'s `checkClosesNTopology`
+ * Core check: closes-n. Thin adapter over `@attalabs/process-vinaya`'s `checkClosesNTopology`
  * — mirrors `harness/processes/vinaya-strict/checks/standalone/verify-coherence.ts --closes-n`'s input
  * assembly (BRANCH/PR_BODY env, the branch's own tranche, the reverse
  * `Closes #N` lookup via `fetchTaskIssueRefs`), emitting the check contract
@@ -10,8 +10,8 @@
  * Narrower than `--closes-n`'s own tranche load: that CLI's
  * `loadTrancheFiles(null, slug)` merges an on-disk topology FILE with the
  * forge and falls back to disk when the forge is unavailable. This
- * adapter's dependency boundary is `@attalabs/aeg-core` + `@attalabs/vinaya-sources`
- * only (no `@attalabs/aeg-forge-state` file-loader import) — it derives the
+ * adapter's dependency boundary is `@attalabs/process-vinaya` + `@attalabs/vinaya-sources`
+ * only (no the forge-state modules file-loader import) — it derives the
  * branch's own tranche from the forge alone (`createForgeSource`), the same
  * forge-only scoping `check-coherence.ts`/`check-dispatch-readiness.ts`
  * already use. A documented, honest narrowing versus `verify-coherence.ts

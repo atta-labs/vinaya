@@ -97,7 +97,7 @@ Every condition below holds before step 0, or the task does not start — the re
    ```
    ```
    gh pr view <N> --json comments \
-     | jq '.comments[].body | select(test("AEG.*provenance|provenance.*task"; "i"))'
+     | jq '.comments[].body | select(test("provenance.*task"; "i"))'
    ```
 5. **The previous tranche is archived.** For each product the brief's `Project:` names, no prior tranche for that product still has an open Milestone with all its task PRs merged (a tranche planned before the forge-native cutover: `tranche-model.md` §4). If one does → *"Product `<X>`'s previous tranche `<name>` is complete but not archived — the Tranche Archivist runs before new work on this product. Dispatch it first."* No prior tranche passes trivially. See `doctrine/contracts/tranche-archivist-planner.md`.
 6. **The branch name matches the task.** The branch suffix in the Step 0 you were handed literal-matches this task's forge-derived id `<n>` — character for character: no added prefix, no case change, no truncation. If not → *"The Step 0 branch name `task/<tranche>/<X>` doesn't match this task's topology ID `<Y>` — stopping here; the Planner/Principal settles which name is right."*

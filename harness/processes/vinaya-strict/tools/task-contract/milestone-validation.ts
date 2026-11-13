@@ -28,7 +28,7 @@ export type MilestoneShapeResult =
 
 /**
  * Line-anchored, `**`-optional on both sides, same shape as `PROJECT_FIELD`
- * (`@attalabs/aeg-forge-state`'s `list-tasks.ts`) — the reference grammar this
+ * (the forge-state `list-tasks.ts`) — the reference grammar this
  * field is deliberately matched against rather than approximated. Un-global
  * and `.exec`'d once: first match wins.
  */

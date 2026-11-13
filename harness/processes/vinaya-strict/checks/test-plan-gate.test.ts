@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
+import { REGION_PREFIX } from '../tools/legacy-markers'
 import { renderLiveRecordBlock } from '../tools/task-contract/live-record'
 import { evaluateTestPlanGate } from './test-plan-gate'
 
@@ -148,7 +149,7 @@ describe('evaluateTestPlanGate — the [agent] half is never graded here (task 1
 })
 
 /**
- * The own-PR fixture rule (`aeg-root/enforcement.md`): a pull request that
+ * The own-PR fixture rule (`doctrine/enforcement.md`): a pull request that
  * adds a check reading a PR body ships a test running that check over THAT
  * PR's own body. A body-reading gate is the one class whose real input
  * exists the moment the PR opens and is never exercised by a synthetic
@@ -158,9 +159,9 @@ describe('evaluateTestPlanGate — the [agent] half is never graded here (task 1
  *
  * `pr-body-393.md` is a real merged PR's live body, captured verbatim from
  * the forge with `gh pr view --json body -q .body`. It carries everything a
- * real body carries — the machine-emitted `AEG:EVIDENCE`/`AEG:TOKENS`
+ * real body carries — the machine-emitted `VINAYA:EVIDENCE`/`VINAYA:TOKENS`
  * blocks, three ticked `[agent]` items, a ticked `[principal]` item inside
- * the real `AEG:TEST-PLAN` anchor, and the brief pasted below in its
+ * the real `VINAYA:TEST-PLAN` anchor, and the brief pasted below in its
  * `<details>` block. That last part is the load-bearing one: the pasted
  * brief carries its own Test Plan with an UNTICKED `[principal]` item of the
  * same shape (line 357), so a gate reading anything but the anchored
@@ -193,7 +194,7 @@ describe("evaluateTestPlanGate — a real PR's own body (task 12, #387)", () => 
     // own Test Plan section with an UNTICKED `[principal]` item of the same
     // shape. If the gate read those too, the real, ticked section could
     // never satisfy it.
-    expect(LIVE).toContain('<!-- AEG:TEST-PLAN:START -->')
+    expect(LIVE).toContain(`<!-- ${REGION_PREFIX.old}:TEST-PLAN:START -->`)
     expect(evaluateTestPlanGate(LIVE, OWN_BRANCH).verdict).toBe('pass')
   })
 })
@@ -205,7 +206,7 @@ describe("evaluateTestPlanGate — the brief's [live] lines at the pull request 
   const PLAN = '## 9. Test Plan\n\n- [x] **[principal]** looked at it\n'
   const live = { liveCommands: [COMMAND], head: HEAD }
 
-  it('FAILs, pending like an unticked [principal] item, when the body carries no AEG:LIVE record', () => {
+  it('FAILs, pending like an unticked [principal] item, when the body carries no live-run record', () => {
     const result = evaluateTestPlanGate(PLAN, TASK_BRANCH, live)
     expect(result.verdict).toBe('fail')
     const text = result.messages.join('\n')

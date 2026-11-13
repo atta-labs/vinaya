@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'bun:test'
+import { FROZEN_BRIEF_MARKER } from '../../tools/legacy-markers'
 
 /**
  * CLI-level coverage for the two behaviors that live in the shim rather than in
@@ -23,11 +24,11 @@ const CONFIGURED_PRINCIPAL = 'daniboomerang'
 
 /** A complete standalone-fix brief: every required section, and no `Closes #N` (it has no task Issue). */
 const FIX_BRIEF = `**For:** Sonnet (coding-agent CLI, dispatched locally)
-**Project:** aeg-core
+**Project:** sample-package
 
 ## Summary
 
-Standalone fix — not an AEG task.
+Standalone fix — not a task.
 
 ## Test plan
 
@@ -43,7 +44,7 @@ One package.
 
 ## Technical surface map
 
-- \`packages/aeg-core/src/brief-validation.ts\`
+- \`packages/core/src/brief-validation.ts\`
 
 ## Pre-flight
 
@@ -54,7 +55,7 @@ git worktree add .worktrees/fix/x -b fix/x origin/main
 
 ## Documentation-update list
 
-- \`aeg-root/state-machine.md\`
+- \`doctrine/state-machine.md\`
 
 ## Stop conditions
 
@@ -69,7 +70,7 @@ covered by a stop condition, choose the most reasonable option.
 /** The exact live failure shape: a real brief whose §7 documentation-update list is absent. */
 const FIX_BRIEF_NO_DOC_LIST = FIX_BRIEF.replace(/## Documentation-update list[\s\S]*?(?=## Stop conditions)/, '')
 
-/** An ordinary non-AEG PR body — the exemption the bypass exists to protect. */
+/** An ordinary non-task PR body — the exemption the bypass exists to protect. */
 const DEPENDENCY_BUMP = `## Summary
 
 Bumps \`zod\` from 3.23.8 to 3.24.1.
@@ -232,8 +233,8 @@ describe('verify-brief — Objectives fetch failure on a task branch (review rou
 })
 
 describe('verify-brief — grades the dispatched Issue comment, not PR_BODY, on a task branch (plan-brief-v1 task 3, #428)', () => {
-  it('grades the frozen aeg:brief:v1 Issue comment body instead of PR_BODY when the two disagree', () => {
-    const commentBody = `<!-- aeg:brief:v1 -->\nBrief hash: abc123\n${TASK_BRIEF_CLOSING_12}`
+  it('grades the frozen brief Issue comment body instead of PR_BODY when the two disagree', () => {
+    const commentBody = `<!-- ${FROZEN_BRIEF_MARKER.old}:v1 -->\nBrief hash: abc123\n${TASK_BRIEF_CLOSING_12}`
     const path = fakeGhWithComments(commentBody)
     // PR_BODY carries only `Closes #12` — nothing else. If verify-brief
     // graded PR_BODY directly (the old behavior) this would fail on every
@@ -243,7 +244,7 @@ describe('verify-brief — grades the dispatched Issue comment, not PR_BODY, on 
     expect(output).toMatch(/PASS/)
   })
 
-  it('fails with a clear message, never silently falling back to PR_BODY, when the Issue carries no aeg:brief:v1 comment', () => {
+  it('fails with a clear message, never silently falling back to PR_BODY, when the Issue carries no frozen brief comment', () => {
     const path = fakeGhWithComments('some other unrelated comment, no marker line')
     const { code, output } = runCli([], { BRANCH: 'task/iter/12', PR_BODY: 'Closes #12\n', PATH: path })
     expect(code).toBe(1)

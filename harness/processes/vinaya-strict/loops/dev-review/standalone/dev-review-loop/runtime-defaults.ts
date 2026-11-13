@@ -103,7 +103,7 @@ import { fetchPrBody } from './developer-dispatch.js'
 import { defaultPatchIdOf } from './git-defaults.js'
 
 /**
- * O1/O3: `assessRound`'s own `'confidence'` pause (`packages/aeg-core`, out
+ * O1/O3: `assessRound`'s own `'confidence'` pause (the process package, out
  * of this task's Surface — the guard itself is untouched) carries no
  * `detail` at all for either branch that reaches it (a re-asked turn that
  * never reported one; a reported value still under 50 after the loop's one
@@ -121,7 +121,7 @@ export function describeConfidencePauseDetail(confidence: Confidence): string {
 
 /**
  * O1/O3: the `'reappearance'`/`'escalation'` pauses
- * `assessVerdicts` decides (`packages/aeg-core`, out of Surface) carry no
+ * `assessVerdicts` decides (the process package, out of Surface) carry no
  * `detail` either, though the round's own `findings_compared` event (Boundary:
  * read here, never recomputed — the comparison itself stays entirely in
  * `assessRound`) already names exactly which finding ids reappeared, and the

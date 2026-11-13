@@ -35,7 +35,7 @@ describe('which changed paths the selector can judge', () => {
       '.changeset/quiet-fox.md',
       'apps/cli/src/lib/widget.ts',
       'apps/cli/tests/widget.test.ts',
-      'packages/aeg-core/src/brief.ts',
+      'packages/core/src/brief.ts',
       'packages/widgets/src/view.tsx'
     ]) {
       expect(isSelectablePath(path), path).toBe(true)
@@ -45,11 +45,11 @@ describe('which changed paths the selector can judge', () => {
   it('refuses every other kind of path', () => {
     for (const path of [
       '.github/workflows/ci.yml',
-      'aeg-root/enforcement.md',
+      'doc-root/enforcement.md',
       'apps/cli/specs/self-hosting.md',
       'apps/cli/package.json',
       'harness/processes/vinaya-strict/fixtures/repo/src/index.ts',
-      'packages/aeg-core/src/fixtures/brief.ts',
+      'packages/core/src/fixtures/brief.ts',
       'harness/processes/vinaya-strict/integration/test-preload.ts',
       'apps/cli/tests/ci-shards/shard-1.txt',
       'bunfig.toml',
@@ -58,9 +58,9 @@ describe('which changed paths the selector can judge', () => {
       'scripts/build.ts',
       'apps/cli/scripts/bundle-doctrine.ts',
       'apps/cli/scripts/bundle-doctrine.test.ts',
-      'packages/aeg-core/bin/verify-dispatch.ts',
+      'packages/core/bin/verify-dispatch.ts',
       'apps/cli/vitest.config.ts',
-      'packages/aeg-core/vitest.config.ts',
+      'packages/core/vitest.config.ts',
       'apps/cli/index.ts',
       'apps/cli/tsconfig.json',
       'apps/cli/src/lib/tool.py'
@@ -233,7 +233,7 @@ describe('eligibility follows the workspace members discovery finds', () => {
       'vinaya.config.json',
       'scripts/build.ts',
       'apps/cli/scripts/bundle-doctrine.ts',
-      'packages/aeg-core/bin/verify-dispatch.ts',
+      'packages/core/bin/verify-dispatch.ts',
       'apps/cli/index.ts'
     ]
     for (const path of judged)

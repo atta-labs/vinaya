@@ -19,13 +19,13 @@ describe('parseEnforcementRegistry', () => {
 
 | CI check | Summary | Category | Re-verifies | implementation |
 |---|---|---|---|---|
-| Coherence oracle | Ever found a task marked done that never merged? | ci | Plan/forge drift | \`packages/aeg-core/bin/verify-coherence.ts\` |
+| Coherence oracle | Ever found a task marked done that never merged? | ci | Plan/forge drift | \`packages/core/bin/verify-coherence.ts\` |
 
 ## Ring 2 — Audit (drift from any writer, any era)
 
 | Mechanism | Summary | Category | Runs | Catches | implementation |
 |---|---|---|---|---|---|
-| Post-merge archivist | Ever wanted a permanent record of what shipped? | event | On merge | Audit record | \`packages/aeg-core/bin/archive-task.ts\` |
+| Post-merge archivist | Ever wanted a permanent record of what shipped? | event | On merge | Audit record | \`packages/core/bin/archive-task.ts\` |
 | Staleness audits | Ever had docs contradict a decision? | event | Dispatched periodically | Doc drift |  |
 `
     const rows = parseEnforcementRegistry(fixture)
@@ -55,13 +55,13 @@ describe('parseEnforcementRegistry', () => {
     expect(ring1?.action).toBe('Coherence oracle')
     expect(ring1?.summary).toBe('Ever found a task marked done that never merged?')
     expect(ring1?.category).toBe('ci')
-    expect(ring1?.implementation).toBe('packages/aeg-core/bin/verify-coherence.ts')
+    expect(ring1?.implementation).toBe('packages/core/bin/verify-coherence.ts')
 
     const ring2Rows = rows.filter((r) => r.ring === 'ring2')
     expect(ring2Rows).toHaveLength(2)
     expect(ring2Rows[0]?.summary).toBe('Ever wanted a permanent record of what shipped?')
     expect(ring2Rows[0]?.category).toBe('event')
-    expect(ring2Rows[0]?.implementation).toBe('packages/aeg-core/bin/archive-task.ts')
+    expect(ring2Rows[0]?.implementation).toBe('packages/core/bin/archive-task.ts')
     expect(ring2Rows[1]?.action).toBe('Staleness audits')
     expect(ring2Rows[1]?.category).toBe('event')
     expect(ring2Rows[1]?.implementation).toBe('')
@@ -119,7 +119,7 @@ describe('parseEnforcementRegistry', () => {
 
 | Action | Summary | Category | Gate | What must be true | Audience | implementation |
 |---|---|---|---|---|---|---|
-| Shipped check | Ever? | hook | Gate | Something | product | \`packages/aeg-core/bin/verify-dispatch.ts\` |
+| Shipped check | Ever? | hook | Gate | Something | product | \`packages/core/bin/verify-dispatch.ts\` |
 | Repo-only hook | Ever? | hook | Gate | Something | repo-own | \`harness/kernel/gates/checks/runner.ts\` |
 | Malformed cell | Ever? | hook | Gate | Something | Product | \`harness/kernel/gates/checks/runner.ts\` |
 | Blank cell | Ever? | hook | Gate | Something |  | \`harness/kernel/gates/checks/runner.ts\` |

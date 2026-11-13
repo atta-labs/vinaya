@@ -1,11 +1,17 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { COMMENT_MARKER_PREFIX } from '../legacy-markers'
 import { parseTranche } from './parse-tranche'
+
+// The recorded tranche fixture still carries the retired project and tranche names.
+const OLD = COMMENT_MARKER_PREFIX.old
+const OLD_CORE = `${OLD}-core`
+const OLD_UI_TRANCHE = `${OLD}-ui-v1`
 
 const FIXTURES = join(__dirname, './fixtures')
 const heraldMd = readFileSync(join(FIXTURES, 'herald-onto-engine.md'), 'utf8')
-const aegUiMd = readFileSync(join(FIXTURES, 'aeg-ui-v1.md'), 'utf8')
+const retiredUiMd = readFileSync(join(FIXTURES, `${OLD_UI_TRANCHE}.md`), 'utf8')
 
 describe('parseTranche: herald-onto-engine', () => {
   const iter = parseTranche(heraldMd)
@@ -18,8 +24,8 @@ describe('parseTranche: herald-onto-engine', () => {
     // The rename cannot reach into git history, and an adopter's own topology
     // files are not ours to migrate. A refused marker would surface as a
     // nameless tranche, not an error — silence is why this is pinned.
-    expect(parseTranche('# Iteration: aeg-forge-state-v1 — June 2026\n').name).toBe('aeg-forge-state-v1')
-    expect(parseTranche('# Tranche: aeg-forge-state-v1 — June 2026\n').name).toBe('aeg-forge-state-v1')
+    expect(parseTranche('# Iteration: sample-tranche-v1 — June 2026\n').name).toBe('sample-tranche-v1')
+    expect(parseTranche('# Tranche: sample-tranche-v1 — June 2026\n').name).toBe('sample-tranche-v1')
   })
 
   it('defaults to active when the lifecycle marker is absent (pre-§11 file)', () => {
@@ -81,11 +87,11 @@ describe('parseTranche: herald-onto-engine', () => {
   })
 })
 
-describe('parseTranche: aeg-ui-v1', () => {
-  const iter = parseTranche(aegUiMd)
+describe('parseTranche: a recorded tranche with multi-project rows', () => {
+  const iter = parseTranche(retiredUiMd)
 
   it('extracts the tranche name', () => {
-    expect(iter.name).toBe('aeg-ui-v1')
+    expect(iter.name).toBe(OLD_UI_TRANCHE)
   })
 
   it('reads an explicit `Lifecycle: active` marker', () => {
@@ -96,10 +102,10 @@ describe('parseTranche: aeg-ui-v1', () => {
     expect(iter.tasks.map((t) => t.id)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8'])
   })
 
-  it('aeg-core multi-project rows resolve their projects', () => {
-    expect(iter.tasks.find((t) => t.id === '1')?.projects).toEqual(['aeg-core'])
-    expect(iter.tasks.find((t) => t.id === '3')?.projects).toEqual(['aeg', 'aeg-core'])
-    expect(iter.tasks.find((t) => t.id === '7')?.projects).toEqual(['aeg-core', 'aeg'])
+  it('core multi-project rows resolve their projects', () => {
+    expect(iter.tasks.find((t) => t.id === '1')?.projects).toEqual([OLD_CORE])
+    expect(iter.tasks.find((t) => t.id === '3')?.projects).toEqual([OLD, OLD_CORE])
+    expect(iter.tasks.find((t) => t.id === '7')?.projects).toEqual([OLD_CORE, OLD])
   })
 
   it('multi-conflict edges parse', () => {

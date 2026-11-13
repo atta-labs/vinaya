@@ -7,7 +7,7 @@
  * The first cut reused `deriveWorkspacePackageDomains` (`blast-radius-domains.ts`),
  * which deliberately collapses to `packages/*` members only — correct for
  * that module's own collision-domain purpose, wrong here: it silently
- * exempted `apps/cli`, a real `@attalabs/aeg-core` consumer, from a rule
+ * exempted `apps/cli`, a real `@attalabs/process-vinaya` consumer, from a rule
  * that promises "every workspace package" (found live reviewing this PR's
  * own diff). This module resolves every workspace glob instead —
  * `apps/*` and `packages/*` alike — via `resolveWorkspaceEntry`, the same
@@ -26,7 +26,7 @@ import { resolveWorkspaceEntry } from './blast-radius-domains'
 export type PackageManifest = { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
 
 /**
- * Every workspace member directory (`apps/cli`, `packages/aeg-core`, …),
+ * Every workspace member directory (`apps/cli`, `packages/core`, …),
  * resolved from `workspaces` (positive entries minus any `!`-negated ones,
  * same semantics as `deriveWorkspacePackageDomains`) — but NOT collapsed to
  * `packages/*` only, since a real consumer can live anywhere in the
@@ -52,7 +52,7 @@ export function deriveWorkspaceMemberDirs(workspaces: string[], listDirs: (dir: 
 
 /**
  * Builds `checkConsumerTests`'s `consumersOf` callback: for a package `pkg`
- * (as named in a brief's `§4`, e.g. `packages/aeg-core/` → `'aeg-core'`),
+ * (as named in a brief's `§4`, e.g. `packages/core/` → `'core'`),
  * every workspace member directory (self excluded) whose own manifest lists
  * `@attalabs/<pkg>` in `dependencies` or `devDependencies`.
  */

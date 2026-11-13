@@ -16,6 +16,7 @@ import {
   validateForgeWrite
 } from '../../task-contract/forge/forge-write'
 import { checkBareDigits } from '../../body-bare-digits-logic'
+import { FROZEN_BRIEF_MARKER } from '../../legacy-markers'
 import type { CheckError } from '../../../../../kernel/gates/checks/contract'
 
 const RETRY_CREATE = 'vinaya-pr create --validate-only …'
@@ -142,7 +143,7 @@ function fetchPrForgeContext(prRef: string): { changedFiles: string[]; branch: s
  * expects to find on the Issue, and passing it through would ship a body
  * shaped for a mechanism that no longer runs.
  */
-const LEGACY_BRIEF_MARKERS = ['<!-- aeg:brief:start -->', '<!-- aeg:brief:end -->']
+const LEGACY_BRIEF_MARKERS = [`<!-- ${FROZEN_BRIEF_MARKER.old}:start -->`, `<!-- ${FROZEN_BRIEF_MARKER.old}:end -->`]
 
 /**
  * Line-anchored, not a whole-body substring search: the real, structural

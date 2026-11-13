@@ -1,13 +1,15 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { COMMENT_MARKER_PREFIX } from '../../legacy-markers'
 import { parseLedger } from './parse-ledger'
 
 const FIXTURES = join(__dirname, './fixtures')
-const aegUiTokensMd = readFileSync(join(FIXTURES, 'aeg-ui-v1-tokens.md'), 'utf8')
+const LEDGER_FIXTURE = `${COMMENT_MARKER_PREFIX.old}-ui-v1-tokens.md`
+const sampleTokensMd = readFileSync(join(FIXTURES, LEDGER_FIXTURE), 'utf8')
 
-describe('parseLedger: aeg-ui-v1-tokens.md (sibling-file form)', () => {
-  const rows = parseLedger(aegUiTokensMd)
+describe('parseLedger: the ledger fixture (sibling-file form)', () => {
+  const rows = parseLedger(sampleTokensMd)
 
   it('parses all 4 rows in source order — re-entry rows preserved', () => {
     expect(rows).toHaveLength(4)

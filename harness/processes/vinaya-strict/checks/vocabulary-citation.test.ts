@@ -100,7 +100,7 @@ describe('evaluateVocabularyCitation', () => {
   it('records a pattern whose sample fails to self-match as vacuous, and skips its scope entirely', () => {
     // Deliberately not shaped like any real retired-vocabulary token — this
     // repo's own `retired-vocabulary.test.ts` sweeps `['.']` repo-wide, and a
-    // realistic-looking fixture in an aeg-core file not on its own EXEMPT
+    // realistic-looking fixture in a process-package file not on its own EXEMPT
     // list would trip that unrelated suite.
     const patterns: VocabularyPattern[] = [
       { id: 'broken', pattern: 'ZZZ_UNMATCHABLE_TOKEN', scope: ['.'], sample: 'ZZZ_UNMATCHABLE_TOKEN' }
@@ -116,14 +116,14 @@ describe('evaluateVocabularyCitation', () => {
       {
         id: 'harness-claude-path',
         pattern: '\\.claude/hooks/',
-        scope: ['aeg-root'],
+        scope: ['doc-root'],
         sample: 'wired via .claude/hooks/check-skill.sh',
         exemptTableRow: true
       }
     ]
     const hits = [
       {
-        file: 'aeg-root/enforcement.md',
+        file: 'doc-root/enforcement.md',
         line: 37,
         content: '| Editing a governed file | … | `.claude/hooks/check-skill.sh` |'
       }
@@ -137,14 +137,14 @@ describe('evaluateVocabularyCitation', () => {
       {
         id: 'harness-claude-path',
         pattern: '\\.claude/hooks/',
-        scope: ['aeg-root'],
+        scope: ['doc-root'],
         sample: 'wired via .claude/hooks/check-skill.sh',
         exemptTableRow: true
       }
     ]
     const hits = [
       {
-        file: 'aeg-root/some-doc.md',
+        file: 'doc-root/some-doc.md',
         line: 12,
         content: 'Every agent must run .claude/hooks/check-skill.sh before editing.'
       }
@@ -159,12 +159,12 @@ describe('evaluateVocabularyCitation', () => {
       {
         id: 'harness-claude-path',
         pattern: '\\.claude/hooks/',
-        scope: ['aeg-root'],
+        scope: ['doc-root'],
         sample: 'wired via .claude/hooks/check-skill.sh',
         exemptTableRow: true
       }
     ]
-    const hits = [{ file: 'aeg-root/enforcement.md', line: 5, content: '  | row | `.claude/hooks/x.sh` |' }]
+    const hits = [{ file: 'doc-root/enforcement.md', line: 5, content: '  | row | `.claude/hooks/x.sh` |' }]
     const result = evaluateVocabularyCitation(patterns, fakeGrep({ '\\.claude/hooks/': hits }), ALWAYS_MATCHES)
     expect(result.findings).toEqual([])
   })

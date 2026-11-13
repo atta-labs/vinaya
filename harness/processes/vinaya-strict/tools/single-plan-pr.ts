@@ -10,6 +10,11 @@
  * touched files, every other open PR's touched files) and pass them in.
  */
 
+import { escapeForPattern, LEGACY_TRANCHES_DIR } from './legacy-paths'
+
+/** An active tranche topology file: directly under the retired tranche-file directory. */
+const TOPOLOGY_PATH = new RegExp(`^${escapeForPattern(LEGACY_TRANCHES_DIR)}/([^/]+)\\.md$`)
+
 /**
  * Parses a tranche slug from a touched file path, when that path is an
  * active (non-`completed/`) tranche topology file. Returns `null` for
@@ -17,7 +22,7 @@
  * which is a topology file the single-plan-PR guard (below) cares about.
  */
 export function trancheSlugFromTopologyPath(path: string): string | null {
-  const m = path.match(/^aeg-root\/tranches\/([^/]+)\.md$/)
+  const m = path.match(TOPOLOGY_PATH)
   if (!m) return null
   const slug = m[1] as string
   if (slug === 'README' || slug.endsWith('.tokens')) return null
@@ -30,7 +35,7 @@ export type OpenPrFiles = { number: number; files: string[] }
  * Single-plan-PR guard: refuses a plan-branch diff
  * that touches a tranche's topology file when another OPEN PR's diff
  * already touches that SAME tranche's topology file. Ends the plan-PR
- * race that produced two concurrent plan PRs for `aeg-governance-hardening`
+ * race that produced two concurrent plan PRs for a single tranche
  * itself — each cut from `origin/main` unaware of the other's
  * newly-cut Issue.
  *

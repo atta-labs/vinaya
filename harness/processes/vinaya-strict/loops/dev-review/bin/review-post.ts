@@ -7,7 +7,7 @@ import { parseChangedLineRanges } from '../../../../../kernel/connectors/git/cha
  * resolves the PR's real head itself, posts the comment, and refuses to
  * exit 0 unless its own post re-parses clean through the SAME
  * `extractCodeReviewVerdict`/`extractSecurityReviewVerdict` functions
- * `checkReviewGate` calls (`@attalabs/aeg-core`'s `verdict-extraction.ts` —
+ * `checkReviewGate` calls (`@attalabs/process-vinaya`'s `verdict-extraction.ts` —
  * reused, never re-implemented, so this command cannot silently drift from
  * what the merge gate actually checks).
  *
@@ -140,7 +140,7 @@ export type Finding = { severity: string; location: string; description: string 
 export class FindingsParseError extends Error {}
 
 // The full severity vocabulary each role's findings file may use — the
-// canonical scale @attalabs/aeg-core's evaluator itself orders against
+// canonical scale @attalabs/process-vinaya's evaluator itself orders against
 // (`CODE_REVIEW_SEVERITY_ORDER`/`SECURITY_SEVERITY_ORDER`), reused here
 // rather than a second local copy that could drift.
 const CODE_REVIEW_SEVERITIES = CODE_REVIEW_SEVERITY_ORDER
@@ -446,7 +446,7 @@ const CODE_REVIEW_VERDICT_TEXT: Record<CodeReviewVerdict, string> = {
 
 /**
  * A finding's id and re-review state, read from its description through the
- * shared `parseFindingState` (`@attalabs/aeg-core`) — the single definition of
+ * shared `parseFindingState` (`@attalabs/process-vinaya`) — the single definition of
  * the `F<n> <class>[ <state>]:` grammar this repo carries, reused here rather
  * than a second local copy (Traps to avoid). `id` is `null` when the
  * description carries no `F<n>` head at all (an id-less new finding is never a
@@ -459,13 +459,13 @@ function findingIdState(description: string): { id: string | null; state: string
 /**
  * The command decides, not the caller. `REQUEST_CHANGES` iff a finding at or
  * above `policy.codeReviewThreshold` is present, decided by
- * `@attalabs/aeg-core`'s pure evaluator (`evaluateCodeReview`) — no literal
+ * `@attalabs/process-vinaya`'s pure evaluator (`evaluateCodeReview`) — no literal
  * `'BLOCKER'` decision here any more:
  * which severities block is repository policy, resolved once by the
  * caller and passed in. The severity vocabulary itself is unchanged — a
  * finding whose re-review state is `resolved` keeps its severity for the
  * record but never drives the verdict — a fix-claimed or reproduced blocking
- * finding still does. `consequentialFindings` (`@attalabs/aeg-core`) is the
+ * finding still does. `consequentialFindings` (`@attalabs/process-vinaya`) is the
  * SAME filter the merge gate and the loop's publication self-check apply (O4),
  * so all three agree about which findings a verdict comment counts.
  */
@@ -1380,7 +1380,7 @@ export type ObjectivesResolution =
   | { kind: 'skip' }
 
 /**
- * Uses `@attalabs/aeg-core`'s `resolveObjectivesSource` — the one function
+ * Uses `@attalabs/process-vinaya`'s `resolveObjectivesSource` — the one function
  * `check-review-gate.ts`'s `resolveObjectivesVersion` also switches on
  * — to decide WHERE this PR's objectives come from:
  * `Closes #N`'s Issue when it resolves and is at/above `OBJECTIVES_SINCE_ISSUE`,

@@ -17,7 +17,7 @@ import { reviewPolicy } from '../standalone/dev-review-loop/developer-dispatch.j
  *           `behind main: unknown — fetch origin/<base> first` when git
  *           cannot measure the distance at all
  *
- * The decision itself is `deriveReviewStatus` (`@attalabs/aeg-core`, pure) —
+ * The decision itself is `deriveReviewStatus` (`@attalabs/process-vinaya`, pure) —
  * this shim does only the I/O: one `gh pr view` for the comments, head and
  * base, and one `git rev-list --count`. Verdict comments and their
  * `Judged head:` binding are read through the SAME extractors `review-gate`

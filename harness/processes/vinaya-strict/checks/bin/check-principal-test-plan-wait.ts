@@ -7,7 +7,7 @@
  * mergeable rather than requiring a reviewer to notice a red `review-gate`
  * line buried among several other reasons that check can fail.
  *
- * Reuses `evaluateTestPlanGate` (`@attalabs/aeg-core`) — the exact same
+ * Reuses `evaluateTestPlanGate` (`@attalabs/process-vinaya`) — the exact same
  * tick-detection logic `check-test-plan.ts` runs — rather than
  * reimplementing the checkbox scan, so the two checks can never disagree
  * about which lines are unticked. Only the `[principal]`-unticked branch of

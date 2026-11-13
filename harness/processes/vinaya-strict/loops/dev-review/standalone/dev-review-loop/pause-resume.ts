@@ -258,7 +258,7 @@ export function renderPauseComment(
  * fact already lives: `developerBranchFor` resolved the Issue's labels and
  * title once, at dispatch, and wrote the answer into the branch name —
  * `task/<tranche>/<n>` for a tranche task, `task/issue-<n>` for a backlog one
- * (`parseTaskBranchIdentity`, `@attalabs/aeg-core`). Reading it back costs no
+ * (`parseTaskBranchIdentity`, `@attalabs/process-vinaya`). Reading it back costs no
  * forge call and cannot disagree with the branch the run is actually on. A
  * branch that parses as neither falls back to the Issue form, the only address
  * derivable from a task number alone.
@@ -935,7 +935,7 @@ export function isDriverPidAlive(pid: number): boolean {
   }
 }
 
-/** One loop-prefixed stderr line, the same `vinaya dev-review-loop: ` prefix the CLI shim's own argv-validation messages use — no new Vinaya Log event kind (`packages/aeg-core` is out of this module's declared Surface). */
+/** One loop-prefixed stderr line, the same `vinaya dev-review-loop: ` prefix the CLI shim's own argv-validation messages use — no new Vinaya Log event kind (the process package is out of this module's declared Surface). */
 export function printDriverLockLine(message: string): void {
   process.stderr.write(`vinaya dev-review-loop: ${message}\n`)
 }
@@ -1146,7 +1146,7 @@ export function writeEscalationRecord(facts: EscalationFacts): EscalationRecord 
   const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
   const deps = defaultControlStoreDeps(controlStoreRoot)
   // O1/O3: read BEFORE the write below, so a rerun of the identical pause
-  // instance — which `writeEscalation` (`@attalabs/aeg-core`) answers with
+  // instance — which `writeEscalation` (`@attalabs/process-vinaya`) answers with
   // this SAME canonical id — is told apart from a genuinely first write.
   // Only the latter is a real `raised` occurrence.
   const existedBefore = readEscalation(deps, facts.task, escalationId).status === 'ok'
@@ -1204,7 +1204,7 @@ export function writeEscalationRecord(facts: EscalationFacts): EscalationRecord 
 /**
  * The durable escalation record for `escalationId`, or `null` — never
  * thrown; a caller that needs to distinguish absent from corrupt reads
- * `readEscalation` from `@attalabs/aeg-core` directly. Takes the id itself,
+ * `readEscalation` from `@attalabs/process-vinaya` directly. Takes the id itself,
  * never `(round, head)` alone (code review, round 2, MEDIUM) — a colliding
  * escalation can live at a disambiguating `-<n>` suffix, so a caller reads
  * `PauseState.escalationId` (falling back to `escalationIdFor(task, round,

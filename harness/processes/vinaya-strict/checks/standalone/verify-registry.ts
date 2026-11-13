@@ -2,16 +2,16 @@
 
 /**
  * verify-registry — G1–G6, the deterministic checks that make
- * `harness/processes/vinaya-strict/doctrine/enforcement.md`'s three ring tables load-bearing (aeg-core-purity
+ * `harness/processes/vinaya-strict/doctrine/enforcement.md`'s three ring tables load-bearing (purity
  * discipline: this is the thin I/O shim; the pure evaluators live in
- * `../src/registry-parse.ts` / `../src/registry-checks.ts`).
+ * `tools/registry-parse.ts` / `checks/registry-checks.ts`).
  *
  * Rollout policy: G1 and G2 (both re-graded blocking in this same wave)
  * and G3/G4/G5 are blocking: the process exits non-zero if any of them
  * returns `'fail'`.
  *
  * G6 does NOT run from this standalone bin: it needs `coreCheckRegistry()`,
- * which lives in `apps/cli` and `aeg-core` cannot import without closing a
+ * which lives in `apps/cli` and the process package cannot import without closing a
  * dependency cycle (same reasoning `gate-audience.ts` documents). Run
  * `harness/processes/vinaya-strict/checks/bin/check-registry-gates.ts` (or `vinaya check
  * registry-gates`) for the full G1–G6 gate set.
@@ -21,7 +21,7 @@
  * and prints what it inserted. Deliberately only here, never in the shipped
  * `check-registry-gates.ts` (apps/cli) — adopter checks stay read-only over
  * doctrine; this repo's own maintainers run the writer directly, from
- * aeg-core, exactly like every other `bin/verify-*.ts` gate. Without the
+ * the process package, exactly like every other `standalone/verify-*.ts` gate. Without the
  * flag, behavior is unchanged.
  *
  * Usage: bun harness/processes/vinaya-strict/checks/standalone/verify-registry.ts [--scaffold]
@@ -75,7 +75,7 @@ function existsFn(path: string): boolean {
 
 /**
  * `.husky/*` (excluding the `_` internal dir), `.claude/hooks/*.sh`,
- * `packages/aeg-core/bin/*.ts`, and `harness/processes/vinaya-strict/checks/bin/*.ts` (each
+ * `harness/processes/vinaya-strict/checks/standalone/*.ts`, and `harness/processes/vinaya-strict/checks/bin/*.ts` (each
  * excluding `*.test.ts` — tests aren't hooks/CLIs that enforcement.md would
  * ever register; including them would flood G2 with noise the brief's own
  * dig never contemplated). The fourth location (Issue #307) is where most

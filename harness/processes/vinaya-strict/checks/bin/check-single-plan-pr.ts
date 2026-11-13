@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: single-plan-pr. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: single-plan-pr. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkSinglePlanPr` — mirrors `harness/processes/vinaya-strict/checks/standalone/verify-single-plan-pr.ts`'s
  * predicate (does this branch's diff touch a tranche topology file that
  * some OTHER open PR's diff also touches), emitting the check contract

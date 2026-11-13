@@ -60,13 +60,13 @@ function servePrincipalsConfig(): () => void {
   }
 }
 
-const BRIEF_TEXT = '**For:** Sonnet\n**Tier:** 1\n\nCloses #427\n\nYou are the AEG Developer.'
+const BRIEF_TEXT = '**For:** Sonnet\n**Tier:** 1\n\nCloses #427\n\nYou are the Vinaya Developer.'
 const CLI_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', 'apps', 'cli')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
 
 /**
  * `contentAfterTwoLines` and `FROZEN_BRIEF_V1_MARKER` are the promoted
- * `@attalabs/aeg-core` exports (plan-brief-v1 task 3, #428) — `dispatch-task.ts`
+ * `@attalabs/process-vinaya` exports — `dispatch-task.ts`
  * re-exports them rather than carrying its own copy. Pinned identically in
  * `harness/processes/vinaya-strict/checks/standalone/verify-dispatch.content-after-two-lines.test.ts`,
  * proving both packages agree on the SAME function.
@@ -74,12 +74,12 @@ const REPO_ROOT = join(CLI_ROOT, '..', '..')
 const CONTENT_AFTER_TWO_LINES_VECTORS: Array<{ name: string; input: string; expected: string }> = [
   {
     name: 'marker, hash line, then brief text with a trailing newline',
-    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc123\nThe brief text.\nMore text.\n',
+    input: '<!-- vinaya:brief:v1 -->\nBrief hash: abc123\nThe brief text.\nMore text.\n',
     expected: 'The brief text.\nMore text.\n'
   },
   {
     name: 'marker and hash line only, no body at all',
-    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc123',
+    input: '<!-- vinaya:brief:v1 -->\nBrief hash: abc123',
     expected: ''
   },
   {
@@ -89,18 +89,18 @@ const CONTENT_AFTER_TWO_LINES_VECTORS: Array<{ name: string; input: string; expe
   },
   {
     name: 'exactly two lines (no third line to slice out)',
-    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc123\n',
+    input: '<!-- vinaya:brief:v1 -->\nBrief hash: abc123\n',
     expected: ''
   },
   {
     name: 'a blank line immediately after the hash line survives verbatim',
-    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc\n\nBrief text after a blank line.\n',
+    input: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\n\nBrief text after a blank line.\n',
     expected: '\nBrief text after a blank line.\n'
   },
   {
     name: 'brief text that itself contains a line starting with the marker string',
-    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nSee <!-- aeg:brief:v1 --> for details.\n',
-    expected: 'See <!-- aeg:brief:v1 --> for details.\n'
+    input: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nSee <!-- vinaya:brief:v1 --> for details.\n',
+    expected: 'See <!-- vinaya:brief:v1 --> for details.\n'
   }
 ]
 
@@ -201,7 +201,7 @@ describe('dispatchTask', () => {
         { tranche: 'plan-brief-v1', n: 427 },
         postingDeps({
           findExistingFrozenBrief: () => ({
-            body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+            body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nold brief',
             url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
             author: 'a-principal',
             version: 1
@@ -500,7 +500,7 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
         { tranche: 'task-run-v1', n: 1 },
         preparePostingDeps({
           findExistingFrozenBrief: () => ({
-            body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+            body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nold brief',
             url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
             author: 'a-principal',
             version: 1
@@ -616,7 +616,7 @@ describe('prepareTask --supersede (O3, task-run-v1 task 4, #483)', () => {
       { tranche: 'task-run-v1', n: 1, supersede: { reason: 'wrong tier' } },
       preparePostingDeps({
         findExistingFrozenBrief: () => ({
-          body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+          body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nold brief',
           url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
           author: 'a-principal',
           version: 1
@@ -641,7 +641,7 @@ describe('prepareTask --supersede (O3, task-run-v1 task 4, #483)', () => {
       { tranche: 'task-run-v1', n: 1, supersede: { reason: 'still wrong' } },
       preparePostingDeps({
         findExistingFrozenBrief: () => ({
-          body: '<!-- aeg:brief:v2 -->\nBrief hash: def\nSupersedes: url — first fix\nsecond version',
+          body: '<!-- vinaya:brief:v2 -->\nBrief hash: def\nSupersedes: url — first fix\nsecond version',
           url: 'https://github.com/acme/widget/issues/427#issuecomment-2',
           author: 'a-principal',
           version: 2
@@ -717,7 +717,7 @@ describe('prepareTask --supersede (O3, task-run-v1 task 4, #483)', () => {
       { tranche: 'task-run-v1', n: 1, supersede: { reason: 'wrong tier' } },
       preparePostingDeps({
         findExistingFrozenBrief: () => ({
-          body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+          body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nold brief',
           url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
           author: 'a-principal',
           version: 1
@@ -749,7 +749,7 @@ describe('prepareTask --supersede --surface-in (O3) — widens a frozen Surface 
             : { ok: true, brief: WIDENED_BRIEF_TEXT, issue: 427 }
         },
         findExistingFrozenBrief: () => ({
-          body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+          body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nold brief',
           url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
           author: 'a-principal',
           version: 1
@@ -775,7 +775,7 @@ describe('prepareTask --supersede --surface-in (O3) — widens a frozen Surface 
       { tranche: 'task-run-v1', n: 1, supersede: { reason: 'wrong tier' } },
       preparePostingDeps({
         findExistingFrozenBrief: () => ({
-          body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+          body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nold brief',
           url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
           author: 'a-principal',
           version: 1
@@ -819,7 +819,7 @@ describe('prepareTask --supersede --surface-in (O3) — widens a frozen Surface 
               : { ok: false, missing: ['a genuine post-widen render gap'] }
           },
           findExistingFrozenBrief: () => ({
-            body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+            body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nold brief',
             url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
             author: 'a-principal',
             version: 1
@@ -838,7 +838,7 @@ describe('prepareTask --supersede --surface-in (O3) — widens a frozen Surface 
 
 describe('prepareTask / prepareIssueTask --supersede --surface-in — the gate grades the widened body', () => {
   const FROZEN = {
-    body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nold brief',
+    body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nold brief',
     url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
     author: 'a-principal',
     version: 1
@@ -1075,7 +1075,7 @@ describe('widenSurfaceInLine (O3) — splices the `in:` and `out:` lines', () =>
 describe('validateIssueWriteGate (O2) — the real Issue write gate, exercised against a genuine fixture', () => {
   let cwd: string
   let originalCwd: string
-  let originalAegRepo: string | undefined
+  let originalRepo: string | undefined
 
   const RATIONALE = [
     "## Task Issue — Planner's rationale",
@@ -1146,7 +1146,7 @@ describe('validateIssueWriteGate (O2) — the real Issue write gate, exercised a
     // with no network and no second checkout.
     execFileSync('git', ['remote', 'add', 'origin', cwd], { cwd })
 
-    originalAegRepo = process.env.VINAYA_REPO
+    originalRepo = process.env.VINAYA_REPO
     process.env.VINAYA_REPO = 'test-owner/test-repo'
     originalCwd = process.cwd()
     process.chdir(cwd)
@@ -1156,7 +1156,7 @@ describe('validateIssueWriteGate (O2) — the real Issue write gate, exercised a
   afterEach(() => {
     restorePrincipals()
     process.chdir(originalCwd)
-    process.env.VINAYA_REPO = originalAegRepo
+    process.env.VINAYA_REPO = originalRepo
     rmSync(cwd, { recursive: true, force: true })
   })
 

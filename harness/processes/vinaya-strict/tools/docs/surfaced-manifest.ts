@@ -1,6 +1,6 @@
 /**
  * The canonical "surfaced doc" manifest for `harness/processes/vinaya-strict/`. Defines, as
- * data, which docs a public AEG page shows. The rule is **model-backed**: a
+ * data, which docs a public Vinaya page shows. The rule is **model-backed**: a
  * doc is surfaced if and only if a `DiagramModel` node points at it.
  * The same `DiagramModel` that `/docs/harness` renders is the allowlist for
  * `/docs/reference` — the two surfaces are two renderers of one model, and the doc that
@@ -24,7 +24,7 @@
  *
  * Purity: this module imports only the `DiagramModel` **type** from the
  * diagram layer — no runtime coupling, no I/O. The doctrine is read (and the
- * model derived) by the caller, which passes the derived path set in; aeg-core
+ * model derived) by the caller, which passes the derived path set in; the process package
  * stays zero-I/O.
  *
  * Paths are relative to `harness/processes/vinaya-strict/` (e.g. `roles/developer.md`), matching

@@ -464,7 +464,7 @@ describe('re-running a task', () => {
       recovery: recoveryDeps({
         fetchLoopHistory: () =>
           loopHistoryFromComments(
-            [{ body: '<!-- aeg:developer:round-1 -->\nHead: h1', author: 'principal' }],
+            [{ body: '<!-- vinaya:developer:round-1 -->\nHead: h1', author: 'principal' }],
             ['principal'],
             () => 'unknown'
           ),
@@ -881,9 +881,9 @@ describe('recovering a re-run', () => {
 
 describe('rebuilding the round journal from the forge', () => {
   const PRINCIPALS = ['principal']
-  const round = (n: number) => ({ body: `<!-- aeg:developer:round-${n} -->\nHead: h${n}`, author: 'principal' })
+  const round = (n: number) => ({ body: `<!-- vinaya:developer:round-${n} -->\nHead: h${n}`, author: 'principal' })
   const summary = {
-    body: '<!-- aeg:loop:published head=abcdef1 confidence=1:90 -->\nReady for merge.',
+    body: '<!-- vinaya:loop:published head=abcdef1 confidence=1:90 -->\nReady for merge.',
     author: 'principal',
     url: 'https://forge.example/pr/31#c1'
   }

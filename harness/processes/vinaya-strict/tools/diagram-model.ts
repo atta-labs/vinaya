@@ -49,7 +49,7 @@ export type DiagramNode = {
   /** Whether this action reaches GitHub — `action` nodes only, straight from
    * its `ACTIONS` entry (the canonical set). On the node because a
    * renderer cannot get it any other way: `ACTIONS` is a value export, and
-   * importing it into a client component drags `@attalabs/aeg-forge-state`'s
+   * importing it into a client component drags the forge-state modules'
    * `node:child_process` into the browser bundle. The distinction is
    * doctrine-load-bearing — ring-0 gates guard exactly the crossings, and
    * G3 exists to prove there is no unguarded one — so it must survive to the

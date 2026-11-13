@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: doc-coverage. Thin adapter over `@attalabs/aeg-core`'s C5 evaluator
+ * Core check: doc-coverage. Thin adapter over `@attalabs/process-vinaya`'s C5 evaluator
  * (`evaluateC5` + `parseDocOwners`/`readDocAcks`, used internally by
  * `evaluateC5`), emitting the check contract instead of human text.
  *

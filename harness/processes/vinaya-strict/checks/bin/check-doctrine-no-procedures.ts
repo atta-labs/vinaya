@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: doctrine-no-procedures. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: doctrine-no-procedures. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkDoctrineNoProcedures` — task 9's rule that
  * doctrine describes no command sequence, made a check. Unlike its sibling
  * `doctrine-portability` (baseline mode, warning-only — task 234's corpus

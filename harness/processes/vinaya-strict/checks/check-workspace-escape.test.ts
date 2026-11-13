@@ -68,7 +68,7 @@ describe('isTestFile', () => {
 
   it('does not match ordinary source files, including ones containing "test" in the name', () => {
     expect(isTestFile('apps/cli/src/checks/bin/check-workspace-escape.ts')).toBe(false)
-    expect(isTestFile('packages/aeg-core/src/testing-utils.ts')).toBe(false)
+    expect(isTestFile('packages/core/src/testing-utils.ts')).toBe(false)
   })
 })
 

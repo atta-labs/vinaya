@@ -170,7 +170,7 @@ describe('normalisation must not create a false MATCH (security review, round tw
   // reachable from pull-request text alone.
   test('two different in-repo paths do NOT collapse onto one line', () => {
     const a = 'packages/widgets/tests/a.spec.ts'
-    const b = 'packages/aeg-core/tests/a.spec.ts'
+    const b = 'packages/core/tests/a.spec.ts'
     expect(normaliseLines(a, ROOT)).toEqual([a])
     expect(normaliseLines(b, ROOT)).toEqual([b])
     expect(compareEvidence(region(a), b, ROOT).status).toBe('differs')
@@ -243,9 +243,9 @@ describe('the hidden verdict is pinned end to end, not just at the switch arm', 
     const { ScanContext, resolveAnchoredRegion } = await import('../../../../kernel/gates/checks/scan-context')
     const wrapped = [
       '<details><summary>x</summary>',
-      '<!-- AEG:EVIDENCE:START -->',
+      '<!-- VINAYA:EVIDENCE:START -->',
       'Head: aaaaaaa',
-      '<!-- AEG:EVIDENCE:END -->',
+      '<!-- VINAYA:EVIDENCE:END -->',
       '</details>'
     ].join('\n')
     expect(resolveAnchoredRegion(ScanContext.from(wrapped, REGION_PREFIXES), 'EVIDENCE')).toBe('hidden')
@@ -256,13 +256,13 @@ describe('the hidden verdict is pinned end to end, not just at the switch arm', 
     const { ScanContext, resolveAnchoredRegion } = await import('../../../../kernel/gates/checks/scan-context')
     const body = [
       '<details><summary>worked example</summary>',
-      '<!-- AEG:EVIDENCE:START -->',
+      '<!-- VINAYA:EVIDENCE:START -->',
       'DECOY',
-      '<!-- AEG:EVIDENCE:END -->',
+      '<!-- VINAYA:EVIDENCE:END -->',
       '</details>',
-      '<!-- AEG:EVIDENCE:START -->',
+      '<!-- VINAYA:EVIDENCE:START -->',
       'REAL',
-      '<!-- AEG:EVIDENCE:END -->'
+      '<!-- VINAYA:EVIDENCE:END -->'
     ].join('\n')
     const r = resolveAnchoredRegion(ScanContext.from(body, REGION_PREFIXES), 'EVIDENCE')
     if (typeof r !== 'object' || r === null) throw new Error('expected a resolved region')

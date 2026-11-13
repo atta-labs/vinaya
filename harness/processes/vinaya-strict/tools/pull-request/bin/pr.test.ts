@@ -10,7 +10,7 @@ const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..',
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
 const FORGE_FIXTURES = join(import.meta.dir, '..', '..', '..', 'fixtures', 'forge')
-const AEG_CORE_FIXTURES = join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/pull-request/bin/fixtures')
+const PR_BIN_FIXTURES = join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/pull-request/bin/fixtures')
 
 const FULL_PR_CONFIG = {
   briefSchema: {
@@ -289,7 +289,7 @@ describe('vinaya pr create --validate-only — runs the registry PR_BODY checks 
         'create',
         '--validate-only',
         '--body-file',
-        join(AEG_CORE_FIXTURES, 'pr-body-394-as-opened.md'),
+        join(PR_BIN_FIXTURES, 'pr-body-394-as-opened.md'),
         '--title',
         'Fix: x'
       ],

@@ -1,14 +1,14 @@
 /**
  * Finding-count baseline capture + comparison. Pure — does not run `verify-docs.ts`/`verify-coherence.ts`
  * itself and never calls `Date.now()` (a pure `src/` module cannot — see
- * `packages/aeg-core/CLAUDE.md`-equivalent constraint, this repo's is the
+ * `the process package/CLAUDE.md`-equivalent constraint, this repo's is the
  * Workflow-script rule of the same shape). The CLI shim runs those tools,
  * counts their findings, and passes the counts plus a caller-supplied
  * timestamp in here.
  *
  * Exists to make the dispatch-readiness bar honestly "no new findings versus
  * the captured baseline" rather than "zero findings" — live-fire #2
- * (aeg-governance-hardening's own dispatch wave) asserted "verify-docs full
+ * (an earlier dispatch wave) asserted "verify-docs full
  * mode must be green" as a pre-flight precondition without ever running it;
  * full mode had 44 pre-existing, unrelated findings and was never green.
  * Baseline data is capture-at-run only, never a committed file.

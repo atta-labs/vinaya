@@ -4,7 +4,7 @@
  * dispatched task. The write gate accepts an edge declared on either side;
  * this is what lets the dispatch gate see the one the dispatched Issue
  * itself never lists. The edge test is `siblingsSharingConflictEdge`
- * (`@attalabs/aeg-core`), which wraps the write gate's own reader.
+ * (`tools/dispatch-gate.ts`), which wraps the write gate's own reader.
  *
  * Takes the already-fetched open-Issue listing and an injected resolver, so
  * it adds no forge read and is testable without one.

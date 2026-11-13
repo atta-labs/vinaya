@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: main-branch-refusal. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: main-branch-refusal. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkMainBranchRefusal` — mechanizes the
  * worktree-plus-PR rule at ring 0 for adopters: refuses a commit or push
  * whose current branch IS the repo's default branch. Today this is

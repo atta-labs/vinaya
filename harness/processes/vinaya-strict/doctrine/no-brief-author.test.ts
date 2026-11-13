@@ -25,8 +25,8 @@ const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..')
  * - `harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.ts` — the one file that must keep
  *   naming the retired role, in order to refuse a request for it and point
  *   the caller at `planner`.
- * - `harness/processes/vinaya-strict/tools/task-contract/dispatch-task.ts` — quotes `aeg-root/process.md`'s own
- *   Phase 5 verbatim, and `aeg-root/**` is out of this task's surface (task
+ * - `harness/processes/vinaya-strict/tools/task-contract/dispatch-task.ts` — quotes `doctrine/process.md`'s own
+ *   Phase 5 verbatim, and the retired doctrine root is out of this task's surface (task
  *   4's doctrine rewrite); editing the quote to disagree with the doctrine
  *   it quotes would be the actual regression.
  */
@@ -58,7 +58,7 @@ function listSourceFiles(dir: string): string[] {
   return out
 }
 
-describe('no-brief-author — brief-author is retired as a role id (plan-brief-v1 task 3, #428)', () => {
+describe('no-brief-author — brief-author is retired as a role id', () => {
   it('no source file under packages/*/src or apps/cli/src names brief-author, except the doctrine refusal itself', () => {
     const offenders: string[] = []
     for (const root of SCAN_ROOTS) {

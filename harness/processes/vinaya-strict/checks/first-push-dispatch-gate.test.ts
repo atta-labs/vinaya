@@ -3,18 +3,18 @@ import { checkFirstPushDispatchGate, parseTaskBranch } from './first-push-dispat
 
 describe('parseTaskBranch', () => {
   it('parses a well-formed task branch', () => {
-    expect(parseTaskBranch('task/aeg-governance-hardening/25')).toEqual({
-      tranche: 'aeg-governance-hardening',
+    expect(parseTaskBranch('task/sample-tranche-v1/25')).toEqual({
+      tranche: 'sample-tranche-v1',
       taskId: '25'
     })
   })
 
   it('rejects a plan branch', () => {
-    expect(parseTaskBranch('plan/aeg-governance-hardening')).toBeNull()
+    expect(parseTaskBranch('plan/sample-tranche-v1')).toBeNull()
   })
 
   it('rejects an archive branch', () => {
-    expect(parseTaskBranch('archive/aeg-governance-hardening')).toBeNull()
+    expect(parseTaskBranch('archive/sample-tranche-v1')).toBeNull()
   })
 
   it('rejects a fix branch', () => {
@@ -29,7 +29,7 @@ describe('parseTaskBranch', () => {
 describe('checkFirstPushDispatchGate — branch-type scoping', () => {
   it('allows a plan branch regardless of readiness', () => {
     const result = checkFirstPushDispatchGate({
-      branch: 'plan/aeg-governance-hardening',
+      branch: 'plan/sample-tranche-v1',
       prExists: false,
       readiness: 'NOT_READY'
     })
@@ -39,7 +39,7 @@ describe('checkFirstPushDispatchGate — branch-type scoping', () => {
 
   it('allows an archive branch regardless of readiness', () => {
     const result = checkFirstPushDispatchGate({
-      branch: 'archive/aeg-governance-hardening',
+      branch: 'archive/sample-tranche-v1',
       prExists: false,
       readiness: 'NOT_READY'
     })
@@ -55,7 +55,7 @@ describe('checkFirstPushDispatchGate — branch-type scoping', () => {
 describe('checkFirstPushDispatchGate — first-push vs PR-exists', () => {
   it('allows a task branch with an existing PR even when readiness is NOT_READY', () => {
     const result = checkFirstPushDispatchGate({
-      branch: 'task/aeg-governance-hardening/25',
+      branch: 'task/sample-tranche-v1/25',
       prExists: true,
       readiness: 'NOT_READY'
     })
@@ -65,7 +65,7 @@ describe('checkFirstPushDispatchGate — first-push vs PR-exists', () => {
 
   it('blocks a task branch on its first push when NOT_READY', () => {
     const result = checkFirstPushDispatchGate({
-      branch: 'task/aeg-governance-hardening/25',
+      branch: 'task/sample-tranche-v1/25',
       prExists: false,
       readiness: 'NOT_READY'
     })
@@ -75,7 +75,7 @@ describe('checkFirstPushDispatchGate — first-push vs PR-exists', () => {
 
   it('allows a task branch on its first push when READY', () => {
     const result = checkFirstPushDispatchGate({
-      branch: 'task/aeg-governance-hardening/25',
+      branch: 'task/sample-tranche-v1/25',
       prExists: false,
       readiness: 'READY'
     })
@@ -87,7 +87,7 @@ describe('checkFirstPushDispatchGate — first-push vs PR-exists', () => {
 describe('checkFirstPushDispatchGate — fail-open mapping', () => {
   it('allows (fails open) when readiness is UNKNOWN (forge unreachable)', () => {
     const result = checkFirstPushDispatchGate({
-      branch: 'task/aeg-governance-hardening/25',
+      branch: 'task/sample-tranche-v1/25',
       prExists: false,
       readiness: 'UNKNOWN'
     })

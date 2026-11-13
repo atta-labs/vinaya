@@ -2,7 +2,7 @@ import { readMarkdownTable } from './parse-registry'
 import type { Tranche, Lifecycle, Task } from './types'
 
 /**
- * Parse `aeg-root/tranches/<name>.md` into a typed `Tranche`.
+ * Parse a tranche file (`<name>.md` in the retired tranche-file directory) into a typed `Tranche`.
  *
  * Captures:
  *   - the tranche's name (from `# Tranche: <name> — <timeframe>`; the

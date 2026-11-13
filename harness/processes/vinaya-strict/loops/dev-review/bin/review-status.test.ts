@@ -86,7 +86,7 @@ function principalComment(body: string) {
 }
 
 function roundComment(n: number): { body: string; author: { login: string } } {
-  return principalComment(`Head: ${HEAD}\n\n<!-- aeg:developer:round-${n} -->\n\nAll green.`)
+  return principalComment(`Head: ${HEAD}\n\n<!-- vinaya:developer:round-${n} -->\n\nAll green.`)
 }
 
 /**
@@ -179,7 +179,7 @@ describe('vinaya review status', () => {
       {
         comments: [
           principalComment(verdict(OLD_HEAD, ['1. [MAJOR] a.ts:1 — F1 correctness resolved: x'])),
-          principalComment(`Head: ${HEAD}\n\n<!-- aeg:developer:round-1 -->`),
+          principalComment(`Head: ${HEAD}\n\n<!-- vinaya:developer:round-1 -->`),
           principalComment(verdict(HEAD, ['1. [MAJOR] a.ts:1 — F1 correctness reproduced: x']))
         ],
         headRefOid: HEAD,

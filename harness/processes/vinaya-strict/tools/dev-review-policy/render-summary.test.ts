@@ -50,13 +50,13 @@ describe('parseSummaryConfidenceRows', () => {
   })
 
   it('reads a marker quoted inside a longer comment, and nothing from prose', () => {
-    const body = `Deferred findings are tracked in #12.\n\n<!-- aeg:loop:published head=${HEAD} confidence=2:70 -->\n\n| 9 | 99% |`
+    const body = `Deferred findings are tracked in #12.\n\n<!-- vinaya:loop:published head=${HEAD} confidence=2:70 -->\n\n| 9 | 99% |`
     expect(parseSummaryConfidenceRows(body)).toEqual([{ round: 2, percent: 70, asked: true }])
     expect(parseSummaryConfidenceRows('1:90 and 2:80, no marker')).toEqual([])
   })
 
   it('drops an entry whose confidence exceeds the percentage a caller is allowed to publish, or is malformed', () => {
-    const body = `<!-- aeg:loop:published head=${HEAD} confidence=1:101,2:90,x:50,3:-5 -->`
+    const body = `<!-- vinaya:loop:published head=${HEAD} confidence=1:101,2:90,x:50,3:-5 -->`
     expect(parseSummaryConfidenceRows(body)).toEqual([{ round: 2, percent: 90, asked: true }])
   })
 })

@@ -61,7 +61,7 @@ O2. [SECOND OBJECTIVE — numbered contiguously from O1, one line per objective,
 
 ## Surface
 
-in: [SURFACE IN — directory-level globs this task touches, comma-separated, e.g. `packages/aeg-core/src`, `apps/cli/src/commands`; no file path]
+in: [SURFACE IN — directory-level globs this task touches, comma-separated, e.g. `harness/processes/vinaya-strict/tools`, `apps/cli/src/commands`; no file path]
 out: [SURFACE OUT — directory-level globs explicitly excluded from this task's surface, comma-separated]
 
 ## Parts

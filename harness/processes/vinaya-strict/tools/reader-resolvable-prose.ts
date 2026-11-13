@@ -16,7 +16,7 @@
  *     resolve." Reuses the same two pattern shapes proven in
  *     `retired-vocabulary.test.ts` (`FORGE_NUMBER_PATTERN`,
  *     `TRANCHE_SLUG_VN_PATTERN`, and the legacy-slug list derived — not
- *     guessed — from `aeg-root/tranches/completed/*.md` filenames), scoped to
+ *     guessed — from the retired tranche-file directory's `completed/*.md` filenames), scoped to
  *     the reader-facing surfaces instead of banned repo-wide (the same digit
  *     shape is this product's own live `Closes #N`/PR-number grammar
  *     elsewhere, so a repo-wide ban would flag the mechanism, not the
@@ -288,7 +288,7 @@ export const TASK_NUMBER_PATTERN = readerPattern('task-number')
 /**
  * Builds the legacy-slug pattern from the real archived-tranche filenames
  * the adapter reads (mirrors `retired-vocabulary.test.ts`'s `legacySlugs()` —
- * derived from `aeg-root/tranches/completed/*.md`, never a shape guess).
+ * derived from the retired tranche-file directory's `completed/*.md`, never a shape guess).
  * Returns `null` when there is nothing left for it to catch (every archived
  * slug now ends `-vN`), matching that file's "no pattern with zero positive
  * samples" rule.
@@ -690,7 +690,7 @@ export function extractComments(path: string, content: string): string {
 /**
  * The source-comment class — scans comment lines of `.ts`
  * files for a tranche-slug or forge-number citation. Unlike the `product`
- * class above (a fixed, aeg-core-internal `PRODUCT_SLUG_SCOPE`), the file
+ * class above (a fixed, process-internal `PRODUCT_SLUG_SCOPE`), the file
  * SET here is entirely the caller's choice: the bin resolves
  * `proseGates.sourceComments.globs` into concrete files and passes them in,
  * so this stays zero-I/O and adopter-configurable rather than hardcoded to

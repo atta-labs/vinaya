@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: dispatch-readiness. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: dispatch-readiness. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkDispatchReadiness` — mirrors `harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts`'s
  * gate-mode input assembly, scoped to ONE task rather than every task in the
  * repo — the same narrowing `harness/processes/vinaya-strict/checks/standalone/verify-brief.ts`/
@@ -16,18 +16,18 @@
  * Tranche state is read ONLY through a `StateSource`
  * (`createForgeSource` from `@attalabs/vinaya-sources`) — no hardcoded state
  * path (task 2's ratified corollary). Forge facts come only from the two
- * primitives `@attalabs/aeg-core` re-exports for this purpose: `fetchForgeFacts`
+ * primitives `@attalabs/process-vinaya` re-exports for this purpose: `fetchForgeFacts`
  * and `fetchOpenIssuesByLabel`.
  *
  * `resolveRepo`/token discovery below are NOT re-derivations of a governance
  * fact — they're the same small env-or-git-remote / env-or-`gh` recipe
- * `@attalabs/aeg-forge-state`'s `resolveRepo`/`resolveGithubToken` use, kept
- * local because those two functions are not re-exported from `@attalabs/aeg-core`
- * (an aeg-core-purity fix) and this module's dependency boundary is
- * `@attalabs/aeg-core` + `@attalabs/vinaya-sources` only.
+ * the forge-state modules's `resolveRepo`/`resolveGithubToken` use, kept
+ * local because those two functions are not re-exported from `@attalabs/process-vinaya`
+ * (a purity fix) and this module's dependency boundary is
+ * `@attalabs/process-vinaya` + `@attalabs/vinaya-sources` only.
  *
  * The prior-tranche-archival predicate is resolved in tranche mode by
- * `resolvePriorTrancheArchival` (`@attalabs/aeg-forge-state`), the same
+ * `resolvePriorTrancheArchival` (the forge-state modules), the same
  * resolution `harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts` calls. A read it could
  * not complete is a `severity:infra` error with exit `1`, never a pass by
  * default. Backlog-Issue mode names no project, so it passes an empty list.

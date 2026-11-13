@@ -3,7 +3,7 @@
 /**
  * eval-agent-compliance — offline eval harness (vinaya-verification-v1
  * task 9, #37). Replays a live sample of this repo's own closed, merged
- * `task/*` PRs through three pure AEG gates and reports how often each gate
+ * `task/*` PRs through three pure Vinaya gates and reports how often each gate
  * would have agreed with the PR's real historical outcome.
  *
  * Read-only, never cached: the corpus (PR bodies, labels, commits, comments,

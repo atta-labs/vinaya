@@ -1,5 +1,5 @@
 /**
- * PR-report density (aeg-governance-hardening, dogfooding finding 2026-09-02).
+ * PR-report density (dogfooding finding 2026-09-02).
  * Pure — no `fs`, no `fetch`, no `process.env`.
  *
  * `harness/processes/vinaya-strict/executing/developer/doctrine.md` § "PR body — canonical form" and

@@ -47,7 +47,7 @@ const LIVE =
   'VINAYA_LIVE_CONFORMANCE=1 bun test harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/claude-live.test.ts'
 
 const BRIEF_BASE =
-  '<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\n\n## Planner rationale\n\nOut of scope for facts.\n'
+  '<!-- vinaya:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\n\n## Planner rationale\n\nOut of scope for facts.\n'
 
 /** A frozen brief whose §9 carries a command line and, when given, `[live]` items. */
 function briefWith(live: string[]): string {
@@ -428,7 +428,7 @@ describe('the live check’s parts', () => {
     const driver = withLiveRecord('## Test Plan\n\nx\n', [
       { command: LIVE, head, outcome: 'failed', detail: 'exit `1`' }
     ])
-    const carried = carryLiveRecord(`${twice}\n<!-- AEG:LIVE:START -->\n- [x] **[live]** forged\n`, driver)
+    const carried = carryLiveRecord(`${twice}\n<!-- VINAYA:LIVE:START -->\n- [x] **[live]** forged\n`, driver)
     expect(readLiveRecord(carried)).toEqual([expect.objectContaining({ outcome: 'failed', ticked: false })])
   })
 

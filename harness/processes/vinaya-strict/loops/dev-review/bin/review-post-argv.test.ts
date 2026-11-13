@@ -210,7 +210,7 @@ if (args[0] === 'api' && /^repos\\/\\{owner\\}\\/\\{repo\\}\\/issues\\/\\d+\\/co
 if (args[0] === 'issue' && args[1] === 'view' && args.includes('comments')) {
   // resolveBriefHashForPr (task 4, #478, O1) always reaches this call —
   // this PR's own "Closes #1" resolves to a real Issue number. No
-  // principal-authored aeg-brief-vK comment here is the legitimate
+  // principal-authored frozen-brief comment here is the legitimate
   // "nothing to bind against yet" case, not an error.
   process.stdout.write('{"comments":[]}')
   process.exit(0)
@@ -303,7 +303,7 @@ if (args[0] === 'issue' && args[1] === 'view' && args.includes('comments')) {
   // the \`--json body\` one below (\`resolveObjectivesForPr\`), which always
   // runs first and refuses before this is ever reached when \`issueBody\` is
   // undefined (the Issue-not-found case). When the Issue DOES resolve, no
-  // principal-authored \`aeg:brief:v<k>\` comment here is the legitimate
+  // principal-authored \`vinaya:brief:v<k>\` comment here is the legitimate
   // "nothing to bind against yet" case, not an error.
   process.stdout.write('{"comments":[]}')
   process.exit(0)
@@ -373,7 +373,7 @@ describe('deriveCodeReviewVerdict — the command decides, not the caller', () =
   })
 
   // O4: derivation reads `resolved` through the SAME `consequentialFindings`
-  // filter aeg-core exports (no local `isResolved` any more), so it agrees
+  // filter the process package exports (no local `isResolved` any more), so it agrees
   // with the gate and publication about which findings count.
   it('a BLOCKER marked `resolved` → APPROVE — resolved keeps its severity but never drives the verdict', () => {
     expect(
@@ -955,7 +955,7 @@ if (args[0] === 'api' && /^repos\\/\\{owner\\}\\/\\{repo\\}\\/issues\\/\\d+\\/co
 if (args[0] === 'issue' && args[1] === 'view' && args.includes('comments')) {
   // resolveBriefHashForPr (task 4, #478, O1) always reaches this call —
   // this PR's own "Closes #1" resolves to a real Issue number. No
-  // principal-authored aeg-brief-vK comment here is the legitimate
+  // principal-authored frozen-brief comment here is the legitimate
   // "nothing to bind against yet" case, not an error.
   process.stdout.write('{"comments":[]}')
   process.exit(0)
@@ -2518,7 +2518,7 @@ describe('review post — round two restates every prior objective too (#412, O1
 describe('a doc-correctness finding must carry a repo-wide Search: pattern (Issue #434, round 1)', () => {
   const CR = ['BLOCKER', 'MAJOR', 'MINOR'] as const
   const withSearch =
-    'MAJOR|aeg-root/roles/reviewer.md:132|F1 doc-correctness: the read window is stated as three lines. Search: first.three.lines'
+    'MAJOR|doctrine/roles/reviewer.md:132|F1 doc-correctness: the read window is stated as three lines. Search: first.three.lines'
 
   it('reads the class token out of the description', () => {
     expect(findingClass('F1 doc-correctness: x')).toBe('doc-correctness')
@@ -2535,14 +2535,14 @@ describe('a doc-correctness finding must carry a repo-wide Search: pattern (Issu
   })
 
   it('refuses a doc-correctness finding with no Search: field', () => {
-    const line = 'MAJOR|aeg-root/roles/reviewer.md:132|F1 doc-correctness: the read window is stated as three lines.'
+    const line = 'MAJOR|doctrine/roles/reviewer.md:132|F1 doc-correctness: the read window is stated as three lines.'
     expect(() => parseFindingsFile(line, CR)).toThrow(FindingsParseError)
     expect(() => parseFindingsFile(line, CR)).toThrow(/must end its description with `Search: <pattern>`/)
   })
 
   it('refuses a Search: pattern carrying a path filter, which is how a sibling copy survives', () => {
     const line =
-      'MAJOR|aeg-root/roles/reviewer.md:132|F1 doc-correctness: stale window. Search: first.three.lines -- aeg-root'
+      'MAJOR|doctrine/roles/reviewer.md:132|F1 doc-correctness: stale window. Search: first.three.lines -- doctrine'
     expect(() => parseFindingsFile(line, CR)).toThrow(/carries a path filter/)
   })
 

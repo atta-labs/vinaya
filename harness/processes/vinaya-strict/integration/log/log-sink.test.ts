@@ -647,7 +647,7 @@ describe('log-sink — the trust-anchor config is cached per repository (O1, O3)
         'const b1 = await resolveUnattendedServerSetting()\n' +
         'console.log(JSON.stringify({ a1: a1?.url ?? null, a2: a2?.url ?? null, b1: b1?.url ?? null }))\n'
     )
-    // Clear the runner/AEG repo hints so `trustAnchorRepoAsync` resolves each
+    // Clear the runner/Vinaya repo hints so `trustAnchorRepoAsync` resolves each
     // repository from ITS OWN git remote, not one process-wide slug.
     const probeEnv: NodeJS.ProcessEnv = { ...stripVinayaEnv(), PATH: `${binDir}:${process.env.PATH ?? ''}` }
     delete probeEnv.GITHUB_REPOSITORY

@@ -62,7 +62,7 @@ describe('edge resolution — a conflict edge never reports in-flight from Issue
    * conflict: a conflict only matters while a PR is genuinely open, and no PR
    * has been observed here. Deriving it from Issue state would block a
    * cross-tranche conflict from Issue creation through merge, contradicting
-   * `aeg-root/tranche-model.md`'s definition of the predicate.
+   * `doctrine/tranche-model.md`'s definition of the predicate.
    */
   it('is false for an open Issue', () => {
     expect(edgeFromIssueJson(193, STILL_OPEN).open).toBe(false)

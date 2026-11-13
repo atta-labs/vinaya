@@ -6,7 +6,7 @@
  *
  * This is the TARGET model (Linear "Tech spec — Developer-review on Atta
  * Engine", revision 7, section 16), not the standalone implementation: it
- * names no file in `apps/cli/src` or `packages/aeg-core/src`, because this
+ * names no file in `apps/cli/src` or the process package's source, because this
  * task specifies the contract production execution must satisfy, and does
  * not build that execution. It consumes Task 1's frozen, now fully
  * Principal-ruled ambiguity register

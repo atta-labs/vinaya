@@ -7,7 +7,7 @@ import type { MergedPrFacts } from './archive-task'
 function facts(overrides: Partial<MergedPrFacts> = {}): MergedPrFacts {
   return {
     number: 42,
-    headRefName: 'task/aeg-governance-hardening/5d',
+    headRefName: 'task/sample-tranche-v1/5d',
     body: '',
     mergedAt: '2026-07-02T12:00:00Z',
     mergeSha: 'abc123def456',
@@ -22,7 +22,7 @@ function facts(overrides: Partial<MergedPrFacts> = {}): MergedPrFacts {
 const FULL_BODY = `
 **Tier:** 3
 Closes #309
-Project: aeg, aeg-core
+Project: app, core
 For: a high-capability model (coding-agent CLI, dispatched session)
 Ticket: none
 
@@ -37,14 +37,14 @@ One paragraph of blast radius.
 
 describe('taskRefFromBranch', () => {
   it('parses a well-formed task branch', () => {
-    expect(taskRefFromBranch('task/aeg-governance-hardening/5d')).toEqual({
-      tranche: 'aeg-governance-hardening',
+    expect(taskRefFromBranch('task/sample-tranche-v1/5d')).toEqual({
+      tranche: 'sample-tranche-v1',
       taskId: '5d'
     })
   })
 
   it('returns null for a plan branch', () => {
-    expect(taskRefFromBranch('plan/aeg-consolidation')).toBeNull()
+    expect(taskRefFromBranch('plan/example-tranche-v1')).toBeNull()
   })
 
   it('returns null for a fix branch', () => {
@@ -56,11 +56,11 @@ describe('taskRefFromBranch', () => {
   })
 
   it('returns null for a malformed task branch (missing taskId)', () => {
-    expect(taskRefFromBranch('task/aeg-governance-hardening')).toBeNull()
+    expect(taskRefFromBranch('task/sample-tranche-v1')).toBeNull()
   })
 
   it('returns null for a malformed task branch (extra segment)', () => {
-    expect(taskRefFromBranch('task/aeg-governance-hardening/5d/extra')).toBeNull()
+    expect(taskRefFromBranch('task/sample-tranche-v1/5d/extra')).toBeNull()
   })
 
   // A backlog Issue's branch — `tranche: null`, the
@@ -77,7 +77,7 @@ describe('taskRefFromBranch', () => {
 // the shim can check that Issue's own `vinaya/tranche:*` label.
 describe('extractIssue', () => {
   it('finds Closes #N on a non-task-branch PR body (the #530 shape)', () => {
-    const body = '<!-- AEG:CLOSES:START -->\nCloses #524\n<!-- AEG:CLOSES:END -->\n\n## Summary\n\nCleanup fix.'
+    const body = '<!-- VINAYA:CLOSES:START -->\nCloses #524\n<!-- VINAYA:CLOSES:END -->\n\n## Summary\n\nCleanup fix.'
     expect(extractIssue(body, REGION_PREFIXES)).toEqual({ issue: 524, extraIssues: [], outsideHeader: false })
   })
 
@@ -89,15 +89,15 @@ describe('extractIssue', () => {
     })
   })
 
-  it('an EMPTY AEG:CLOSES pair strands the Issue rather than falling back to a body-wide reference', () => {
+  it('an EMPTY VINAYA:CLOSES pair strands the Issue rather than falling back to a body-wide reference', () => {
     // Anchored IS canonical: when the pair is present it replaces the header
     // block entirely, with deliberately no fallback to body-wide search (that
     // fallback is the decoy problem the anchor exists to solve). So a pair the
     // author left empty yields `issue: null` — a loud DANGLING at archive time —
     // while the stray reference elsewhere in the body is still flagged, not lost.
     const body = [
-      '<!-- AEG:CLOSES:START -->',
-      '<!-- AEG:CLOSES:END -->',
+      '<!-- VINAYA:CLOSES:START -->',
+      '<!-- VINAYA:CLOSES:END -->',
       '',
       '## Summary',
       '',
@@ -106,16 +106,16 @@ describe('extractIssue', () => {
     expect(extractIssue(body, REGION_PREFIXES)).toEqual({ issue: null, extraIssues: [524], outsideHeader: false })
   })
 
-  it('an empty AEG:CLOSES pair with no reference anywhere is null with nothing flagged', () => {
-    const body = '<!-- AEG:CLOSES:START -->\n\n<!-- AEG:CLOSES:END -->\n\n## Summary\n\nNothing here.'
+  it('an empty VINAYA:CLOSES pair with no reference anywhere is null with nothing flagged', () => {
+    const body = '<!-- VINAYA:CLOSES:START -->\n\n<!-- VINAYA:CLOSES:END -->\n\n## Summary\n\nNothing here.'
     expect(extractIssue(body, REGION_PREFIXES)).toEqual({ issue: null, extraIssues: [], outsideHeader: false })
   })
 
-  it('a populated AEG:CLOSES pair still flags body-wide extras beyond its own reference', () => {
+  it('a populated VINAYA:CLOSES pair still flags body-wide extras beyond its own reference', () => {
     const body = [
-      '<!-- AEG:CLOSES:START -->',
+      '<!-- VINAYA:CLOSES:START -->',
       'Closes #524',
-      '<!-- AEG:CLOSES:END -->',
+      '<!-- VINAYA:CLOSES:END -->',
       '',
       '## Summary',
       '',
@@ -129,7 +129,7 @@ describe('extractIssue', () => {
 // a task-branch `ref` is sufficient on its own; a non-task branch needs the
 // closed Issue's own labels to carry `vinaya/tranche:*`.
 describe('isEligibleForProvenance', () => {
-  const ref = { tranche: 'aeg-governance-hardening', taskId: '5d' }
+  const ref = { tranche: 'sample-tranche-v1', taskId: '5d' }
 
   it('is eligible when ref is a real task branch, regardless of labels', () => {
     expect(isEligibleForProvenance(ref, [])).toBe(true)
@@ -192,7 +192,7 @@ describe('buildProvenanceBlock', () => {
     const { block, issue, dangling } = buildProvenanceBlock(
       facts({ body: FULL_BODY, briefCommentUrl: 'https://github.com/acme/widget/issues/309#issuecomment-1' })
     )
-    expect(block.split('\n')[0]).toBe(`${PROVENANCE_HEADING.current} — task 5d (tranche aeg-governance-hardening)`)
+    expect(block.split('\n')[0]).toBe(`${PROVENANCE_HEADING.current} — task 5d (tranche sample-tranche-v1)`)
     expect(issue).toBe(309)
     expect(dangling).toEqual([
       'no code-reviewer verdict comment found on this PR',
@@ -201,13 +201,13 @@ describe('buildProvenanceBlock', () => {
     expect(block).toContain('- Issue:        #309  (closed by merge)')
     expect(block).toContain('- Tier:         3')
     expect(block).toContain('- Brief:        https://github.com/acme/widget/issues/309#issuecomment-1')
-    expect(block).toContain('- Project(s):   aeg, aeg-core')
+    expect(block).toContain('- Project(s):   app, core')
     expect(block).toContain('- Model/agent:  a high-capability model (coding-agent CLI, dispatched session)')
     expect(block).toContain('- Ticket:       none')
     expect(block).toContain('- Merged:       abc123def456 at 2026-07-02T12:00:00Z')
   })
 
-  it('flags a missing aeg:brief:v1 comment resolution as DANGLING (plan-brief-v1 task 2, #427)', () => {
+  it('flags a missing vinaya:brief:v1 comment resolution as DANGLING (plan-brief-v1 task 2, #427)', () => {
     const { block, dangling } = buildProvenanceBlock(facts({ body: FULL_BODY }))
     expect(block).toContain('- Brief:        DANGLING — no vinaya:brief:v1 comment resolved for this task')
     expect(dangling).toContain('no `vinaya:brief:v1` comment resolved for Issue #309 — Brief field is DANGLING')
@@ -252,7 +252,7 @@ describe('buildProvenanceBlock', () => {
   })
 
   it('still resolves a Closes #N placed outside the header block, with a flag (defensive fallback)', () => {
-    const body = '**Tier:** 3\nProject: aeg\nFor: Sonnet\n\n## Summary\n\nShips it. Closes #309'
+    const body = '**Tier:** 3\nProject: app\nFor: Sonnet\n\n## Summary\n\nShips it. Closes #309'
     const { issue, dangling } = buildProvenanceBlock(facts({ body }))
     expect(issue).toBe(309)
     expect(dangling.some((d) => d.includes('outside the PR body'))).toBe(true)
@@ -266,7 +266,7 @@ describe('buildProvenanceBlock', () => {
   })
 
   it('flags a Project field that only appears after a heading as DANGLING (#311 regression)', () => {
-    const body = `${FULL_BODY.replace('Project: aeg, aeg-core\n', '')}\n\n## Notes\n\nThe Project: aeg field lives here, wrongly.`
+    const body = `${FULL_BODY.replace('Project: app, core\n', '')}\n\n## Notes\n\nThe Project: app field lives here, wrongly.`
     const { block, dangling } = buildProvenanceBlock(facts({ body }))
     expect(block).toContain('- Project(s):   DANGLING — no Project field in PR body')
     expect(dangling).toContain('no `Project:` field found in PR body — Project(s) field is DANGLING')
@@ -320,7 +320,7 @@ describe('buildProvenanceBlock', () => {
   })
 
   it('flags a missing Project field as DANGLING', () => {
-    const body = FULL_BODY.replace('Project: aeg, aeg-core\n', '')
+    const body = FULL_BODY.replace('Project: app, core\n', '')
     const { block, dangling } = buildProvenanceBlock(facts({ body }))
     expect(block).toContain('- Project(s):   DANGLING — no Project field in PR body')
     expect(dangling).toContain('no `Project:` field found in PR body — Project(s) field is DANGLING')
@@ -331,7 +331,7 @@ describe('buildProvenanceBlock', () => {
     // value is nothing but the separator reads as present-with-no-value. The
     // cardinal constraint says the block must not fabricate or default: it
     // DANGLES, exactly as an absent field does.
-    const body = FULL_BODY.replace('Project: aeg, aeg-core', 'Project: ·')
+    const body = FULL_BODY.replace('Project: app, core', 'Project: ·')
     const { block, dangling } = buildProvenanceBlock(facts({ body }))
     expect(block).toContain('- Project(s):   DANGLING — no Project field in PR body')
     expect(dangling).toContain('no `Project:` field found in PR body — Project(s) field is DANGLING')

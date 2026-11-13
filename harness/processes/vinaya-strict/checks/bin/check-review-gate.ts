@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: review-gate. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: review-gate. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkReviewGate` — the input assembly it judges (PR comments/labels/
  * waiver-label-actor/head sha/base sha/policy/objectives version/brief hash via
  * `gh` and `git`) lives in `lib/review-gate-input.ts`'s

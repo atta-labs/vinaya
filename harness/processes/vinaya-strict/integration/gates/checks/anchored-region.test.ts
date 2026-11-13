@@ -21,10 +21,22 @@ const FIXTURES = join(__dirname, './fixtures')
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex')
 
+// The retired product prefix: the pinned provenance block and the fixture's premise pin this sample data byte for byte.
+const RETIRED = REGION_PREFIX.old.toLowerCase()
+const SAMPLE_SLUG = `${RETIRED}-governance-hardening`
+
 // ---------- fixture helpers ---------------------------------------------------
 
 function makeTask(id: string, issue: number | null): Task {
-  return { id, title: `Task ${id}`, issue, projects: ['aeg'], dependsOn: [], conflictsWith: [], rationaleMarkdown: '' }
+  return {
+    id,
+    title: `Task ${id}`,
+    issue,
+    projects: [RETIRED],
+    dependsOn: [],
+    conflictsWith: [],
+    rationaleMarkdown: ''
+  }
 }
 
 function makeTrancheFile(slug: string, tasks: Task[]): TrancheFile {
@@ -34,7 +46,7 @@ function makeTrancheFile(slug: string, tasks: Task[]): TrancheFile {
 function makeFacts(body: string): MergedPrFacts {
   return {
     number: 407,
-    headRefName: 'task/aeg-governance-hardening/31',
+    headRefName: `task/${SAMPLE_SLUG}/31`,
     body,
     mergedAt: '2026-07-05T00:00:00Z',
     mergeSha: 'deadbeef',
@@ -46,7 +58,7 @@ function makeFacts(body: string): MergedPrFacts {
 
 describe('anchoredRegion — grammar', () => {
   it('returns the text between a START/END pair', () => {
-    const body = 'before\n<!-- AEG:TIER:START -->\n**Tier:** 1\n<!-- AEG:TIER:END -->\nafter'
+    const body = 'before\n<!-- VINAYA:TIER:START -->\n**Tier:** 1\n<!-- VINAYA:TIER:END -->\nafter'
     expect(anchoredRegion(body, 'TIER', REGION_PREFIXES)).toBe('\n**Tier:** 1\n')
   })
 
@@ -55,46 +67,46 @@ describe('anchoredRegion — grammar', () => {
   })
 
   it('is field-scoped — a TIER pair is not a PROJECT pair', () => {
-    const body = '<!-- AEG:TIER:START -->\n**Tier:** 1\n<!-- AEG:TIER:END -->'
+    const body = '<!-- VINAYA:TIER:START -->\n**Tier:** 1\n<!-- VINAYA:TIER:END -->'
     expect(anchoredRegion(body, 'PROJECT', REGION_PREFIXES)).toBeNull()
   })
 
   it('tolerates extra whitespace inside the comment markers', () => {
-    const body = '<!--  AEG:TIER:START  -->\n**Tier:** 3\n<!--\tAEG:TIER:END -->'
+    const body = '<!--  VINAYA:TIER:START  -->\n**Tier:** 3\n<!--\tVINAYA:TIER:END -->'
     expect(anchoredRegion(body, 'TIER', REGION_PREFIXES)).toBe('\n**Tier:** 3\n')
   })
 
   it('treats a START with no following END as no anchor at all', () => {
-    const body = '<!-- AEG:TIER:START -->\n**Tier:** 1\n(no end marker)'
+    const body = '<!-- VINAYA:TIER:START -->\n**Tier:** 1\n(no end marker)'
     expect(anchoredRegion(body, 'TIER', REGION_PREFIXES)).toBeNull()
   })
 
   it('first pair wins when a field is anchored twice', () => {
     const body =
-      '<!-- AEG:TIER:START -->\nfirst\n<!-- AEG:TIER:END -->\n<!-- AEG:TIER:START -->\nsecond\n<!-- AEG:TIER:END -->'
+      '<!-- VINAYA:TIER:START -->\nfirst\n<!-- VINAYA:TIER:END -->\n<!-- VINAYA:TIER:START -->\nsecond\n<!-- VINAYA:TIER:END -->'
     expect(anchoredRegion(body, 'TIER', REGION_PREFIXES)).toBe('\nfirst\n')
   })
 
   it('ignores markers inside fenced code blocks', () => {
-    const body = ['```', '<!-- AEG:TIER:START -->', 'Tier: 3', '<!-- AEG:TIER:END -->', '```'].join('\n')
+    const body = ['```', '<!-- VINAYA:TIER:START -->', 'Tier: 3', '<!-- VINAYA:TIER:END -->', '```'].join('\n')
     expect(anchoredRegion(body, 'TIER', REGION_PREFIXES)).toBeNull()
   })
 
   it('ignores markers inside inline code spans', () => {
-    const body = 'use `<!-- AEG:TIER:START -->` and `<!-- AEG:TIER:END -->` to anchor the field'
+    const body = 'use `<!-- VINAYA:TIER:START -->` and `<!-- VINAYA:TIER:END -->` to anchor the field'
     expect(anchoredRegion(body, 'TIER', REGION_PREFIXES)).toBeNull()
   })
 
   it('a fenced decoy marker does not shadow a real pair later in the body', () => {
     const body = [
       '```',
-      '<!-- AEG:TIER:START -->',
+      '<!-- VINAYA:TIER:START -->',
       'Tier: 3',
-      '<!-- AEG:TIER:END -->',
+      '<!-- VINAYA:TIER:END -->',
       '```',
-      '<!-- AEG:TIER:START -->',
+      '<!-- VINAYA:TIER:START -->',
       '**Tier:** 1',
-      '<!-- AEG:TIER:END -->'
+      '<!-- VINAYA:TIER:END -->'
     ].join('\n')
     expect(anchoredRegion(body, 'TIER', REGION_PREFIXES)).toBe('\n**Tier:** 1\n')
   })
@@ -133,7 +145,7 @@ describe('anchor recognition is additive — PR #407 freeform round-trip', () =>
   it('parsePremiseBlock — unchanged (the five captured pins)', () => {
     expect(parsePremiseBlock(body)).toEqual([
       { kind: 'contains', path: '.github/workflows/archivist.yml', value: 'pull-requests: read' },
-      { kind: 'contains', path: '.github/workflows/forge-lifecycle.yml', value: 'aeg-gate-suite' },
+      { kind: 'contains', path: '.github/workflows/forge-lifecycle.yml', value: `${RETIRED}-gate-suite` },
       { kind: 'contains', path: '.github/workflows/forge-lifecycle.yml', value: '!cancelled()' },
       { kind: 'contains', path: 'apps/vada-ai/web/vercel.json', value: 'git fetch --depth=100 origin main:main' },
       { kind: 'contains', path: 'apps/vada-ai/web/vercel.json', value: '--fallback=main' }
@@ -145,8 +157,8 @@ describe('anchor recognition is additive — PR #407 freeform round-trip', () =>
   })
 
   it('checkClosesNTopology — unchanged (ok, expected Issue 395)', () => {
-    const files = [makeTrancheFile('aeg-governance-hardening', [makeTask('31', 395)])]
-    const r = checkClosesNTopology('task/aeg-governance-hardening/31', body, files)
+    const files = [makeTrancheFile(SAMPLE_SLUG, [makeTask('31', 395)])]
+    const r = checkClosesNTopology(`task/${SAMPLE_SLUG}/31`, body, files)
     expect(r.ok).toBe(true)
     expect(r.expectedIssue).toBe(395)
   })
@@ -168,7 +180,7 @@ describe('anchor recognition is additive — PR #407 freeform round-trip', () =>
     // `task 31 (tranche <slug>)`.
     //
     // Re-pinned again: the `- Brief:` line now
-    // names the Issue's `aeg:brief:v1` comment URL (DANGLING here — this
+    // names the Issue's `vinaya:brief:v1` comment URL (DANGLING here — this
     // fixture's `makeFacts` carries no `briefCommentUrl`) instead of the
     // retired "in this PR body" text. Assembly is otherwise untouched.
     //
@@ -190,15 +202,15 @@ describe('anchor vs decoy — Tier', () => {
   it('resolves to the anchored value, not an earlier decoy', () => {
     const body = [
       'Reference brief says Tier: 3 somewhere in prose.', // decoy, earlier
-      '<!-- AEG:TIER:START -->',
+      '<!-- VINAYA:TIER:START -->',
       '**Tier:** 1',
-      '<!-- AEG:TIER:END -->'
+      '<!-- VINAYA:TIER:END -->'
     ].join('\n')
     expect(readTierFromPrBody(body)).toBe(1)
   })
 
   it('an anchored pair with no Tier field inside is a missing tier (no decoy fallback)', () => {
-    const body = ['<!-- AEG:TIER:START -->', '(left empty)', '<!-- AEG:TIER:END -->', 'Tier: 3'].join('\n')
+    const body = ['<!-- VINAYA:TIER:START -->', '(left empty)', '<!-- VINAYA:TIER:END -->', 'Tier: 3'].join('\n')
     expect(readTierFromPrBody(body)).toBeNull()
   })
 })
@@ -207,9 +219,9 @@ describe('anchor vs decoy — Project', () => {
   it('gate and archivist both resolve to the anchored value, not the header decoy', () => {
     const body = [
       'Project: wrong-decoy', // header-block decoy — legacy recognition would pick this
-      '<!-- AEG:PROJECT:START -->',
-      '**Project:** aeg',
-      '<!-- AEG:PROJECT:END -->',
+      '<!-- VINAYA:PROJECT:START -->',
+      `**Project:** ${RETIRED}`,
+      '<!-- VINAYA:PROJECT:END -->',
       '',
       '## Summary',
       '',
@@ -217,7 +229,7 @@ describe('anchor vs decoy — Project', () => {
     ].join('\n')
     expect(checkProjectField(body).status).toBe('pass')
     const { block } = buildProvenanceBlock(makeFacts(body))
-    expect(block).toContain('- Project(s):   aeg')
+    expect(block).toContain(`- Project(s):   ${RETIRED}`)
     expect(block).not.toContain('wrong-decoy')
   })
 })
@@ -225,10 +237,10 @@ describe('anchor vs decoy — Project', () => {
 describe('anchor vs decoy — Closes #N', () => {
   const body = [
     'Closes #999', // header-block decoy — legacy recognition would pick this
-    '<!-- AEG:CLOSES:START -->',
+    '<!-- VINAYA:CLOSES:START -->',
     'Closes #395',
-    '<!-- AEG:CLOSES:END -->',
-    '**Project:** aeg',
+    '<!-- VINAYA:CLOSES:END -->',
+    `**Project:** ${RETIRED}`,
     '',
     '## Summary',
     '',
@@ -236,11 +248,11 @@ describe('anchor vs decoy — Closes #N', () => {
   ].join('\n')
 
   it('checkClosesNTopology counts only references inside the pair', () => {
-    const files = [makeTrancheFile('aeg-governance-hardening', [makeTask('31', 395)])]
-    expect(checkClosesNTopology('task/aeg-governance-hardening/31', body, files).ok).toBe(true)
+    const files = [makeTrancheFile(SAMPLE_SLUG, [makeTask('31', 395)])]
+    expect(checkClosesNTopology(`task/${SAMPLE_SLUG}/31`, body, files).ok).toBe(true)
     // …and the decoy alone would NOT satisfy the gate for issue 999:
-    const files999 = [makeTrancheFile('aeg-governance-hardening', [makeTask('31', 999)])]
-    expect(checkClosesNTopology('task/aeg-governance-hardening/31', body, files999).ok).toBe(false)
+    const files999 = [makeTrancheFile(SAMPLE_SLUG, [makeTask('31', 999)])]
+    expect(checkClosesNTopology(`task/${SAMPLE_SLUG}/31`, body, files999).ok).toBe(false)
   })
 
   it('archivist resolves the primary Issue to the anchored reference and flags the decoy as extra', () => {
@@ -256,10 +268,10 @@ describe('anchor vs decoy — Premise', () => {
       '**Premise:**', // decoy block, earlier — legacy recognition would pick this
       '- decoy/path.ts contains: DECOY',
       '',
-      '<!-- AEG:PREMISE:START -->',
+      '<!-- VINAYA:PREMISE:START -->',
       '**Premise:**',
       '- real/path.ts contains: REAL',
-      '<!-- AEG:PREMISE:END -->'
+      '<!-- VINAYA:PREMISE:END -->'
     ].join('\n')
     expect(parsePremiseBlock(body)).toEqual([{ kind: 'contains', path: 'real/path.ts', value: 'REAL' }])
   })
@@ -274,9 +286,9 @@ describe('anchor vs decoy — Test Plan', () => {
       '',
       '## Real report',
       '',
-      '<!-- AEG:TEST-PLAN:START -->',
+      '<!-- VINAYA:TEST-PLAN:START -->',
       '- [x] **[agent]** real, ticked item',
-      '<!-- AEG:TEST-PLAN:END -->'
+      '<!-- VINAYA:TEST-PLAN:END -->'
     ].join('\n')
     const r = locateTestPlanSection(body)
     expect(r.found).toBe(true)
@@ -287,7 +299,7 @@ describe('anchor vs decoy — Test Plan', () => {
   })
 
   it('needs no heading inside the pair (closing the #377 unrecognized-heading class)', () => {
-    const body = '<!-- AEG:TEST-PLAN:START -->\n- [x] **[agent]** item\n<!-- AEG:TEST-PLAN:END -->'
+    const body = '<!-- VINAYA:TEST-PLAN:START -->\n- [x] **[agent]** item\n<!-- VINAYA:TEST-PLAN:END -->'
     const r = locateTestPlanSection(body)
     expect(r.found).toBe(true)
     if (r.found) expect(r.section).toContain('**[agent]** item')
@@ -298,14 +310,14 @@ describe('anchor vs decoy — Test Plan', () => {
 
 describe('template-shaped body — anchored report above a <details>-wrapped brief', () => {
   const body = [
-    '<!-- AEG:CLOSES:START -->',
+    '<!-- VINAYA:CLOSES:START -->',
     'Closes #393',
-    '<!-- AEG:CLOSES:END -->',
+    '<!-- VINAYA:CLOSES:END -->',
     '',
     '**For:** Sonnet (test)',
-    '<!-- AEG:PROJECT:START -->',
-    '**Project:** aeg',
-    '<!-- AEG:PROJECT:END -->',
+    '<!-- VINAYA:PROJECT:START -->',
+    `**Project:** ${RETIRED}`,
+    '<!-- VINAYA:PROJECT:END -->',
     '',
     '## Summary',
     '',
@@ -313,17 +325,17 @@ describe('template-shaped body — anchored report above a <details>-wrapped bri
     '',
     '## Test plan',
     '',
-    '<!-- AEG:TEST-PLAN:START -->',
+    '<!-- VINAYA:TEST-PLAN:START -->',
     '- [x] **[agent]** real item, ticked, with evidence',
-    '<!-- AEG:TEST-PLAN:END -->',
+    '<!-- VINAYA:TEST-PLAN:END -->',
     '',
     '## Scope',
     '',
     'Blast radius.',
     '',
-    '<!-- AEG:TIER:START -->',
+    '<!-- VINAYA:TIER:START -->',
     '**Tier:** 1',
-    '<!-- AEG:TIER:END -->',
+    '<!-- VINAYA:TIER:END -->',
     '',
     '## Reference — the dispatched brief',
     '',
@@ -354,12 +366,12 @@ describe('template-shaped body — anchored report above a <details>-wrapped bri
       expect(tp.section).not.toContain('decoy unticked box')
     }
 
-    const files = [makeTrancheFile('aeg-governance-hardening', [makeTask('30', 393)])]
-    expect(checkClosesNTopology('task/aeg-governance-hardening/30', body, files).ok).toBe(true)
+    const files = [makeTrancheFile(SAMPLE_SLUG, [makeTask('30', 393)])]
+    expect(checkClosesNTopology(`task/${SAMPLE_SLUG}/30`, body, files).ok).toBe(true)
 
     const { issue, block } = buildProvenanceBlock(makeFacts(body))
     expect(issue).toBe(393)
-    expect(block).toContain('- Project(s):   aeg')
+    expect(block).toContain(`- Project(s):   ${RETIRED}`)
   })
 
   it('the raw body still carries the full reference-brief text for provenance greps', () => {
@@ -385,20 +397,20 @@ describe('maskCode / stripCode grammar parity (PR #617 review BLOCKER)', () => {
       'Example of the anchor shape:',
       '',
       open,
-      '<!-- AEG:CLOSES:START -->',
+      '<!-- VINAYA:CLOSES:START -->',
       'Closes #123',
-      '<!-- AEG:CLOSES:END -->',
-      '<!-- AEG:TIER:START -->',
+      '<!-- VINAYA:CLOSES:END -->',
+      '<!-- VINAYA:TIER:START -->',
       '**Tier:** 3',
-      '<!-- AEG:TIER:END -->',
+      '<!-- VINAYA:TIER:END -->',
       close,
       '',
-      '<!-- AEG:CLOSES:START -->',
+      '<!-- VINAYA:CLOSES:START -->',
       'Closes #616',
-      '<!-- AEG:CLOSES:END -->',
-      '<!-- AEG:TIER:START -->',
+      '<!-- VINAYA:CLOSES:END -->',
+      '<!-- VINAYA:TIER:START -->',
       '**Tier:** 1',
-      '<!-- AEG:TIER:END -->',
+      '<!-- VINAYA:TIER:END -->',
       ''
     ].join(eol)
 
@@ -416,13 +428,13 @@ describe('maskCode / stripCode grammar parity (PR #617 review BLOCKER)', () => {
 
   it('a decoy anchor in a double-backtick inline span loses to the real one', () => {
     const body =
-      'See ``<!-- AEG:CLOSES:START -->Closes #123<!-- AEG:CLOSES:END -->`` for shape.\n\n<!-- AEG:CLOSES:START -->\nCloses #616\n<!-- AEG:CLOSES:END -->\n'
+      'See ``<!-- VINAYA:CLOSES:START -->Closes #123<!-- VINAYA:CLOSES:END -->`` for shape.\n\n<!-- VINAYA:CLOSES:START -->\nCloses #616\n<!-- VINAYA:CLOSES:END -->\n'
     expect([...extractClosesReferences(body)]).toEqual([616])
   })
 
   it('a decoy anchor in an indented code block loses to the real one', () => {
     const body =
-      'Shape:\n\n    <!-- AEG:CLOSES:START -->\n    Closes #123\n    <!-- AEG:CLOSES:END -->\n\n<!-- AEG:CLOSES:START -->\nCloses #616\n<!-- AEG:CLOSES:END -->\n'
+      'Shape:\n\n    <!-- VINAYA:CLOSES:START -->\n    Closes #123\n    <!-- VINAYA:CLOSES:END -->\n\n<!-- VINAYA:CLOSES:START -->\nCloses #616\n<!-- VINAYA:CLOSES:END -->\n'
     expect([...extractClosesReferences(body)]).toEqual([616])
   })
 
@@ -431,19 +443,23 @@ describe('maskCode / stripCode grammar parity (PR #617 review BLOCKER)', () => {
   // must still resolve. `anchoredRegion` slices the ORIGINAL body, so these also
   // pin the mask's 1:1 index mapping — a length-changing mask would misalign here.
   it.each([
-    ['plain', '<!-- AEG:CLOSES:START -->\nCloses #616\n<!-- AEG:CLOSES:END -->', '\nCloses #616\n'],
+    ['plain', '<!-- VINAYA:CLOSES:START -->\nCloses #616\n<!-- VINAYA:CLOSES:END -->', '\nCloses #616\n'],
     [
       'after a fenced block',
-      '```\ncode\n```\n\n<!-- AEG:CLOSES:START -->\nCloses #616\n<!-- AEG:CLOSES:END -->',
+      '```\ncode\n```\n\n<!-- VINAYA:CLOSES:START -->\nCloses #616\n<!-- VINAYA:CLOSES:END -->',
       '\nCloses #616\n'
     ],
-    ['between two inline spans', '`a` <!-- AEG:CLOSES:START -->Closes #616<!-- AEG:CLOSES:END --> `b`', 'Closes #616'],
     [
-      'indented inside a list item',
-      '- item\n\n    <!-- AEG:CLOSES:START -->Closes #616<!-- AEG:CLOSES:END -->',
+      'between two inline spans',
+      '`a` <!-- VINAYA:CLOSES:START -->Closes #616<!-- VINAYA:CLOSES:END --> `b`',
       'Closes #616'
     ],
-    ['CRLF body', '<!-- AEG:CLOSES:START -->\r\nCloses #616\r\n<!-- AEG:CLOSES:END -->', '\r\nCloses #616\r\n']
+    [
+      'indented inside a list item',
+      '- item\n\n    <!-- VINAYA:CLOSES:START -->Closes #616<!-- VINAYA:CLOSES:END -->',
+      'Closes #616'
+    ],
+    ['CRLF body', '<!-- VINAYA:CLOSES:START -->\r\nCloses #616\r\n<!-- VINAYA:CLOSES:END -->', '\r\nCloses #616\r\n']
   ])('does not over-mask a real anchor: %s', (_name, body, expected) => {
     expect(anchoredRegion(body, 'CLOSES', REGION_PREFIXES)).toBe(expected)
   })
@@ -469,9 +485,9 @@ describe('strip whole, then slice (PR #617 review MAJOR)', () => {
     '',
     '- context bullet',
     '',
-    '    <!-- AEG:CLOSES:START -->',
+    '    <!-- VINAYA:CLOSES:START -->',
     '    Closes #616',
-    '    <!-- AEG:CLOSES:END -->',
+    '    <!-- VINAYA:CLOSES:END -->',
     ''
   ].join('\n')
 
@@ -482,21 +498,21 @@ describe('strip whole, then slice (PR #617 review MAJOR)', () => {
   })
 
   it('a genuine indented code block is still stripped (the guard is not simply disabled)', () => {
-    const body = 'Shape:\n\n    <!-- AEG:CLOSES:START -->\n    Closes #123\n    <!-- AEG:CLOSES:END -->\n'
+    const body = 'Shape:\n\n    <!-- VINAYA:CLOSES:START -->\n    Closes #123\n    <!-- VINAYA:CLOSES:END -->\n'
     expect(extractIssue(body, REGION_PREFIXES).issue).toBeNull()
   })
 
   // The invariant that broke: one body, two parsers, one answer. Both read the
   // same grammar over the same text, so any disagreement is a bug by definition.
   it.each([
-    ['plain anchor', '<!-- AEG:CLOSES:START -->\nCloses #616\n<!-- AEG:CLOSES:END -->'],
+    ['plain anchor', '<!-- VINAYA:CLOSES:START -->\nCloses #616\n<!-- VINAYA:CLOSES:END -->'],
     ['list-indented anchor', listAnchor],
     [
       'anchor after a fenced decoy',
-      '```\n<!-- AEG:CLOSES:START -->\nCloses #123\n<!-- AEG:CLOSES:END -->\n```\n\n<!-- AEG:CLOSES:START -->\nCloses #616\n<!-- AEG:CLOSES:END -->'
+      '```\n<!-- VINAYA:CLOSES:START -->\nCloses #123\n<!-- VINAYA:CLOSES:END -->\n```\n\n<!-- VINAYA:CLOSES:START -->\nCloses #616\n<!-- VINAYA:CLOSES:END -->'
     ],
-    ['CRLF anchor', '<!-- AEG:CLOSES:START -->\r\nCloses #616\r\n<!-- AEG:CLOSES:END -->'],
-    ['anchor between inline spans', '`a` <!-- AEG:CLOSES:START -->Closes #616<!-- AEG:CLOSES:END --> `b`']
+    ['CRLF anchor', '<!-- VINAYA:CLOSES:START -->\r\nCloses #616\r\n<!-- VINAYA:CLOSES:END -->'],
+    ['anchor between inline spans', '`a` <!-- VINAYA:CLOSES:START -->Closes #616<!-- VINAYA:CLOSES:END --> `b`']
   ])('extractIssue and extractClosesReferences agree: %s', (_name, body) => {
     expect(extractIssue(body, REGION_PREFIXES).issue).toBe(616)
     expect([...extractClosesReferences(body)]).toEqual([616])

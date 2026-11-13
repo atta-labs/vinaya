@@ -103,7 +103,7 @@ describe('fetchForgeTasksByLabel', () => {
       repository: {
         issues: {
           nodes: [
-            { number: 34, title: '[iter] 6 — Mocked-gh test harness for aeg-forge-state fetchers' },
+            { number: 34, title: '[iter] 6 — Mocked-gh test harness for forge-state fetchers' },
             { number: 35, title: '[iter] 7 — Some other task' }
           ]
         }

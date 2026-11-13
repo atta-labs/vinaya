@@ -11,7 +11,7 @@
  * state as something the Developer must re-derive by hand — the exact gap
  * this task exists to close: four Developer agents independently re-derived
  * (and stopped on) the same archival fact from scratch, at real token cost,
- * hours after it first became true (aeg-governance-hardening's 2026-07-02/03
+ * hours after it first became true (the 2026-07-02/03
  * live-fire wave).
  *
  * Message style mirrors `coherence-checks.ts`'s A1/A2/T2/etc. family: one
@@ -207,12 +207,12 @@ export type DispatchResult = { ready: boolean; blockers: string[]; blockerDetail
  *
  * A self-dependency is unsatisfiable by construction, so it is never a real
  * gate state — its presence is proof of a defect in the edge text or in its
- * resolution. `parseRationaleDeps` (`@attalabs/aeg-forge-state`) reads only
+ * resolution. `parseRationaleDeps` (the forge-state modules) reads only
  * a labeled `Depends-on:`/`Conflicts-with:` field's own comma-separated,
  * id-shaped tokens; an unlabeled/bare span elsewhere in the
  * "Dependency rationale" section is never read as an edge, whatever its
  * shape (`parse-rationale-deps.ts`'s own module comment states the rule). A
- * slug-qualified token in that list (`aeg-governance-hardening #NNN`) still
+ * slug-qualified token in that list (`<slug> #NNN`) still
  * resolves its trailing bare number against the NAMED tranche, not the host
  * — a resolver bug there is what would land a task depending on itself, on
  * that tranche's own task `1`.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: doctrine-portability. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: doctrine-portability. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkDoctrinePortability` — the class
  * `check-reader-resolvable-prose` sweeps but, by its own zero-I/O contract,
  * cannot see: a shipped-doctrine citation of a path that exists only in the
@@ -20,7 +20,7 @@
  * it runs the same predicate twice — once over the working tree, once over
  * `BASE_SHA` (`origin/main` by default) read live through `git show`/`git
  * ls-tree` — and reports only the findings present in the working tree but
- * absent at the base ref. `@attalabs/aeg-core`'s `captureBaseline`/
+ * absent at the base ref. `@attalabs/process-vinaya`'s `captureBaseline`/
  * `compareToBaseline` (`baseline-capture.ts`) carry the aggregate
  * baseline-vs-current counts into the summary line; the per-finding new-set
  * is a multiplicity-aware diff over the two predicate runs, keyed on

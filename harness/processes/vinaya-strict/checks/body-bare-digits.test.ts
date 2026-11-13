@@ -16,7 +16,7 @@ function wrapToken(body: string, token: string): string {
   return `${body.slice(0, idx)}\`${token}\`${body.slice(idx + token.length)}`
 }
 
-// ---------- must NOT fail — the masking pipeline (code spans/blocks, AEG:* anchors, and the region-level exemptions that are separate, already-authorized decisions, not per-token identifier-shape classification) ----------
+// ---------- must NOT fail — the masking pipeline (code spans/blocks, VINAYA:* anchors, and the region-level exemptions that are separate, already-authorized decisions, not per-token identifier-shape classification) ----------
 
 describe('body-bare-digits — must NOT fail: the masking pipeline', () => {
   it('an inline single-backtick code span', () => {
@@ -37,25 +37,25 @@ describe('body-bare-digits — must NOT fail: the masking pipeline', () => {
     expect(violationLines(body)).toEqual([])
   })
 
-  it('a digit inside an AEG:TIER anchor', () => {
-    const body = ['## Scope', '', '<!-- AEG:TIER:START -->', '**Tier:** 1', '<!-- AEG:TIER:END -->'].join('\n')
+  it('a digit inside an VINAYA:TIER anchor', () => {
+    const body = ['## Scope', '', '<!-- VINAYA:TIER:START -->', '**Tier:** 1', '<!-- VINAYA:TIER:END -->'].join('\n')
     expect(violationLines(body)).toEqual([])
   })
 
-  it('a digit inside an AEG:EVIDENCE anchor (owned by evidence-fresh, not this check)', () => {
+  it('a digit inside an VINAYA:EVIDENCE anchor (owned by evidence-fresh, not this check)', () => {
     const body = [
-      '<!-- AEG:EVIDENCE:START -->',
+      '<!-- VINAYA:EVIDENCE:START -->',
       'Head: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       '```',
       '2\t1\tfile.ts',
       '```',
-      '<!-- AEG:EVIDENCE:END -->'
+      '<!-- VINAYA:EVIDENCE:END -->'
     ].join('\n')
     expect(violationLines(body)).toEqual([])
   })
 
-  it('a digit inside an AEG:CLOSES anchor', () => {
-    const body = ['<!-- AEG:CLOSES:START -->', 'Closes #135', '<!-- AEG:CLOSES:END -->'].join('\n')
+  it('a digit inside an VINAYA:CLOSES anchor', () => {
+    const body = ['<!-- VINAYA:CLOSES:START -->', 'Closes #135', '<!-- VINAYA:CLOSES:END -->'].join('\n')
     expect(violationLines(body)).toEqual([])
   })
 
@@ -181,11 +181,11 @@ describe('body-bare-digits — O<n>. objective markers under ## Objectives (task
 const NOW_REQUIRES_BACKTICKS: Array<[string, string, string]> = [
   ['an Issue/PR reference', 'See #135 for the original report.', '#135'],
   ['a date', 'Fixed on 2026-08-18, verified the same day.', '2026-08-18'],
-  ['a dotted version string', 'Bumped @attalabs/aeg-types to 0.12.0 in this pass.', '0.12.0'],
+  ['a dotted version string', 'Bumped @attalabs/types to 0.12.0 in this pass.', '0.12.0'],
   [
     'a file path segment carrying a digit',
-    'See packages/v2/aeg-core/src/index.ts for the real path.',
-    'packages/v2/aeg-core/src/index.ts'
+    'See packages/v2/core/src/index.ts for the real path.',
+    'packages/v2/core/src/index.ts'
   ],
   ['a section number', 'See Section 9 for the full rationale behind this call.', '9'],
   ['a letter-led check-code identifier', 'C5 flags the gap in this pass.', 'C5'],
@@ -262,7 +262,7 @@ describe('body-bare-digits — must fail: narrative quantitative claims', () => 
  * list-marker-shape bypass, a loose URL check, an inline-enumeration-marker
  * bypass). None of that shape enumeration exists anymore. Every one of
  * these strings fails for the exact same single reason now — the digit
- * token is not inside a code span/block/AEG anchor — and every one passes
+ * token is not inside a code span/block/VINAYA anchor — and every one passes
  * the moment its digit token is backtick-wrapped, for the exact same single
  * reason too. The shape that used to matter for classifying WHY a string
  * escaped no longer matters for WHETHER it does; it is kept here purely as
@@ -342,13 +342,15 @@ describe('body-bare-digits — historical bypasses, all closed by the collapsed 
 // ---------- masking-boundary integrity — zero-width/entity normalization now defends the mask itself, not a vocabulary word ----------
 
 describe('body-bare-digits — masking-boundary integrity (normalization runs before masking, not after)', () => {
-  it('a zero-width character embedded inside an AEG:* anchor tag does not defeat anchor recognition', () => {
+  it('a zero-width character embedded inside an VINAYA:* anchor tag does not defeat anchor recognition', () => {
     // Round 4 finding 2 originally hid a vocabulary word from a noun check;
     // that classifier is gone, but the same character could just as easily
     // corrupt the literal anchor-tag text `blankAnchoredRegions` matches
     // against — this is the surviving, still-real reason `ZERO_WIDTH`
     // stripping runs on the whole body before any masking.
-    const body = ['## Scope', '', '<!-- AEG:TIER:START -->', '**Tier:** 1', '<!-- AEG:TIER\u200B:END -->'].join('\n')
+    const body = ['## Scope', '', '<!-- VINAYA:TIER:START -->', '**Tier:** 1', '<!-- VINAYA:TIER\u200B:END -->'].join(
+      '\n'
+    )
     expect(checkBareDigits(body).violations).toEqual([])
   })
 
@@ -360,15 +362,15 @@ describe('body-bare-digits — masking-boundary integrity (normalization runs be
 
 // ---------- round 6 security review: the "kept" masking layers had laundering surface of their own ----------
 
-describe('body-bare-digits — round 6: a decoy AEG:* anchor pair outside its documented section is not trusted', () => {
+describe('body-bare-digits — round 6: a decoy VINAYA:* anchor pair outside its documented section is not trusted', () => {
   it('does not let a decoy anchor for a field the body otherwise never anchors exempt a fabricated claim', () => {
     const body = [
       '## Summary',
       'Ordinary body.',
       '',
-      '<!-- AEG:PROJECT:START -->',
+      '<!-- VINAYA:PROJECT:START -->',
       'We actually observed 4500 regressions in this pass.',
-      '<!-- AEG:PROJECT:END -->'
+      '<!-- VINAYA:PROJECT:END -->'
     ].join('\n')
     expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
   })
@@ -381,30 +383,36 @@ describe('body-bare-digits — round 6: a decoy AEG:* anchor pair outside its do
     const body = [
       '## Summary',
       '',
-      `<!-- AEG:${field}:START -->`,
+      `<!-- VINAYA:${field}:START -->`,
       'We shipped 900 fixes this week.',
-      `<!-- AEG:${field}:END -->`
+      `<!-- VINAYA:${field}:END -->`
     ].join('\n')
     expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
   })
 
   it('does not trust a decoy CLOSES anchor placed after the header block', () => {
-    const body = ['## Summary', '', '<!-- AEG:CLOSES:START -->', 'We fixed 4500 bugs.', '<!-- AEG:CLOSES:END -->'].join(
-      '\n'
-    )
+    const body = [
+      '## Summary',
+      '',
+      '<!-- VINAYA:CLOSES:START -->',
+      'We fixed 4500 bugs.',
+      '<!-- VINAYA:CLOSES:END -->'
+    ].join('\n')
     expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
   })
 
   it('still trusts a real CLOSES/TIER/EVIDENCE anchor correctly placed under its documented section', () => {
     const bodies = [
-      ['<!-- AEG:CLOSES:START -->', 'Closes #135', '<!-- AEG:CLOSES:END -->', '', '## Summary', 'text'].join('\n'),
-      ['## Scope', '', '<!-- AEG:TIER:START -->', '**Tier:** 1', '<!-- AEG:TIER:END -->'].join('\n'),
+      ['<!-- VINAYA:CLOSES:START -->', 'Closes #135', '<!-- VINAYA:CLOSES:END -->', '', '## Summary', 'text'].join(
+        '\n'
+      ),
+      ['## Scope', '', '<!-- VINAYA:TIER:START -->', '**Tier:** 1', '<!-- VINAYA:TIER:END -->'].join('\n'),
       [
         '## Evidence',
         '',
-        '<!-- AEG:EVIDENCE:START -->',
+        '<!-- VINAYA:EVIDENCE:START -->',
         'Head: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        '<!-- AEG:EVIDENCE:END -->'
+        '<!-- VINAYA:EVIDENCE:END -->'
       ].join('\n')
     ]
     for (const body of bodies) expect(checkBareDigits(body).violations).toEqual([])
@@ -414,10 +422,10 @@ describe('body-bare-digits — round 6: a decoy AEG:* anchor pair outside its do
     const body = [
       '## Premise',
       '',
-      '<!-- AEG:PREMISE:START -->',
+      '<!-- VINAYA:PREMISE:START -->',
       '**Premise:**',
       '- a.ts contains: export function f',
-      '<!-- AEG:PREMISE:END -->'
+      '<!-- VINAYA:PREMISE:END -->'
     ].join('\n')
     expect(checkBareDigits(body).violations).toEqual([])
   })
@@ -436,17 +444,17 @@ describe('body-bare-digits — task vinaya-adopter-portability-v1 2 (Issue #232)
       '## Premise',
       '',
       '**Premise:**',
-      "- apps/cli/src/checks/bin/check-registry-gates.ts contains: ROLES_DIR = 'aeg-root/roles'"
+      "- apps/cli/src/checks/bin/check-registry-gates.ts contains: ROLES_DIR = 'sample-root/roles'"
     ].join('\n')
     expect(checkBareDigits(body).violations).toEqual([])
   })
 
-  it("exempts an anchored `AEG:PREMISE` pin bullet's digit-bearing value the same way", () => {
+  it("exempts an anchored `VINAYA:PREMISE` pin bullet's digit-bearing value the same way", () => {
     const body = [
-      '<!-- AEG:PREMISE:START -->',
+      '<!-- VINAYA:PREMISE:START -->',
       '**Premise:**',
       '- some/file.ts absent: retired Capability 7 flag',
-      '<!-- AEG:PREMISE:END -->'
+      '<!-- VINAYA:PREMISE:END -->'
     ].join('\n')
     expect(checkBareDigits(body).violations).toEqual([])
   })
@@ -493,8 +501,8 @@ describe('body-bare-digits — task vinaya-adopter-portability-v1 2 (Issue #232)
     // The whole point of the carve-out: unlike a backtick-wrapped value,
     // the bare value `checkBareDigits` exempts is byte-identical to what a
     // real file on disk would contain, so `content.includes(a.value)` in
-    // `@attalabs/aeg-core`'s `checkPremises` still matches.
-    const value = "ROLES_DIR = 'aeg-root/roles'"
+    // `@attalabs/process-vinaya`'s `checkPremises` still matches.
+    const value = "ROLES_DIR = 'sample-root/roles'"
     const body = ['**Premise:**', `- apps/cli/src/checks/bin/check-registry-gates.ts contains: ${value}`].join('\n')
     expect(checkBareDigits(body).violations).toEqual([])
     expect(value.includes('`')).toBe(false)
@@ -509,23 +517,25 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
         '## Summary',
         'text',
         '',
-        '<!-- AEG:PROJECT:START -->',
+        '<!-- VINAYA:PROJECT:START -->',
         'We actually observed 4500 regressions in this pass.',
-        '<!-- AEG:PROJECT:END -->'
+        '<!-- VINAYA:PROJECT:END -->'
       ].join('\n')
     ],
     [
       'CLOSES',
-      ['<!-- AEG:CLOSES:START -->', 'We actually fixed 4500 bugs in this pass.', '<!-- AEG:CLOSES:END -->'].join('\n')
+      ['<!-- VINAYA:CLOSES:START -->', 'We actually fixed 4500 bugs in this pass.', '<!-- VINAYA:CLOSES:END -->'].join(
+        '\n'
+      )
     ],
     [
       'TIER',
       [
         '## Scope',
         '',
-        '<!-- AEG:TIER:START -->',
+        '<!-- VINAYA:TIER:START -->',
         'We actually shipped 4500 unrelated fixes in this pass.',
-        '<!-- AEG:TIER:END -->'
+        '<!-- VINAYA:TIER:END -->'
       ].join('\n')
     ],
     [
@@ -533,9 +543,9 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
       [
         '## Evidence',
         '',
-        '<!-- AEG:EVIDENCE:START -->',
+        '<!-- VINAYA:EVIDENCE:START -->',
         'We measured 4500 improvements in this pass.',
-        '<!-- AEG:EVIDENCE:END -->'
+        '<!-- VINAYA:EVIDENCE:END -->'
       ].join('\n')
     ]
   ])(
@@ -553,9 +563,9 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
     [
       'CLOSES',
       [
-        '<!-- AEG:CLOSES:START -->',
+        '<!-- VINAYA:CLOSES:START -->',
         'Closes #999 -- by the way we also fixed 4500 unrelated bugs.',
-        '<!-- AEG:CLOSES:END -->'
+        '<!-- VINAYA:CLOSES:END -->'
       ].join('\n')
     ],
     [
@@ -563,17 +573,17 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
       [
         '## Scope',
         '',
-        '<!-- AEG:TIER:START -->',
+        '<!-- VINAYA:TIER:START -->',
         '**Tier:** 1 and also 500 known regressions remain untriaged',
-        '<!-- AEG:TIER:END -->'
+        '<!-- VINAYA:TIER:END -->'
       ].join('\n')
     ],
     [
       'PROJECT',
       [
-        '<!-- AEG:PROJECT:START -->',
+        '<!-- VINAYA:PROJECT:START -->',
         '**Project:** cli, though 500 regressions were found',
-        '<!-- AEG:PROJECT:END -->'
+        '<!-- VINAYA:PROJECT:END -->'
       ].join('\n')
     ]
   ])(
@@ -585,9 +595,13 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
 
   it('still trusts real, single-value CLOSES/TIER/PROJECT anchors bounded correctly', () => {
     const bodies = [
-      ['<!-- AEG:CLOSES:START -->', 'Closes #135', '<!-- AEG:CLOSES:END -->', '', '## Summary', 'text'].join('\n'),
-      ['## Scope', '', '<!-- AEG:TIER:START -->', '**Tier:** 1', '<!-- AEG:TIER:END -->'].join('\n'),
-      ['<!-- AEG:PROJECT:START -->', '**Project:** aeg-core, cli, vinaya', '<!-- AEG:PROJECT:END -->'].join('\n')
+      ['<!-- VINAYA:CLOSES:START -->', 'Closes #135', '<!-- VINAYA:CLOSES:END -->', '', '## Summary', 'text'].join(
+        '\n'
+      ),
+      ['## Scope', '', '<!-- VINAYA:TIER:START -->', '**Tier:** 1', '<!-- VINAYA:TIER:END -->'].join('\n'),
+      ['<!-- VINAYA:PROJECT:START -->', '**Project:** sample-core, cli, vinaya', '<!-- VINAYA:PROJECT:END -->'].join(
+        '\n'
+      )
     ]
     for (const body of bodies) expect(checkBareDigits(body).violations).toEqual([])
   })
@@ -606,7 +620,7 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
     const body = [
       '## Test plan',
       '',
-      '<!-- AEG:TEST-PLAN:START -->',
+      '<!-- VINAYA:TEST-PLAN:START -->',
       '- [x] **[agent]** Piped-vs-redirected byte counts on the oversized fixture: `| wc -c` and `> file` now produce the same count.',
       '',
       '  ```',
@@ -616,7 +630,7 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
       '     1967118',
       '  ```',
       '  (The 9-byte difference is a newline-counting quirk; both captures are the complete payload.)',
-      '<!-- AEG:TEST-PLAN:END -->'
+      '<!-- VINAYA:TEST-PLAN:END -->'
     ].join('\n')
     // The fenced 1967109/1967118 never trip — maskCode already masks them.
     // The unfenced "9-byte" is the only violation: real, correct behavior
@@ -628,7 +642,7 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
     const body = [
       '## Test plan',
       '',
-      '<!-- AEG:TEST-PLAN:START -->',
+      '<!-- VINAYA:TEST-PLAN:START -->',
       '- [x] **[agent]** Piped-vs-redirected byte counts on the oversized fixture: `| wc -c` and `> file` now produce the same count.',
       '',
       '  ```',
@@ -638,7 +652,7 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
       '     1967118',
       '  ```',
       '  (The `9`-byte difference is a newline-counting quirk; both captures are the complete payload.)',
-      '<!-- AEG:TEST-PLAN:END -->'
+      '<!-- VINAYA:TEST-PLAN:END -->'
     ].join('\n')
     expect(checkBareDigits(body).violations).toEqual([])
   })
@@ -653,11 +667,11 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
       [
         '## Premise',
         '',
-        '<!-- AEG:PREMISE:START -->',
+        '<!-- VINAYA:PREMISE:START -->',
         '**Premise:**',
         '- a.ts contains: export function f',
         'We actually shipped 4500 unrelated fixes.',
-        '<!-- AEG:PREMISE:END -->'
+        '<!-- VINAYA:PREMISE:END -->'
       ].join('\n')
     ],
     [
@@ -665,10 +679,10 @@ describe('body-bare-digits — round 8: an anchor placed in its own canonical se
       [
         '## Test plan',
         '',
-        '<!-- AEG:TEST-PLAN:START -->',
+        '<!-- VINAYA:TEST-PLAN:START -->',
         '- [x] **[agent]** 163 pass, 0 fail',
         'By the way we fixed 4500 unrelated bugs.',
-        '<!-- AEG:TEST-PLAN:END -->'
+        '<!-- VINAYA:TEST-PLAN:END -->'
       ].join('\n')
     ]
   ])(
@@ -688,7 +702,7 @@ describe('body-bare-digits — round 6: Tier:/Project: no longer blank a claim a
     expect(checkBareDigits(body).violations.length).toBeGreaterThan(0)
   })
 
-  it.each(['Tier: 1', '**Tier:** 1', 'Project: aeg-core, cli, vinaya', 'Project: cli'])(
+  it.each(['Tier: 1', '**Tier:** 1', 'Project: sample-core, cli, vinaya', 'Project: cli'])(
     'the field value itself is still exempt: %s',
     (body) => {
       expect(checkBareDigits(body).violations).toEqual([])
@@ -724,7 +738,7 @@ describe('body-bare-digits — round 7: Tier:/Project: reuse the real field gram
   })
 
   it('still exempts a real multi-name Project value with no punctuation boundary needed after it', () => {
-    expect(checkBareDigits('Project: aeg-core, cli, vinaya, aeg-forge-state').violations).toEqual([])
+    expect(checkBareDigits('Project: sample-core, cli, vinaya, forge-state').violations).toEqual([])
   })
 
   // Round 9 code review, BLOCKER: PROJECT_SLUG's own shape
@@ -735,7 +749,9 @@ describe('body-bare-digits — round 7: Tier:/Project: reuse the real field gram
   it.each([
     ['Project: cli, we-fixed-4500-bugs', 'unanchored'],
     [
-      ['<!-- AEG:PROJECT:START -->', '**Project:** cli, we-fixed-4500-bugs', '<!-- AEG:PROJECT:END -->'].join('\n'),
+      ['<!-- VINAYA:PROJECT:START -->', '**Project:** cli, we-fixed-4500-bugs', '<!-- VINAYA:PROJECT:END -->'].join(
+        '\n'
+      ),
       'anchored, genuinely signed'
     ]
   ])('does not let a hyphenated digit-bearing claim launder as a real Project name (%s)', (body) => {
@@ -745,8 +761,8 @@ describe('body-bare-digits — round 7: Tier:/Project: reuse the real field gram
   it('still exempts real, digit-free Project names, single and multi, anchored and not', () => {
     const bodies = [
       'Project: cli',
-      'Project: aeg-core, cli, vinaya',
-      ['<!-- AEG:PROJECT:START -->', '**Project:** cli, aeg-forge-state', '<!-- AEG:PROJECT:END -->'].join('\n')
+      'Project: sample-core, cli, vinaya',
+      ['<!-- VINAYA:PROJECT:START -->', '**Project:** cli, forge-state', '<!-- VINAYA:PROJECT:END -->'].join('\n')
     ]
     for (const body of bodies) expect(checkBareDigits(body).violations).toEqual([])
   })

@@ -98,7 +98,7 @@ describe('isSurfacedDoc: frontmatter override wins both ways', () => {
 
   it('surfaced: true shows a doc no node points at', () => {
     expect(isSurfacedDoc('task-model.md', { surfaced: true }, SURFACED)).toBe(true)
-    expect(isSurfacedDoc('tranches/aeg-consolidation.md', { surfaced: true }, SURFACED)).toBe(true)
+    expect(isSurfacedDoc('tranches/example-tranche-v1.md', { surfaced: true }, SURFACED)).toBe(true)
   })
 })
 

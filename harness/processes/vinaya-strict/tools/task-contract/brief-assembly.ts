@@ -1,5 +1,5 @@
 /**
- * Brief assembly — the forge/tree shim over `@attalabs/aeg-core`'s pure
+ * Brief assembly — the forge/tree shim over the process package's pure
  * `renderBrief`, extracted out of `commands/brief.ts` so a
  * second caller (`dispatchTask`) can render the exact same brief without a
  * second copy of this assembly. `briefRenderCommand`
@@ -64,8 +64,8 @@ import { BUNDLED_DOCTRINE_DIR, DOCTRINE_TREE, doctrineSource } from '../doctrine
 
 const DOC_OWNERS_PATH = '.vinaya/doc-owners'
 /** The workspace member that owns the unabridged gate derivations a brief may name, and the name it must declare for this repository to be the one that owns them. */
-const AEG_CORE_DIR = 'harness/processes/vinaya-strict'
-const AEG_CORE_PACKAGE_NAME = '@attalabs/process-vinaya'
+const PROCESS_PACKAGE_DIR = 'harness/processes/vinaya-strict'
+const PROCESS_PACKAGE_NAME = '@attalabs/process-vinaya'
 const PACKAGE_ROOT = cliPackageRoot()
 const BRIEF_TEMPLATE_SOURCE = doctrineSource('templates/brief-template.md')
 const PACKAGED_TEMPLATE_PATH = join(PACKAGE_ROOT, BUNDLED_DOCTRINE_DIR, BRIEF_TEMPLATE_SOURCE)
@@ -88,7 +88,7 @@ const TEMPLATE_PATH = existsSync(PACKAGED_TEMPLATE_PATH)
  * A local gate program is named only when this repository is identified, by
  * PACKAGE NAME, as one that owns that derivation: the CLI itself is vendored
  * here (`detectVendoredVinaya`, which matches on `@attalabs/vinaya`), the
- * `packages/aeg-core` member declares `@attalabs/aeg-core`, and the bin file
+ * process package member declares `@attalabs/process-vinaya`, and the bin file
  * is present. The file's presence alone is deliberately not enough — a brief
  * names these to a Developer as commands to run with `bun`, and directory
  * shape is not identity: any repository (a fork, a single contributed commit)
@@ -104,9 +104,11 @@ export function repoBriefCommandFacts(repoRoot: string): {
   localGateCommands: LocalGateCommands
 } {
   const vendored = detectVendoredVinaya(repoRoot)
-  const aegCoreName = readJson(join(repoRoot, AEG_CORE_DIR, 'package.json')).name
-  const ownsAegCore = vendored !== null && typeof aegCoreName === 'string' && aegCoreName === AEG_CORE_PACKAGE_NAME
-  const program = (rel: string): string | null => (ownsAegCore && existsSync(join(repoRoot, rel)) ? `bun ${rel}` : null)
+  const processPackageName = readJson(join(repoRoot, PROCESS_PACKAGE_DIR, 'package.json')).name
+  const ownsProcessPackage =
+    vendored !== null && typeof processPackageName === 'string' && processPackageName === PROCESS_PACKAGE_NAME
+  const program = (rel: string): string | null =>
+    ownsProcessPackage && existsSync(join(repoRoot, rel)) ? `bun ${rel}` : null
   return {
     cliInvocation: briefCliInvocation(vendored, repoRoot),
     localGateCommands: {
@@ -470,7 +472,7 @@ export function checkDirtyPinnedFiles(pinnedPaths: string[], cwd?: string): stri
  * read here so this stays testable without a real repo) — an exact match, or
  * a UNIQUE suffix match for a bare filename elided from a shared directory
  * prefix in the Boundary prose (e.g. a real brief's own "harness/processes/vinaya-strict/
- * aeg-manual-flow.md, process.md, roles/developer.md"). A token matching
+ * manual-flow.md, process.md, roles/developer.md"). A token matching
  * zero or more-than-one tracked file is dropped, never guessed, unless it
  * is an exact new repository path covered by the supplied Surface.
  */
@@ -523,7 +525,7 @@ function readManifest(dir: string): PackageManifest | null {
   return Object.keys(manifest).length === 0 ? null : (manifest as PackageManifest)
 }
 
-/** `apps/cli`/`packages/aeg-core` → that workspace member's own `package.json` `name` field, or `null` outside any workspace member — never a directory path, per `SurfaceFileFact.packageName`'s own contract. */
+/** `apps/cli`/`packages/core` → that workspace member's own `package.json` `name` field, or `null` outside any workspace member — never a directory path, per `SurfaceFileFact.packageName`'s own contract. */
 export function packageNameForPath(path: string): string | null {
   const m = /^((?:packages|apps)\/[^/]+)\//.exec(path)
   if (!m) return null
@@ -623,7 +625,7 @@ export type PremiseScope = 'all' | 'none'
  * `## Premises` section is `checkIssuePremises`' finding on that same write,
  * and reporting it twice would double every refusal the Planner reads.
  *
- * The predicate and the refusal wording are `@attalabs/aeg-core`'s
+ * The predicate and the refusal wording are the process package's
  * (`checkPremisesHold`), the same ones `task_issue_create`/`task_issue_edit` apply, so
  * the two moments can never disagree about what a premise means.
  *

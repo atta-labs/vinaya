@@ -152,9 +152,9 @@ describe('collectTaskIssueErrors — one gate sequence, every group, one refusal
     check: 'brief-shape',
     severity: 'error',
     message:
-      'brief-validation consumer tests: §4 names a path under packages/aeg-core/, and apps/cli depends on @attalabs/aeg-core, but no test path under apps/cli is named in §4 — name one, or add `consumer-tests: none — <reason>`.',
+      'brief-validation consumer tests: §4 names a path under packages/core/, and apps/cli depends on @attalabs/core, but no test path under apps/cli is named in §4 — name one, or add `consumer-tests: none — <reason>`.',
     agent_recovery_prompt:
-      'Refused for: `brief-validation consumer tests: §4 names a path under packages/aeg-core/, and apps/cli depends on @attalabs/aeg-core, but no test path under apps/cli is named in §4 — name one, or add `consumer-tests: none — <reason>`.` — Name a test path under apps/cli in §4, or add the `consumer-tests: none — <reason>` sentinel, then re-run `vinaya issue create --validate-only …`.'
+      'Refused for: `brief-validation consumer tests: §4 names a path under packages/core/, and apps/cli depends on @attalabs/core, but no test path under apps/cli is named in §4 — name one, or add `consumer-tests: none — <reason>`.` — Name a test path under apps/cli in §4, or add the `consumer-tests: none — <reason>` sentinel, then re-run `vinaya issue create --validate-only …`.'
   }
 
   it("a body failing title grammar, a Surface-versus-Test-plan rule, and the rendered brief's consumer-test rule is refused once with three findings", async () => {
@@ -416,7 +416,7 @@ exit 1
 describe('the real (non-injected) rendered-brief-shape group also names its own fix', () => {
   let cwd: string
   let originalCwd: string
-  let originalAegRepo: string | undefined
+  let originalRepo: string | undefined
 
   const RATIONALE = [
     "## Task Issue — Planner's rationale",
@@ -480,7 +480,7 @@ describe('the real (non-injected) rendered-brief-shape group also names its own 
     execFileSync('git', ['add', '.'], { cwd })
     execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
 
-    originalAegRepo = process.env.VINAYA_REPO
+    originalRepo = process.env.VINAYA_REPO
     process.env.VINAYA_REPO = 'test-owner/test-repo'
     originalCwd = process.cwd()
     process.chdir(cwd)
@@ -490,7 +490,7 @@ describe('the real (non-injected) rendered-brief-shape group also names its own 
   afterEach(() => {
     restorePrincipals()
     process.chdir(originalCwd)
-    process.env.VINAYA_REPO = originalAegRepo
+    process.env.VINAYA_REPO = originalRepo
     rmSync(cwd, { recursive: true, force: true })
   })
 
@@ -514,7 +514,7 @@ describe('the real (non-injected) rendered-brief-shape group also names its own 
 // ---------------------------------------------------------------------------
 // Issue #849 (O1/O2/O3) — the plan-time write gate renders the brief exactly as
 // dispatch does, in EVERY repository (not only Vinaya's own) and at task CREATE
-// time. The fixture is an adopter repo with NO `aeg-root/` of its own — the
+// time. The fixture is an adopter repo with NO doctrine folder of its own — the
 // exact shape that installs Vinaya from the registry: it has the PACKAGED
 // template dispatch renders from, and nothing more. It is given the body that
 // dispatch refused at brief render (the `## Surface` `in:` resolves to a tracked
@@ -523,10 +523,10 @@ describe('the real (non-injected) rendered-brief-shape group also names its own 
 // checkout that genuinely cannot render reports WHY, never a silent pass.
 // ---------------------------------------------------------------------------
 
-describe('the plan-time gate renders as dispatch does — adopter with no aeg-root, at create time (Issue #849)', () => {
+describe('the plan-time gate renders as dispatch does — adopter with no doctrine folder, at create time (Issue #849)', () => {
   let cwd: string
   let originalCwd: string
-  let originalAegRepo: string | undefined
+  let originalRepo: string | undefined
 
   const RATIONALE = (boundary: string): string =>
     [
@@ -594,7 +594,7 @@ describe('the plan-time gate renders as dispatch does — adopter with no aeg-ro
   let restorePrincipals: () => void = () => {}
 
   beforeEach(() => {
-    cwd = mkdtempSync(join(tmpdir(), 'vinaya-adopter-no-aeg-root-'))
+    cwd = mkdtempSync(join(tmpdir(), 'vinaya-adopter-no-doctrine-'))
     writeFileSync(
       join(cwd, 'vinaya.config.json'),
       JSON.stringify({ briefSchema: { issue: { sections: [{ builtin: 'issueRationale' }] } } }),
@@ -604,15 +604,15 @@ describe('the plan-time gate renders as dispatch does — adopter with no aeg-ro
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd })
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd })
     // A tracked file under the Surface `in:` glob — but DELIBERATELY no
-    // `aeg-root/` of its own. If this gate still switched itself off for a
-    // missing workspace `aeg-root/` (the O1 bug), the incident below would
+    // doctrine folder of its own. If this gate still switched itself off for a
+    // missing workspace doctrine folder (the O1 bug), the incident below would
     // falsely pass and this test would prove nothing.
     mkdirSync(join(cwd, 'src'), { recursive: true })
     writeFileSync(join(cwd, 'src', 'fixture.ts'), 'export const fixture = true\n')
     execFileSync('git', ['add', '.'], { cwd })
     execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd })
 
-    originalAegRepo = process.env.VINAYA_REPO
+    originalRepo = process.env.VINAYA_REPO
     process.env.VINAYA_REPO = 'test-owner/test-repo'
     originalCwd = process.cwd()
     process.chdir(cwd)
@@ -622,8 +622,8 @@ describe('the plan-time gate renders as dispatch does — adopter with no aeg-ro
   afterEach(() => {
     restorePrincipals()
     process.chdir(originalCwd)
-    if (originalAegRepo === undefined) delete process.env.VINAYA_REPO
-    else process.env.VINAYA_REPO = originalAegRepo
+    if (originalRepo === undefined) delete process.env.VINAYA_REPO
+    else process.env.VINAYA_REPO = originalRepo
     rmSync(cwd, { recursive: true, force: true })
   })
 
@@ -635,7 +635,7 @@ describe('the plan-time gate renders as dispatch does — adopter with no aeg-ro
       'vinaya issue create --validate-only …',
       null // no Issue number — a create
     )
-    // The render RAN: no local `aeg-root/` did not switch the gate off (O1).
+    // The render RAN: no local doctrine folder did not switch the gate off (O1).
     expect(renderSkipped).toBeNull()
     const renderFinding = errors.find((e) => e.check === 'brief-render' && e.message.includes(PREMISE_PINS_MESSAGE))
     expect(renderFinding, JSON.stringify(errors)).toBeDefined()
@@ -699,7 +699,7 @@ describe('an unmerged Depends-on folds into the write gate as informational, nev
   let tmpDir: string
   let localDir: string
   let originalCwd: string
-  let originalAegRepo: string | undefined
+  let originalRepo: string | undefined
   let originalPath: string | undefined
   let originalRepository: string | undefined
 
@@ -708,7 +708,7 @@ describe('an unmerged Depends-on folds into the write gate as informational, nev
     '',
     // issue-657, O3 — the render now refuses when the Surface resolves to a
     // tracked file but the Boundary names none of them; this fixture's own
-    // `## Surface` `in: aeg-root` resolves to the fixture's own committed
+    // a `## Surface` `in:` glob resolves to the fixture's own committed
     // `harness/processes/vinaya-strict/artifacts/templates/brief-template.md`, so the Boundary must name a
     // real file to keep this fixture isolating the ONE dependency-not-merged
     // blocker, not a premise-pins one.
@@ -830,7 +830,7 @@ exit 1
     )
     execFileSync('chmod', ['+x', gh])
 
-    originalAegRepo = process.env.VINAYA_REPO
+    originalRepo = process.env.VINAYA_REPO
     process.env.VINAYA_REPO = 'test-owner/test-repo'
     originalRepository = process.env.GITHUB_REPOSITORY
     process.env.GITHUB_REPOSITORY = 'test-owner/test-repo'
@@ -842,7 +842,7 @@ exit 1
 
   afterEach(() => {
     process.chdir(originalCwd)
-    process.env.VINAYA_REPO = originalAegRepo
+    process.env.VINAYA_REPO = originalRepo
     if (originalRepository === undefined) delete process.env.GITHUB_REPOSITORY
     else process.env.GITHUB_REPOSITORY = originalRepository
     process.env.PATH = originalPath
@@ -1067,15 +1067,15 @@ describe('runIssueChecks returns findings rather than refusing (O1)', () => {
 describe('validateIssueContent refuses an unregistered project, an unrunnable Test plan line, and a missing Documentation path', () => {
   const REGISTRY = [
     { name: 'cli', path: 'apps/cli' },
-    { name: 'aeg-core', path: 'packages/aeg-core' }
+    { name: 'core', path: 'packages/core' }
   ]
-  const CHECKOUT: Record<string, string> = { 'aeg-root/roles/planner.md': '# Planner' }
+  const CHECKOUT: Record<string, string> = { 'thinking/planner/doctrine.md': '# Planner' }
 
   function issueBody(opts: { project?: string; testPlanLine?: string; documentation?: string }): string {
     return [
       '## Documentation',
       '',
-      opts.documentation ?? '- aeg-root/roles/planner.md — the entry gate this task makes real (O1)',
+      opts.documentation ?? '- thinking/planner/doctrine.md — the entry gate this task makes real (O1)',
       '',
       '## Test plan',
       '',
@@ -1085,7 +1085,7 @@ describe('validateIssueContent refuses an unregistered project, an unrunnable Te
       '```',
       '',
       '**Docs to keep coherent** — no-doc-surface.',
-      `**Project:** ${opts.project ?? 'aeg-core, cli'}`
+      `**Project:** ${opts.project ?? 'core, cli'}`
     ].join('\n')
   }
 
@@ -1118,11 +1118,11 @@ describe('validateIssueContent refuses an unregistered project, an unrunnable Te
   })
 
   it('refuses a project with no registry row, naming it and the registered rows', () => {
-    const errors = gate(issueBody({ project: 'aeg-core, nonexistent' }))
+    const errors = gate(issueBody({ project: 'core, nonexistent' }))
     expect(errors.length).toBe(1)
     const [e] = errors as [CheckError]
     expect(e.message).toContain('nonexistent')
-    expect(e.message).toContain('registered: cli, aeg-core')
+    expect(e.message).toContain('registered: cli, core')
     expect(e.agent_recovery_prompt).toContain('names a project the registry lists')
     expect(recoveryNamesItsFix(e)).toBe(true)
   })
@@ -1144,11 +1144,11 @@ describe('validateIssueContent refuses an unregistered project, an unrunnable Te
 
   it('refuses a Documentation path the checkout lacks, naming the path', () => {
     const errors = gate(
-      issueBody({ documentation: '- aeg-root/roles/missing.md — a spec that was never written (O1)' })
+      issueBody({ documentation: '- executing/missing/doctrine.md — a spec that was never written (O1)' })
     )
     expect(errors.length).toBe(1)
     const [e] = errors as [CheckError]
-    expect(e.message).toContain('`aeg-root/roles/missing.md`')
+    expect(e.message).toContain('`executing/missing/doctrine.md`')
     expect(e.agent_recovery_prompt).toContain('Correct the named `## Documentation` path')
     expect(recoveryNamesItsFix(e)).toBe(true)
   })

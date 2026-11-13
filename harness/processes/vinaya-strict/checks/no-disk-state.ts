@@ -4,14 +4,14 @@
  * status (`added` — the path didn't exist on the base ref — or `modified`
  * — it already did):
  *
- * (a) A live tranche topology file directly under `aeg-root/tranches/`
+ * (a) A live tranche topology file directly under the retired tranche-file directory (`LEGACY_TRANCHES_DIR`)
  *     (not a subdirectory) — the residue class this task's own Part B proved
  *     unnecessary (forge derivation already covers it, see
  *     the governing spec's deletion). Fails on `added` OR
  *     `modified`: this file class shouldn't exist at all post-cutover,
  *     whether newly created or resurrected via an edit.
  *
- * (b) Any `.md` file anywhere under `aeg-root/tranches/` (any depth,
+ * (b) Any `.md` file anywhere under that directory (any depth,
  *     including `completed/**`) — but ONLY when
  *     `added`. `completed/**`'s existing files are legacy archive
  * (explicitly excludes them, per `tranche-model.md` §4/§11 —
@@ -30,14 +30,17 @@
  *     must stay legal, same reasoning as (b)).
  */
 
+import { escapeForPattern, LEGACY_TRANCHES_DIR } from '../tools/legacy-paths'
+
 export type DiskStateFileStatus = 'added' | 'modified'
 
-const TOP_LEVEL_TOPOLOGY_FILE = /^aeg-root\/tranches\/[^/]+\.md$/
-const ANY_DEPTH_TRANCHES_MD = /^aeg-root\/tranches\/.*\.md$/
+const TRANCHES_DIR_PATTERN = escapeForPattern(LEGACY_TRANCHES_DIR)
+const TOP_LEVEL_TOPOLOGY_FILE = new RegExp(`^${TRANCHES_DIR_PATTERN}/[^/]+\\.md$`)
+const ANY_DEPTH_TRANCHES_MD = new RegExp(`^${TRANCHES_DIR_PATTERN}/.*\\.md$`)
 const TOKENS_FILE = /\.tokens\.md$/
 
 export function isNewDiskStateFile(path: string, status: DiskStateFileStatus): boolean {
-  // The tranche model doc used to live at `aeg-root/tranches/README.md`
+  // The tranche model doc used to live in the retired tranche-file directory, as its `README.md`,
   // and needed an explicit carve-out here so editing it never read as new disk
   // state. It is now `harness/processes/vinaya-strict/doctrine/tranche-model.md`, outside the directory this
   // guard watches, so the carve-out is gone rather than left as a line that

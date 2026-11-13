@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: issue-title-grammar. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: issue-title-grammar. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkForgeTitle` — one of the five write-only rules named apart.
  * `validates: 'issue'`: title grammar only ever applies to a task Issue's own
  * title, never a pull request's — this check has no pull-request body to

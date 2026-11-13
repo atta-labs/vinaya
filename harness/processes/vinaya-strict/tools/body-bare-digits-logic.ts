@@ -268,7 +268,7 @@ const FIELD_CONTENT_SIGNATURE: Record<ExemptAnchorField, RegExp> = {
 /**
  * The Premise-pin carve-out. A Premise pin
  * (`harness/processes/vinaya-strict/executing/developer/doctrine.md` §"Entry gate",
- * `@attalabs/aeg-core`'s `premise-check.ts`) asserts a literal, verbatim
+ * `@attalabs/process-vinaya`'s `premise-check.ts`) asserts a literal, verbatim
  * fact about a file's current byte content — `checkPremises` re-checks it
  * with a plain `content.includes(a.value)`. Backtick-wrapping a pin's value
  * to satisfy the general digit rule corrupts that exact match: the
@@ -420,12 +420,12 @@ function blankTokenReportSection(body: string): string {
  * hand-roll a shape detector" discipline this whole task started from
  * (`stripCode`/`maskCode`, `anchoredRegionBounds`).
  *
- * `Tier:` — `TIER_FIELD` (`@attalabs/aeg-core`, `pr-tier.ts`) is the exact
+ * `Tier:` — `TIER_FIELD` (`@attalabs/process-vinaya`, `pr-tier.ts`) is the exact
  * regex `readTierFromPrBody` already uses to parse the field CI enforces;
  * exported (additive, behavior-unchanged for that module) so this check
  * can blank precisely what that regex matches, nothing appended after it.
  *
- * `Project:` — `PROJECT_SLUG`/`unwrapValue` (`@attalabs/aeg-forge-state`,
+ * `Project:` — `PROJECT_SLUG`/`unwrapValue` (the forge-state modules,
  * `list-tasks.ts`) are the exact validation `projectFieldFromBody` already
  * applies per comma-separated segment to tell a real project name apart
  * from smuggled prose (`parseFieldValue`'s own `unparsed` bucket is
@@ -470,16 +470,16 @@ function blankTierField(line: string): string {
 // is the real, shared shape every genuine project name in this repo's own
 // registry satisfies — but it's also the shape ANY hyphenated claim
 // satisfies, with no comma or space needed to trip it: `we-fixed-4500-bugs`
-// passes `PROJECT_SLUG` exactly as `aeg-core`/`cli`/`vinaya-sources` do,
+// passes `PROJECT_SLUG` exactly as `core`/`cli`/`vinaya-sources` do,
 // laundering a claim past a genuinely-signed anchor, no decoy required.
-// `PROJECT_SLUG` is the real shared grammar (`@attalabs/aeg-forge-state`)
+// `PROJECT_SLUG` is the real shared grammar (the forge-state modules)
 // and stays reused as-is, not re-narrowed here — a repo elsewhere in this
 // ecosystem could legitimately register a digit-bearing project name, and
 // this file is not the place to change what counts as a valid slug
 // project-wide. What changes locally: a segment is trusted as a real name
 // ONLY if it also carries no digit at all — every real name in this
-// repo's own corpus (`aeg-core`, `cli`, `vinaya`, `vinaya-sources`,
-// `aeg-forge-state`, `aeg-types`) already satisfies that, so nothing real
+// repo's own corpus (`core`, `cli`, `vinaya`, `vinaya-sources`,
+// `forge-state`, `task-contract`) already satisfies that, so nothing real
 // is lost; a fake name built specifically to smuggle a digit through the
 // shape check no longer can, the same "don't trust shape alone when shape
 // can hide a real claim" principle this file already applies everywhere
@@ -518,7 +518,7 @@ function blankUnanchoredStructuralFields(body: string): string {
  * Bounded on purpose — blanks ONLY the
  * `O<n>.` prefix (the id marker), never the sentence after it, and only
  * inside the `## Objectives` section itself (`objectivesSectionBounds` —
- * `@attalabs/aeg-core`'s own objectives-grammar module, so this check and
+ * `@attalabs/process-vinaya`'s own objectives-grammar module, so this check and
  * the grammar that owns `O<n>.`'s meaning locate the identical span and can
  * never disagree on where "under the heading" starts or ends). A digit
  * inside an objective's own sentence — a file count, a version, a path — is
@@ -573,7 +573,7 @@ function blankObjectiveMarkers(body: string): string {
  * corpus body this task has verified against). `PREMISE`/`TEST-PLAN` are
  * NOT in `EXEMPT_ANCHOR_FIELDS` at all any more — a bounded per-line
  * approach was tried for them too (`isPremiseHeader`/`PREMISE_LINE` and a
- * Test Plan checklist-item regex, both from `@attalabs/aeg-core`) and
+ * Test Plan checklist-item regex, both from `@attalabs/process-vinaya`) and
  * reverted after re-verifying against the real corpus surfaced a real
  * regression: real Test Plan items in real PRs carry indented,
  * multi-paragraph continuation prose UNDER the checklist line (fixture

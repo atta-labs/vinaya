@@ -1,9 +1,10 @@
 import { execFileSync, execSync } from 'node:child_process'
 import { describe, expect, it } from 'bun:test'
 import { loadTrancheFiles } from './verify-coherence'
+import { LEGACY_TRANCHES_DIR } from '../../tools/legacy-paths'
 
 /**
- * Part 4 (aeg-forge-state-v1 3b, #437): proves the plan-PR-scoping
+ * Proves the plan-PR-scoping
  * path (a PR's own diff touches a tranche topology file) is UNCHANGED by
  * either the id/issue forge cutover or the dependsOn/conflictsWith merge —
  * it must keep reading the PR's own uncommitted content via
@@ -38,7 +39,7 @@ function buildSyntheticPrHeadCommit(slug: string, taskId: string, taskTitle: str
     '',
     '| # | Task | Issue | Project(s) | Depends-on | Conflicts-with |',
     '|---|------|-------|-----------|------------|----------------|',
-    `| ${taskId} | ${taskTitle} | #999999 | aeg | — | — |`,
+    `| ${taskId} | ${taskTitle} | #999999 | sample | — | — |`,
     ''
   ].join('\n')
 
@@ -48,7 +49,7 @@ function buildSyntheticPrHeadCommit(slug: string, taskId: string, taskTitle: str
     env
   }).trim()
 
-  execFileSync('git', ['update-index', '--add', '--cacheinfo', `100644,${blobSha},aeg-root/tranches/${slug}.md`], {
+  execFileSync('git', ['update-index', '--add', '--cacheinfo', `100644,${blobSha},${LEGACY_TRANCHES_DIR}/${slug}.md`], {
     env
   })
 
@@ -58,10 +59,10 @@ function buildSyntheticPrHeadCommit(slug: string, taskId: string, taskTitle: str
   // vars avoid depending on any ambient `git config`, local or CI.
   const commitEnv = {
     ...process.env,
-    GIT_AUTHOR_NAME: 'AEG test fixture',
-    GIT_AUTHOR_EMAIL: 'aeg-test-fixture@localhost',
-    GIT_COMMITTER_NAME: 'AEG test fixture',
-    GIT_COMMITTER_EMAIL: 'aeg-test-fixture@localhost'
+    GIT_AUTHOR_NAME: 'Vinaya test fixture',
+    GIT_AUTHOR_EMAIL: 'vinaya-test-fixture@localhost',
+    GIT_COMMITTER_NAME: 'Vinaya test fixture',
+    GIT_COMMITTER_EMAIL: 'vinaya-test-fixture@localhost'
   }
   const commitSha = execFileSync(
     'git',
@@ -76,7 +77,7 @@ function buildSyntheticPrHeadCommit(slug: string, taskId: string, taskTitle: str
 describe('PR-head-SHA path (plan-PR scoping) — unchanged by the forge cutover', () => {
   it("reads a synthetic tranche file's task from the constructed commit, not the forge or origin/main", async () => {
     const slug = 'zzz-pr-head-fixture-test'
-    const relPath = `aeg-root/tranches/${slug}.md`
+    const relPath = `${LEGACY_TRANCHES_DIR}/${slug}.md`
     const commitSha = buildSyntheticPrHeadCommit(slug, '1', 'Synthetic PR-head fixture task')
 
     // onlySlug scopes the sweep to just this synthetic tranche — avoids

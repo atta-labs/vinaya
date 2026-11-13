@@ -1,5 +1,6 @@
 import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 import { programCommandLine } from '../tools/programs.js'
+import { REGION_PREFIX } from '../tools/legacy-markers.js'
 import { afterAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -119,7 +120,8 @@ function pathWithoutRealVendors(): string {
 
 function withoutVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...env }
-  for (const key of Object.keys(out)) if (key.startsWith('VINAYA_') || key.startsWith('AEG_')) delete out[key]
+  for (const key of Object.keys(out))
+    if (key.startsWith('VINAYA_') || key.startsWith(`${REGION_PREFIX.old}_`)) delete out[key]
   delete out.GITHUB_ACTIONS
   return out
 }

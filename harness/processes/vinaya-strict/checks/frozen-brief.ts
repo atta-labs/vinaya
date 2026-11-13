@@ -22,7 +22,7 @@ export type FrozenBriefResolution = { ok: true; content: string } | { ok: false;
 /**
  * The task Issue's newest frozen `vinaya:brief:v<k>` comment — the Issue named
  * by the body's `Closes #N`, its comments read through `fetchComments`, the
- * newest principal-authored version picked by `@attalabs/aeg-core`'s
+ * newest principal-authored version picked by the process's
  * `resolveNewestFrozenBrief`, the same single resolver the review loop uses,
  * so a supersession is picked up here too. `purpose` finishes the fetch
  * failure's message ("… to <purpose>"). A Principal list that does not

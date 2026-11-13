@@ -1,6 +1,6 @@
 /**
  * The single node → `/docs` route derivation. Nav construction
- * (`load-aeg-docs.ts`), the "Read more" resolver (`read-more.ts`), and the
+ * (`the docs loader`), the "Read more" resolver (`read-more.ts`), and the
  * harness map (`/docs` `page.tsx`) all resolve a `DiagramNode` to its docs
  * location through THIS function — one source of truth, so a card's deep-link,
  * a "Read more" anchor, and a ring/action page's heading `id` can never point
@@ -27,7 +27,7 @@
  * same slug it always did, since stripping/cutting are no-ops on it.
  *
  * Zero I/O, additive export — takes an already-derived node, returns data,
- * never reads a file (an aeg-core purity fix).
+ * never reads a file (a purity fix).
  */
 
 import type { DiagramNode } from '../../tools/diagram-model'
@@ -61,7 +61,7 @@ function stripGCodeSlug(slug: string): string {
 /** Strips the same `G<n> — ` doctrine code off raw label text, for the
  * over-length fallback below. Same contract as `humanLabel` in
  * `apps/vinaya/web`'s `display-label.ts` (duplicated rather than shared:
- * aeg-core cannot import from the web app, and this rule is small enough
+ * the process package cannot import from the web app, and this rule is small enough
  * that keeping two copies in sync by inspection is cheaper than a new
  * cross-package export). */
 function stripGCodeLabel(label: string): string {

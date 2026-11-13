@@ -31,7 +31,7 @@ describe('globsOverlap', () => {
 describe('deriveSection7', () => {
   const OWNERS = [
     'packages/ui/**                                    .claude/skills/ui-components/SKILL.md',
-    'scripts/verify-docs.ts                            aeg-root/state-machine.md',
+    'scripts/verify-docs.ts                            doctrine/state-machine.md',
     'packages/foo/**                                   https://example.com/foo-docs'
   ].join('\n')
 
@@ -62,7 +62,7 @@ describe('deriveSection7', () => {
       OWNERS
     )
     expect(errors).toEqual([])
-    expect(pointers).toEqual(['.claude/skills/ui-components/SKILL.md', 'aeg-root/state-machine.md'])
+    expect(pointers).toEqual(['.claude/skills/ui-components/SKILL.md', 'doctrine/state-machine.md'])
     expect(matches.length).toBe(3)
     expect(matches.map((m) => m.surface)).toEqual(['packages/ui/**', 'scripts/verify-docs.ts', 'packages/ui/topbar/**'])
   })

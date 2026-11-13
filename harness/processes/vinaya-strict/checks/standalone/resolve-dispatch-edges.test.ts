@@ -37,7 +37,15 @@ const { fetchBacklogIssuePrsBatch, resolveConflictsWith, resolveDependsOn } = aw
 const REPO = { owner: 'atta-labs', repo: 'vinaya' }
 
 function makeTask(id: string, issue: number | null): Task {
-  return { id, title: `Task ${id}`, issue, projects: ['aeg'], dependsOn: [], conflictsWith: [], rationaleMarkdown: '' }
+  return {
+    id,
+    title: `Task ${id}`,
+    issue,
+    projects: ['sample'],
+    dependsOn: [],
+    conflictsWith: [],
+    rationaleMarkdown: ''
+  }
 }
 
 function makeTranche(name: string, tasks: Task[]): Tranche {

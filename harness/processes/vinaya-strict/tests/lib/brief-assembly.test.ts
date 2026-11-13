@@ -97,9 +97,9 @@ describe('resolveBoundaryPaths', () => {
   })
 
   it('resolves a bare filename elided from a shared directory prefix via a unique suffix match', () => {
-    const files = ['aeg-root/roles/developer.md', 'aeg-root/process.md', 'aeg-root/aeg-manual-flow.md']
-    expect(resolveBoundaryPaths(['process.md'], files)).toEqual(['aeg-root/process.md'])
-    expect(resolveBoundaryPaths(['roles/developer.md'], files)).toEqual(['aeg-root/roles/developer.md'])
+    const files = ['docs/roles/developer.md', 'docs/process.md', 'docs/manual-flow.md']
+    expect(resolveBoundaryPaths(['process.md'], files)).toEqual(['docs/process.md'])
+    expect(resolveBoundaryPaths(['roles/developer.md'], files)).toEqual(['docs/roles/developer.md'])
   })
 
   it('drops a token with zero matches, never guessing a new/renamed path', () => {
@@ -107,14 +107,14 @@ describe('resolveBoundaryPaths', () => {
   })
 
   it('drops an ambiguous token that suffix-matches more than one tracked file', () => {
-    const files = ['apps/cli/src/commands/brief.ts', 'apps/aeg-core/src/other/brief.ts']
+    const files = ['apps/cli/src/commands/brief.ts', 'apps/core/src/other/brief.ts']
     expect(resolveBoundaryPaths(['brief.ts'], files)).toEqual([])
   })
 
   it('deduplicates when two tokens resolve to the same tracked file', () => {
-    const files = ['aeg-root/roles/developer.md']
-    expect(resolveBoundaryPaths(['roles/developer.md', 'aeg-root/roles/developer.md'], files)).toEqual([
-      'aeg-root/roles/developer.md'
+    const files = ['docs/roles/developer.md']
+    expect(resolveBoundaryPaths(['roles/developer.md', 'docs/roles/developer.md'], files)).toEqual([
+      'docs/roles/developer.md'
     ])
   })
 })
@@ -360,7 +360,7 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
   let remoteDir: string
   let localDir: string
   let originalCwd: string
-  let originalAegRepo: string | undefined
+  let originalRepo: string | undefined
 
   let restorePrincipals: () => void = () => {}
 
@@ -386,7 +386,7 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
     git(localDir, ['config', 'user.name', 'A'])
 
     originalCwd = process.cwd()
-    originalAegRepo = process.env.VINAYA_REPO
+    originalRepo = process.env.VINAYA_REPO
     process.chdir(localDir)
     process.env.VINAYA_REPO = 'test-owner/test-repo'
     restorePrincipals = servePrincipalsConfig()
@@ -395,8 +395,8 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
   afterEach(() => {
     restorePrincipals()
     process.chdir(originalCwd)
-    if (originalAegRepo === undefined) delete process.env.VINAYA_REPO
-    else process.env.VINAYA_REPO = originalAegRepo
+    if (originalRepo === undefined) delete process.env.VINAYA_REPO
+    else process.env.VINAYA_REPO = originalRepo
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
@@ -405,13 +405,13 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
   })
 
   // O1 — the plan-time gate must render in an adopter that installs Vinaya from
-  // the registry and has NO `aeg-root/` of its own: dispatch resolves the
+  // the registry and has NO doctrine folder of its own: dispatch resolves the
   // PACKAGED template (`PACKAGED_TEMPLATE_PATH`), so `canRenderBriefFromHere`
   // must too, never the workspace copy only Vinaya's own repo carries. Removing
-  // the local `aeg-root/` therefore does NOT switch the gate off — that silent
+  // the local doctrine folder therefore does NOT switch the gate off — that silent
   // switch-off was the bug that printed a plan-time pass for an Issue `task
   // run` then refused at brief render.
-  it('stays renderable when the adopter has no aeg-root directory (dispatch resolves the packaged template)', () => {
+  it('stays renderable when the adopter has no doctrine directory (dispatch resolves the packaged template)', () => {
     rmSync(join(localDir, 'harness/processes/vinaya-strict'), { recursive: true, force: true })
     expect(canRenderBriefFromHere().ok).toBe(true)
   })
@@ -435,7 +435,7 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
     '',
     // issue-657, O3 — the render now refuses when the Surface resolves to a
     // tracked file but the Boundary names none of them; this shared
-    // fixture's own `## Surface` `in: aeg-root` resolves to real tracked
+    // fixture's own `## Surface` `in:` entry resolves to real tracked
     // files, so the Boundary must name one.
     "**Boundary** — In: `src/fixture.ts`, the fixture's own committed source file. Out: nothing.",
     '',
@@ -647,7 +647,7 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
  * instead of leaving the whole-brief render dormant.
  *
  * The lookup itself (`createForgeSource(...).getTranche(slug)`) goes through
- * `@attalabs/aeg-forge-state`'s `gh` module, whose `execFileSync('gh', ...)`
+ * the forge-state `gh` module, whose `execFileSync('gh', ...)`
  * calls run against a `PATH` snapshotted into a module-level constant at
  * import time — a PATH-boundary fake bin placed after that snapshot is
  * silently ignored, so only the local, network-free guard (no resolvable
@@ -657,7 +657,7 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
  */
 describe('resolveTrancheTaskId', () => {
   it('returns null when the repo cannot be resolved at all', () => {
-    const originalAegRepo = process.env.VINAYA_REPO
+    const originalRepo = process.env.VINAYA_REPO
     delete process.env.VINAYA_REPO
     const dir = mkdtempSync(join(tmpdir(), 'vinaya-no-repo-'))
     const originalCwd = process.cwd()
@@ -669,8 +669,8 @@ describe('resolveTrancheTaskId', () => {
       .finally(() => {
         process.chdir(originalCwd)
         rmSync(dir, { recursive: true, force: true })
-        if (originalAegRepo === undefined) delete process.env.VINAYA_REPO
-        else process.env.VINAYA_REPO = originalAegRepo
+        if (originalRepo === undefined) delete process.env.VINAYA_REPO
+        else process.env.VINAYA_REPO = originalRepo
       })
   })
 })
@@ -694,7 +694,7 @@ describe('repoBriefCommandFacts', () => {
     const dir = mkdtempSync(join(tmpdir(), 'brief-cli-lookalike-'))
     try {
       // Vendors the CLI, so the invocation is the vendored one — but its
-      // `packages/aeg-core` declares someone else's name, so the bin files it
+      // the process package declares someone else's name, so the bin files it
       // carries are not this package's own derivations and are never named to
       // a Developer as commands to run.
       writeFileSync(
@@ -710,7 +710,7 @@ describe('repoBriefCommandFacts', () => {
       mkdirSync(join(dir, 'harness', 'processes', 'vinaya-strict', 'checks', 'standalone'), { recursive: true })
       writeFileSync(
         join(dir, 'harness', 'processes', 'vinaya-strict', 'package.json'),
-        JSON.stringify({ name: 'not-aeg-core' })
+        JSON.stringify({ name: 'not-process-vinaya' })
       )
       writeFileSync(
         join(dir, 'harness', 'processes', 'vinaya-strict', 'checks', 'standalone', 'verify-dispatch.ts'),

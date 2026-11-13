@@ -42,11 +42,11 @@ describe('parseDocFrontmatter', () => {
   })
 
   it('ignores non-recognized frontmatter fields without throwing', () => {
-    const raw = '---\nname: aeg\ndescription: A skill\nrandom: 42\n---\n\n# AEG skill\n'
+    const raw = '---\nname: vinaya\ndescription: A skill\nrandom: 42\n---\n\n# Vinaya skill\n'
     const out = parseDocFrontmatter(raw)
     expect(out.frontmatter.title).toBeUndefined()
     expect(out.frontmatter.description).toBe('A skill')
-    expect(out.firstH1).toBe('AEG skill')
+    expect(out.firstH1).toBe('Vinaya skill')
   })
 
   it('extracts a boolean surfaced frontmatter override', () => {

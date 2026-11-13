@@ -941,7 +941,7 @@ describe('writeEscalationRecord / resolveEscalation — the handoff Log family (
       writeEscalationRecord(facts)
       // A rerun of the SAME pause instance — identical round/head/branch/pr/
       // reason/detail — which the control store answers with the same
-      // canonical escalation id (`writeEscalation`, `@attalabs/aeg-core`).
+      // canonical escalation id (`writeEscalation`, `@attalabs/process-vinaya`).
       writeEscalationRecord(facts)
       // `log()` is fire-and-forget (queued, never awaited by its own
       // caller) — drained here, still inside this world's own isolated
@@ -1247,7 +1247,7 @@ describe('runDriverLoop — the published pull request watch', () => {
       {
         ...h.watch,
         gitRevParseOriginMain: () => (baseReads++ === 0 ? 'start' : 'moved'),
-        gitCommitsTouchingDriverPaths: () => ['abc packages/aeg-core/src/x.ts'],
+        gitCommitsTouchingDriverPaths: () => ['abc packages/core/src/x.ts'],
         pullDefaultBranch: () => ({ ok: true }),
         reexecSelf: (args) => {
           reexecs.push(args)

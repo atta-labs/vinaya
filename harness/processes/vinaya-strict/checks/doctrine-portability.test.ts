@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { checkDoctrinePortability, NON_PATH_TOP_SEGMENTS } from './doctrine-portability'
 import { VENDOR_EXAMPLE_ANCHORS } from '../tools/legacy-markers'
+import { LEGACY_DOCTRINE_ROOT } from '../tools/legacy-paths'
 
 function file(path: string, content: string) {
   return { path, content }
@@ -8,7 +9,7 @@ function file(path: string, content: string) {
 
 describe('checkDoctrinePortability', () => {
   it('is silent on a file outside shipsPrefix, however non-portable its citations look', () => {
-    const findings = checkDoctrinePortability([file('README.md', 'See `packages/aeg-core/src/foo.ts`.')])
+    const findings = checkDoctrinePortability([file('README.md', 'See `packages/core/src/foo.ts`.')])
     expect(findings).toEqual([])
   })
 
@@ -16,14 +17,14 @@ describe('checkDoctrinePortability', () => {
     const findings = checkDoctrinePortability([
       file(
         'harness/processes/vinaya-strict/doctrine/enforcement.md',
-        'Run `packages/aeg-core/bin/verify-docs.ts` before opening.'
+        'Run `packages/core/bin/verify-docs.ts` before opening.'
       )
     ])
     expect(findings).toHaveLength(1)
     expect(findings[0]).toMatchObject({
       file: 'harness/processes/vinaya-strict/doctrine/enforcement.md',
       line: 1,
-      cited: 'packages/aeg-core/bin/verify-docs.ts'
+      cited: 'packages/core/bin/verify-docs.ts'
     })
   })
 
@@ -108,7 +109,7 @@ describe('checkDoctrinePortability', () => {
 
 describe('the gate can see what it flags — non-vacuity self-test', () => {
   const NON_PORTABLE_SAMPLES: Record<string, string> = {
-    'packages/…': 'packages/aeg-core/bin/verify-docs.ts',
+    'packages/…': 'packages/core/bin/verify-docs.ts',
     'apps/…': 'apps/cli/dist/index.js',
     'bare bin/': 'bin/open-pr.ts',
     'bare src/': 'src/baseline-capture.ts',
@@ -153,13 +154,13 @@ describe('a non-default shipsPrefix is portable too, not just the hardcoded defa
     expect(findings).toEqual([])
   })
 
-  it('does NOT special-case the literal string "aeg-root/" once a different shipsPrefix is in play', () => {
+  it('does NOT special-case the retired doctrine root literal once a different shipsPrefix is in play', () => {
     const findings = checkDoctrinePortability(
-      [file('my-docs/foo.md', 'See `aeg-root/roles/bar.md` for the shape.')],
+      [file('my-docs/foo.md', `See \`${LEGACY_DOCTRINE_ROOT}/roles/bar.md\` for the shape.`)],
       'my-docs/'
     )
     expect(findings).toHaveLength(1)
-    expect(findings[0]?.cited).toBe('aeg-root/roles/bar.md')
+    expect(findings[0]?.cited).toBe(`${LEGACY_DOCTRINE_ROOT}/roles/bar.md`)
   })
 
   it('still recognizes the static portable prefixes (roles/, .github/, …) under a custom shipsPrefix', () => {
@@ -214,15 +215,15 @@ describe('vendor-name finding (Issue #298)', () => {
     }
   })
 
-  it('is silent on a vendor word inside the fenced AEG:VENDOR-EXAMPLE home', () => {
+  it('is silent on a vendor word inside the fenced VINAYA:VENDOR-EXAMPLE home', () => {
     const findings = checkDoctrinePortability([
       file(
         'harness/processes/vinaya-strict/doctrine/tranche-model.md',
         [
           'Prose before.',
-          '<!-- AEG:VENDOR-EXAMPLE:START -->',
-          'AEG ships one adapter, for Claude Code, exposed as `vinaya tokens`.',
-          '<!-- AEG:VENDOR-EXAMPLE:END -->',
+          '<!-- VINAYA:VENDOR-EXAMPLE:START -->',
+          'Vinaya ships one adapter, for Claude Code, exposed as `vinaya tokens`.',
+          '<!-- VINAYA:VENDOR-EXAMPLE:END -->',
           'Prose after, generic only.'
         ].join('\n')
       )
@@ -250,9 +251,9 @@ describe('vendor-name finding (Issue #298)', () => {
         'harness/processes/vinaya-strict/doctrine/tranche-model.md',
         [
           'Named again right here: Claude Code.',
-          '<!-- AEG:VENDOR-EXAMPLE:START -->',
-          'AEG ships one adapter, for Claude Code, exposed as `vinaya tokens`.',
-          '<!-- AEG:VENDOR-EXAMPLE:END -->'
+          '<!-- VINAYA:VENDOR-EXAMPLE:START -->',
+          'Vinaya ships one adapter, for Claude Code, exposed as `vinaya tokens`.',
+          '<!-- VINAYA:VENDOR-EXAMPLE:END -->'
         ].join('\n')
       )
     ])
@@ -286,7 +287,7 @@ describe('vendor-name finding (Issue #298)', () => {
     const findings = checkDoctrinePortability([
       file(
         'harness/processes/vinaya-strict/sample.md',
-        ['<!-- AEG:VENDOR-EXAMPLE:START -->', 'Claude Code, unterminated fence.'].join('\n')
+        ['<!-- VINAYA:VENDOR-EXAMPLE:START -->', 'Claude Code, unterminated fence.'].join('\n')
       )
     ])
     expect(findings.filter((f) => f.kind === 'vendor-name')).toHaveLength(1)
@@ -306,7 +307,7 @@ describe('vendor-name finding (Issue #298)', () => {
     expect(findings.find((f) => f.kind === 'vendor-name')?.cited).toBe('Sonnet')
   })
 
-  it("the corpus-fix regression: this repo's own rewritten aeg-root/** produces zero vendor-name findings", () => {
+  it("the corpus-fix regression: this repo's own rewritten doctrine tree produces zero vendor-name findings", () => {
     // The 12+ real files fixed by this task all pass — see the corpus proof in
     // the PR body (§9); this unit test locks the mechanism the corpus proof
     // depends on, not the corpus itself (which lives on disk, not as fixture

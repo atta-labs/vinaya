@@ -1,5 +1,5 @@
 /**
- * Typed model for AEG artifacts. See `harness/processes/vinaya-strict/doctrine/tranche-model.md` for the
+ * Typed model for Vinaya artifacts. See `harness/processes/vinaya-strict/doctrine/tranche-model.md` for the
  * canonical specification (§3 status table, §4 thin-file template).
  *
  * This module is pure: no I/O. The parser produces these shapes from file
@@ -30,23 +30,23 @@ export type Registry = Project[]
 // ---------- Tranche file (tranches/<name>.md) ----------
 
 /**
- * `Lifecycle`/`Task`/`Tranche` live in `@attalabs/aeg-types` —
+ * `Lifecycle`/`Task`/`Tranche` live in `tranche-types.ts` —
  * re-exported here since every existing call site
- * across the repo imports them from `@attalabs/aeg-core`. Moved out so
- * `@attalabs/aeg-forge-state` can depend on these shapes without creating a
- * package cycle with `aeg-core` (which in turn depends on
- * `aeg-forge-state`'s derivation function).
+ * across the repo imports them from this module. Moved out so
+ * the forge-state modules can depend on these shapes without creating an
+ * import cycle with this module (which in turn depends on
+ * the forge-state derivation function).
  */
 export type { Lifecycle, Task, Tranche }
 
 // ---------- Forge facts ----------
 
 /**
- * `ForgeFacts` lives in `@attalabs/aeg-types` (an aeg-core-purity fix) —
+ * `ForgeFacts` lives in `tranche-types.ts` (keeping this module free of I/O) —
  * re-exported here for the same reason as `Lifecycle`/`Task`/`Tranche`:
- * every existing call site imports it from `@attalabs/aeg-core`, and it moved
- * out so the I/O-performing fetchers that produce it (now in
- * `@attalabs/aeg-forge-state`) don't need to depend on `aeg-core`.
+ * every existing call site imports it from this module, and it moved
+ * out so the I/O-performing fetchers that produce it (now in the
+ * forge-state modules) don't need to depend on this module.
  */
 export type { ForgeFacts }
 

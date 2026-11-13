@@ -21,26 +21,26 @@ describe('listTasksForSlug', () => {
     mocked(ghIssueListByAnyLabel).mockReturnValue([
       {
         number: 425,
-        title: '[aeg-forge-state-v1] 1 — Generic forge-reading adapter (packages/forge-state)',
-        body: '**Project:** aeg-core\n\n**Dependency rationale** — `Depends-on: —`. First task.\n\n**Traps to avoid** — none.',
+        title: '[sample-tranche-v1] 1 — Generic forge-reading adapter (packages/forge-state)',
+        body: '**Project:** core\n\n**Dependency rationale** — `Depends-on: —`. First task.\n\n**Traps to avoid** — none.',
         state: 'OPEN',
         milestone: null,
-        labels: [{ name: 'vinaya/tier:3' }, { name: 'vinaya/tranche:aeg-forge-state-v1' }]
+        labels: [{ name: 'vinaya/tier:3' }, { name: 'vinaya/tranche:sample-tranche-v1' }]
       }
     ])
 
-    const tasks = listTasksForSlug('daniboomerang', 'attalabs', 'aeg-forge-state-v1')
+    const tasks = listTasksForSlug('daniboomerang', 'attalabs', 'sample-tranche-v1')
 
     expect(tasks).toEqual([
       {
         id: '1',
         title: 'Generic forge-reading adapter (packages/forge-state)',
         issue: 425,
-        projects: ['aeg-core'],
+        projects: ['core'],
         dependsOn: [],
         conflictsWith: [],
         rationaleMarkdown:
-          '**Project:** aeg-core\n\n**Dependency rationale** — `Depends-on: —`. First task.\n\n**Traps to avoid** — none.'
+          '**Project:** core\n\n**Dependency rationale** — `Depends-on: —`. First task.\n\n**Traps to avoid** — none.'
       }
     ])
   })
@@ -50,7 +50,7 @@ describe('listTasksForSlug', () => {
       {
         number: 614,
         title: '[state-machine-v1] 2 — Migrate labels to the vinaya/ namespace',
-        body: '**Boundary** — ...\n\n**Project(s) + blast radius** — `Project: aeg-core`.\n\n**Tier:** 3\n**Project:** aeg-core, vinaya',
+        body: '**Boundary** — ...\n\n**Project(s) + blast radius** — `Project: core`.\n\n**Tier:** 3\n**Project:** core, vinaya',
         state: 'OPEN',
         milestone: null,
         labels: [{ name: 'vinaya/tier:3' }, { name: 'vinaya/tranche:state-machine-v1' }]
@@ -59,7 +59,7 @@ describe('listTasksForSlug', () => {
 
     const [task] = listTasksForSlug('daniboomerang', 'attalabs', 'state-machine-v1')
 
-    expect(task?.projects).toEqual(['aeg-core', 'vinaya'])
+    expect(task?.projects).toEqual(['core', 'vinaya'])
   })
 
   it('ignores a residual project:* label — project is a field, never a label (#614)', () => {
@@ -87,7 +87,7 @@ describe('listTasksForSlug', () => {
       {
         number: 431,
         title: '[iter] 7 — plain-form header',
-        body: 'Project: aeg, aeg-core\nTranche: iter · task 7\n\n**Boundary** — x',
+        body: 'Project: app, core\nTranche: iter · task 7\n\n**Boundary** — x',
         state: 'OPEN',
         milestone: null,
         labels: [{ name: 'vinaya/tranche:iter' }]
@@ -95,7 +95,7 @@ describe('listTasksForSlug', () => {
     ])
 
     const [task] = listTasksForSlug('daniboomerang', 'attalabs', 'iter')
-    expect(task?.projects).toEqual(['aeg', 'aeg-core'])
+    expect(task?.projects).toEqual(['app', 'core'])
   })
 
   it('still ignores the `**Project(s) + blast radius**` prose heading', () => {
@@ -198,22 +198,22 @@ const FENCED_EXAMPLE_THEN_FOOT_DECLARATION = [
   '```',
   '',
   '**Tier:** 1',
-  '**Project:** aeg-forge-state'
+  '**Project:** forge-state'
 ].join('\n')
 
 describe('projectsFromBody — fence-blindness', () => {
   it('reads the foot declaration, not an earlier fenced example of the same field', () => {
-    expect(projectsFromBody(FENCED_EXAMPLE_THEN_FOOT_DECLARATION)).toEqual(['aeg-forge-state'])
+    expect(projectsFromBody(FENCED_EXAMPLE_THEN_FOOT_DECLARATION)).toEqual(['forge-state'])
   })
 
   it('reads the foot declaration past a tilde-fenced example', () => {
-    const body = ['~~~', '**Project:** example-only', '~~~', '', '**Project:** aeg-core'].join('\n')
-    expect(projectsFromBody(body)).toEqual(['aeg-core'])
+    const body = ['~~~', '**Project:** example-only', '~~~', '', '**Project:** core'].join('\n')
+    expect(projectsFromBody(body)).toEqual(['core'])
   })
 
   it('reads the foot declaration past a 4-space-indented example', () => {
-    const body = ['Prose paragraph.', '', '    Project: example-only', '', '**Project:** aeg-core'].join('\n')
-    expect(projectsFromBody(body)).toEqual(['aeg-core'])
+    const body = ['Prose paragraph.', '', '    Project: example-only', '', '**Project:** core'].join('\n')
+    expect(projectsFromBody(body)).toEqual(['core'])
   })
 
   it('finds nothing when the only Project field is fenced — a fenced field is never a declaration', () => {
@@ -224,11 +224,11 @@ describe('projectsFromBody — fence-blindness', () => {
 
 describe('projectsFromBody — a declared value no longer vanishes silently', () => {
   it('parses a value wrapped entirely in backticks', () => {
-    expect(projectsFromBody('**Project:** `aeg-core`')).toEqual(['aeg-core'])
+    expect(projectsFromBody('**Project:** `core`')).toEqual(['core'])
   })
 
   it('parses a value wrapped entirely in bold', () => {
-    expect(projectsFromBody('Project: **aeg-core**')).toEqual(['aeg-core'])
+    expect(projectsFromBody('Project: **core**')).toEqual(['core'])
   })
 
   it('parses a value carrying the sentence full stop, so the registry can refuse it', () => {
@@ -236,11 +236,11 @@ describe('projectsFromBody — a declared value no longer vanishes silently', ()
   })
 
   it('still parses the tolerant plain form', () => {
-    expect(projectsFromBody('Project: aeg, aeg-core')).toEqual(['aeg', 'aeg-core'])
+    expect(projectsFromBody('Project: app, core')).toEqual(['app', 'core'])
   })
 
   it('still parses the bold form', () => {
-    expect(projectsFromBody('**Project:** aeg-core, vinaya')).toEqual(['aeg-core', 'vinaya'])
+    expect(projectsFromBody('**Project:** core, vinaya')).toEqual(['core', 'vinaya'])
   })
 
   it('still refuses the `**Project(s) + blast radius**` prose heading', () => {
@@ -267,10 +267,10 @@ describe('projectFieldFromBody — absent is distinguishable from unparseable', 
   })
 
   it('reports the parsed names and the unparsed residue side by side', () => {
-    const body = '**Project:** aeg-core, a value with spaces'
+    const body = '**Project:** core, a value with spaces'
     expect(projectFieldFromBody(body)).toEqual({
       declared: true,
-      names: ['aeg-core'],
+      names: ['core'],
       unparsed: ['a value with spaces'],
       unreadable: false
     })
@@ -295,9 +295,9 @@ describe('projectFieldFromBody — absent is distinguishable from unparseable', 
   })
 
   it('reports a fully-parsed declaration with no residue', () => {
-    expect(projectFieldFromBody('**Project:** aeg-core, vinaya')).toEqual({
+    expect(projectFieldFromBody('**Project:** core, vinaya')).toEqual({
       declared: true,
-      names: ['aeg-core', 'vinaya'],
+      names: ['core', 'vinaya'],
       unparsed: [],
       unreadable: false
     })
@@ -306,7 +306,7 @@ describe('projectFieldFromBody — absent is distinguishable from unparseable', 
   it('reads the same field, past the same fences, that `projectsFromBody` does', () => {
     expect(projectFieldFromBody(FENCED_EXAMPLE_THEN_FOOT_DECLARATION)).toEqual({
       declared: true,
-      names: ['aeg-forge-state'],
+      names: ['forge-state'],
       unparsed: [],
       unreadable: false
     })
@@ -347,11 +347,11 @@ describe('projectFieldFromBody — an unterminated fence must not read as "no pr
   })
 
   it('reports a field swallowed by an unterminated tilde fence', () => {
-    const body = ['~~~', 'x', '', '**Project:** aeg-core'].join('\n')
+    const body = ['~~~', 'x', '', '**Project:** core'].join('\n')
     expect(projectFieldFromBody(body)).toEqual({
       declared: true,
       names: [],
-      unparsed: ['aeg-core'],
+      unparsed: ['core'],
       unreadable: true
     })
   })
@@ -370,14 +370,14 @@ describe('projectFieldFromBody — an unterminated fence must not read as "no pr
   })
 
   it('prefers the real foot declaration when the fences balance', () => {
-    const body = ['```', '**Project:** example-only', '```', '', '**Project:** aeg-core'].join('\n')
-    expect(projectFieldFromBody(body).names).toEqual(['aeg-core'])
+    const body = ['```', '**Project:** example-only', '```', '', '**Project:** core'].join('\n')
+    expect(projectFieldFromBody(body).names).toEqual(['core'])
   })
 })
 
 describe('projectFieldFromBody — the wrapper peel is anchored to the value’s ends', () => {
   it('still peels a fully backticked value', () => {
-    expect(projectsFromBody('**Project:** `aeg-core`')).toEqual(['aeg-core'])
+    expect(projectsFromBody('**Project:** `core`')).toEqual(['core'])
   })
 
   it('still peels a trailing sentence full stop', () => {
@@ -385,7 +385,7 @@ describe('projectFieldFromBody — the wrapper peel is anchored to the value’s
   })
 
   it('still peels a backticked value carrying the sentence full stop outside the span', () => {
-    expect(projectsFromBody('**Project:** `aeg-core`.')).toEqual(['aeg-core'])
+    expect(projectsFromBody('**Project:** `core`.')).toEqual(['core'])
   })
 
   it('does NOT erase interior punctuation to manufacture a name', () => {
@@ -443,13 +443,13 @@ describe('projectFieldFromBody — an indented code block is swallowed the same 
   })
 
   it('still reads a declaration indented inside LIST context — not code by CommonMark', () => {
-    const body = ['- item', '', '    **Project:** aeg-core'].join('\n')
-    expect(projectFieldFromBody(body).names).toEqual(['aeg-core'])
+    const body = ['- item', '', '    **Project:** core'].join('\n')
+    expect(projectFieldFromBody(body).names).toEqual(['core'])
   })
 
   it('still reads an indented declaration with no preceding blank line — not code by CommonMark', () => {
-    const body = ['Prose continues here.', '    **Project:** aeg-core'].join('\n')
-    expect(projectFieldFromBody(body).names).toEqual(['aeg-core'])
+    const body = ['Prose continues here.', '    **Project:** core'].join('\n')
+    expect(projectFieldFromBody(body).names).toEqual(['core'])
   })
 })
 
@@ -527,7 +527,7 @@ describe('fetchTrancheIssuesAsync / listTasksForSlugAsync — the async gh path'
     const raw = [
       {
         number: 34,
-        title: '[vinaya-verification-v1] 6 — Mocked-gh test harness for aeg-forge-state fetchers',
+        title: '[vinaya-verification-v1] 6 — Mocked-gh test harness for forge-state fetchers',
         body: '**Project:** vinaya',
         state: 'OPEN' as const,
         milestone: null,
@@ -543,7 +543,7 @@ describe('fetchTrancheIssuesAsync / listTasksForSlugAsync — the async gh path'
     mocked(ghIssueListByAnyLabelAsync).mockResolvedValueOnce([
       {
         number: 34,
-        title: '[vinaya-verification-v1] 6 — Mocked-gh test harness for aeg-forge-state fetchers',
+        title: '[vinaya-verification-v1] 6 — Mocked-gh test harness for forge-state fetchers',
         body: '**Project:** vinaya',
         state: 'OPEN' as const,
         milestone: null,
@@ -556,7 +556,7 @@ describe('fetchTrancheIssuesAsync / listTasksForSlugAsync — the async gh path'
     expect(tasks).toEqual([
       {
         id: '6',
-        title: 'Mocked-gh test harness for aeg-forge-state fetchers',
+        title: 'Mocked-gh test harness for forge-state fetchers',
         issue: 34,
         projects: ['vinaya'],
         dependsOn: [],
@@ -576,7 +576,7 @@ describe('fetchTrancheIssuesAsync / listTasksForSlugAsync — the async gh path'
 describe('resolveTaskIssueRef — the reverse Issue → task-identity lookup', () => {
   it('resolves a title matching the `[slug] id — title` convention plus its tranche label', () => {
     expect(
-      resolveTaskIssueRef('[vinaya-verification-v1] 6 — Mocked-gh test harness for aeg-forge-state fetchers', [
+      resolveTaskIssueRef('[vinaya-verification-v1] 6 — Mocked-gh test harness for forge-state fetchers', [
         'vinaya/tranche:vinaya-verification-v1',
         'vinaya/tier:0'
       ])

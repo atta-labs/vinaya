@@ -5,7 +5,7 @@
  * `apps/cli/tests/commands/issue.test.ts`'s fake `gh`), never by importing
  * `dispatchRole` in-process: `harness/processes/vinaya-strict/integration/config/compose.ts`'s
  * `GLOBAL_VINAYA_HOME` is a module-level constant frozen at first import from
- * whatever `HOME` happens to be, and `@attalabs/aeg-forge-state`'s
+ * whatever `HOME` happens to be, and the forge-state modules'
  * `resolveRepo()` caches its result for the process lifetime — an in-process
  * `bun:test` run sharing either with another test file in the same run could
  * silently pollute the real developer machine's own `~/.vinaya/outbox/` or
@@ -584,7 +584,7 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     expect(decision(run('bun test'))?.permissionDecision).toBe('deny')
     expect(decision(run('bun test apps/cli/tests'))?.permissionDecision).toBe('deny')
     expect(decision(run('bunx turbo test --affected --force'))?.permissionDecision).toBe('deny')
-    expect(decision(run('vitest run packages/aeg-core'))?.permissionDecision).toBe('deny')
+    expect(decision(run('vitest run packages/core'))?.permissionDecision).toBe('deny')
 
     const denyReason = decision(run('bun test apps/cli/tests'))?.permissionDecisionReason
     expect(denyReason).toMatch(/selected-tests|test-file argument/)

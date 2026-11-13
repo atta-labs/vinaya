@@ -11,7 +11,7 @@ import { PRODUCT_SLUG_SCOPE } from './reader-resolvable-prose'
  * array literal in another package's test.
  */
 describe('PRODUCT_SLUG_SCOPE', () => {
-  it('is exactly the non-aeg-root prefixes the product-code slug sweep covers', () => {
+  it('is exactly the non-doctrine-root prefixes the product-code slug sweep covers', () => {
     expect(PRODUCT_SLUG_SCOPE).toEqual(['apps/cli/src', '.github/workflows', '.vinaya', 'apps/cli/README.md'])
   })
 })

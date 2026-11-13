@@ -22,7 +22,7 @@ import { pathToFileURL } from 'node:url'
  * One round's deferred findings as tracking-Issue entries — each carrying the
  * reviewer that reported it (`v.role`, O1's "reviewer" field), taken straight
  * from the round's own verdict observations. The journal's `RoundRecord.deferred`
- * (`@attalabs/aeg-core`) drops the role, and that type — like the summary that
+ * (`@attalabs/process-vinaya`) drops the role, and that type — like the summary that
  * renders it — is out of this task's Surface, so the role is captured here at
  * the one point it is still in hand, then accumulated per round by the loop.
  * The severity/location/reason are the same facts the summary lists, so the

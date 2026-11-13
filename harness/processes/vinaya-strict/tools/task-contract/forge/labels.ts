@@ -18,9 +18,9 @@
  * `tranche` axis, the `example-tranche-vN` value. The namespace makes every
  * Vinaya label sortable and filterable as one group in a repo it shares with
  * an adopter's own labels — the reason a product namespace exists at all.
- * The `aeg` name is retired in public, so no `aeg:*` label survives:
- * `aeg:blocked` became `vinaya/blocked`, and the forge's `aeg:incoherent` /
- * `aeg:stale-blocker` were renamed in place (history preserved).
+ * The retired product name survives in no public label:
+ * the blocked label became `vinaya/blocked`, and the forge's incoherent /
+ * stale-blocker labels were renamed in place (history preserved).
  *
  * GitHub caps a label name at 50 characters. `vinaya/tranche:` spends 15 of
  * them before the slug starts — `trancheSlugLengthError` is the check that
@@ -28,13 +28,13 @@
  *
  * ## Why it lives here
  *
- * It lives in `@attalabs/aeg-forge-state`, not `@attalabs/aeg-core`, because the
- * dependency direction is `aeg-core → aeg-forge-state → aeg-types`: the
+ * It lives with the forge-state modules, not the process's grammar modules, because the
+ * dependency direction is process grammar → forge-state → task-contract types: the
  * vocabulary's first consumer is `map-forge-facts.ts` (the mapper that turns
  * a raw GitHub label list into the `blockedLabel` fact), which sits in this
- * package and cannot import backward from `aeg-core`. This is the lowest
- * package every consumer already depends on. `@attalabs/aeg-core` re-exports the
- * whole helper surface, so consumers that only depend on `aeg-core` (the
+ * package and cannot import backward from the process grammar. This is the lowest
+ * layer every consumer already depends on. `@attalabs/process-vinaya` re-exports the
+ * whole helper surface, so consumers that only depend on it (the
  * Vinaya CLI) reach the same single source without a new dependency.
  *
  * ## The helpers are the contract
@@ -425,10 +425,7 @@ export function trancheSlugLengthError(slug: string): string | null {
  * cannot drift. Re-exported by `map-forge-facts.ts` (its original home) and by
  * this package's index, so every existing import path keeps resolving.
  *
- * The export name keeps its `AEG_` prefix on purpose: it is a code symbol, not
- * a label string, and renaming it is a consumer-wide churn this migration does
- * not need. What retires is the *label* — its value is `vinaya/blocked`.
- * Prefer `hasLabel('blocked', labels)` for matching; this constant is for
+ * Its value is `vinaya/blocked`. Prefer `hasLabel('blocked', labels)` for matching; this constant is for
  * construction.
  */
-export const AEG_BLOCKED_LABEL = 'vinaya/blocked'
+export const BLOCKED_LABEL = 'vinaya/blocked'

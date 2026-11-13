@@ -83,7 +83,7 @@ If any of these isn't true, refuse rather than write a Milestone `checkMilestone
 - `milestone_close` takes `slug` and optional `validateOnly`. Attachment and declared-tranche completion gates still apply.
 - `milestone_status` takes `number`. Status is derived and never written.
 
-**The `Release:` grammar.** Line-anchored, `**`-optional on both sides, code fences stripped first, first match wins — the same shape `Project:` and `Depends-on:` already use elsewhere in this doctrine (enforced automatically by `milestone_create`; this repo's implementation lives in `@attalabs/aeg-core`'s milestone-validation module). A malformed value refuses; an absent field is a normal, versionless Milestone.
+**The `Release:` grammar.** Line-anchored, `**`-optional on both sides, code fences stripped first, first match wins — the same shape `Project:` and `Depends-on:` already use elsewhere in this doctrine (enforced automatically by `milestone_create`; this repo's implementation lives in `@attalabs/process-vinaya`'s milestone-validation module). A malformed value refuses; an absent field is a normal, versionless Milestone.
 
 **The `### Tranche intents` grammar.** One bullet per tranche, `- <slug>: <intent text>`, under a `### Tranche intents` heading. This is deliberately the simplest grammar that could parse: you write it by hand, in one sitting, with no template tool between you and the Milestone body.
 
