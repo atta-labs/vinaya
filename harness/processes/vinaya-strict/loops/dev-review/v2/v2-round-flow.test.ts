@@ -119,6 +119,9 @@ describe('CI red after the pull request opened', () => {
     const ci = observed.rawEvents.filter((e) => e.event === 'ci_result_read').map((e) => e.conclusion)
     expect(ci).toEqual(['red', 'green'])
     expect(observed.published).toHaveLength(2)
+    // The red read compared the head with its parent, whose name the fake forge answered: no live git or gh ran.
+    expect(observed.world.parentBranchReads.length).toBeGreaterThan(0)
+    expect(new Set(observed.world.parentBranchReads)).toEqual(new Set(['main']))
   })
 })
 

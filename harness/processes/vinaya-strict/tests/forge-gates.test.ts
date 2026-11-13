@@ -21,7 +21,7 @@ import { engineLiveDevToolsContext, liveTaskInput, runEngine, type Agent, type E
 import { createActions } from '../executing/actions'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
 import { liveHandoffDeps, type HandoffDeps } from '../executing/handoff'
-import { keepLogLocal, SCENARIO_ENV_KEYS, useRuntimeDir } from './round-fakes'
+import { keepLogLocal, SCENARIO_ENV_KEYS, testForge, useRuntimeDir } from './round-fakes'
 import { fakeDeps, makeWorld, OWN, SURFACE, WORKFLOW } from './live-developer-context-world'
 
 // The forge gates of the Engine Flow — mergeability, the forge's CI and the premise re-check — each driven end to
@@ -252,7 +252,7 @@ async function run(
   }
   const next = <T>(queue: T[]): T => (queue.length > 1 ? (queue.shift() as T) : (queue[0] as T))
   let reran = false
-  const engineForge: Partial<EngineForge> = {
+  const engineForge: EngineForge = testForge({
     checkTaskDispatchReadiness: () => ({ ready: true, output: 'ready' }),
     createTaskWorktree: () => worktree,
     findOpenPrForBranch: () => (world.prOpen ? { number: PR, branch: BRANCH } : null),
@@ -303,7 +303,7 @@ async function run(
     publishRound: () => {
       observed.published += 1
     }
-  }
+  })
   const task = await liveTaskInput({ task: TASK, agent, dryRun: false }, repo, runtimeDir, 'forge-gates', {
     fetchLabels: () => [],
     fetchTitle: () => 'A test task',

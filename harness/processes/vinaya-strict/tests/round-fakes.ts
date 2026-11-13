@@ -105,3 +105,53 @@ export const QUIET_FORGE_GATES: Pick<
   postMarkedComment: () => 'https://example.invalid/comment',
   refreshPrEvidence: () => ({ head: 'fake-head', checksPassed: true })
 }
+
+/**
+ * Every function a forge supplies, keyed so the compiler refuses this record when `EngineForge` gains or loses one —
+ * the test forge below can then never leave a function out.
+ */
+const FORGE_FUNCTIONS: { readonly [K in keyof EngineForge]-?: true } = {
+  findOpenPrForBranch: true,
+  fetchFrozenBrief: true,
+  resolveIssueObjectives: true,
+  fetchNewestRulingOrdinal: true,
+  fetchNewestIssueRulingOrdinal: true,
+  fetchSourceRevision: true,
+  fetchCiConclusion: true,
+  fetchSettledCiConclusion: true,
+  fetchIssueRulingsAfterBrief: true,
+  fetchRulings: true,
+  fetchLoopHistory: true,
+  resolveHead: true,
+  resolveParentBranch: true,
+  resolveDeveloperDoctrineText: true,
+  prBody: true,
+  checkTaskDispatchReadiness: true,
+  createTaskWorktree: true,
+  pullRequestView: true,
+  publishRound: true,
+  fetchFailingCheckRuns: true,
+  fetchFailedCheckWorkflowRunIds: true,
+  rerunFailedWorkflowJobs: true,
+  fetchMergeableState: true,
+  fetchConflictingFiles: true,
+  postMarkedComment: true,
+  refreshPrEvidence: true
+}
+
+/**
+ * A complete forge for a test: each function in `overrides` answers as given, and every other one throws an error
+ * naming it, so a function a test leaves out can never reach the live forge.
+ */
+export function testForge(overrides: Partial<EngineForge> = {}): EngineForge {
+  const forge: Record<string, unknown> = {}
+  for (const name of Object.keys(FORGE_FUNCTIONS)) {
+    forge[name] = () => {
+      throw new Error(`Unexpected forge call: ${name}`)
+    }
+  }
+  for (const [name, fn] of Object.entries(overrides)) {
+    if (fn !== undefined) forge[name] = fn
+  }
+  return forge as unknown as EngineForge
+}

@@ -10,7 +10,7 @@ import { objectivesVersion } from '../tools/task-contract/objectives'
 import { readManifest } from '../../../kernel/connectors/checkpoint/control-store/index'
 import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
-import { keepLogLocal, QUIET_FORGE_GATES, SCENARIO_ENV_KEYS, useRuntimeDir } from './round-fakes'
+import { keepLogLocal, QUIET_FORGE_GATES, SCENARIO_ENV_KEYS, testForge, useRuntimeDir } from './round-fakes'
 import type { ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   clearDriverLock,
@@ -286,7 +286,7 @@ async function run(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
   const brief = `# Frozen brief\n\n## Objectives\n\nO1. Do the thing.\n\n**Revision:** ${world.remote}\n`
   const published: Array<Record<string, unknown>> = []
   const markers: string[] = []
-  const forge: Partial<EngineForge> = {
+  const forge: EngineForge = testForge({
     checkTaskDispatchReadiness: () => ({ ready: true, output: 'ready' }),
     createTaskWorktree: () => worktree,
     findOpenPrForBranch: () => (world.prOpen ? { number: PR, branch: BRANCH } : null),
@@ -313,11 +313,12 @@ async function run(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
       journalFinalized: null
     }),
     resolveHead: () => world.remote,
+    resolveParentBranch: () => 'main',
     resolveDeveloperDoctrineText: () => Promise.resolve('Execute the frozen brief.'),
     prBody: () => `Closes #${TASK}`,
     pullRequestView: () => ({ number: PR, body: `Closes #${TASK}`, headRefOid: world.remote, state: 'OPEN' }),
     publishRound: (_runtime, input) => void published.push(input as unknown as Record<string, unknown>)
-  }
+  })
   const task = await liveTaskInput({ task: TASK, agent, dryRun: false }, repo, runtimeDir, 'round-decisions', {
     fetchLabels: () => [],
     fetchTitle: () => 'A test task',
