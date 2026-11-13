@@ -1,13 +1,11 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runDemoBreak } from '../src/commands/demo.js'
 import { stripAmbientFixtureEnv } from './fixture-env.js'
-import { withSerialLock } from './serial-lock.js'
 import { programFile } from '../../../harness/processes/vinaya-strict/tools/programs.js'
 
 // The real CLI source, invoked directly by `bun` rather than through a
@@ -61,27 +59,6 @@ async function captureStdout(fn: () => Promise<unknown>): Promise<string> {
   return buf
 }
 
-/**
- * This test and `quickstart.test.ts`'s "demo break" test both spawn a REAL
- * `bun ${INDEX_TS} check --all` subprocess via a real git hook — the same
- * source file, invoked from two different processes. Both have flaked in CI
- * (Issue #399, O4) with no reproducible shared state found on inspection;
- * this filesystem lock (`mkdir` is atomic on POSIX, so the same path in both
- * files serializes them regardless of which order or how many workers the
- * runner schedules them in) removes the only plausible cross-file race —
- * concurrent invocation of the identical CLI entry point — without changing
- * either test's own behavior.
- */
-// Scoped to THIS checkout: the lock exists to serialize the two test files of
-// one run, not every checkout/worktree/session on the machine. A fixed path
-// coupled every concurrent suite on a shared box (waiters died at the 30s test
-// timeout, reading as "load"). Keyed on INDEX_TS, which both files share.
-// Staleness, heartbeat and release live in `./serial-lock.ts`, tested on its own.
-const SERIAL_LOCK_DIR = join(
-  tmpdir(),
-  `vinaya-demo-break-serial-${createHash('sha1').update(INDEX_TS).digest('hex').slice(0, 12)}.lock`
-)
-
 let root: string
 let restoreFixtureEnv: (() => void) | undefined
 
@@ -108,37 +85,35 @@ afterEach(() => {
 
 describe('vinaya demo break', () => {
   it('refuses the malformed commit with the real check error, fixes, passes, and cleans up — twice, without touching the original branch or leaving stray branches', async () => {
-    await withSerialLock(SERIAL_LOCK_DIR, async () => {
-      for (let run = 1; run <= 2; run++) {
-        const beforeBranch = git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])
-        const beforeHead = git(root, ['rev-parse', 'HEAD'])
-        expect(beforeBranch).toBe('main')
-        expect(git(root, ['status', '--porcelain'])).toBe('')
+    for (let run = 1; run <= 2; run++) {
+      const beforeBranch = git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])
+      const beforeHead = git(root, ['rev-parse', 'HEAD'])
+      expect(beforeBranch).toBe('main')
+      expect(git(root, ['status', '--porcelain'])).toBe('')
 
-        let code = -1
-        const out = await captureStdout(async () => {
-          code = await runDemoBreak(root, [])
-        })
-        expect(code, `run ${run} output:\n${out}`).toBe(0)
+      let code = -1
+      const out = await captureStdout(async () => {
+        code = await runDemoBreak(root, [])
+      })
+      expect(code, `run ${run} output:\n${out}`).toBe(0)
 
-        // the real refusal came from the real check, not a scripted string
-        expect(out).toContain('✗ Commit refused')
-        expect(out).toContain(
-          'brief-validation tier: no `Tier:` field found in the PR body (expected `Tier: 0|1|3` or `**Tier:** 0|1|3`).'
-        )
-        expect(out).toContain('✓ Commit passed — the fix worked.')
-        expect(out).toContain('Cleaned up')
+      // the real refusal came from the real check, not a scripted string
+      expect(out).toContain('✗ Commit refused')
+      expect(out).toContain(
+        'brief-validation tier: no `Tier:` field found in the PR body (expected `Tier: 0|1|3` or `**Tier:** 0|1|3`).'
+      )
+      expect(out).toContain('✓ Commit passed — the fix worked.')
+      expect(out).toContain('Cleaned up')
 
-        const afterBranch = git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])
-        const afterHead = git(root, ['rev-parse', 'HEAD'])
-        expect(afterBranch, `run ${run}`).toBe('main')
-        expect(afterHead, `run ${run}: original branch must not move`).toBe(beforeHead)
-        expect(git(root, ['status', '--porcelain']), `run ${run}`).toBe('')
+      const afterBranch = git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])
+      const afterHead = git(root, ['rev-parse', 'HEAD'])
+      expect(afterBranch, `run ${run}`).toBe('main')
+      expect(afterHead, `run ${run}: original branch must not move`).toBe(beforeHead)
+      expect(git(root, ['status', '--porcelain']), `run ${run}`).toBe('')
 
-        const stray = git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/vinaya/demo-break-*'])
-        expect(stray, `run ${run}: no stray demo branch may survive`).toBe('')
-      }
-    })
+      const stray = git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/vinaya/demo-break-*'])
+      expect(stray, `run ${run}: no stray demo branch may survive`).toBe('')
+    }
   }, 30_000)
 
   it('--keep leaves the demo branch checked out and removes the crash-recovery state file', async () => {

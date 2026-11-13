@@ -2,7 +2,6 @@ import { installVinayaCheckRegistry } from '../../../harness/processes/vinaya-st
 installVinayaCheckRegistry()
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,7 +15,6 @@ import { PROJECTS_REGISTRY_PATH } from '../../../harness/processes/vinaya-strict
 import type { LabelGateway } from '../../../harness/kernel/gates/ops.js'
 import { programFile } from '../../../harness/processes/vinaya-strict/tools/programs.js'
 import { stripAmbientFixtureEnv } from './fixture-env.js'
-import { withSerialLock } from './serial-lock.js'
 
 // The real CLI source, invoked directly by `bun` — same technique
 // `demo.test.ts` uses, needed here because `demo break` (reached when the
@@ -174,27 +172,6 @@ function makeDeps(
   return { deps, questions, closeStdinCalls: () => closeStdinCalls }
 }
 
-/**
- * This test's "run demo break?" step and `demo.test.ts`'s own test both
- * spawn a REAL `bun ${programFile('check')} --all` subprocess via a real git hook
- * — the same source file, invoked from two different processes. Both have
- * flaked in CI (Issue #399, O4) with no reproducible shared state found on
- * inspection; this filesystem lock (`mkdir` is atomic on POSIX, so the same
- * path in both files serializes them regardless of which order or how many
- * workers the runner schedules them in) removes the only plausible
- * cross-file race — concurrent invocation of the identical CLI entry point
- * — without changing either test's own behavior.
- */
-// Scoped to THIS checkout: the lock exists to serialize the two test files of
-// one run, not every checkout/worktree/session on the machine. A fixed path
-// coupled every concurrent suite on a shared box (waiters died at the 30s test
-// timeout, reading as "load"). Keyed on INDEX_TS, which both files share.
-// Staleness, heartbeat and release live in `./serial-lock.ts`, tested on its own.
-const SERIAL_LOCK_DIR = join(
-  tmpdir(),
-  `vinaya-demo-break-serial-${createHash('sha1').update(INDEX_TS).digest('hex').slice(0, 12)}.lock`
-)
-
 let root: string
 let restoreFixtureEnv: (() => void) | undefined
 
@@ -221,70 +198,68 @@ afterEach(() => {
 
 describe('vinaya quickstart', () => {
   it('accept-everything: installs, binds a doc-owner, registers a project, commits, proves the install, and gracefully reports a failed push (no remote)', async () => {
-    await withSerialLock(SERIAL_LOCK_DIR, async () => {
-      const { deps, closeStdinCalls } = makeDeps(root, [
-        '', // press-enter pause before the diff
-        'y', // vinaya init's own confirm
-        'y', // bind a doc-owner pair?
-        'apps/foo/src/**', // glob
-        'apps/foo/specs/foo.md', // pointer
-        'n', // bind another? — declined
-        'y', // register project?
-        'demo', // project name
-        '', // project path — empty, default '.'
-        'n', // register another? — declined
-        'y', // run demo break?
-        'y' // push?
-      ])
+    const { deps, closeStdinCalls } = makeDeps(root, [
+      '', // press-enter pause before the diff
+      'y', // vinaya init's own confirm
+      'y', // bind a doc-owner pair?
+      'apps/foo/src/**', // glob
+      'apps/foo/specs/foo.md', // pointer
+      'n', // bind another? — declined
+      'y', // register project?
+      'demo', // project name
+      '', // project path — empty, default '.'
+      'n', // register another? — declined
+      'y', // run demo break?
+      'y' // push?
+    ])
 
-      let rc = -1
-      const out = await captureStdout(async () => {
-        rc = await runQuickstart([], deps)
-      })
-      expect(rc, out).toBe(0)
-
-      // init actually installed (hooks + config), not just diffed.
-      expect(existsSync(join(root, 'vinaya.config.json'))).toBe(true)
-      expect(existsSync(join(root, '.git/hooks/pre-commit'))).toBe(true)
-
-      // doc-owners binding threaded through to the Part 1 writer.
-      const docOwners = readFileSync(join(root, DOC_OWNERS_PATH), 'utf-8')
-      expect(docOwners).toContain('apps/foo/src/**  apps/foo/specs/foo.md')
-
-      // project registration threaded through to `runInitProduct`/`registry-write.ts`.
-      const registry = readFileSync(join(root, PROJECTS_REGISTRY_PATH), 'utf-8')
-      expect(registry).toContain('| demo | `.` |')
-
-      // a real commit landed.
-      const log = git(root, ['log', '--oneline'])
-      expect(log.split('\n').length, out).toBe(2) // initial commit + install commit
-      expect(git(root, ['log', '-1', '--format=%s'])).toBe('Chore: install Vinaya')
-      expect(git(root, ['status', '--porcelain'])).toBe('')
-
-      // demo break actually ran (real refusal, real fix, real cleanup).
-      expect(out).toContain('✗ Commit refused')
-      expect(out).toContain('✓ Commit passed — the fix worked.')
-      expect(git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/vinaya/demo-break-*'])).toBe('')
-
-      // the working tree is previewed before the commit lands (review finding, PR
-      // #838) — status is captured BEFORE `git add -A` runs, so new files are
-      // still untracked (`??`), not staged (`A`).
-      expect(out).toContain('Working tree before commit')
-      expect(out).toContain('?? vinaya.config.json')
-
-      // doctor ran.
-      expect(out).toContain('vinaya doctor')
-
-      // push was attempted and failed gracefully (fixture has no remote) — the
-      // command still completes successfully rather than crashing.
-      expect(out).toContain('git push failed')
-
-      // next-step hints omit demo break/push since both ran, but the command
-      // still finishes cleanly.
-      expect(out).toContain('Next steps:')
-
-      expect(closeStdinCalls()).toBe(1)
+    let rc = -1
+    const out = await captureStdout(async () => {
+      rc = await runQuickstart([], deps)
     })
+    expect(rc, out).toBe(0)
+
+    // init actually installed (hooks + config), not just diffed.
+    expect(existsSync(join(root, 'vinaya.config.json'))).toBe(true)
+    expect(existsSync(join(root, '.git/hooks/pre-commit'))).toBe(true)
+
+    // doc-owners binding threaded through to the Part 1 writer.
+    const docOwners = readFileSync(join(root, DOC_OWNERS_PATH), 'utf-8')
+    expect(docOwners).toContain('apps/foo/src/**  apps/foo/specs/foo.md')
+
+    // project registration threaded through to `runInitProduct`/`registry-write.ts`.
+    const registry = readFileSync(join(root, PROJECTS_REGISTRY_PATH), 'utf-8')
+    expect(registry).toContain('| demo | `.` |')
+
+    // a real commit landed.
+    const log = git(root, ['log', '--oneline'])
+    expect(log.split('\n').length, out).toBe(2) // initial commit + install commit
+    expect(git(root, ['log', '-1', '--format=%s'])).toBe('Chore: install Vinaya')
+    expect(git(root, ['status', '--porcelain'])).toBe('')
+
+    // demo break actually ran (real refusal, real fix, real cleanup).
+    expect(out).toContain('✗ Commit refused')
+    expect(out).toContain('✓ Commit passed — the fix worked.')
+    expect(git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/vinaya/demo-break-*'])).toBe('')
+
+    // the working tree is previewed before the commit lands (review finding, PR
+    // #838) — status is captured BEFORE `git add -A` runs, so new files are
+    // still untracked (`??`), not staged (`A`).
+    expect(out).toContain('Working tree before commit')
+    expect(out).toContain('?? vinaya.config.json')
+
+    // doctor ran.
+    expect(out).toContain('vinaya doctor')
+
+    // push was attempted and failed gracefully (fixture has no remote) — the
+    // command still completes successfully rather than crashing.
+    expect(out).toContain('git push failed')
+
+    // next-step hints omit demo break/push since both ran, but the command
+    // still finishes cleanly.
+    expect(out).toContain('Next steps:')
+
+    expect(closeStdinCalls()).toBe(1)
   }, 30_000)
 
   it('decline-everything: nothing installed, no commit, no stray artifacts — closeStdin still called exactly once', async () => {
