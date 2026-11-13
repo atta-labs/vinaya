@@ -372,7 +372,12 @@ if (tool === 'Bash') {
   if (statements.some((argv) => policy.shellDeny.some((rule) => matches(argv, tokens(rule))))) deny('command matches a shell deny rule')
   if (!policy.shellDefaultAllow && (statements.length === 0 || statements.some((argv) => !policy.shellAllow.some((rule) => matches(argv, tokens(rule)))))) deny('command is outside the shell allowlist')
 }
-if (policy.guards.background_shell && ['Agent', 'Task'].includes(tool) && args.run_in_background === true) {
+// A subagent tool can start work that outlives the caller's turn: Claude Code
+// launches Agent and Task asynchronously by default (no run_in_background flag
+// is sent), and Workflow always runs in the background. The turn then ends with
+// that work unfinished, so under the background guard every subagent launch is
+// denied, whatever its arguments say.
+if (policy.guards.background_shell && ['Agent', 'Task', 'Workflow'].includes(tool)) {
   deny('background subagent is denied')
 }
 if (policy.guards.write_scope && ['Write', 'Edit', 'NotebookEdit', 'apply_patch'].includes(tool)) {

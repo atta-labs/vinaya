@@ -134,7 +134,7 @@ export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths
     hooks: {
       PreToolUse: [
         {
-          matcher: 'Bash|Write|Edit|NotebookEdit|Agent|Task',
+          matcher: 'Bash|Write|Edit|NotebookEdit|Agent|Task|Workflow',
           hooks: [{ type: 'command', command: `node ${JSON.stringify(hookPath)}`, timeout: 30 }]
         }
       ]

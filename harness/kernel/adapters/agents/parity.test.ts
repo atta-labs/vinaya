@@ -523,6 +523,12 @@ describe('role-grant vendor parity', () => {
     expect(invoke(claude, { tool_name: 'Agent', tool_input: { run_in_background: true } })).toContain(
       '"permissionDecision":"deny"'
     )
+    // Claude Code launches a subagent asynchronously with no flag at all, and Workflow is always background.
+    for (const tool of ['Agent', 'Task', 'Workflow']) {
+      expect(invoke(claude, { tool_name: tool, tool_input: { description: 'sweep', prompt: 'edit files' } })).toContain(
+        '"permissionDecision":"deny"'
+      )
+    }
     expect(invoke(claude, { tool_name: 'Bash', tool_input: { command: 'git status --short' } })).toBe('')
     expect(invoke(codex, { tool_name: 'Bash', tool_input: { command: 'git status --short' } })).toBe('')
     expect(invoke(claude, { tool_name: 'Bash', tool_input: { command: 'git commit -m "ordinary; message"' } })).toBe('')
