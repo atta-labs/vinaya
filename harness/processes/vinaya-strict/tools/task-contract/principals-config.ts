@@ -7,10 +7,10 @@ export const PRINCIPALS_CONFIG_FIX = 'add "principals": [...] to vinaya.config.j
 export type ConfigPrincipalsResult = { ok: true; principals: string[] } | { ok: false; reason: string }
 
 /**
- * `vinaya.config.json`'s `principals` — the logins every aeg-core script
+ * `vinaya.config.json`'s `principals` — the logins every process script
  * counts as a Principal — read as plain JSON beside its precedent
- * `readConfigObjectivesSinceIssue`, because aeg-core cannot depend on
- * `apps/cli`'s zod configuration loader. This is the only place the aeg-core
+ * `readConfigObjectivesSinceIssue`, because the process tools cannot depend on
+ * `apps/cli`'s zod configuration loader. This is the only place the process
  * scripts read the key.
  *
  * Never a default: an unreadable file, a file that is not JSON, a missing

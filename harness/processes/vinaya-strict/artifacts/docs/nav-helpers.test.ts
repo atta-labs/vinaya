@@ -10,7 +10,7 @@ const doc = (slug: string, title: string, section: string): Doc => ({
   section,
   order: 0,
   href: `/docs/${slug}`,
-  filePath: `aeg-root/${slug}.md`
+  filePath: `sample-root/${slug}.md`
 })
 
 const nav = buildDocNav(

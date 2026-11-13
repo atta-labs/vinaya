@@ -4,13 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { DOCTRINE_REPO_PATHS } from '../tools/doctrine/doctrine-map'
+import { LEGACY_DOCTRINE_ROOT } from '../tools/legacy-paths'
 import { programCommandLine, programFile } from '../tools/programs.js'
 
 // Task `vinaya-adopter-portability-v1` 2 (Issue #232): `reader-resolvable-prose`
 // and `retired-vocabulary` both defaulted an unconfigured `proseGates.doctrineRoot`
-// to the bare literal `'aeg-root'`, resolved relative to the caller's cwd —
+// to the bare literal retired doctrine-root name, resolved relative to the caller's cwd —
 // permanently empty for every `vinaya init` adopter, none of whom ever gets a
-// repo-relative `aeg-root/` (settled by experiment). The fix changes only the
+// repo-relative retired doctrine root (settled by experiment). The fix changes only the
 // UNCONFIGURED default, via `resolveDoctrineRoot()` (`../commands/doctrine.js`
 // — the same "package's own copy" resolution `vinaya doctrine` already uses).
 // An explicit `proseGates.doctrineRoot` in `vinaya.config.json` must still win
@@ -98,8 +99,8 @@ describe('reader-resolvable-prose/retired-vocabulary doctrineRoot default — ta
     for (const bin of [READER_BIN, RETIRED_BIN]) {
       const source = readFileSync(bin, 'utf8')
       expect(source).toContain('resolveDoctrineRoot()')
-      expect(source).not.toContain("proseGates?.doctrineRoot ?? 'aeg-root'")
-      expect(source).not.toContain("loadConfig()?.proseGates?.doctrineRoot ?? 'aeg-root'")
+      expect(source).not.toContain(`proseGates?.doctrineRoot ?? '${LEGACY_DOCTRINE_ROOT}'`)
+      expect(source).not.toContain(`loadConfig()?.proseGates?.doctrineRoot ?? '${LEGACY_DOCTRINE_ROOT}'`)
     }
   })
 
@@ -129,8 +130,8 @@ describe('reader-resolvable-prose/retired-vocabulary doctrineRoot default — ta
       expect(result.exitCode).toBe(0)
       // Positive proof it read the CONFIGURED root, not the package default:
       // a finding (if any) would name a path under `configured-doctrine/`,
-      // never this monorepo's own `aeg-root/`.
-      expect(result.stderr.toString()).not.toContain('/aeg-root/')
+      // never this monorepo's own retired doctrine root.
+      expect(result.stderr.toString()).not.toContain(`/${LEGACY_DOCTRINE_ROOT}/`)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -161,7 +162,7 @@ describe('reader-resolvable-prose/retired-vocabulary doctrineRoot default — ta
 for (const check of [
   {
     name: 'retired-vocabulary',
-    // A real, deterministic `RETIRED_PATTERNS` hit (`@attalabs/aeg-core`'s
+    // A real, deterministic `RETIRED_PATTERNS` hit (the process's
     // retired decision-id format, `D` dash three digits) — not a guessed
     // heuristic. Built via concatenation, not a literal in this file's own
     // source: `harness/processes/vinaya-strict/checks/retired-vocabulary.test.ts`'s own
@@ -180,7 +181,7 @@ for (const check of [
   },
   {
     name: 'reader-resolvable-prose',
-    /** `#123`-shaped — a real, deterministic `FORGE_NUMBER_PATTERN` hit (`checkUnresolvableReferences`, `@attalabs/aeg-core`), not a guessed heuristic. */
+    /** `#123`-shaped — a real, deterministic `FORGE_NUMBER_PATTERN` hit (`checkUnresolvableReferences`), not a guessed heuristic. */
     mention: 'See #123 for the historical rationale.\n',
     findingContains: ['reader-resolvable-prose', 'a forge number']
   }
@@ -309,14 +310,14 @@ for (const check of [
 // real doctrine root depended on whether the checkout's ancestor path
 // happened to contain a directory literally named `node_modules` (which
 // gates `resolveDoctrineRoot`'s internal fallback candidate) — a fact with no
-// relation to whether the checkout's own `aeg-root/` exists. Measured live:
+// relation to whether the checkout's own retired doctrine root exists. Measured live:
 // the same commit, checked out one directory deeper under a `node_modules`-
 // named ancestor, silently swept zero files instead of its real backlog.
 //
 // The fix anchors both checks' unconfigured default to `repoRoot()` (`git
 // rev-parse --show-toplevel`) first — deterministic regardless of checkout
 // shape — falling back to `resolveDoctrineRoot()`'s package-relative
-// resolution only when the repo under check has no local `aeg-root/` of its
+// resolution only when the repo under check has no local retired doctrine root of its
 // own. These tests exercise both halves of that fix against the REAL bins,
 // not a unit test of the resolution logic in isolation, because the bug was
 // specifically about what the real subprocess does under a real checkout
@@ -374,7 +375,7 @@ describe('doctrine-root checkout-location independence (Issue #314)', () => {
    * does not prove checkout-independence: with the fix reverted, both
    * fixtures' `resolveDoctrineRoot()` fallback resolves relative to wherever
    * `doctrine.ts` itself physically sits (this dev repo), so both runs
-   * silently escape to the SAME real `aeg-root/` and can coincidentally
+   * silently escape to the SAME real retired doctrine root and can coincidentally
    * report the same count without ever having swept the fixture at all —
    * caught live in review by reverting the three fixed source files and
    * re-running this suite unmodified. Asserting the reported path actually
@@ -417,7 +418,7 @@ describe('doctrine-root checkout-location independence (Issue #314)', () => {
         expect(nested.exitCode).toBe(expectedExit)
         // Each run actually resolved INTO its own fixture, not (with the fix
         // reverted) both silently escaping to this dev repo's own real
-        // `aeg-root/` — see `doctrineRootPath`'s doc comment for why a
+        // retired doctrine root — see `doctrineRootPath`'s doc comment for why a
         // finding-count match alone cannot prove this.
         expect(doctrineRootPath(plain.stdout)).toStartWith(realpathSync(plainRoot))
         expect(doctrineRootPath(nested.stdout)).toStartWith(realpathSync(nestedRoot))
@@ -470,29 +471,29 @@ describe('doctrine-root checkout-location independence (Issue #314)', () => {
 })
 
 // Issue #314's second acceptance criterion: where the doctrine root
-// genuinely cannot be resolved (no local `aeg-root/`, and no bundled copy
+// genuinely cannot be resolved (no local retired doctrine root, and no bundled copy
 // findable relative to the check's own install either), the check must
 // report that as its own distinct outcome — never silently as a clean,
 // zero-finding pass, which is structurally indistinguishable from "ran and
 // found nothing."
 //
 // Constructing this for real means defeating BOTH resolution paths: the
-// `repoRoot()`-anchored candidate (no local `aeg-root/`) AND
+// `repoRoot()`-anchored candidate (no local retired doctrine root) AND
 // `resolveDoctrineRoot()`'s own package-relative fallback (no bundled copy
 // reachable from the check bin's own install location). Every real caller
-// in this dev monorepo's own tree finds ITS OWN `aeg-root/` via that second
+// in this dev monorepo's own tree finds ITS OWN retired doctrine root via that second
 // path, so the only way to exercise genuine unresolvability for real is a
-// separate checkout with its `aeg-root/` actually removed — a fixture
+// separate checkout with its doctrine actually removed — a fixture
 // clone, not the shared dev tree these tests run inside of. `git clone`
 // (local, same filesystem) hardlinks objects, so this is fast; `node_modules`
 // is symlinked in from THIS run's own real install rather than reinstalled,
-// since only `aeg-root`'s absence is under test here, not dependency
+// since only the doctrine's absence is under test here, not dependency
 // resolution.
 describe('doctrine root genuinely unresolvable (Issue #314)', () => {
   const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
 
-  function cloneWithoutAegRoot(name: string): string {
-    const dest = join(tmpdir(), `vinaya-no-aeg-root-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  function cloneWithoutDoctrine(name: string): string {
+    const dest = join(tmpdir(), `vinaya-no-doctrine-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     // `--shared`: the clone borrows this repository's objects through an
     // alternate instead of copying them. A plain local clone hardlinks them
     // only when the source is an ordinary checkout — from a linked worktree,
@@ -503,7 +504,7 @@ describe('doctrine root genuinely unresolvable (Issue #314)', () => {
     // borrowing objects from its source is safe; nothing here writes to the
     // source, and the clone's own commit below lands in its own object store.
     execFileSync('git', ['clone', '--quiet', '--shared', REPO_ROOT, dest])
-    execFileSync('git', ['checkout', '-q', '-b', 'test-no-aeg-root'], { cwd: dest })
+    execFileSync('git', ['checkout', '-q', '-b', 'test-no-doctrine'], { cwd: dest })
     symlinkSync(join(REPO_ROOT, 'node_modules'), join(dest, 'node_modules'))
     execFileSync('git', ['rm', '-rq', '--', ...DOCTRINE_REPO_PATHS], { cwd: dest })
     execFileSync(
@@ -518,7 +519,7 @@ describe('doctrine root genuinely unresolvable (Issue #314)', () => {
 
   for (const checkName of ['reader-resolvable-prose', 'retired-vocabulary'] as const) {
     it(`${checkName}: reports doctrine-root-unresolvable as a distinct outcome, never a silent clean pass`, () => {
-      const clone = cloneWithoutAegRoot(checkName)
+      const clone = cloneWithoutDoctrine(checkName)
       const binPath = join(
         clone,
         'harness/processes/vinaya-strict/checks/bin',
@@ -555,10 +556,10 @@ describe('doctrine root genuinely unresolvable (Issue #314)', () => {
 // already covered above (task `vinaya-adopter-portability-v1` 2); this adds
 // the retired-vocabulary half, which that earlier suite never exercised.
 describe('explicit proseGates.doctrineRoot still wins — retired-vocabulary (Issue #314 regression)', () => {
-  it('a configured doctrineRoot is read even when a real repo-root aeg-root/ also exists', () => {
+  it('a configured doctrineRoot is read even when a real repo-root doctrine also exists', () => {
     const root = join(tmpdir(), `vinaya-retired-config-wins-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     try {
-      // A real `aeg-root/` at the repo root too, so this test actually
+      // A real doctrine at the repo root too, so this test actually
       // discriminates "configured wins" from "repoRoot() candidate would
       // have won anyway" — the two must differ for the assertion to mean
       // anything.
@@ -587,7 +588,7 @@ describe('explicit proseGates.doctrineRoot still wins — retired-vocabulary (Is
       })
       expect(result.exitCode).toBe(0)
       // Positive proof it read the CONFIGURED root, not the repo-root
-      // aeg-root/: the real retired-decision-id finding in aeg-root/note.md
+      // doctrine: the real retired-decision-id finding in the repo-root doctrine
       // (the same pattern `mention` above writes there) never surfaces.
       expect(result.stderr.toString()).not.toContain('retired Vinaya mechanism')
     } finally {
@@ -609,7 +610,7 @@ describe('reader-resolvable-prose: a product-code slug citation is a blocking fi
     const root = initFixture('product-slug-blocking')
     try {
       mkdirSync(join(root, 'apps', 'cli', 'src'), { recursive: true })
-      writeFileSync(join(root, 'apps', 'cli', 'src', 'index.ts'), '// landed in aeg-coherence-v1\n')
+      writeFileSync(join(root, 'apps', 'cli', 'src', 'index.ts'), '// landed in sample-tranche-v1\n')
       execFileSync('git', ['add', '-A'], { cwd: root })
       execFileSync('git', ['commit', '-q', '-m', 'Chore: add a CLI source file with a tranche-slug citation'], {
         cwd: root
@@ -782,7 +783,7 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
   it('a root SPEC.md citing an Issue number and a tranche slug fails, with no configuration at all', () => {
     const root = fixtureWithConfig('spec-defaults-root-spec', null)
     try {
-      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1, closing (#4213).\n')
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in sample-tranche-v1, closing (#4213).\n')
       commitAll(root, 'Chore: add a root spec carrying plan citations')
 
       const { exitCode, stderr } = runReaderBin(root)
@@ -842,13 +843,13 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
       proseGates: { specGrandfather: ['SPEC.md'] }
     })
     try {
-      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1, closing (#4213).\n')
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in sample-tranche-v1, closing (#4213).\n')
       commitAll(root, 'Chore: add a grandfathered root spec')
 
       const { exitCode, stderr } = runReaderBin(root)
       expect(exitCode).toBe(0)
       // The array form's one warning names the path; the citations themselves stay unreported.
-      expect(stderr).not.toContain('aeg-coherence-v1')
+      expect(stderr).not.toContain('sample-tranche-v1')
       expect(stderr).not.toContain('#4213')
     } finally {
       rmSync(root, { recursive: true, force: true })
@@ -860,13 +861,13 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
       proseGates: { specGrandfather: { 'SPEC.md': 1 } }
     })
     try {
-      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1.\n')
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in sample-tranche-v1.\n')
       commitAll(root, 'Chore: add a root spec at its limit')
       const atLimit = runReaderBin(root)
       expect(atLimit.exitCode).toBe(0)
       expect(atLimit.stderr).not.toContain('SPEC.md')
 
-      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1, closing (#4213).\n')
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in sample-tranche-v1, closing (#4213).\n')
       commitAll(root, 'Chore: add one more citation')
       const above = runReaderBin(root)
       expect(above.exitCode).toBe(1)
@@ -882,7 +883,7 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
       proseGates: { specGrandfather: ['SPEC.md', 'CONTEXT.md'] }
     })
     try {
-      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in aeg-coherence-v1, closing (#4213).\n')
+      writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nThe gate landed in sample-tranche-v1, closing (#4213).\n')
       commitAll(root, 'Chore: add a grandfathered root spec')
 
       const { exitCode, stderr } = runReaderBin(root)
@@ -925,7 +926,7 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
       mkdirSync(join(root, 'design'), { recursive: true })
       mkdirSync(join(root, 'notes'), { recursive: true })
       writeFileSync(join(root, 'design', 'architecture.md'), '# Architecture\n\nDelivered by task 4.\n')
-      writeFileSync(join(root, 'notes', 'context.md'), '# Context\n\nShaped by aeg-coherence-v1.\n')
+      writeFileSync(join(root, 'notes', 'context.md'), '# Context\n\nShaped by sample-tranche-v1.\n')
       commitAll(root, 'Chore: add spec folders named with a trailing slash and a leading dot-slash')
 
       const { exitCode, stderr } = runReaderBin(root)
@@ -1002,7 +1003,7 @@ describe('reader-resolvable-prose: the spec class checks a root spec, context an
     })
     try {
       mkdirSync(join(root, 'design'), { recursive: true })
-      writeFileSync(join(root, 'design', 'architecture.md'), '# Architecture\n\nShaped by aeg-coherence-v1.\n')
+      writeFileSync(join(root, 'design', 'architecture.md'), '# Architecture\n\nShaped by sample-tranche-v1.\n')
       writeFileSync(join(root, 'SPEC.md'), '# Spec\n\nClosing (#4213).\n')
       commitAll(root, 'Chore: add a configured spec folder alongside a root spec')
 
@@ -1033,8 +1034,8 @@ describe('proseGates.rules — configured writing rules, end to end', () => {
     scopes: ['repository']
   }
 
-  // The doctrine tree sits under its own configured root, not `aeg-root/`:
-  // `check --plan` resolves roles from a repository's `aeg-root/` when one
+  // The doctrine tree sits under its own configured root, not the retired doctrine root:
+  // `check --plan` resolves roles from a repository's retired doctrine root when one
   // exists, and this fixture carries no complete doctrine.
   function rulesFixture(name: string, rules: unknown, checks: Record<string, unknown> = {}): string {
     const root = initFixture(name)

@@ -6,10 +6,10 @@ import { DOCTRINE_REPO_PATHS } from '../doctrine/doctrine-map'
 describe('normalizeTouchedPath', () => {
   test.each([
     ['./.github/x', '.github/x'],
-    ['/aeg-root/x', 'aeg-root/x'],
+    ['/old-root/x', 'old-root/x'],
     ['foo/../.github/workflows/ci.yml', '.github/workflows/ci.yml'],
     ['../.github/x', '.github/x'],
-    ['../../aeg-root/x', 'aeg-root/x'],
+    ['../../old-root/x', 'old-root/x'],
     ['.github\\workflows\\ci.yml', '.github/workflows/ci.yml']
   ])('%s -> %s', (input, expected) => {
     expect(normalizeTouchedPath(input)).toBe(expected)

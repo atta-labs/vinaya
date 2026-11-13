@@ -168,7 +168,7 @@ describe('dev-tools server — success and refusal both land on the agent', () =
           'same_attempt',
           'not_committed',
           'pre-push-hook',
-          'aeg-core: 1 fail',
+          'core: 1 fail',
           'Fix the failing test, then publish_changes again.'
         )
       })

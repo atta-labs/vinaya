@@ -38,14 +38,14 @@ import {
   FROZEN_BRIEF_V1_MARKER,
   resolveNewestFrozenBrief
 } from './brief-validation'
-import { FROZEN_BRIEF_MARKER } from '../legacy-markers'
+import { FROZEN_BRIEF_MARKER, PRINCIPAL_RULING_MARKER } from '../legacy-markers'
 import { type Objective, objectivesOf } from './objectives'
 import { EOLS, FENCE_DELIMS, fenceShapes } from '../../tests/fixtures/fence-shapes'
 import { readTierFromPrBody } from './pr-tier'
 
 const WELL_FORMED = `
 **For:** Claude Sonnet (Claude Code CLI, dispatched non-interactive session)
-**Project:** aeg
+**Project:** vinaya
 
 ## Summary
 
@@ -68,18 +68,18 @@ One paragraph of blast radius.
 
 ### 4. Technical surface map
 
-- Create \`packages/aeg-core/src/brief-validation.ts\`.
+- Create \`packages/core/src/brief-validation.ts\`.
 
 ### 5. Pre-flight checks
 
 Step 0 (mandatory, verbatim):
 \`\`\`
-git worktree add .worktrees/task/aeg-governance-hardening/2 -b task/aeg-governance-hardening/2 origin/main
+git worktree add .worktrees/task/sample-governance/2 -b task/sample-governance/2 origin/main
 \`\`\`
 
 ### 7. Documentation-update list
 
-- \`aeg-root/state-machine.md\` §12.
+- \`doctrine/state-machine.md\` §12.
 
 ### 10. Stop conditions
 
@@ -168,7 +168,7 @@ describe('checkTestPlanExclusivity', () => {
     expect(checkTestPlanExclusivity(body).status).toBe('fail')
   })
 
-  it('ignores checkbox items in a pasted reference-brief copy outside the AEG:TEST-PLAN anchor (found live)', () => {
+  it('ignores checkbox items in a pasted reference-brief copy outside the VINAYA:TEST-PLAN anchor (found live)', () => {
     // The template instructs pasting the dispatched brief verbatim as a
     // reference copy (a `<details>` block at the bottom of the PR body). A
     // brief whose REAL Test Plan is `unit-tests-only`, anchored, must not fail
@@ -176,9 +176,9 @@ describe('checkTestPlanExclusivity', () => {
     // `test-plan.ts`'s real merge-gate check already reads only the anchor;
     // this check disagreed about the same bytes until it did too.
     const body = [
-      '<!-- AEG:TEST-PLAN:START -->',
+      '<!-- VINAYA:TEST-PLAN:START -->',
       'Test Plan: unit-tests-only — pure parser change.',
-      '<!-- AEG:TEST-PLAN:END -->',
+      '<!-- VINAYA:TEST-PLAN:END -->',
       '',
       '<details><summary>Reference: dispatched brief</summary>',
       '',
@@ -216,9 +216,9 @@ describe('checkPrincipalPlaceholder', () => {
 
   it('ignores a None placeholder living only in a pasted reference-brief copy outside the anchor', () => {
     const body = [
-      '<!-- AEG:TEST-PLAN:START -->',
+      '<!-- VINAYA:TEST-PLAN:START -->',
       '- [ ] **[principal]** Sign in → upload a CV → CLEAN report with grade A/B/C/D',
-      '<!-- AEG:TEST-PLAN:END -->',
+      '<!-- VINAYA:TEST-PLAN:END -->',
       '',
       '<details><summary>Reference: dispatched brief</summary>',
       '',
@@ -318,8 +318,8 @@ describe('checkClosesNPresence', () => {
   it('passes a bare Closes #N in prose', () => {
     expect(checkClosesNPresence('Ships the fix. Closes #5').status).toBe('pass')
   })
-  it('passes a bare Closes #N inside the AEG:CLOSES anchor', () => {
-    const body = 'Summary.\n\n<!-- AEG:CLOSES:START -->\nCloses #5\n<!-- AEG:CLOSES:END -->\n'
+  it('passes a bare Closes #N inside the VINAYA:CLOSES anchor', () => {
+    const body = 'Summary.\n\n<!-- VINAYA:CLOSES:START -->\nCloses #5\n<!-- VINAYA:CLOSES:END -->\n'
     expect(checkClosesNPresence(body).status).toBe('pass')
   })
   it('passes when a fenced example Closes #99 sits alongside a real bare Closes #5', () => {
@@ -457,8 +457,8 @@ describe('checkClosesNPresence — fence matrix', () => {
       expect(checkClosesNPresence(['Ref ```Closes #5``` inline.'].join(eol)).status).toBe('fail')
     })
 
-    it(`${eolName}: bare Closes #5 in the AEG:CLOSES anchor passes`, () => {
-      const body = ['<!-- AEG:CLOSES:START -->', 'Closes #5', '<!-- AEG:CLOSES:END -->'].join(eol)
+    it(`${eolName}: bare Closes #5 in the VINAYA:CLOSES anchor passes`, () => {
+      const body = ['<!-- VINAYA:CLOSES:START -->', 'Closes #5', '<!-- VINAYA:CLOSES:END -->'].join(eol)
       expect(checkClosesNPresence(body).status).toBe('pass')
     })
 
@@ -508,14 +508,14 @@ describe('checkClosesNPresence — separator bound', () => {
 
 describe('headerRegion', () => {
   it('returns everything before the first h2+ heading', () => {
-    expect(headerRegion('Tier: 3\nProject: aeg\n\n## Summary\n\nbody')).toBe('Tier: 3\nProject: aeg\n\n')
+    expect(headerRegion('Tier: 3\nProject: vinaya\n\n## Summary\n\nbody')).toBe('Tier: 3\nProject: vinaya\n\n')
   })
   it('returns the whole body when no h2+ heading exists', () => {
-    expect(headerRegion('Tier: 3\nProject: aeg')).toBe('Tier: 3\nProject: aeg')
+    expect(headerRegion('Tier: 3\nProject: vinaya')).toBe('Tier: 3\nProject: vinaya')
   })
   it('does not split on an h1 heading', () => {
-    const body = '# Task Brief\n\nProject: aeg\n\n## Context'
-    expect(headerRegion(body)).toBe('# Task Brief\n\nProject: aeg\n\n')
+    const body = '# Task Brief\n\nProject: vinaya\n\n## Context'
+    expect(headerRegion(body)).toBe('# Task Brief\n\nProject: vinaya\n\n')
   })
 })
 
@@ -524,8 +524,8 @@ describe('checkProjectField', () => {
     expect(checkProjectField(WELL_FORMED).status).toBe('pass')
   })
   it('accepts the plain and Project(s) label forms', () => {
-    expect(checkProjectField('Project: aeg, aeg-core\n\n## Summary').status).toBe('pass')
-    expect(checkProjectField('**Project(s):** aeg\n\n## Summary').status).toBe('pass')
+    expect(checkProjectField('Project: vinaya, core\n\n## Summary').status).toBe('pass')
+    expect(checkProjectField('**Project(s):** vinaya\n\n## Summary').status).toBe('pass')
   })
   it('fails when absent entirely', () => {
     const r = checkProjectField('Tier: 3\n\n## Summary\n\nno project field')
@@ -621,7 +621,7 @@ describe('isBriefShaped', () => {
         '',
         open,
         '## Technical surface map',
-        '- `packages/aeg-core/src/brief-validation.ts`',
+        '- `packages/core/src/brief-validation.ts`',
         '',
         '## Stop conditions',
         '- Pre-flight failure.',
@@ -637,7 +637,7 @@ describe('isBriefShaped', () => {
 
 describe('inferBranchFromBody', () => {
   it('reads the branch from the Step 0 worktree command inside a fence', () => {
-    expect(inferBranchFromBody(WELL_FORMED)).toBe('task/aeg-governance-hardening/2')
+    expect(inferBranchFromBody(WELL_FORMED)).toBe('task/sample-governance/2')
   })
   it('reads a non-task branch the same way', () => {
     expect(inferBranchFromBody('git worktree add .worktrees/fix/x -b fix/x origin/main')).toBe('fix/x')
@@ -677,17 +677,17 @@ describe('checkBriefSections — requireClosesN', () => {
 
 describe('checkForgeTitle', () => {
   it('passes commit-style titles with and without scope', () => {
-    expect(checkForgeTitle('Fix(aeg): Gate-contract parity for Project/For').status).toBe('pass')
+    expect(checkForgeTitle('Fix(vinaya): Gate-contract parity for Project/For').status).toBe('pass')
     expect(checkForgeTitle('Docs: Update the readme').status).toBe('pass')
-    expect(checkForgeTitle('Plan(aeg): Add task 5d — post-merge Archivist').status).toBe('pass')
+    expect(checkForgeTitle('Plan(vinaya): Add task 5d — post-merge Archivist').status).toBe('pass')
   })
   it('passes task-style titles with a whole-number id', () => {
-    expect(checkForgeTitle('[aeg-governance-hardening] 5 — Post-merge Archivist automation').status).toBe('pass')
-    expect(checkForgeTitle('[aeg-studio-cleanup] 2 — Remove dependency-graph + board view').status).toBe('pass')
+    expect(checkForgeTitle('[sample-governance] 5 — Post-merge Archivist automation').status).toBe('pass')
+    expect(checkForgeTitle('[sample-cleanup] 2 — Remove dependency-graph + board view').status).toBe('pass')
     expect(checkForgeTitle('[log-quality-v1] 12 — a two-digit id still passes').status).toBe('pass')
   })
   it('fails a task-style title whose id carries a letter, naming the whole-number rule', () => {
-    const r = checkForgeTitle('[aeg-governance-hardening] 5d — Post-merge Archivist automation')
+    const r = checkForgeTitle('[sample-governance] 5d — Post-merge Archivist automation')
     expect(r.status).toBe('fail')
     expect(r.errors[0]).toContain('5d')
     expect(r.errors[0]).toMatch(/whole numbers/)
@@ -707,19 +707,19 @@ describe('checkForgeTitle', () => {
 
 describe('checkPlanPrNoCloses', () => {
   it('fails a plan/* branch whose body carries Closes #N', () => {
-    const result = checkPlanPrNoCloses('plan/aeg-consolidation', 'This plan adds tasks. Closes #123')
+    const result = checkPlanPrNoCloses('plan/sample-consolidation', 'This plan adds tasks. Closes #123')
     expect(result.status).toBe('fail')
     expect(result.errors[0]).toMatch(/plan-PR guard/)
   })
 
   it('passes a plan/* branch whose body has no Closes reference', () => {
-    const result = checkPlanPrNoCloses('plan/aeg-consolidation', 'This plan adds tasks 1-5 to the topology.')
+    const result = checkPlanPrNoCloses('plan/sample-consolidation', 'This plan adds tasks 1-5 to the topology.')
     expect(result.status).toBe('pass')
     expect(result.errors).toEqual([])
   })
 
   it('passes a task/* branch with Closes #N — unaffected by the guard', () => {
-    const result = checkPlanPrNoCloses('task/aeg-governance-hardening/5d', 'Ships the thing. Closes #309')
+    const result = checkPlanPrNoCloses('task/sample-governance/5d', 'Ships the thing. Closes #309')
     expect(result.status).toBe('pass')
     expect(result.errors).toEqual([])
   })
@@ -767,7 +767,7 @@ describe('checkPremiseCoverage', () => {
 describe('checkNoUnpinnedCodeClaims', () => {
   it('fails on a bare file:line reference outside Premise and outside a fence (PR #382 shape)', () => {
     const body =
-      'one intentional exception: `aeg-root/contracts/security-archivist.md:88` still says a merged finding "means a deviation was approved"'
+      'one intentional exception: `doctrine/contracts/security-archivist.md:88` still says a merged finding "means a deviation was approved"'
     const result = checkNoUnpinnedCodeClaims(body)
     expect(result.status).toBe('fail')
     expect(result.errors[0]).toContain('security-archivist.md:88')
@@ -777,7 +777,7 @@ describe('checkNoUnpinnedCodeClaims', () => {
     const body = `one intentional exception, pinned below.
 
 **Premise:**
-- aeg-root/contracts/security-archivist.md contains: means a deviation was approved
+- doctrine/contracts/security-archivist.md contains: means a deviation was approved
 `
     const result = checkNoUnpinnedCodeClaims(body)
     expect(result.status).toBe('pass')
@@ -787,7 +787,7 @@ describe('checkNoUnpinnedCodeClaims', () => {
     const body = `See the composer body below; no bare reference appears in this prose.
 
 \`\`\`
-packages/aeg-core/src/brief-validation.ts:490
+packages/core/src/brief-validation.ts:490
 \`\`\`
 `
     const result = checkNoUnpinnedCodeClaims(body)
@@ -798,7 +798,7 @@ packages/aeg-core/src/brief-validation.ts:490
     const body = `See below.
 
 **Premise:**
-- packages/aeg-core/src/brief-validation.ts:490 contains: export function checkBriefSections(
+- packages/core/src/brief-validation.ts:490 contains: export function checkBriefSections(
 `
     const result = checkNoUnpinnedCodeClaims(body)
     expect(result.status).toBe('pass')
@@ -897,34 +897,34 @@ grep -n "c" three.ts
 })
 
 describe('checkConsumerTests', () => {
-  const consumersOfAegForgeState = (pkg: string): string[] => (pkg === 'aeg-forge-state' ? ['packages/aeg-core'] : [])
+  const consumersOfForgeState = (pkg: string): string[] => (pkg === 'forge-state' ? ['packages/core'] : [])
 
   const surfaceMap = (extra: string): string => `
 ### 4. Technical surface map
 
-- Modify \`packages/aeg-forge-state/src/x.ts\`.
+- Modify \`packages/forge-state/src/x.ts\`.
 ${extra}
 `
 
   it('fails when a named consumer has no test path and no sentinel', () => {
-    const result = checkConsumerTests(surfaceMap(''), consumersOfAegForgeState)
+    const result = checkConsumerTests(surfaceMap(''), consumersOfForgeState)
     expect(result.status).toBe('fail')
   })
 
   it('passes when a consumer test path is named', () => {
-    const body = surfaceMap('- `packages/aeg-core/src/dispatch-gate.test.ts` already covers this.')
-    const result = checkConsumerTests(body, consumersOfAegForgeState)
+    const body = surfaceMap('- `packages/core/src/dispatch-gate.test.ts` already covers this.')
+    const result = checkConsumerTests(body, consumersOfForgeState)
     expect(result.status).toBe('pass')
   })
 
   it('passes with the consumer-tests sentinel', () => {
     const body = surfaceMap('\nconsumer-tests: none — no consumer-visible behavior changed.')
-    const result = checkConsumerTests(body, consumersOfAegForgeState)
+    const result = checkConsumerTests(body, consumersOfForgeState)
     expect(result.status).toBe('pass')
   })
 
   it('passes trivially when no §4 section exists', () => {
-    const result = checkConsumerTests('no surface map here', consumersOfAegForgeState)
+    const result = checkConsumerTests('no surface map here', consumersOfForgeState)
     expect(result.status).toBe('pass')
   })
 
@@ -935,7 +935,7 @@ the sentinel line \`consumer-tests: none — <reason>\`.
 
 ${surfaceMap('')}
 `
-    const result = checkConsumerTests(body, consumersOfAegForgeState)
+    const result = checkConsumerTests(body, consumersOfForgeState)
     expect(result.status).toBe('fail')
   })
 
@@ -943,20 +943,20 @@ ${surfaceMap('')}
   // for the same shape `brief-render.ts` now renders when `boundaryNarrowsSurface`
   // hides the covering FILE from §4's own Modify list.
   it('passes when a consumer test DIRECTORY is named, not a file', () => {
-    const body = surfaceMap('- consumer-tests: packages/aeg-core/tests (covers @attalabs/aeg-forge-state)')
-    const result = checkConsumerTests(body, consumersOfAegForgeState)
+    const body = surfaceMap('- consumer-tests: packages/core/tests (covers @attalabs/forge-state)')
+    const result = checkConsumerTests(body, consumersOfForgeState)
     expect(result.status).toBe('pass')
   })
 
   it('passes when a nested consumer test directory is named', () => {
-    const body = surfaceMap('- consumer-tests: packages/aeg-core/tests/checks (covers @attalabs/aeg-forge-state)')
-    const result = checkConsumerTests(body, consumersOfAegForgeState)
+    const body = surfaceMap('- consumer-tests: packages/core/tests/checks (covers @attalabs/forge-state)')
+    const result = checkConsumerTests(body, consumersOfForgeState)
     expect(result.status).toBe('pass')
   })
 
   it('a directory merely named "testsuite" is NOT accepted — segment equality, never a substring test', () => {
-    const body = surfaceMap('- consumer-tests: packages/aeg-core/testsuite (covers @attalabs/aeg-forge-state)')
-    const result = checkConsumerTests(body, consumersOfAegForgeState)
+    const body = surfaceMap('- consumer-tests: packages/core/testsuite (covers @attalabs/forge-state)')
+    const result = checkConsumerTests(body, consumersOfForgeState)
     expect(result.status).toBe('fail')
   })
 })
@@ -986,7 +986,7 @@ describe('checkDefeatCases', () => {
 
 1. Wire the registry entry.
 
-Defeat cases: a fenced block with two commands inside the AEG:VENDOR-EXAMPLE anchor must still pass.
+Defeat cases: a fenced block with two commands inside the VINAYA:VENDOR-EXAMPLE anchor must still pass.
 `
     const result = checkDefeatCases(body)
     expect(result.status).toBe('pass')
@@ -1098,9 +1098,9 @@ describe('checkNoAgentBoxes', () => {
 const ISSUE_411_OBJECTIVES = `## Objectives
 
 O1. A task Issue carries a \`## Objectives\` section of numbered \`O<n>.\` lines, one observable sentence each; \`vinaya issue create\` and \`vinaya issue edit\` refuse a task Issue without it, for Issues numbered from this tranche's first Issue onward; \`checkIssueRationale\` and \`vinaya check coherence\` grade the same rule.
-O2. \`objectivesOf(body)\` in \`@attalabs/aeg-core\` parses the list and \`objectivesVersion(list)\` returns a stable hash of its text; both are the only readers every later consumer uses.
+O2. \`objectivesOf(body)\` in \`@attalabs/core\` parses the list and \`objectivesVersion(list)\` returns a stable hash of its text; both are the only readers every later consumer uses.
 O3. A brief carries the Issue's \`## Objectives\` byte-for-byte; every numbered Part cites at least one \`O<n>\` and every \`O<n>\` is cited by at least one Part; \`verify-brief\` and \`brief-shape\` refuse otherwise, and \`vinaya brief render\` emits the section from the Issue.
-O4. \`aeg-root/roles/planner.md\`, \`aeg-root/roles/brief-author.md\`, \`aeg-root/templates/issue-rationale-template.md\` and \`aeg-root/templates/brief-template.md\` state the rule in the same words the gates enforce.
+O4. \`thinking/planner/doctrine.md\`, \`thinking/planner/reference.md\`, \`artifacts/templates/issue-rationale-template.md\` and \`artifacts/templates/brief-template.md\` state the rule in the same words the gates enforce.
 `
 
 /** A minimal §6 shape matching this task's own dispatched brief: Parts 1-4 each cite one objective, Part 5 (an administrative changeset/push step) cites none. */
@@ -1169,15 +1169,15 @@ describe('briefMarkerFor / parseBriefMarkerVersion (task-run-v1 task 4, #483, O3
   it('round-trips version numbers through the marker line', () => {
     expect(briefMarkerFor(1)).toBe('<!-- vinaya:brief:v1 -->')
     expect(briefMarkerFor(2)).toBe('<!-- vinaya:brief:v2 -->')
-    expect(parseBriefMarkerVersion('<!-- aeg:brief:v1 -->')).toBe(1)
-    expect(parseBriefMarkerVersion('<!-- aeg:brief:v2 -->')).toBe(2)
-    expect(parseBriefMarkerVersion('<!-- aeg:brief:v12 -->')).toBe(12)
+    expect(parseBriefMarkerVersion(`<!-- ${FROZEN_BRIEF_MARKER.old}:v1 -->`)).toBe(1)
+    expect(parseBriefMarkerVersion(`<!-- ${FROZEN_BRIEF_MARKER.old}:v2 -->`)).toBe(2)
+    expect(parseBriefMarkerVersion(`<!-- ${FROZEN_BRIEF_MARKER.old}:v12 -->`)).toBe(12)
   })
 
   it('rejects a v0 marker and any non-marker-shaped line', () => {
-    expect(parseBriefMarkerVersion('<!-- aeg:brief:v0 -->')).toBeNull()
+    expect(parseBriefMarkerVersion(`<!-- ${FROZEN_BRIEF_MARKER.old}:v0 -->`)).toBeNull()
     expect(parseBriefMarkerVersion('not a marker')).toBeNull()
-    expect(parseBriefMarkerVersion('<!-- aeg:principal:ruling -->')).toBeNull()
+    expect(parseBriefMarkerVersion(`<!-- ${PRINCIPAL_RULING_MARKER.old} -->`)).toBeNull()
     expect(parseBriefMarkerVersion('<!-- other:brief:v1 -->')).toBeNull()
   })
 
@@ -1206,17 +1206,17 @@ describe('briefMarkerFor / parseBriefMarkerVersion (task-run-v1 task 4, #483, O3
 
 describe('contentAfterNLines / frozenBriefContent', () => {
   it('contentAfterTwoLines is contentAfterNLines(body, 2) — same behavior, unchanged v1 contract', () => {
-    const body = '<!-- aeg:brief:v1 -->\nBrief hash: abc\nThe brief text.\n'
+    const body = '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nThe brief text.\n'
     expect(contentAfterTwoLines(body)).toBe(contentAfterNLines(body, 2))
     expect(contentAfterTwoLines(body)).toBe('The brief text.\n')
   })
 
   it('frozenBriefContent strips two header lines for v1, three for v2+ (the Supersedes line)', () => {
-    const v1 = '<!-- aeg:brief:v1 -->\nBrief hash: abc\nThe v1 brief text.\n'
+    const v1 = '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nThe v1 brief text.\n'
     expect(frozenBriefContent(v1, 1)).toBe('The v1 brief text.\n')
 
     const v2 =
-      '<!-- aeg:brief:v2 -->\nBrief hash: def\nSupersedes: https://github.com/acme/widget/issues/1#issuecomment-1 — wrong tier\nThe v2 brief text.\n'
+      '<!-- vinaya:brief:v2 -->\nBrief hash: def\nSupersedes: https://github.com/acme/widget/issues/1#issuecomment-1 — wrong tier\nThe v2 brief text.\n'
     expect(frozenBriefContent(v2, 2)).toBe('The v2 brief text.\n')
   })
 })
@@ -1229,16 +1229,16 @@ describe('resolveNewestFrozenBrief (task-run-v1 task 4, #483, O3) — the single
   })
 
   it('returns null when the only marker-shaped comment is not principal-authored', () => {
-    const comments = [{ body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nbrief text', author: 'random-collaborator' }]
+    const comments = [{ body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nbrief text', author: 'random-collaborator' }]
     expect(resolveNewestFrozenBrief(comments, ALLOWLIST)).toBeNull()
   })
 
   it('picks the newest version among several principal-authored frozen-brief comments, never the first posted', () => {
     const comments = [
-      { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nfirst version', author: 'a-principal' },
+      { body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nfirst version', author: 'a-principal' },
       { body: 'unrelated chatter', author: 'a-principal' },
       {
-        body: '<!-- aeg:brief:v2 -->\nBrief hash: def\nSupersedes: url — wrong tier\nsecond version',
+        body: '<!-- vinaya:brief:v2 -->\nBrief hash: def\nSupersedes: url — wrong tier\nsecond version',
         author: 'a-principal'
       }
     ]
@@ -1249,8 +1249,11 @@ describe('resolveNewestFrozenBrief (task-run-v1 task 4, #483, O3) — the single
 
   it('ignores a marker-shaped comment from a non-principal even when it claims a higher version', () => {
     const comments = [
-      { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nreal version', author: 'a-principal' },
-      { body: '<!-- aeg:brief:v9 -->\nBrief hash: xyz\nSupersedes: url — fake\nforged version', author: 'an-impostor' }
+      { body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nreal version', author: 'a-principal' },
+      {
+        body: '<!-- vinaya:brief:v9 -->\nBrief hash: xyz\nSupersedes: url — fake\nforged version',
+        author: 'an-impostor'
+      }
     ]
     const resolved = resolveNewestFrozenBrief(comments, ALLOWLIST)
     expect(resolved?.version).toBe(1)
@@ -1260,7 +1263,7 @@ describe('resolveNewestFrozenBrief (task-run-v1 task 4, #483, O3) — the single
   it('carries through extra fields on the candidate (e.g. url) unchanged', () => {
     const comments = [
       {
-        body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nbrief text',
+        body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nbrief text',
         author: 'a-principal',
         url: 'https://github.com/acme/widget/issues/1#issuecomment-1'
       }

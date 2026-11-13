@@ -180,7 +180,7 @@ function loadRealDoctrine(): DoctrineContent {
   }
 }
 
-describe('deriveDiagramModel — real aeg-root/ cross-check', () => {
+describe('deriveDiagramModel — real doctrine cross-check', () => {
   const model = deriveDiagramModel(loadRealDoctrine(), null, null)
 
   it('derives 3 rings, some gates, some checks, all 11 actions, 9 roles, some contracts', () => {

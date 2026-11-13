@@ -1,8 +1,8 @@
 /**
- * Who each governance gate under `packages/aeg-core/bin/` is FOR.
+ * Who each governance gate under `harness/processes/vinaya-strict/checks/standalone/` is FOR.
  *
  * The problem this closes: this repository holds two parallel worlds — the
- * gates it runs on itself (`packages/aeg-core/bin/*`) and the checks an
+ * gates it runs on itself (`harness/processes/vinaya-strict/checks/standalone/*`) and the checks an
  * adopter runs through the published CLI (`harness/processes/vinaya-strict/checks/bin/*`) — and
  * nothing asserted a relationship between them. Membership of the shipped set
  * was defined by ABSENCE from `coreCheckRegistry()`, which means a deliberate
@@ -32,13 +32,13 @@
 /** A gate that adopters run, and the `coreCheckRegistry()` name it ships
  * under. `ring` mirrors the process check list's `CORE_CHECK_RING`
  * value for that same name — duplicated here, not imported, because
- * `aeg-core` cannot import `apps/cli` (see this file's own module comment on
+ * the process package cannot import `apps/cli` (see this file's own module comment on
  * the dependency-cycle constraint `coreCheckRegistry()` runs into). Kept
  * from drifting by `registry-ring-parity.test.ts` (`apps/cli`), which is the
  * only place both sides are in scope at once — same shape as
  * `shipped-bin-audience.test.ts`'s existing `shippedAs` cross-check. This is
  * the "registry-derived fact" `registry-scaffold.ts` reads to place a stub
- * row for an aeg-core-bin G2 candidate that IS registry-backed; a candidate
+ * row for an standalone-bin G2 candidate that IS registry-backed; a candidate
  * with no entry here gets no stub (see `registry-scaffold.ts`). */
 export type ShippedGate = { shippedAs: string | string[]; ring: 0 | 1 | 2 }
 /** A gate this repo runs on itself, and why it cannot or should not ship. */
@@ -46,7 +46,7 @@ export type InternalGate = { internal: string }
 export type GateAudience = ShippedGate | InternalGate
 
 /**
- * Keyed by basename (no extension) of each `packages/aeg-core/bin/*.ts` that
+ * Keyed by basename (no extension) of each `harness/processes/vinaya-strict/checks/standalone/*.ts` that
  * is a GATE — something that inspects a repo and passes or fails. Non-gate
  * tooling in the same directory (forge writers, one-shot reporters) is listed
  * in `NON_GATE_BINS` below rather than given a fake audience.
@@ -81,7 +81,7 @@ export const GATE_AUDIENCE: Record<string, GateAudience> = {
 /**
  * The other half, and the one the motivating case actually lives in.
  *
- * `reader-resolvable-prose` has no bin under `packages/aeg-core/bin/` at all —
+ * `reader-resolvable-prose` has no bin under `harness/processes/vinaya-strict/checks/standalone/` at all —
  * its logic is `src/reader-resolvable-prose.ts` and its only executable is
  * `harness/processes/vinaya-strict/checks/bin/check-reader-resolvable-prose.ts`. So the map above
  * would never have seen it, and an earlier revision of this file claimed it as
@@ -90,7 +90,7 @@ export const GATE_AUDIENCE: Record<string, GateAudience> = {
  *
  * Enumerating the SHIPPED check bins asks the question that case actually
  * poses: here is an executable adopters could run — is it registered, and if
- * not, why not? `coreCheckRegistry()` lives in `apps/cli`, which `aeg-core`
+ * not, why not? `coreCheckRegistry()` lives in `apps/cli`, which the process package
  * cannot import without closing a dependency cycle, so the declaration lives
  * here and `apps/cli`'s own suite does the asserting.
  *
@@ -109,11 +109,11 @@ export const SHIPPED_BIN_AUDIENCE: Record<string, GateAudience> = {}
  * `ShippedGate.ring` above, for the OTHER directory. Mirrors
  * the process check list's `CORE_CHECK_RING` — duplicated, not
  * imported, for the identical dependency-cycle reason `ShippedGate.ring`'s
- * own comment gives: `aeg-core` cannot import `apps/cli`. This is the
+ * own comment gives: the process package cannot import `apps/cli`. This is the
  * registry-derived fact `registry-scaffold.ts` reads to place a stub row for
  * an `harness/processes/vinaya-strict/checks/bin/` G2 candidate; a bin whose stripped name has
  * no entry here gets no stub — same no-guess discipline `classify()`
- * already applies to `packages/aeg-core/bin/` candidates via
+ * already applies to `harness/processes/vinaya-strict/checks/standalone/` candidates via
  * `GATE_AUDIENCE`. Kept from drifting by `shipped-bin-audience.test.ts`
  * (`apps/cli`)'s own ring-parity block, the only place both sides are in
  * scope at once — same shape as this file's `ShippedGate.ring` check.

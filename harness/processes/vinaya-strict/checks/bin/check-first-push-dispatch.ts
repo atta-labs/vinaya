@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: first-push-dispatch. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: first-push-dispatch. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkFirstPushDispatchGate` — mirrors `harness/processes/vinaya-strict/checks/standalone/check-first-push-dispatch.ts`'s
  * gate shape (only evaluates on a task branch's genuinely first push, no PR
  * yet), emitting the check contract instead of human text.
@@ -11,9 +11,9 @@
  * only inside THIS monorepo checkout, never in an arbitrary adopter repo
  * `vinaya init` installs into. This adapter instead classifies readiness
  * the same way the already-registered `dispatch-readiness` check does:
- * `checkDispatchReadiness` (`@attalabs/aeg-core`) fed with forge facts read via
+ * `checkDispatchReadiness` (`@attalabs/process-vinaya`) fed with forge facts read via
  * `createForgeSource` (`@attalabs/vinaya-sources`) — the same
- * `@attalabs/aeg-core` + `@attalabs/vinaya-sources`-only boundary every check in
+ * `@attalabs/process-vinaya` + `@attalabs/vinaya-sources`-only boundary every check in
  * this directory already keeps. Same fail-open contract as the reference:
  * any forge-reachability failure classifies as `UNKNOWN`, which the pure
  * gate evaluator maps to `allow` — a transient outage must never block a

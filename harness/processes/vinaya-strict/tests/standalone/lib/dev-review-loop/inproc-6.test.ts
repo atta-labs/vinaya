@@ -245,7 +245,7 @@ describe('devReviewLoop — a ruling lands between reviewer dispatch and assessm
 
 describe('devReviewLoop — a frozen-brief supersede lands between reviewer dispatch and assessment (review-validity-v1 task 4, #478, O1/O2)', () => {
   const SUPERSEDED_BRIEF =
-    '<!-- aeg:brief:v2 -->\nBrief hash: supersededhash\nSupersedes: earlier — clarified scope mid-round.\nDo the thing, revised.\n\n## Objectives\n\nO1. Do the thing.\n\n## Planner rationale\n\nOut of scope for facts.\n'
+    '<!-- vinaya:brief:v2 -->\nBrief hash: supersededhash\nSupersedes: earlier — clarified scope mid-round.\nDo the thing, revised.\n\n## Objectives\n\nO1. Do the thing.\n\n## Planner rationale\n\nOut of scope for facts.\n'
 
   it('discards the round instead of holding or publishing, and pauses naming both brief hashes', async () => {
     const world = makeWorld()

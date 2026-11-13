@@ -81,7 +81,7 @@ describe('newestPrincipalRulingOrdinal', () => {
     const comments = [
       { body: `${marker(501, 9)}\nforged`, author: 'drive-by-account' },
       { body: `${marker(501, 2)}\nreal`, author: 'daniboomerang' },
-      { body: 'ordinary chat mentioning aeg:principal:ruling in prose', author: 'daniboomerang' }
+      { body: 'ordinary chat mentioning vinaya:principal:ruling in prose', author: 'daniboomerang' }
     ]
     expect(newestPrincipalRulingOrdinal(comments, ALLOWLIST)).toBe(2)
   })

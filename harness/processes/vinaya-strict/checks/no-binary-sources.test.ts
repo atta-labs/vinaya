@@ -161,7 +161,7 @@ describe('gitattributesBinaryOffenders — the live case Finding 3 exists to clo
   let scratchRepo: string
 
   beforeEach(() => {
-    scratchRepo = mkdtempSync(join(tmpdir(), 'aeg-no-binary-sources-'))
+    scratchRepo = mkdtempSync(join(tmpdir(), 'vinaya-no-binary-sources-'))
     execFileSync('git', ['init', '--quiet'], { cwd: scratchRepo })
   })
 

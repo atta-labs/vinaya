@@ -26,7 +26,7 @@
  *     both for a tranche-labeled Issue would give it two request identities,
  *     and so two claims, and so two concurrent runs.
  *   - is idempotent per REQUEST IDENTITY — caller + repo + target + payload
- *     digest (`taskStartRequestIdentity`, `@attalabs/aeg-core`), with the
+ *     digest (`taskStartRequestIdentity`, `@attalabs/process-vinaya`), with the
  *     address FORM folded into that identity, so `{ issue: 729 }` and a tranche
  *     ordinal resolving to Issue 729 can never share a claim. The repo
  *     component is the local checkout's git toplevel path (`repoRoot`,

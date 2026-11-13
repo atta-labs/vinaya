@@ -45,7 +45,7 @@ const SKILL_DIRS: Record<SkillTarget, string> = { agents: '.agents/skills', clau
 const SKILL_GROUPS: Record<SkillTarget, string> = { agents: AGENTS_SKILLS_GROUP, claude: CLAUDE_SKILLS_GROUP }
 
 /**
- * Format a role slug into a human-readable AEG role title.
+ * Format a role slug into a human-readable Vinaya role title.
  * e.g. "developer" -> "Developer", "planner" -> "Planner", "tranche-archivist" -> "Tranche Archivist"
  */
 export function formatRoleTitle(roleName: string): string {

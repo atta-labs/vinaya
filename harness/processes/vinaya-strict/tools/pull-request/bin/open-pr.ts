@@ -8,7 +8,7 @@
  * wrapper runs the full deterministic contract gate LOCALLY, before anything
  * reaches the forge — prevention, not detection. A malformed PR body is
  * refused by this wrapper; the agent fixes it in-session and retries. CI
- * runs the identical checks (same aeg-core code) purely as a backstop.
+ * runs the identical checks (same process-package code) purely as a backstop.
  *
  * Usage:
  *   bun harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.ts --body-file <path> [gh pr create args...]
@@ -37,8 +37,7 @@
  *   3. closes-n       — task branches only: the branch must resolve to a real
  *                       topology row and the body's Closes #N must name that
  * row's Issue.
- *   4. verify-task    — task branches only (aeg-governance-hardening task 25,
- *                       #365): the Developer's full exit composite
+ *   4. verify-task    — task branches only (added with the Developer exit composite): the Developer's full exit composite
  *                       (typecheck/lint/test/build/verify-docs --pr/premise
  *                       checks — `bin/verify-task.ts`, unchanged, invoked
  *                       wholesale). `verify-docs --pr` therefore runs twice
@@ -151,7 +150,7 @@ export function resolveShippableArgs(
   if (bodyResult?.source.kind !== 'file') {
     return { finalArgs: args, cleanup: () => {} }
   }
-  const dir = mkdtempSync(join(tmpdir(), 'aeg-open-pr-body-'))
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-open-pr-body-'))
   const tempPath = join(dir, 'body.md')
   writeFileSync(tempPath, bodyResult.body, 'utf8')
   const finalArgs = [...args]
@@ -218,7 +217,7 @@ export function bareDigitsGateEnv(body: string, editPrNumber: number | null): Re
 }
 
 /**
- * Pure gate-selection plan (aeg-governance-hardening task 25, #365) — decides
+ * Pure gate-selection plan — decides
  * WHICH gates run for a given branch, so the non-task-branch gate set stays
  * byte-identical and is independently fixture-tested without mocking `gh`/
  * `bun` subprocess calls. `main()` below is the only thing that turns this
@@ -302,7 +301,7 @@ export function main(): void {
           PR_BODY: body
         })
       } else if (step === 'body-bare-digits') {
-        // The scanner lives in `apps/cli`, which `aeg-core`'s bin cannot import,
+        // The scanner lives in `apps/cli`, which the process package's bin cannot import,
         // so run its bin as a subprocess — the same shape every other gate here
         // uses, and the same source the shipped check is built from.
         //

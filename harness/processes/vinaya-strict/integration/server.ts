@@ -1,6 +1,6 @@
 /**
  * The shared, transport-agnostic task-tool surface (O1) — the ONE place the
- * catalog (`@attalabs/aeg-core`'s `TASK_TOOL_CATALOG`) is bound to the CLI-side
+ * catalog (`@attalabs/process-vinaya`'s `TASK_TOOL_CATALOG`) is bound to the CLI-side
  * handlers (`handlers.ts` for the two outbox reads, `pr-read.ts` for the
  * forge read; `start.ts` for `task_start`), and the ONE place the MCP wire
  * protocol is spoken. Both
@@ -243,7 +243,7 @@ const CURSOR_LIMIT_PROPS = {
 /**
  * One JSON Schema per catalog tool — the shape MCP `tools/list` requires,
  * hand-authored here (Zod 3 ships no JSON-Schema exporter) and kept beside the
- * transport, so `aeg-core` stays a pure Zod catalog. A test asserts every
+ * transport, so the process package stays a pure Zod catalog. A test asserts every
  * catalog name has an entry here, so the two never drift.
  */
 export const TASK_TOOL_INPUT_JSON_SCHEMAS: Record<TaskToolName, Record<string, unknown>> = {

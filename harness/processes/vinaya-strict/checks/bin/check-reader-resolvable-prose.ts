@@ -2,7 +2,7 @@
 
 /**
  * Core check: reader-resolvable-prose. Thin adapter over
- * `@attalabs/aeg-core`'s `checkReaderResolvableProse` — the two mechanizable
+ * `@attalabs/process-vinaya`'s `checkReaderResolvableProse` — the two mechanizable
  * classes (unresolvable references, undefined coined vocabulary) from
  * a three-class analysis of unresolvable prose. Class 3 (register/slop) stays with the
  * review role; it is not deterministic and is not attempted here.
@@ -29,7 +29,7 @@
  *
  * Reads `<doctrineRoot>/glossary.md` for the term list and
  * `<legacySlugDir>` for the legacy-slug list — the only I/O in this check,
- * per aeg-core's zero-I/O pure-rule charter (the rule itself takes file
+ * per the process package's zero-I/O pure-rule charter (the rule itself takes file
  * paths + contents + term/slug lists and returns findings).
  *
  * **Report-only, except one blocking class.** The `ships` and
@@ -56,7 +56,7 @@
  * (`resolveChangedFiles`, lib/diff-evidence.ts) — full sweep, without that,
  * meant every PR reprinted this package's entire shipped-doctrine backlog
  * regardless of what it touched (found live on a real PR
- * that changed one `packages/aeg-core` test file and nothing under
+ * that changed one `the process package` test file and nothing under
  * `harness/processes/vinaya-strict/`). A real new coined-term/unresolvable-reference finding in a
  * file the PR actually changed still surfaces.
  */
@@ -312,7 +312,7 @@ function readProductFiles(root: string, relPaths: string[]): ProseSourceFile[] {
  * every `.md` file at — or under — each `specPaths` entry (the defaults every
  * repository gets, plus whatever `proseGates.specPaths` adds). Returned
  * repo-relative to `root` — the same coordinate system the spec-class
- * predicate (`@attalabs/aeg-core`) compares against, and de-duplicated, since
+ * predicate (`@attalabs/process-vinaya`) compares against, and de-duplicated, since
  * a configured entry may name a path the `apps/` walk already found.
  *
  * A repo with no `apps/` directory at all (an adopter whose product tree

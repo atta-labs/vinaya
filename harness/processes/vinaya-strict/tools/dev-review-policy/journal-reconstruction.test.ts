@@ -201,7 +201,7 @@ describe('isPublishedSummaryComment', () => {
   it('recognizes the marker even when the comment carries other lines around it', () => {
     expect(
       isPublishedSummaryComment(
-        '<!-- aeg:loop:published head=abc1234 confidence=1:- -->\n\nDeferred findings are tracked in #9.'
+        '<!-- vinaya:loop:published head=abc1234 confidence=1:- -->\n\nDeferred findings are tracked in #9.'
       )
     ).toBe(true)
   })
@@ -211,7 +211,7 @@ describe('isPublishedSummaryComment', () => {
   })
 
   it('is false for a developer round marker comment', () => {
-    expect(isPublishedSummaryComment('<!-- aeg:developer:round-2 -->\nHead: abc1234')).toBe(false)
+    expect(isPublishedSummaryComment('<!-- vinaya:developer:round-2 -->\nHead: abc1234')).toBe(false)
   })
 
   it('is false for the old round table — the loop no longer posts one', () => {

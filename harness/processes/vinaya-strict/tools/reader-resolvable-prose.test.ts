@@ -20,7 +20,7 @@ import {
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
 /**
- * `aeg-root/tranches/completed` is legitimately absent in this repo (task
+ * The retired tranche-file directory's `completed/` is legitimately absent in this repo (task
  * 4's ratified boundary — attalabs' operational archive, not doctrine).
  * These tests' subject is the pattern's matching behavior — fires on a
  * legacy slug, does not fire on a substring inside a longer token, reports
@@ -43,7 +43,7 @@ const READER_FACING_PREFIX = 'apps/vinaya/web/src/app/(site)/'
 const READER_FACING_SUFFIX = '/page.tsx'
 
 describe('classifyProseFile — the three-class map', () => {
-  it('classifies aeg-root/** as ships', () => {
+  it('classifies the doctrine tree as ships', () => {
     expect(
       classifyProseFile(
         'harness/processes/vinaya-strict/doctrine/enforcement.md',
@@ -60,10 +60,10 @@ describe('classifyProseFile — the three-class map', () => {
     ).toBe('ships')
   })
 
-  it('classifies the archived-tranche history under aeg-root as internal, not ships', () => {
+  it('classifies the archived-tranche history under the retired doctrine root as internal, not ships', () => {
     expect(
       classifyProseFile(
-        'harness/processes/vinaya-strict/tranches/completed/aeg-ui-v1.md',
+        'harness/processes/vinaya-strict/tranches/completed/sample-tranche-v1.md',
         READER_FACING_PREFIX,
         READER_FACING_SUFFIX
       )
@@ -148,7 +148,7 @@ describe('classifyProseFile — the three-class map', () => {
   })
 
   it('classifies an unrelated source file as out of scope entirely', () => {
-    expect(classifyProseFile('packages/aeg-core/src/index.ts', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBeNull()
+    expect(classifyProseFile('packages/core/src/index.ts', READER_FACING_PREFIX, READER_FACING_SUFFIX)).toBeNull()
   })
 
   it('classifies a file under a PRODUCT_SLUG_SCOPE prefix as product', () => {
@@ -189,7 +189,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
       [
         {
           path: 'harness/processes/vinaya-strict/executing/developer/doctrine.md',
-          content: 'landed in aeg-coherence-v1 task 3'
+          content: 'landed in sample-tranche-v1 task 3'
         }
       ],
       READER_FACING_PREFIX,
@@ -216,7 +216,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
     expect(slugs.length, 'no legacy slugs on disk to prove this against').toBeGreaterThan(0)
     const pattern = legacySlugPattern(slugs)
     expect(pattern).not.toBeNull()
-    // e.g. real slug `aeg-consolidation` must not match inside `xxx-aeg-consolidation-suffixyyy`
+    // e.g. real slug `sample-consolidation` must not match inside `xxx-sample-consolidation-suffixyyy`
     const embedded = `xxx-${slugs[0]}-suffixyyy`
     expect((pattern as RegExp).test(embedded)).toBe(false)
   })
@@ -257,7 +257,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
 
   it('never sweeps CLAUDE.md — this reader already has this forge', () => {
     const findings = checkUnresolvableReferences(
-      [{ path: 'apps/vinaya/CLAUDE.md', content: 'closed by (#365), see aeg-coherence-v1' }],
+      [{ path: 'apps/vinaya/CLAUDE.md', content: 'closed by (#365), see sample-tranche-v1' }],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
     )
@@ -268,7 +268,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
   // doctrine page, and the finding blocks (like the `product` class).
   it('sweeps apps/*/specs/** with the doctrine-page rules, blocking', () => {
     const findings = checkUnresolvableReferences(
-      [{ path: 'apps/vinaya/specs/vinaya-spec.md', content: 'closed by (#365), see aeg-coherence-v1' }],
+      [{ path: 'apps/vinaya/specs/vinaya-spec.md', content: 'closed by (#365), see sample-tranche-v1' }],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
     )
@@ -281,7 +281,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
   it('sweeps a root SPEC.md and a docs/adr record with the same blocking rules, no configuration at all', () => {
     const findings = checkUnresolvableReferences(
       [
-        { path: 'SPEC.md', content: 'closed by (#365), see aeg-coherence-v1' },
+        { path: 'SPEC.md', content: 'closed by (#365), see sample-tranche-v1' },
         { path: 'docs/adr/0002-store-logs-remotely.md', content: 'decided in (#365)' }
       ],
       READER_FACING_PREFIX,
@@ -294,7 +294,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
 
   it('grandfathers a default-path spec by path exactly as it grandfathers a per-product one', () => {
     const findings = checkUnresolvableReferences(
-      [{ path: 'SPEC.md', content: 'closed by (#365), see aeg-coherence-v1' }],
+      [{ path: 'SPEC.md', content: 'closed by (#365), see sample-tranche-v1' }],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX,
       [],
@@ -306,7 +306,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
 
   it('sweeps a file named only by specPaths, and reports nothing for a README with a badge-shaped slug', () => {
     const files = [
-      { path: 'design/architecture.md', content: 'see aeg-coherence-v1' },
+      { path: 'design/architecture.md', content: 'see sample-tranche-v1' },
       { path: 'README.md', content: 'Built with next-v1 and bun-v1.' }
     ]
     const findings = checkUnresolvableReferences(
@@ -357,7 +357,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
       [
         {
           path: 'harness/processes/vinaya-strict/executing/developer/doctrine.md',
-          content: 'an opening line\n(#365) opened this line\naeg-coherence-v1 this one\n'
+          content: 'an opening line\n(#365) opened this line\nsample-tranche-v1 this one\n'
         }
       ],
       READER_FACING_PREFIX,
@@ -409,7 +409,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
 
   it('a spec explicitly grandfathered by path is skipped entirely, even with a real citation', () => {
     const findings = checkUnresolvableReferences(
-      [{ path: 'apps/vinaya/specs/vinaya-spec.md', content: 'closed by (#365), see aeg-coherence-v1' }],
+      [{ path: 'apps/vinaya/specs/vinaya-spec.md', content: 'closed by (#365), see sample-tranche-v1' }],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX,
       [],
@@ -456,7 +456,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
     })
 
     it('counts the task-number rule too, with the same patterns as the ungrandfathered class', () => {
-      const content = 'Delivered by task 4, see aeg-coherence-v1 and (#365).'
+      const content = 'Delivered by task 4, see sample-tranche-v1 and (#365).'
       const ungrandfathered = checkUnresolvableReferences(
         [{ path: SPEC, content }],
         READER_FACING_PREFIX,
@@ -515,7 +515,7 @@ describe('class 1 — unresolvable references — the gate can see what it bans'
 describe('the product class — a tranche-slug citation in product code is a blocking finding', () => {
   it('fires as a blocking finding on a slug in CLI source', () => {
     const findings = checkUnresolvableReferences(
-      [{ path: 'apps/cli/src/index.ts', content: '// landed in aeg-coherence-v1' }],
+      [{ path: 'apps/cli/src/index.ts', content: '// landed in sample-tranche-v1' }],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
     )
@@ -535,7 +535,7 @@ describe('the product class — a tranche-slug citation in product code is a blo
 
   it('does NOT fire on a slug outside the product scope (a test/fixture dir under apps/cli)', () => {
     const findings = checkUnresolvableReferences(
-      [{ path: 'apps/cli/tests/x.test.ts', content: '// landed in aeg-coherence-v1' }],
+      [{ path: 'apps/cli/tests/x.test.ts', content: '// landed in sample-tranche-v1' }],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
     )
@@ -547,7 +547,7 @@ describe('the product class — a tranche-slug citation in product code is a blo
       [
         {
           path: 'harness/processes/vinaya-strict/executing/developer/doctrine.md',
-          content: 'landed in aeg-coherence-v1 task 3'
+          content: 'landed in sample-tranche-v1 task 3'
         }
       ],
       READER_FACING_PREFIX,
@@ -559,7 +559,7 @@ describe('the product class — a tranche-slug citation in product code is a blo
 
   it('does NOT fire on a slug split across two lines', () => {
     const findings = checkUnresolvableReferences(
-      [{ path: 'apps/cli/src/index.ts', content: '// landed in aeg-coherence\n-v1' }],
+      [{ path: 'apps/cli/src/index.ts', content: '// landed in sample-tranche\n-v1' }],
       READER_FACING_PREFIX,
       READER_FACING_SUFFIX
     )
@@ -567,7 +567,7 @@ describe('the product class — a tranche-slug citation in product code is a blo
   })
 
   it('does NOT fire on a slug inside a fenced code block in a product README', () => {
-    const content = ['Usage:', '```', 'vinaya dispatch aeg-coherence-v1', '```', 'See the docs.'].join('\n')
+    const content = ['Usage:', '```', 'vinaya dispatch sample-tranche-v1', '```', 'See the docs.'].join('\n')
     const findings = checkUnresolvableReferences(
       [{ path: 'apps/cli/README.md', content }],
       READER_FACING_PREFIX,
@@ -576,7 +576,7 @@ describe('the product class — a tranche-slug citation in product code is a blo
     expect(findings).toEqual([])
   })
 
-  it('PRODUCT_SLUG_SCOPE is exactly the non-aeg-root scope list', () => {
+  it('PRODUCT_SLUG_SCOPE is exactly the non-doctrine-root scope list', () => {
     expect(PRODUCT_SLUG_SCOPE).toEqual(['apps/cli/src', '.github/workflows', '.vinaya', 'apps/cli/README.md'])
   })
 })
@@ -733,7 +733,7 @@ describe('class 2 — undefined coined vocabulary — the gate can see what it b
 describe('checkSourceComments — the source-comment class (Issue #575)', () => {
   it('fires on a tranche-slug citation in a line comment', () => {
     const findings = checkSourceComments([
-      { path: 'packages/aeg-core/src/x.ts', content: '// landed in review-convergence-v1 task 3\nexport const a = 1' }
+      { path: 'packages/core/src/x.ts', content: '// landed in review-convergence-v1 task 3\nexport const a = 1' }
     ])
     expect(findings, JSON.stringify(findings)).toHaveLength(1)
     expect(findings[0]!.message).toContain('tranche-slug')
@@ -743,7 +743,7 @@ describe('checkSourceComments — the source-comment class (Issue #575)', () => 
 
   it('fires on a forge-number citation in a block comment', () => {
     const findings = checkSourceComments([
-      { path: 'packages/aeg-core/src/x.ts', content: '/**\n * fixed the gap (#4213)\n */\nexport const a = 1' }
+      { path: 'packages/core/src/x.ts', content: '/**\n * fixed the gap (#4213)\n */\nexport const a = 1' }
     ])
     expect(findings, JSON.stringify(findings)).toHaveLength(1)
     expect(findings[0]!.message).toContain('forge-number')
@@ -752,7 +752,7 @@ describe('checkSourceComments — the source-comment class (Issue #575)', () => 
 
   it('does NOT fire on a slug/number-shaped string inside a string literal, not a comment', () => {
     const findings = checkSourceComments([
-      { path: 'packages/aeg-core/src/x.ts', content: 'const url = "https://vinaya.dev/review-convergence-v1/#4213"' }
+      { path: 'packages/core/src/x.ts', content: 'const url = "https://vinaya.dev/review-convergence-v1/#4213"' }
     ])
     expect(findings).toEqual([])
   })
@@ -767,23 +767,21 @@ describe('checkSourceComments — the source-comment class (Issue #575)', () => 
   it('honours the allowlist — a named file is skipped entirely', () => {
     const content = '// review-convergence-v1 (#4213)'
     const findings = checkSourceComments(
-      [{ path: 'packages/aeg-core/src/allowed.ts', content }],
-      ['packages/aeg-core/src/allowed.ts']
+      [{ path: 'packages/core/src/allowed.ts', content }],
+      ['packages/core/src/allowed.ts']
     )
     expect(findings).toEqual([])
 
-    const stillFires = checkSourceComments([{ path: 'packages/aeg-core/src/allowed.ts', content }])
+    const stillFires = checkSourceComments([{ path: 'packages/core/src/allowed.ts', content }])
     expect(stillFires.length).toBeGreaterThan(0)
   })
 
   it('red before green — a seeded comment citation fails, then a fact-stated rewrite passes', () => {
-    const violating = checkSourceComments([
-      { path: 'packages/aeg-core/src/x.ts', content: '// closed the gap (#4213)' }
-    ])
+    const violating = checkSourceComments([{ path: 'packages/core/src/x.ts', content: '// closed the gap (#4213)' }])
     expect(violating.length, 'expected the seeded violation to be caught').toBeGreaterThan(0)
 
     const fixed = checkSourceComments([
-      { path: 'packages/aeg-core/src/x.ts', content: '// a closed union now covers every failure class' }
+      { path: 'packages/core/src/x.ts', content: '// a closed union now covers every failure class' }
     ])
     expect(fixed).toEqual([])
   })
@@ -792,7 +790,7 @@ describe('checkSourceComments — the source-comment class (Issue #575)', () => 
 describe('extractComments', () => {
   it('keeps only line- and block-comment text, blanking code and preserving line count', () => {
     const content = ['const a = 1 // review-convergence-v1', '/* #4213', 'still a comment */', 'const b = 2'].join('\n')
-    const extracted = extractComments('packages/aeg-core/src/x.ts', content)
+    const extracted = extractComments('packages/core/src/x.ts', content)
     expect(extracted.split('\n')).toHaveLength(4)
     expect(extracted).toContain('review-convergence-v1')
     expect(extracted).toContain('#4213')
@@ -802,14 +800,14 @@ describe('extractComments', () => {
 
   it('blanks string and template literal content so an embedded "//" is never read as a comment start', () => {
     const content = 'const url = "https://vinaya.dev" // review-convergence-v1'
-    const extracted = extractComments('packages/aeg-core/src/x.ts', content)
+    const extracted = extractComments('packages/core/src/x.ts', content)
     expect(extracted).not.toContain('https://vinaya.dev')
     expect(extracted).toContain('review-convergence-v1')
   })
 
   it('honours a backslash escape inside a string so an escaped quote does not end the literal early', () => {
     const content = String.raw`const s = "a \" review-convergence-v1" // real comment #4213`
-    const extracted = extractComments('packages/aeg-core/src/x.ts', content)
+    const extracted = extractComments('packages/core/src/x.ts', content)
     expect(extracted).not.toContain('review-convergence-v1')
     expect(extracted).toContain('real comment #4213')
   })
@@ -826,7 +824,7 @@ describe('extractComments', () => {
 describe('stripNonProse', () => {
   it('blanks fenced and inline code in markdown while preserving line count', () => {
     const content = ['before', '```', 'inside #365', '```', 'after `#365` too'].join('\n')
-    const stripped = stripNonProse('aeg-root/x.md', content)
+    const stripped = stripNonProse('docs-root/x.md', content)
     expect(stripped.split('\n')).toHaveLength(5)
     expect(stripped).not.toContain('#365')
   })
@@ -876,7 +874,7 @@ describe('regression: class 2 still fires on prose that follows a URL on the sam
   })
 })
 
-describe('shipsPrefix — an adopter\'s doctrine root need not be "aeg-root/" (task 7, Issue #56)', () => {
+describe('shipsPrefix — an adopter\'s doctrine root need not be "doctrine/" (task 7, Issue #56)', () => {
   const CUSTOM_ROOT = 'governance-docs/'
 
   it('classifyProseFile treats the custom root as the ships class, and its own completed-tranches archive as internal', () => {
@@ -891,7 +889,7 @@ describe('shipsPrefix — an adopter\'s doctrine root need not be "aeg-root/" (t
         CUSTOM_ROOT
       )
     ).toBe('internal')
-    // The default "aeg-root/" is no longer special once a custom root is given.
+    // The default "doctrine/" is no longer special once a custom root is given.
     expect(
       classifyProseFile(
         'harness/processes/vinaya-strict/doctrine/enforcement.md',

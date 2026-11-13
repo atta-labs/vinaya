@@ -320,7 +320,7 @@ describe('symbol-collision detection', () => {
  *   - `resolvePrBody`  — byte-identical in `verify-docs.ts`/`verify-task.ts`. Harmless.
  *   - `resolveShippableArgs` — same logic in `open-issue.ts`/`open-pr.ts`,
  *                        differs only in the temp-dir name prefix
- *                        (`aeg-open-issue-body-` vs `aeg-open-pr-body-`).
+ *                        (an issue-body prefix vs a PR-body prefix).
  *                        Unfixed as a byte difference.
  *   - `sh`             — eight files, at least six distinct implementations
  *                        (execFileSync-array vs execSync-string args,
@@ -393,7 +393,7 @@ describe('symbol-collision gate over this package', () => {
     const found = packageCollisions().map((c) => c.name)
     expect(
       found,
-      "A name is now declared in more than one non-test source file of @attalabs/aeg-core's src/ or bin/ (test files are not scanned). Rename or consolidate it, or add it to KNOWN_COLLISIONS with a reason. A name that resolves to two files cannot be checked by reading one of them."
+      "A name is now declared in more than one non-test source file of @attalabs/process-vinaya's src/ or bin/ (test files are not scanned). Rename or consolidate it, or add it to KNOWN_COLLISIONS with a reason. A name that resolves to two files cannot be checked by reading one of them."
     ).toEqual([...KNOWN_COLLISIONS].sort((a, b) => a.localeCompare(b)))
   })
 

@@ -10,6 +10,7 @@
  */
 
 import { describe, expect, it } from 'bun:test'
+import { COMMENT_MARKER_PREFIX } from '../../../tools/legacy-markers.js'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -57,12 +58,12 @@ describe('no source file posts a log comment or uploads a log artifact (O4)', ()
 
   it('no file constructs the tracker comment marker the deleted flush used to post', () => {
     // A real construction site interpolates a value right after the marker
-    // prefix (`` `<!-- aeg:log:${... `` — the exact shape `logForFlush` used
+    // prefix (the retired-prefix marker followed by an interpolation — the exact shape `logForFlush` used
     // to build); a doc comment describing the historical format in prose
-    // (`<!-- aeg:log:<run_id>:<seq_from>-<seq_to> -->`, `store.ts`/`schema.ts`
+    // (the retired-prefix log marker with its run id and sequence range, `store.ts`/`schema.ts`
     // still explain it for backward-compat reading) never contains that
     // interpolation and must not trip this check.
-    const constructsMarker = /`<!--\s*aeg:log:\$\{/
+    const constructsMarker = new RegExp(`\x60<!--\\s*${COMMENT_MARKER_PREFIX.old}:log:\\$\\{`)
     const offenders = files.filter(([, abs]) => constructsMarker.test(readFileSync(abs, 'utf8'))).map(([rel]) => rel)
     expect(offenders).toEqual([])
   })
@@ -73,7 +74,7 @@ describe('no source file posts a log comment or uploads a log artifact (O4)', ()
       'apps/cli/src/commands/log.ts',
       'apps/cli/src/lib/log-flush.ts',
       'apps/cli/src/lib/log-artifact.ts',
-      'packages/aeg-core/src/log/artifact.ts'
+      `packages/${COMMENT_MARKER_PREFIX.old}-core/src/log/artifact.ts`
     ]) {
       expect(existing.has(rel), `${rel} should not exist`).toBe(false)
     }

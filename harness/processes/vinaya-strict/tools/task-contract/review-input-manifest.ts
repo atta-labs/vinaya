@@ -17,7 +17,7 @@
  * carries `baseSha` — the base commit the round's candidate was judged
  * against — a field deliberately deferred until a durable control-store
  * landed a home for it (that store is now built;
- * see `packages/aeg-core/src/control-store/`). Its acceptance is BOUNDED, not
+ * see `harness/kernel/connectors/checkpoint/control-store/`). Its acceptance is BOUNDED, not
  * a sixth always-checked equality (Traps to avoid: "same patch text on a new
  * base is not automatically equivalent"; "preserve the existing comparison
  * function ownership; explicitly document any narrowed acceptance"):
@@ -103,7 +103,7 @@ export function pauseBoundRulingFromResolution(
  * header lines — moved here from `apps/cli/src/lib/dispatch-task.ts` (one
  * implementation, not two now that a pure-package caller
  * needs the identical fact). The hashed content is `brief + '\n'`, exactly
- * what `@attalabs/aeg-core`'s `frozenBriefContent`/`contentAfterNLines`
+ * what `frozenBriefContent` (`brief-validation.ts`)/`contentAfterNLines`
  * reconstruct from a live posted comment — computing the hash any other way
  * would make the writer and every reader of "the frozen brief's hash"
  * disagree on a real, once-posted comment.

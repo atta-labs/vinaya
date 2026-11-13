@@ -48,7 +48,7 @@ describe('createFileDoctrineSource — real doctrine tree', () => {
       root: join(REPO_ROOT, 'harness/processes/vinaya-strict')
     }).getDoctrine()
     expect(doctrine.enforcement).toContain('Ring 0')
-    // 9 role files, per aeg-core actions.test.ts's own invariant.
+    // 9 role files, per the process's actions.test.ts's own invariant.
     expect(doctrine.roles).toHaveLength(9)
     expect(doctrine.contracts.length).toBeGreaterThan(0)
     expect(doctrine.roles.every((r) => r.path.startsWith('roles/'))).toBe(true)

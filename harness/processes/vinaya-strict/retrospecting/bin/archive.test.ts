@@ -188,7 +188,7 @@ const PR_WITH_PROVENANCE = {
   headRefName: 'task/fake-tranche/6',
   body: 'Closes #99\n\n**Tier:** 1',
   mergedAt: '2026-01-01T00:00:00Z',
-  comments: [{ body: '### AEG provenance — task 6 (tranche fake-tranche)\n- Issue:        #99  (closed by merge)' }]
+  comments: [{ body: '### Vinaya provenance — task 6 (tranche fake-tranche)\n- Issue:        #99  (closed by merge)' }]
 }
 
 const PR_WITHOUT_PROVENANCE = { ...PR_WITH_PROVENANCE, comments: [] as { body: string }[] }
@@ -525,9 +525,9 @@ describe('roundsForTaskPr', () => {
       number: 7,
       comments: [
         { body: 'unrelated comment' },
-        { body: '<!-- aeg:developer:round-1 -->\nHead: abc' },
-        { body: '<!-- aeg:developer:round-3 -->\nHead: def' },
-        { body: '<!-- aeg:developer:round-2 -->\nHead: ghi' }
+        { body: '<!-- vinaya:developer:round-1 -->\nHead: abc' },
+        { body: '<!-- vinaya:developer:round-3 -->\nHead: def' },
+        { body: '<!-- vinaya:developer:round-2 -->\nHead: ghi' }
       ]
     }
     expect(roundsForTaskPr(pr)).toBe(3)
@@ -542,7 +542,7 @@ describe('roundsForTaskPr', () => {
 describe('renderRetrospectiveSection', () => {
   it('renders the task count, rounds per task, and merged PR list under the slug heading', () => {
     const taskPrs = [
-      { number: 10, comments: [{ body: '<!-- aeg:developer:round-2 -->' }] },
+      { number: 10, comments: [{ body: '<!-- vinaya:developer:round-2 -->' }] },
       { number: 11, comments: [] }
     ]
     const section = renderRetrospectiveSection('my-tranche', taskPrs)
@@ -1240,7 +1240,7 @@ describe('runArchiveTranches', () => {
 const BRIEF_URL_V1 = 'https://github.com/acme/widget/issues/99#issuecomment-1'
 const BRIEF_URL_V2 = 'https://github.com/acme/widget/issues/99#issuecomment-2'
 const briefComment = (version: number, url: string, login: string) => ({
-  body: `<!-- aeg:brief:v${version} -->\n# Brief`,
+  body: `<!-- vinaya:brief:v${version} -->\n# Brief`,
   url,
   author: { login }
 })

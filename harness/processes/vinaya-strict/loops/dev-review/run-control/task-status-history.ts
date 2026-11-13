@@ -4,7 +4,7 @@
  *
  * One bounded read per STATUS READ: the most recent merged task branches
  * (`MERGED_TASK_PR_READ_CAP` of them), each pull request's comments fetched
- * once, every interval extracted by the pure reader in `@attalabs/aeg-core`
+ * once, every interval extracted by the pure reader in `@attalabs/process-vinaya`
  * (`phaseSamplesFromPrComments`) from PRINCIPAL-AUTHORED comments only — the
  * same trust boundary every other forge read in this loop applies, so a
  * non-principal commenter cannot post a round-marker- or verdict-shaped

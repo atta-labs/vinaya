@@ -129,7 +129,7 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/kernel/connectors/checkpoint/control-store/index.ts',
     'harness/kernel/connectors/checkpoint/control-store/local.test.ts',
     'harness/kernel/connectors/checkpoint/control-store/local.ts',
-    'packages/aeg-core/src/index.ts'
+    'packages/core/src/index.ts'
   ],
   'task-files-v1/1 — a6d9640c, the one-runtime-directory first push': [
     '.changeset/task-files-v1-1-one-runtime-directory.md',

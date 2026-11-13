@@ -30,23 +30,23 @@ describe('parseRationaleDeps', () => {
   })
 
   it('resolves a bare id that follows a slug-qualified one inside the SAME labeled span', () => {
-    // Issue #388's real body (aeg-forge-state-v1 3b, #437) meant `#372` as a
-    // second aeg-governance-hardening reference, not this tranche's own #372.
+    // Issue #388's real body meant `#372` as a
+    // second sample-hardening reference, not this tranche's own #372.
     // Since #347 that inheritance lives inside one labeled span's comma list —
     // the form `amendRationaleDeps` writes — rather than across spans.
     const body =
-      '**Dependency rationale** — `Depends-on: aeg-governance-hardening #368, #372`: both reshape the surface.\n\n**Traps to avoid** — none.'
+      '**Dependency rationale** — `Depends-on: sample-hardening #368, #372`: both reshape the surface.\n\n**Traps to avoid** — none.'
     expect(parseRationaleDeps(body)).toEqual({
-      dependsOn: ['aeg-governance-hardening #368', 'aeg-governance-hardening #372'],
+      dependsOn: ['sample-hardening #368', 'sample-hardening #372'],
       conflictsWith: []
     })
   })
 
   it('resets slug inheritance after one bare id, so a THIRD id does not inherit a stale qualifier', () => {
     const body =
-      "**Dependency rationale** — `Depends-on: aeg-governance-hardening #368, #372, 5` — the last is this tranche's own task and must NOT inherit.\n\n**Traps to avoid** — none."
+      "**Dependency rationale** — `Depends-on: sample-hardening #368, #372, 5` — the last is this tranche's own task and must NOT inherit.\n\n**Traps to avoid** — none."
     expect(parseRationaleDeps(body)).toEqual({
-      dependsOn: ['aeg-governance-hardening #368', 'aeg-governance-hardening #372', '5'],
+      dependsOn: ['sample-hardening #368', 'sample-hardening #372', '5'],
       conflictsWith: []
     })
   })
@@ -114,15 +114,14 @@ describe('parseRationaleDeps', () => {
 
   // issue-809, O1 — the grammar no longer accepts a lettered task id. The
   // tolerant reader drops it (the refusal lives in `findLetteredEdgeIds` + the
-  // aeg-core gate); it must not be scavenged as an edge.
+  // core gate); it must not be scavenged as an edge.
   it('drops a lettered task id from a labeled edge span rather than declaring it', () => {
     const body = '**Dependency rationale** — `Depends-on: 7a, 2`, `Conflicts-with: 3b`.\n\n**Traps to avoid** — none.'
     expect(parseRationaleDeps(body)).toEqual({ dependsOn: ['2'], conflictsWith: [] })
   })
 
   it('drops a slug-qualified lettered id, keeping only the whole-number references', () => {
-    const body =
-      '**Dependency rationale** — `Depends-on: aeg-governance-hardening 3c, #372`.\n\n**Traps to avoid** — none.'
+    const body = '**Dependency rationale** — `Depends-on: sample-hardening 3c, #372`.\n\n**Traps to avoid** — none.'
     expect(parseRationaleDeps(body)).toEqual({ dependsOn: ['#372'], conflictsWith: [] })
   })
 })
@@ -146,8 +145,8 @@ describe('findLetteredEdgeIds', () => {
 
   it('names lettered ids across both fields, including a slug-qualified one', () => {
     const body =
-      '**Dependency rationale** — `Depends-on: aeg-governance-hardening 3c`, `Conflicts-with: 2b`.\n\n**Traps to avoid** — none.'
-    expect(findLetteredEdgeIds(body)).toEqual(['aeg-governance-hardening 3c', '2b'])
+      '**Dependency rationale** — `Depends-on: sample-hardening 3c`, `Conflicts-with: 2b`.\n\n**Traps to avoid** — none.'
+    expect(findLetteredEdgeIds(body)).toEqual(['sample-hardening 3c', '2b'])
   })
 
   it('reads only the FIRST labeled span per field, so a later prose re-mention of a dropped `2b` is not flagged', () => {

@@ -2,7 +2,7 @@
 
 /**
  * Core check: issue-milestone-attach. Thin adapter over
- * `@attalabs/aeg-core`'s `checkMilestoneAttach` — one of the five write-only
+ * `@attalabs/process-vinaya`'s `checkMilestoneAttach` — one of the five write-only
  * rules named apart. `validates: 'issue'`: a task Issue's live
  * Milestone matching its tranche label's resolved target is a property of
  * the Issue itself, never a pull request.

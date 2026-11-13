@@ -2,7 +2,7 @@
  * Pure mapper: GitHub raw responses → `ForgeFacts`. No I/O. Isolated from the
  * I/O layer so the derivation is exhaustively testable with fixtures.
  *
- * Field-by-field correspondence to `ForgeFacts` (defined in `@attalabs/aeg-types`):
+ * Field-by-field correspondence to `ForgeFacts` (defined in the task-contract types):
  *
  *   issueState     ← issue.state lowercased ('OPEN' | 'CLOSED' → 'open' | 'closed')
  *   assigned       ← issue.assigneesCount > 0
@@ -10,12 +10,12 @@
  *                    (Issue-scoped per state-machine.md §14)
  *   branchExists   ← refExists for `refs/heads/task/<tranche>/<id>`
  *   prState        ← pullRequest.state lowercased; `'closed'` (PR closed without
- *                    merge) collapses to `'none'` since AEG only models open /
+ *                    merge) collapses to `'none'` since Vinaya only models open /
  *                    merged / none in `ForgeFacts`.
  *   reviewDecision ← 'APPROVED' → 'approved'
  *                    'CHANGES_REQUESTED' → 'changes_requested'
  *                    'REVIEW_REQUIRED' / null → 'none'
- *                    (Only `'changes_requested'` flips status per aeg-types.)
+ *                    (Only `'changes_requested'` flips status per the task-contract types.)
  *   stateReason    ← issue.stateReason: 'COMPLETED' → 'completed',
  *                    'NOT_PLANNED' → 'not_planned', 'REOPENED' / null → null.
  *                    Drives honest terminal derivation: a closed-no-
@@ -31,14 +31,14 @@
  */
 
 import type { ForgeFacts, RawTaskFacts } from '../tranche-types'
-import { AEG_BLOCKED_LABEL, hasLabel } from './labels'
+import { BLOCKED_LABEL, hasLabel } from './labels'
 
 // The constant's home is now `labels.ts` (the code-owned label vocabulary,
 // re-exported here because this module is its original import path
 // and several call sites, including this package's own tests, still reach for
 // it at `./map-forge-facts`. Re-export rather than move-and-break: same value,
 // same export surface, no consumer edit.
-export { AEG_BLOCKED_LABEL }
+export { BLOCKED_LABEL }
 
 export function mapForgeFacts(raw: RawTaskFacts): ForgeFacts | null {
   if (!raw.issue) return null
@@ -68,7 +68,7 @@ function mapStateReason(reason: 'COMPLETED' | 'NOT_PLANNED' | 'REOPENED' | null)
 function mapPrState(state: 'OPEN' | 'CLOSED' | 'MERGED' | undefined): ForgeFacts['prState'] {
   if (state === 'OPEN') return 'open'
   if (state === 'MERGED') return 'merged'
-  // 'CLOSED' (without merge) and undefined both collapse to 'none' — AEG does
+  // 'CLOSED' (without merge) and undefined both collapse to 'none' — Vinaya does
   // not model closed-without-merge separately; deriveTranche treats either
   // as "no PR" for status purposes, falling through to branch / issue facts.
   return 'none'
@@ -80,6 +80,6 @@ function mapReviewDecision(
   if (decision === 'APPROVED') return 'approved'
   if (decision === 'CHANGES_REQUESTED') return 'changes_requested'
   // 'REVIEW_REQUIRED', null, undefined all map to 'none' — same effective
-  // meaning for AEG (in-review, not flipped to changes-requested).
+  // meaning for Vinaya (in-review, not flipped to changes-requested).
   return 'none'
 }

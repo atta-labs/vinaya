@@ -91,7 +91,7 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
   // never a decided `pause`/`publish` from the loop's OWN logic — is the
   // fixture the brief asks for. The role log is the one trace left inside
   // this task's Surface (the forge journal event needs an out-of-surface
-  // `packages/aeg-core` schema change and belongs to a different task, per
+  // process-package schema change and belongs to a different task, per
   // the Principal's ruling).
   it('O2 (#548 v3): an uncaught error mid-loop leaves a driver_exited trace in the role log', async () => {
     const world = makeWorld()
@@ -173,7 +173,7 @@ describe('devReviewLoop — the loop’s exit sites (O6)', () => {
     const result = await runLoopInProcess(world, undefined, {
       fetchFrozenBrief: () => {
         throw new Error(
-          `fetchFrozenBrief: Issue #${world.task} carries no principal-authored, frozen \`aeg:brief:v<k>\` comment — \`vinaya task brief\` must post the brief before this loop can start.`
+          `fetchFrozenBrief: Issue #${world.task} carries no principal-authored, frozen \`vinaya:brief:v<k>\` comment — \`vinaya task brief\` must post the brief before this loop can start.`
         )
       }
     })
@@ -301,7 +301,7 @@ describe('the driver-run dispatch-readiness gate', () => {
 
   it('a READY verdict is staged where the Developer reads it, and the turn is dispatched', async () => {
     const world = makeWorld()
-    const gateOutput = '$ bun packages/aeg-core/bin/verify-dispatch.ts --issue 1\nREADY'
+    const gateOutput = '$ bun packages/core/bin/verify-dispatch.ts --issue 1\nREADY'
     await runLoopInProcess(world, undefined, {
       checkTaskDispatchReadiness: (_branch) => ({ ready: true, output: gateOutput })
     })

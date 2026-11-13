@@ -113,7 +113,7 @@ describe('extractCodeReviewVerdict', () => {
 
   it('regression 1: the literal DANGLING placeholder string does NOT produce a clean verdict', () => {
     const result = extractCodeReviewVerdict([
-      `### AEG provenance\n- Code review: ${DANGLING_CODE_REVIEW_PLACEHOLDER}\n\nDANGLING: no code-reviewer verdict comment found on this PR`
+      `### Vinaya provenance\n- Code review: ${DANGLING_CODE_REVIEW_PLACEHOLDER}\n\nDANGLING: no code-reviewer verdict comment found on this PR`
     ])
     expect(result.danglingNote).not.toBeNull()
     expect(result.value).not.toBe('APPROVE')
@@ -309,7 +309,7 @@ describe('extractSecurityReviewVerdict', () => {
 
   it('regression 1 (the confirmed exploit): the Archivist DANGLING placeholder\'s bare "pass" does NOT produce a clean PASS', () => {
     const result = extractSecurityReviewVerdict([
-      `### AEG provenance\n- Security: ${DANGLING_SECURITY_PLACEHOLDER}\n\nDANGLING: no security-review verdict comment found on this PR`
+      `### Vinaya provenance\n- Security: ${DANGLING_SECURITY_PLACEHOLDER}\n\nDANGLING: no security-review verdict comment found on this PR`
     ])
     expect(result.value).not.toBe('PASS')
     expect(result.danglingNote).not.toBeNull()

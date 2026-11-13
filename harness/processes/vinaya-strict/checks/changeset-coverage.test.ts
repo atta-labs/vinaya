@@ -6,9 +6,9 @@ import {
   type FixedGroupMember
 } from './changeset-coverage-logic'
 
-const AEG_CORE: FixedGroupMember = {
-  name: '@attalabs/aeg-core',
-  dir: 'packages/aeg-core',
+const SAMPLE_CORE: FixedGroupMember = {
+  name: '@attalabs/core',
+  dir: 'packages/core',
   files: ['src', '!src/**/*.test.ts']
 }
 
@@ -18,28 +18,28 @@ const VINAYA: FixedGroupMember = {
   files: ['dist', 'templates', 'README.md']
 }
 
-const FIXED_GROUP = [AEG_CORE, VINAYA]
+const FIXED_GROUP = [SAMPLE_CORE, VINAYA]
 
 describe('changeset-coverage-logic — isShippedPath', () => {
   it('a bare directory entry matches anything nested under it', () => {
-    expect(isShippedPath(AEG_CORE, 'packages/aeg-core/src/index.ts')).toBe(true)
-    expect(isShippedPath(AEG_CORE, 'packages/aeg-core/src/nested/deep.ts')).toBe(true)
+    expect(isShippedPath(SAMPLE_CORE, 'packages/core/src/index.ts')).toBe(true)
+    expect(isShippedPath(SAMPLE_CORE, 'packages/core/src/nested/deep.ts')).toBe(true)
   })
 
   it('a negated glob excludes a TOP-LEVEL src test file (no directory between src/ and the filename) — real fixed-group shape', () => {
-    expect(isShippedPath(AEG_CORE, 'packages/aeg-core/src/milestone-validation.test.ts')).toBe(false)
+    expect(isShippedPath(SAMPLE_CORE, 'packages/core/src/milestone-validation.test.ts')).toBe(false)
   })
 
   it('a negated glob excludes a NESTED test file too', () => {
-    expect(isShippedPath(AEG_CORE, 'packages/aeg-core/src/nested/deep.test.ts')).toBe(false)
+    expect(isShippedPath(SAMPLE_CORE, 'packages/core/src/nested/deep.test.ts')).toBe(false)
   })
 
   it('a path outside the member dir never matches', () => {
-    expect(isShippedPath(AEG_CORE, 'packages/aeg-types/src/index.ts')).toBe(false)
+    expect(isShippedPath(SAMPLE_CORE, 'packages/types/src/index.ts')).toBe(false)
   })
 
   it('a path under the member dir but outside every files entry never matches', () => {
-    expect(isShippedPath(AEG_CORE, 'packages/aeg-core/tests/index.test.ts')).toBe(false)
+    expect(isShippedPath(SAMPLE_CORE, 'packages/core/tests/index.test.ts')).toBe(false)
   })
 
   it('a bare filename entry matches only itself, not a same-prefixed sibling', () => {
@@ -70,16 +70,16 @@ describe('changeset-coverage-logic — evaluateChangesetCoverage', () => {
   it('a shipped-path hit with no changeset is a finding naming the shipped paths', () => {
     const result = evaluateChangesetCoverage(
       FIXED_GROUP,
-      ['packages/aeg-core/src/index.ts', 'packages/aeg-core/src/index.test.ts'],
+      ['packages/core/src/index.ts', 'packages/core/src/index.test.ts'],
       false
     )
-    expect(result).toEqual({ status: 'finding', shippedPathsHit: ['packages/aeg-core/src/index.ts'] })
+    expect(result).toEqual({ status: 'finding', shippedPathsHit: ['packages/core/src/index.ts'] })
   })
 
   it('a shipped-path hit WITH a changeset in the same diff passes', () => {
     const result = evaluateChangesetCoverage(
       FIXED_GROUP,
-      ['packages/aeg-core/src/index.ts', '.changeset/a-change.md'],
+      ['packages/core/src/index.ts', '.changeset/a-change.md'],
       false
     )
     expect(result).toEqual({ status: 'pass' })
@@ -88,14 +88,14 @@ describe('changeset-coverage-logic — evaluateChangesetCoverage', () => {
   it('a diff that touches no shipped path passes, changeset or not — a real test-only PR shape', () => {
     const result = evaluateChangesetCoverage(
       FIXED_GROUP,
-      ['apps/cli/tests/checks/some.test.ts', 'packages/aeg-core/src/milestone-validation.test.ts'],
+      ['apps/cli/tests/checks/some.test.ts', 'packages/core/src/milestone-validation.test.ts'],
       false
     )
     expect(result).toEqual({ status: 'pass' })
   })
 
   it('the Changesets-release branch is exempt even with a shipped hit and no changeset', () => {
-    const result = evaluateChangesetCoverage(FIXED_GROUP, ['packages/aeg-core/src/index.ts'], true)
+    const result = evaluateChangesetCoverage(FIXED_GROUP, ['packages/core/src/index.ts'], true)
     expect(result).toEqual({ status: 'pass' })
   })
 
@@ -104,14 +104,10 @@ describe('changeset-coverage-logic — evaluateChangesetCoverage', () => {
   })
 
   it('a hit across two different fixed-group members is named in full', () => {
-    const result = evaluateChangesetCoverage(
-      FIXED_GROUP,
-      ['packages/aeg-core/src/index.ts', 'apps/cli/README.md'],
-      false
-    )
+    const result = evaluateChangesetCoverage(FIXED_GROUP, ['packages/core/src/index.ts', 'apps/cli/README.md'], false)
     expect(result.status).toBe('finding')
     expect((result as { shippedPathsHit: string[] }).shippedPathsHit.sort()).toEqual(
-      ['apps/cli/README.md', 'packages/aeg-core/src/index.ts'].sort()
+      ['apps/cli/README.md', 'packages/core/src/index.ts'].sort()
     )
   })
 })

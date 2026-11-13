@@ -9,10 +9,11 @@ import { parseEnforcementRegistry } from '../tools/registry-parse'
 import { findCrossingFiles, globCandidateFiles } from '../../../kernel/gates/checks/github-crossing-files.js'
 import { blockingGateFiles, gatherLogProducerGraph, readG7Exemptions } from './log-producer-graph.js'
 import { buildInitOps } from '../integration/artifacts.js'
+import { COMMENT_MARKER_PREFIX } from '../tools/legacy-markers.js'
 import { HOOK_DIRS, initHookPaths } from '../../../kernel/gates/ring0-hooks/init-hook-paths.js'
 
 // Task `vinaya-adopter-portability-v1` 2 (Issue #232): before this fix, an
-// absent `aeg-root/enforcement.md` made `check-registry-gates.ts` exit 0 with
+// absent doctrine `enforcement.md` made `check-registry-gates.ts` exit 0 with
 // ZERO findings — a vacuous pass, byte-indistinguishable from a real pass
 // that inspected a real doctrine tree. Reproduced on a fresh
 // `npm i @attalabs/vinaya@0.19.2 && vinaya init --yes` fixture (this task's
@@ -69,9 +70,9 @@ describe('registry-gates — task vinaya-adopter-portability-v1 2 (Issue #232)',
     }
   }, 45_000)
 
-  it('no longer hardcodes packages/aeg-core/bin as a candidate-file location (repo-specific, not portable)', () => {
+  it('no longer hardcodes the retired standalone-gate directory as a candidate-file location (repo-specific, not portable)', () => {
     const source = readFileSync(BIN_PATH, 'utf8')
-    expect(source).not.toContain("existsSync('packages/aeg-core/bin')")
+    expect(source).not.toContain(`existsSync('packages/${COMMENT_MARKER_PREFIX.old}-core/bin')`)
   })
 
   it("this repository's own run still exercises the real corpus — no dormancy finding when harness/processes/vinaya-strict/doctrine/enforcement.md exists", () => {

@@ -57,7 +57,7 @@ describe("runPrincipalTestPlanWait — the merge holds on the frozen brief's [li
   const PRINCIPAL = 'the-principal'
   const PLAN = 'Closes #42\n\n## 9. Test Plan\n\n- [x] **[principal]** looked at it\n'
   const brief = (plan: string) => ({
-    body: `<!-- aeg:brief:v1 -->\nBrief hash: x\n# Brief\n\n## 9. Test Plan\n\n${plan}\n`,
+    body: `<!-- vinaya:brief:v1 -->\nBrief hash: x\n# Brief\n\n## 9. Test Plan\n\n${plan}\n`,
     author: { login: PRINCIPAL }
   })
   const LIVE_BRIEF = brief(`\`\`\`\nbun test a.test.ts\n\`\`\`\n\n- **[live]** ${COMMAND}`)
@@ -74,7 +74,7 @@ describe("runPrincipalTestPlanWait — the merge holds on the frozen brief's [li
   const withRecord = (head: string) =>
     `${PLAN}\n${renderLiveRecordBlock([{ command: COMMAND, head, outcome: 'passed', passCount: 2 }])}\n`
 
-  it('holds the merge on a [live] line with no AEG:LIVE record', () => {
+  it('holds the merge on a [live] line with no VINAYA:LIVE record', () => {
     const errors = runPrincipalTestPlanWait({ body: PLAN, branch: BRANCH, head: HEAD }, returning([LIVE_BRIEF]))
     expect(errors.length).toBe(1)
     expect(errors[0]?.message).toContain(COMMAND)

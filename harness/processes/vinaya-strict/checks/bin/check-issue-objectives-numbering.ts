@@ -2,7 +2,7 @@
 
 /**
  * Core check: issue-objectives-numbering. Thin adapter over
- * `@attalabs/aeg-core`'s `checkIssueObjectives` — one of the five write-only
+ * `@attalabs/process-vinaya`'s `checkIssueObjectives` — one of the five write-only
  * rules named apart. `validates: 'issue'`: `## Objectives`
  * numbering is a property of a task Issue's own body, never a pull request's.
  *

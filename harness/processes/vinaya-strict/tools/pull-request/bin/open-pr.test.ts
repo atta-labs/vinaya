@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { bareDigitsGateEnv, gatePlanForBranch, locateBody, resolveShippableArgs } from './open-pr'
 
-describe('gatePlanForBranch (aeg-governance-hardening task 25, #365)', () => {
+describe('gatePlanForBranch (task-branch gate selection)', () => {
   const BASE = ['verify-brief', 'verify-docs', 'body-bare-digits']
 
   it('runs the base gate set for a non-task branch', () => {
@@ -12,15 +12,15 @@ describe('gatePlanForBranch (aeg-governance-hardening task 25, #365)', () => {
   })
 
   it('runs the base gate set for a plan branch', () => {
-    expect(gatePlanForBranch('plan/aeg-governance-hardening')).toEqual(BASE)
+    expect(gatePlanForBranch('plan/sample-tranche-v1')).toEqual(BASE)
   })
 
   it('runs the base gate set for an archive branch', () => {
-    expect(gatePlanForBranch('archive/aeg-governance-hardening')).toEqual(BASE)
+    expect(gatePlanForBranch('archive/sample-tranche-v1')).toEqual(BASE)
   })
 
   it('adds closes-n and verify-task for a task branch', () => {
-    expect(gatePlanForBranch('task/aeg-governance-hardening/25')).toEqual([...BASE, 'closes-n', 'verify-task'])
+    expect(gatePlanForBranch('task/sample-tranche-v1/25')).toEqual([...BASE, 'closes-n', 'verify-task'])
   })
 
   /**
@@ -37,7 +37,7 @@ describe('gatePlanForBranch (aeg-governance-hardening task 25, #365)', () => {
   })
 
   it('runs it before the task-only gates, so a bad body is refused early', () => {
-    const plan = gatePlanForBranch('task/aeg-governance-hardening/25')
+    const plan = gatePlanForBranch('task/sample-tranche-v1/25')
     expect(plan.indexOf('body-bare-digits')).toBeLessThan(plan.indexOf('closes-n'))
   })
 })

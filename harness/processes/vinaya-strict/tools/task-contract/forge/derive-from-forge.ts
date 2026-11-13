@@ -25,7 +25,7 @@ export function trancheFromIssues(slug: string, issues: GhIssue[], known?: Miles
 }
 
 /**
- * Derives an `@attalabs/aeg-types` `Tranche` purely from forge objects:
+ * Derives an task-contract-types `Tranche` purely from forge objects:
  *   - the tranche's identity is its `vinaya/tranche:<slug>` label
  *     → `goal` + `lifecycle`, via
  *     `findMilestoneForSlug`: a Milestone titled exactly `slug` (the legacy

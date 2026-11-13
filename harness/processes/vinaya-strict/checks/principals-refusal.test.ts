@@ -180,7 +180,7 @@ const CHECKS: Record<
     env: () => ({
       PR_NUMBER: '1',
       BASE_SHA: 'main',
-      PR_BODY: ['<!-- AEG:EVIDENCE:START -->', EVIDENCE_PLACEHOLDER_TEXT, '<!-- AEG:EVIDENCE:END -->'].join('\n')
+      PR_BODY: ['<!-- VINAYA:EVIDENCE:START -->', EVIDENCE_PLACEHOLDER_TEXT, '<!-- VINAYA:EVIDENCE:END -->'].join('\n')
     })
   },
   'brief-shape': {

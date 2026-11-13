@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
 /**
- * verify-review-gate — required pre-merge CI check (aeg-review-gate-v1 task 1,
- * #474). Blocks a PR from merging unless a code-reviewer
+ * verify-review-gate — required pre-merge CI check.
+ * Blocks a PR from merging unless a code-reviewer
  * `APPROVE` verdict AND a security-review `PASS` verdict both exist on the
  * PR, or an actor-verified `vinaya/waiver:review` label is present (the exact
  * pattern — `isWaiverLabelActorVerified`, reused not duplicated).
@@ -14,7 +14,7 @@
  *
  * Thin CLI/I/O shim, same discipline as `verify-single-plan-pr.ts`: resolves
  * the PR's comments/labels/waiver-label-actor/head sha via `gh`, calls the
- * pure `checkReviewGate` (`@attalabs/aeg-core`), and exits non-zero with a
+ * pure `checkReviewGate` (`tools/review-gate.ts`), and exits non-zero with a
  * clear message on failure. No check logic lives here.
  *
  * `headRefOid` (#73) is resolved from GitHub via this same `gh pr view`

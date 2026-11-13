@@ -41,7 +41,7 @@ afterEach(cleanupWorlds)
  * would compute from an objectives-edit comment must equal the version the
  * merge gate computes from the SAME post-edit Issue body — proven here by
  * exercising the identical shared primitives both sides call
- * (`objectivesOf`/`objectivesVersion`, `@attalabs/aeg-core`) over one body,
+ * (`objectivesOf`/`objectivesVersion`, `@attalabs/process-vinaya`) over one body,
  * never by importing the gate's own private `resolveObjectivesVersion`
  * (`harness/processes/vinaya-strict/checks/bin/check-review-gate.ts`, out of this task's
  * declared Surface). `spliceObjectivesSection`/`renderObjectives` are the
@@ -68,7 +68,7 @@ describe('objectives version — loop and gate agree (O1)', () => {
     // And what `parseObjectivesEditComment` (the loop's own reader) recovers
     // from the rendered comment is that same value.
     const commentBody = [
-      '<!-- aeg:objectives:v1 -->',
+      '<!-- vinaya:objectives:v1 -->',
       'Previous:',
       previous.map((o) => `${o.id}. ${o.text}`).join('\n'),
       '',
@@ -87,7 +87,7 @@ describe('objectives version — loop and gate agree (O1)', () => {
  * calls, now carrying a real `objectivesVersion` instead of the old
  * hardcoded `null` — is accepted by the merge gate's own `checkReviewGate`
  * evaluator when the current objectives version matches. Calling the real
- * gate function directly (`@attalabs/aeg-core`), not a re-derivation of its
+ * gate function directly (`@attalabs/process-vinaya`), not a re-derivation of its
  * logic.
  */
 describe('a loop-published verdict passes the merge gate (O2)', () => {

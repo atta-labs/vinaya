@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, mock } from 'bun:test'
+import { PROVENANCE_HEADING } from '../../tools/legacy-markers'
 
 /**
- * Regression coverage for aeg-governance-hardening task 20 (#340) — two
+ * Regression coverage for two
  * confirmed root causes in `fetchProvenance`:
  *
  * 1. `timelineItems(first: 1, ...)` fetched the FIRST `ClosedEvent`, not the
@@ -75,7 +76,7 @@ mock.module('@octokit/graphql', () => ({
 const { fetchProvenance } = await import('./verify-coherence')
 
 const PROVENANCE_FOR = (issue: number) =>
-  `### AEG provenance — task 1 (tranche fixture)\n- Issue:        #${issue}  (closed by merge)\n- Tier:         1`
+  `${PROVENANCE_HEADING.old} — task 1 (tranche fixture)\n- Issue:        #${issue}  (closed by merge)\n- Tier:         1`
 
 beforeEach(() => {
   closedEventFixtures = {}
@@ -155,8 +156,8 @@ describe('fetchProvenance — Part 2: null-closer fallback', () => {
 })
 
 /**
- * Regression coverage for the PR #378 review (aeg-governance-hardening task
- * 24, #364): `--json` mode's stdout must be pure, parseable JSON — nothing
+ * Regression coverage for a review finding:
+ * `--json` mode's stdout must be pure, parseable JSON — nothing
  * else (a stray `console.log`/`console.warn`, or noise leaking from a
  * shelled-out command like the item-5 `git fetch origin main`) may write to
  * it, because the `coherence-gate` CI job captures stdout+stderr combined

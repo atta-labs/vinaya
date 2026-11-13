@@ -2,7 +2,7 @@
 
 /**
  * check-direct-main-push — ring-2 detection backstop for direct pushes to
- * `main` (aeg-governance-hardening task 24, #364, Part 3 — item 1).
+ * `main`.
  * Prevention lives in `.husky/pre-push` (ring 0) and the repository
  * ruleset's `non_fast_forward`/`pull_request` rules (ring 1) — this job
  * runs on every push to `main` and answers, after the fact, "was this
@@ -32,7 +32,7 @@ process.chdir(REPO_ROOT)
 
 // The label name comes from the code-owned vocabulary — never a literal here.
 // This bin MINTS the label on first fire (`ensureLabelExists`), so a literal
-// would have silently created a retired `aeg:`-named label the first time a
+// would have silently created a retired old-style label the first time a
 // direct push ever happened. No forge object exists yet: it has never
 // fired, which is also why renaming the idempotency marker below is safe —
 // there is no already-posted comment carrying the old one to miss.

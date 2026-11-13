@@ -1,15 +1,15 @@
 #!/usr/bin/env bun
 
 /**
- * verify-task — the Developer's exit composite (aeg-governance-hardening
- * task 11, #324). One command, one summary, wrapping the exact checks the
- * Developer's own pre-PR verification list already requires (`roles/
- * developer.md` § Verification before reporting done): typecheck, lint,
+ * verify-task — the Developer's exit composite.
+ * One command, one summary, wrapping the exact checks the
+ * Developer's own pre-PR verification list already requires (the Developer doctrine,
+ * `executing/developer/doctrine.md` § Verification before reporting done): typecheck, lint,
  * tests, build, `verify-docs --pr`, and a premise re-check + coverage check
  * against the real diff. No second implementation of any of these — each
  * step shells out to the SAME command CI runs (`turbo typecheck`, `biome
  * check .`, `turbo test`, `bun harness/processes/vinaya-strict/checks/standalone/verify-docs.ts --pr`)
- * or calls the pure `@attalabs/aeg-core` evaluators directly
+ * or calls the pure task-contract evaluators directly
  * (`checkPremiseCoverage`, `checkPremises`).
  *
  * Usage:

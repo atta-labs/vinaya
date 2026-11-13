@@ -10,7 +10,7 @@ import {
   isValidCitedFilePath,
   type QuotedCommandSourceFile
 } from './quoted-command'
-import { QUOTES_FILE_ANCHORS } from './legacy-markers'
+import { QUOTES_FILE_ANCHOR, QUOTES_FILE_ANCHORS } from './legacy-markers'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const READER_FACING_PREFIX = '/no-reader-facing-surface'
@@ -18,8 +18,7 @@ const READER_FACING_SUFFIX = '/page.tsx'
 
 describe('findCitedQuotes — marker discovery', () => {
   it('finds one inline-backtick pair and reports the doc line, quoted text, and cited file', () => {
-    const content =
-      'one job — <!-- AEG:QUOTES-FILE:START:.github/workflows/x.yml -->`vinaya check --all`<!-- AEG:QUOTES-FILE:END --> today'
+    const content = `one job — <!-- ${QUOTES_FILE_ANCHOR.old}:START:.github/workflows/x.yml -->\`vinaya check --all\`<!-- ${QUOTES_FILE_ANCHOR.old}:END --> today`
     const quotes = findCitedQuotes(
       [{ path: 'harness/processes/vinaya-strict/doctrine/enforcement.md', content }],
       READER_FACING_PREFIX,
@@ -52,9 +51,9 @@ describe('findCitedQuotes — marker discovery', () => {
   it('finds a two-line pair, reporting the line the marker pair starts on', () => {
     const content = [
       'preamble',
-      '<!-- AEG:QUOTES-FILE:START:harness/processes/vinaya-strict/doctrine/glossary.md -->',
+      '<!-- VINAYA:QUOTES-FILE:START:harness/processes/vinaya-strict/doctrine/glossary.md -->',
       '`some quoted text`',
-      '<!-- AEG:QUOTES-FILE:END -->',
+      '<!-- VINAYA:QUOTES-FILE:END -->',
       'trailer'
     ].join('\n')
     const quotes = findCitedQuotes(
@@ -70,8 +69,8 @@ describe('findCitedQuotes — marker discovery', () => {
 
   it('finds multiple pairs in one file, left to right', () => {
     const content = [
-      '<!-- AEG:QUOTES-FILE:START:a.txt -->`one`<!-- AEG:QUOTES-FILE:END -->',
-      '<!-- AEG:QUOTES-FILE:START:b.txt -->`two`<!-- AEG:QUOTES-FILE:END -->'
+      '<!-- VINAYA:QUOTES-FILE:START:a.txt -->`one`<!-- VINAYA:QUOTES-FILE:END -->',
+      '<!-- VINAYA:QUOTES-FILE:START:b.txt -->`two`<!-- VINAYA:QUOTES-FILE:END -->'
     ].join('\n')
     const quotes = findCitedQuotes(
       [{ path: 'harness/processes/vinaya-strict/doctrine/glossary.md', content }],
@@ -86,9 +85,9 @@ describe('findCitedQuotes — marker discovery', () => {
     const content = [
       'Here is the marker syntax:',
       '```',
-      '<!-- AEG:QUOTES-FILE:START:some/file.txt -->',
+      '<!-- VINAYA:QUOTES-FILE:START:some/file.txt -->',
       '`example`',
-      '<!-- AEG:QUOTES-FILE:END -->',
+      '<!-- VINAYA:QUOTES-FILE:END -->',
       '```'
     ].join('\n')
     const quotes = findCitedQuotes(
@@ -100,7 +99,7 @@ describe('findCitedQuotes — marker discovery', () => {
   })
 
   it('does NOT fire on an unterminated START with no following END', () => {
-    const content = '<!-- AEG:QUOTES-FILE:START:a.txt -->`dangling, no end marker`'
+    const content = '<!-- VINAYA:QUOTES-FILE:START:a.txt -->`dangling, no end marker`'
     const quotes = findCitedQuotes(
       [{ path: 'harness/processes/vinaya-strict/doctrine/glossary.md', content }],
       READER_FACING_PREFIX,
@@ -111,7 +110,7 @@ describe('findCitedQuotes — marker discovery', () => {
 
   it('never sweeps apps/*/specs/** or CLAUDE.md — this reader already has this forge', () => {
     const content =
-      '<!-- AEG:QUOTES-FILE:START:harness/processes/vinaya-strict/doctrine/enforcement.md -->`x`<!-- AEG:QUOTES-FILE:END -->'
+      '<!-- VINAYA:QUOTES-FILE:START:harness/processes/vinaya-strict/doctrine/enforcement.md -->`x`<!-- VINAYA:QUOTES-FILE:END -->'
     const quotes = findCitedQuotes(
       [
         { path: 'apps/cli/specs/self-hosting.md', content },
@@ -125,11 +124,11 @@ describe('findCitedQuotes — marker discovery', () => {
 
   it('strips a fenced (triple-backtick) wrapper the same way as an inline span', () => {
     const content = [
-      '<!-- AEG:QUOTES-FILE:START:a.txt -->',
+      '<!-- VINAYA:QUOTES-FILE:START:a.txt -->',
       '```',
       'line one',
       '```',
-      '<!-- AEG:QUOTES-FILE:END -->'
+      '<!-- VINAYA:QUOTES-FILE:END -->'
     ].join('\n')
     const quotes = findCitedQuotes(
       [{ path: 'harness/processes/vinaya-strict/doctrine/glossary.md', content }],
@@ -144,7 +143,7 @@ describe('isValidCitedFilePath — closing the file-content oracle (security fin
   it('rejects a `..` traversal segment, however deep', () => {
     expect(isValidCitedFilePath('../etc/hosts')).toBe(false)
     expect(isValidCitedFilePath('../../../../../../etc/hosts')).toBe(false)
-    expect(isValidCitedFilePath('aeg-root/../../../etc/hosts')).toBe(false)
+    expect(isValidCitedFilePath('doctrine/../../../etc/hosts')).toBe(false)
   })
 
   it('rejects a POSIX-absolute path', () => {
@@ -171,7 +170,8 @@ describe('isValidCitedFilePath — closing the file-content oracle (security fin
 
 describe('findCitedQuotes — a traversal/absolute citedFile is not a valid citation at all', () => {
   it('a `..`-traversal citedFile never becomes a discovered quote — same as no marker present', () => {
-    const content = '<!-- AEG:QUOTES-FILE:START:../../../../../etc/hosts -->`localhost`<!-- AEG:QUOTES-FILE:END -->'
+    const content =
+      '<!-- VINAYA:QUOTES-FILE:START:../../../../../etc/hosts -->`localhost`<!-- VINAYA:QUOTES-FILE:END -->'
     const quotes = findCitedQuotes(
       [{ path: 'harness/processes/vinaya-strict/doctrine/glossary.md', content }],
       READER_FACING_PREFIX,
@@ -181,7 +181,7 @@ describe('findCitedQuotes — a traversal/absolute citedFile is not a valid cita
   })
 
   it('an absolute citedFile never becomes a discovered quote', () => {
-    const content = '<!-- AEG:QUOTES-FILE:START:/etc/hosts -->`localhost`<!-- AEG:QUOTES-FILE:END -->'
+    const content = '<!-- VINAYA:QUOTES-FILE:START:/etc/hosts -->`localhost`<!-- VINAYA:QUOTES-FILE:END -->'
     const quotes = findCitedQuotes(
       [{ path: 'harness/processes/vinaya-strict/doctrine/glossary.md', content }],
       READER_FACING_PREFIX,
@@ -193,7 +193,7 @@ describe('findCitedQuotes — a traversal/absolute citedFile is not a valid cita
   it('a hostile marker produces zero findings end to end, indistinguishable from no marker — no oracle signal survives', () => {
     const hostile: QuotedCommandSourceFile = {
       path: 'harness/processes/vinaya-strict/doctrine/glossary.md',
-      content: '<!-- AEG:QUOTES-FILE:START:../../../../../etc/hosts -->`root:x:0:0`<!-- AEG:QUOTES-FILE:END -->'
+      content: '<!-- VINAYA:QUOTES-FILE:START:../../../../../etc/hosts -->`root:x:0:0`<!-- VINAYA:QUOTES-FILE:END -->'
     }
     const findings = checkQuotedCommandStaleness(
       [hostile],
@@ -260,7 +260,7 @@ describe('checkQuotedCommandStaleness — end to end over a small fixture', () =
     const files: QuotedCommandSourceFile[] = [
       {
         path: 'harness/processes/vinaya-strict/doctrine/enforcement.md',
-        content: '<!-- AEG:QUOTES-FILE:START:wf.yml -->`vinaya@X check --all`<!-- AEG:QUOTES-FILE:END -->'
+        content: '<!-- VINAYA:QUOTES-FILE:START:wf.yml -->`vinaya@X check --all`<!-- VINAYA:QUOTES-FILE:END -->'
       }
     ]
     const passing = checkQuotedCommandStaleness(
@@ -286,7 +286,7 @@ function collectMarkdown(): string[] {
   return DOCTRINE_REPO_PATHS.filter((path) => existsSync(join(REPO_ROOT, path)))
 }
 
-describe('corpus test — the real aeg-root/** tree', () => {
+describe('corpus test — the real doctrine tree', () => {
   it('produces zero findings against this repo as it stands today', () => {
     const docPaths = collectMarkdown()
     const files: QuotedCommandSourceFile[] = docPaths.map((p) => ({

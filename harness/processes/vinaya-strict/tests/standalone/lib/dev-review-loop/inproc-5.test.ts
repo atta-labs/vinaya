@@ -985,8 +985,8 @@ describe('rulingsAfterNewestBrief — which Issue rulings count', () => {
   const principal = 'principal-1'
   const comment = (body: string, author: string | null = principal): MarkerComment => ({ body, author })
   const ruling = (n: number, text: string, author: string | null = principal) =>
-    comment(`<!-- aeg:principal:ruling:7-${n} -->\n${text}`, author)
-  const brief = (v: number) => comment(`<!-- aeg:brief:v${v} -->\nBrief hash: ab\nBody ${v}`)
+    comment(`<!-- vinaya:principal:ruling:7-${n} -->\n${text}`, author)
+  const brief = (v: number) => comment(`<!-- vinaya:brief:v${v} -->\nBrief hash: ab\nBody ${v}`)
 
   it('delivers the rulings posted after the brief, in comment order', () => {
     expect(rulingsAfterNewestBrief([brief(1), ruling(1, 'one'), ruling(2, 'two')], [principal])).toEqual(['one', 'two'])
@@ -1917,7 +1917,7 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     const world = makeWorld({ worktreeExists: true })
     await runLoopInProcess(world, { task: world.task, agent: 'codex' }, developerPublishesViaToolsDeps(world))
     world.prOpened = true
-    world.prBody = `<!-- AEG:CLOSES:START -->\nCloses #${world.task}\n<!-- AEG:CLOSES:END -->`
+    world.prBody = `<!-- VINAYA:CLOSES:START -->\nCloses #${world.task}\n<!-- VINAYA:CLOSES:END -->`
     const checked = await world.devToolContext!.runChecks()
     expect(checked.ok).toBe(true)
     expect(world.runChecksEnv).toEqual({
@@ -1944,7 +1944,7 @@ describe('devReviewLoop — the Developer publishes through the driver-run tools
     await runLoopInProcess(
       world,
       { task: world.task, agent: 'codex' },
-      developerPublishesViaToolsDeps(world, { changedPaths: ['packages/aeg-core/src/x.ts'] })
+      developerPublishesViaToolsDeps(world, { changedPaths: ['packages/core/src/x.ts'] })
     )
     expect(world.commits).toHaveLength(1)
     expect(world.pushes).toHaveLength(1)

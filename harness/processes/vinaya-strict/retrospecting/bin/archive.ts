@@ -4,8 +4,8 @@
 // this monorepo's own `harness/processes/vinaya-strict/retrospecting/archivist/bin/archive-task.ts`: resolves the
 // merged PR from a merge SHA via `gh`, gathers `MergedPrFacts`, and calls
 // the pure `buildProvenanceBlock` / `taskRefFromBranch` / `hasProvenance` /
-// `isEligibleForProvenance` homed in `@attalabs/aeg-core` — already a CLI
-// dependency (see artifacts.ts's own `@attalabs/aeg-core` import).
+// `isEligibleForProvenance` homed in `@attalabs/process-vinaya` — already a CLI
+// dependency (see artifacts.ts's own `@attalabs/process-vinaya` import).
 //
 // Repo/owner resolution goes through this CLI's own `detectGitRepo()`
 // (lib/detect.ts) — the same path every other command uses — never a
@@ -58,7 +58,7 @@ export type ArchiveDeps = {
   /**
    * One declared tranche's own lifecycle, derived from its labeled Issues.
    * Injected for the same reason the probe above is, plus one specific to
-   * this read: `@attalabs/aeg-forge-state`'s `gh` wrapper builds its child
+   * this read: the forge-state modules's `gh` wrapper builds its child
    * environment ONCE at import, so the fake-`gh`-on-PATH technique the rest
    * of this file's tests use (`sh` below passes `process.env` explicitly to
    * defeat exactly that) can never reach it — a test placing a fake `gh`
@@ -479,7 +479,7 @@ export function resolveTaskMilestone(issues: readonly LabeledIssueRef[]): TaskMi
 
 /**
  * The highest Developer round marker (`<!-- vinaya:developer:round-<n> -->`,
- * `@attalabs/aeg-core`'s `parseDeveloperRoundMarker`) posted on a merged
+ * `@attalabs/process-vinaya`'s `parseDeveloperRoundMarker`) posted on a merged
  * task PR — `1` when none is found, since a task that merged on its first
  * round never had a reason to post one.
  */
@@ -605,7 +605,7 @@ function parseTrancheArgs(args: string[]): { slug: string | null; yes: boolean }
  * this tranche done" answered from its own labeled Issues rather than from
  * a Milestone — is unit-testable with no `gh`/`execFileSync` mocking at all,
  * matching this repo's pure-evaluator/I-O-shim split used throughout
- * `packages/aeg-core` (`coherence-checks.ts`, `fetch-milestone.ts`, …).
+ * the process package (`coherence-checks.ts`, `fetch-milestone.ts`, …).
  */
 export function trancheArchivalStatus(
   issues: LabeledIssueRef[]
@@ -741,7 +741,7 @@ async function archiveCompleteTranche(
   // O7: the Milestone can hold other tranches or backlog tasks — closing
   // it the moment THIS tranche finishes would close out work that is
   // still open. The raw `gh api .../issues?milestone=…` REST call
-  // `tranchesAttachedToMilestone` (`@attalabs/aeg-forge-state`) used for
+  // `tranchesAttachedToMilestone` (the forge-state modules) used for
   // this same question returns each Issue's FULL body/labels/etc — a
   // Milestone with more Issues than that call can hold in one response
   // overran `execFileSync`'s default output buffer (`ENOBUFS`) before a

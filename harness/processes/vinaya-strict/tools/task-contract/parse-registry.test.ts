@@ -1,24 +1,29 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { COMMENT_MARKER_PREFIX } from '../legacy-markers'
 import { parseRegistry } from './parse-registry'
+
+// The recorded projects.md fixture still carries the retired project names.
+const OLD = COMMENT_MARKER_PREFIX.old
+const OLD_CORE = `${OLD}-core`
 
 const FIXTURES = join(__dirname, './fixtures')
 const projectsMd = readFileSync(join(FIXTURES, 'projects.md'), 'utf8')
 
 describe('parseRegistry', () => {
-  it('parses every row in the live projects.md, including aeg-core', () => {
+  it('parses every row in the live projects.md, including the retired core row', () => {
     const registry = parseRegistry(projectsMd)
-    expect(registry.map((p) => p.name)).toEqual(['vada', 'cetana', 'herald', 'aeg', 'aeg-core', 'atta', 'desktop'])
+    expect(registry.map((p) => p.name)).toEqual(['vada', 'cetana', 'herald', OLD, OLD_CORE, 'atta', 'desktop'])
   })
 
-  it('reads the aeg-core row added in this task', () => {
+  it('reads the retired core row', () => {
     const registry = parseRegistry(projectsMd)
-    const aegCore = registry.find((p) => p.name === 'aeg-core')
-    expect(aegCore).toMatchObject({
-      name: 'aeg-core',
-      path: 'packages/aeg-core',
-      specsPath: 'packages/aeg-core/specs/',
+    const coreRow = registry.find((p) => p.name === OLD_CORE)
+    expect(coreRow).toMatchObject({
+      name: OLD_CORE,
+      path: `packages/${OLD_CORE}`,
+      specsPath: `packages/${OLD_CORE}/specs/`,
       statePath: null
     })
   })
@@ -30,7 +35,7 @@ describe('parseRegistry', () => {
       name: 'vada',
       path: 'apps/vada-ai',
       specsPath: 'apps/vada-ai/specs/',
-      statePath: 'apps/vada-ai/aeg-project/'
+      statePath: `apps/vada-ai/${OLD}-project/`
     })
   })
 
@@ -41,7 +46,7 @@ describe('parseRegistry', () => {
     expect(atta?.statePath).toBeNull()
     expect(desktop?.statePath).toBeNull()
     // The tracked rows still have paths — the null case is targeted.
-    expect(registry.find((p) => p.name === 'aeg')?.statePath).toBe('apps/aeg/aeg-project/')
+    expect(registry.find((p) => p.name === OLD)?.statePath).toBe(`apps/${OLD}/${OLD}-project/`)
   })
 
   it('returns [] when the Registry section is missing', () => {
@@ -54,7 +59,7 @@ describe('parseRegistry', () => {
       '',
       '| Project | Path | Specs | State |',
       '|---------|------|-------|-------|',
-      '| good    | `apps/x` | `apps/x/specs/` | `apps/x/aeg-project/` |',
+      '| good    | `apps/x` | `apps/x/specs/` | `apps/x/state-notes/` |',
       '| broken  | `apps/y` |', // 3 cells, not 4 — skipped
       ''
     ].join('\n')

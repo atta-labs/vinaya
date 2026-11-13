@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: test-plan. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: test-plan. Thin adapter over `@attalabs/process-vinaya`'s
  * `evaluateTestPlanGate` — mirrors `harness/processes/vinaya-strict/checks/standalone/verify-test-plan.ts`'s
  * input assembly (PR_BODY/BRANCH env), emitting the check contract instead
  * of human text.

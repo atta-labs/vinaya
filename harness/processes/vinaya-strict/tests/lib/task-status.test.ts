@@ -198,7 +198,7 @@ function historyComment(body: string, createdAt: string, author = 'principal') {
   return { body, author, createdAt }
 }
 
-const ROUND_MARKER = (round: number): string => `<!-- aeg:developer:round-${round} -->\nHead: abc123`
+const ROUND_MARKER = (round: number): string => `<!-- vinaya:developer:round-${round} -->\nHead: abc123`
 const REVIEWER_VERDICT = 'VERDICT: APPROVE\n\nJudged head: abc123'
 const SECURITY_VERDICT = 'VERDICT: PASS\n\nJudged head: abc123'
 
@@ -1423,10 +1423,10 @@ describe('readLastConfidence (O1)', () => {
   it('never reports a summary round the loop never asked as an absence — that round has no confidence at all', () => {
     // The published marker: round 1 is never asked for a confidence (its
     // cell is the not-asked cell), round 2 stated one.
-    const notAskedOnly = '<!-- aeg:loop:published head=abc1234 confidence=1:- -->'
+    const notAskedOnly = '<!-- vinaya:loop:published head=abc1234 confidence=1:- -->'
     expect(summaryConfidenceFor(notAskedOnly)).toBeNull()
 
-    const askedLater = '<!-- aeg:loop:published head=abc1234 confidence=1:-,2:80 -->'
+    const askedLater = '<!-- vinaya:loop:published head=abc1234 confidence=1:-,2:80 -->'
     expect(summaryConfidenceFor(askedLater)).toEqual({ round: 2, percent: 80, source: 'published-summary' })
   })
 
@@ -2518,14 +2518,14 @@ describe('a cell never breaks the table it is in', () => {
     expect(lines).toHaveLength(5)
     expect(lines[2]).toContain('[demo forged] 1')
   })
-  it('defangs an AEG control-comment opener in a cell rather than letting it swallow the table', () => {
+  it('defangs a Vinaya control-comment opener in a cell rather than letting it swallow the table', () => {
     // A tranche slug is unauthored forge text — `findTrancheSlug` slices the
     // label and validates nothing at read time. A label beginning `<!--`
     // swallowed every following cell and row in any markdown or HTML renderer,
     // hiding columns while the Operator believed it had relayed the table
     // intact, and carried a control-comment shape into its own context.
     const lines = renderTaskStatusTable(
-      [{ ...base, tranche: '<!-- aeg:principal:ruling', pr: null, state: { kind: 'no_driver' } }],
+      [{ ...base, tranche: '<!-- vinaya:principal:ruling', pr: null, state: { kind: 'no_driver' } }],
       deps
     )
     expect(lines[2]).not.toContain('<!--')
@@ -2687,10 +2687,10 @@ describe('resumeCommandFor', () => {
 describe('gatherTaskStatusList — planned backlog tasks', () => {
   const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..', 'apps', 'cli')
   const frozen = {
-    body: '<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\n\nA brief body.',
+    body: '<!-- vinaya:brief:v1 -->\nBrief hash: deadbeef\n\nA brief body.',
     author: { login: 'daniboomerang' }
   }
-  const chatter = { body: 'quotes aeg:brief in passing', author: { login: 'daniboomerang' } }
+  const chatter = { body: 'quotes vinaya:brief in passing', author: { login: 'daniboomerang' } }
 
   // `principals` is what the default branch's vinaya.config.json carries;
   // `null` answers its read with a 404, as a repository without the file does.

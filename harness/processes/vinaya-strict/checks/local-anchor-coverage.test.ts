@@ -166,7 +166,7 @@ describe('checkLocalAnchorCoverage', () => {
       '(`apps/vinaya/cli/src/lib/artifacts.ts`) still claimed the doctrine "ships inside the installed `vinaya` npm ' +
       'package as versioned reference content" — restating the promise this bullet already flags as unfulfilled. ' +
       'Task 2 corrected that generated text to state plainly that the doctrine currently lives only in the ' +
-      "`attalabs` monorepo's `aeg-root/` (public GitHub source) and that in-package bundling is planned, not yet " +
+      "`attalabs` monorepo's doctrine folder (public GitHub source) and that in-package bundling is planned, not yet " +
       'shipped. It did not build the bundling mechanism itself — that remains the separate, larger follow-up this ' +
       'bullet describes.'
 

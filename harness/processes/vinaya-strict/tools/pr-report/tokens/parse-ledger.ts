@@ -5,7 +5,7 @@ import type { LedgerRow } from '../../task-contract/types'
  * Parse the append-only token/cost ledger for a tranche. See
  * `harness/processes/vinaya-strict/doctrine/tranche-model.md` §12 for the canonical format.
  *
- * The ledger lives in a sibling file `aeg-root/tranches/<name>.tokens.md`
+ * The ledger lives in a sibling file the retired tranche-file directory (`<name>.tokens.md`)
  * (the recommended home, since two roles appending rows do not collide with
  * a Planner editing the topology file) but the parser also accepts a
  * `## Token ledger` section inside any markdown — so a future tranche that

@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
 /**
- * verify-dispatch — the deterministic pre-work gate (aeg-governance-hardening
- * task 11, #324). Mechanizes the prose entry-gate items `roles/developer.md`
+ * verify-dispatch — the deterministic pre-work gate.
+ * Mechanizes the prose entry-gate items the Developer doctrine
  * currently asks every Developer to re-derive by hand — the exact gap the
  * 2026-07-02/03 dispatch wave proved live (four agents independently
  * re-derived, and stopped on, the same archival fact; one walked through the
@@ -10,7 +10,7 @@
  *
  * Thin CLI/I/O shim, same discipline as `verify-docs.ts`/`verify-coherence.ts`:
  * resolves args, reads freshly-fetched forge/git state, and calls the pure
- * evaluators homed in `@attalabs/aeg-core` (`checkDispatchReadiness`,
+ * evaluators homed in the process's `tools/dispatch-gate.ts` (`checkDispatchReadiness`,
  * `classifyLeftover`, `captureBaseline`/`compareToBaseline`,
  * `parsePremiseBlock`/`checkPremises`). No check logic lives here.
  *
@@ -178,7 +178,7 @@ const execFileAsync = promisify(execFile)
 /**
  * Async, larger-buffer sibling of `sh()` — for a bounded request whose
  * payload can still exceed `execFileSync`'s 1 MB default (an ENOBUFS there
- * silently returned nothing). 16 MB matches `@attalabs/aeg-forge-state`'s own
+ * silently returned nothing). 16 MB matches the forge-state modules' own
  * `gh.ts` precedent. Returns `null` on any failure; callers that must tell a
  * failed read from an empty answer treat `null` as the former.
  */
@@ -301,7 +301,7 @@ type BacklogPrRead = { nodes?: PrListEntry[]; closedByPullRequestsReferences?: {
  * (issue-586, O2) to its OWN pull request — read for THAT Issue directly,
  * never out of a window of the newest pull requests, so a dependency merged
  * at any time is found: the pull request(s) on the `task/issue-<n>` branch
- * (`issueBranchName`, `@attalabs/aeg-core`), else the pull request(s) the
+ * (`issueBranchName`, `tools/task-contract/task-branch-identity.ts`), else the pull request(s) the
  * Issue itself names as closing it (`closedByPullRequestsReferences`). A
  * number with neither returns no entry at all: `resolveDependsOn` falls back
  * to the Issue's own closed/open state for it.
@@ -384,8 +384,8 @@ function buildBacklogPrQuery(numbers: number[]): string {
 // ---- tranche / task resolution ---------------------------------------------
 
 /**
- * Forge-derived (task aeg-forge-state-v1 3a) — no longer reads
- * `aeg-root/tranches/<slug>.md` off `origin/main`; the forge (Milestone +
+ * Forge-derived — no longer reads
+ * a tranche file off `origin/main`; the forge (Milestone +
  * `vinaya/tranche:<slug>`-labeled Issues) is inherently live, so there is no
  * separate "freshly-fetched" version to read. `null` now means the forge
  * call itself failed (network/gh unreachable), not "file absent" — a real,
@@ -441,7 +441,7 @@ export type IssueStateFetcher = (numbers: number[], repo: RepoRef) => Map<number
 /**
  * One batched GraphQL call resolving every requested Issue number's state —
  * `gh api graphql` aliasing `issue(number: N)` per number (the same
- * one-HTTP-round-trip aliasing discipline `@attalabs/aeg-forge-state`'s
+ * one-HTTP-round-trip aliasing discipline the forge-state modules'
  * `fetchTaskIssueRefs` already uses), through the `gh` CLI this file already
  * shells out to everywhere else rather than a new octokit import — that
  * package is out of this task's surface.
@@ -734,7 +734,7 @@ type CaptureResult = { stdout: string; stderr: string; exitCode: number; ranAtAl
  * The two streams are kept APART, and that separation is the whole point
  * (#173). They used to be concatenated, on the stated premise that "neither
  * writes to stderr on its clean `--json` path". That premise was false:
- * `verify-coherence` probes `aeg-root/tranches` and `aeg-root/tranches/completed`
+ * `verify-coherence` probes the retired tranche-file directory and its `completed/` subdirectory
  * off the base ref, and the forge-native cutover deleted those directories —
  * `no-disk-state.ts` now actively forbids re-adding one — so `git` prints a
  * `fatal:` line per probe while the tool itself exits 0 with correct results.

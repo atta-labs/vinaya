@@ -25,7 +25,7 @@ export const INDEX = join(CLI_ROOT, 'src', 'index.ts')
 /**
  * The ambient `PATH`, minus any directory that carries a REAL `claude`/
  * `codex`/`gemini` binary — this authoring machine has all three installed
- * (`aeg-root/roles/developer.md` pre-flight `which` check), and a naive
+ * (`executing/developer/doctrine.md` pre-flight `which` check), and a naive
  * `process.env.PATH` passthrough would let the "absent"/"not executable"
  * defeat cases silently find and exercise the real vendor CLI instead of the
  * fake fixture. Still carries `bun`'s own directory and the usual system

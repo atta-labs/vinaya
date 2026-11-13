@@ -49,15 +49,15 @@ describe("Vinaya's configuration section", () => {
 
   test("the decision-records rule reads the section's doctrine root and adds its issue after every field's", () => {
     const parsed = VinayaConfigSchema.safeParse({
-      decisionRecords: { path: 'docs/aeg/adr' },
-      proseGates: { doctrineRoot: 'docs/aeg' }
+      decisionRecords: { path: 'docs/doctrine/adr' },
+      proseGates: { doctrineRoot: 'docs/doctrine' }
     })
     expect(parsed.success).toBe(false)
     if (parsed.success) return
     expect(parsed.error.issues.map((i) => [i.path.join('.'), i.message])).toEqual([
       [
         'decisionRecords.path',
-        'must be outside the doctrine tree "docs/aeg" — decision records belong to this repository, not to the doctrine it ships'
+        'must be outside the doctrine tree "docs/doctrine" — decision records belong to this repository, not to the doctrine it ships'
       ]
     ])
     expect(decisionRecordsPathIssue('docs/adr', undefined)).toBeNull()

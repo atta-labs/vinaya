@@ -9,7 +9,7 @@
  * resolved` (nothing was ever wired to try) is the sanctioned operator-
  * metered case and passes; every other incapable reason
  * (`transcript-unreadable`/`transcript-empty` — something WAS wired but
- * reaching it failed) fails — lives in `@attalabs/aeg-core`'s
+ * reaching it failed) fails — lives in `@attalabs/process-vinaya`'s
  * `isTokenCollectionWiringBroken`, shared verbatim with this repo's own
  * shipped check — there is no second bin.
  *
@@ -17,9 +17,9 @@
  * `transcript-empty`. Passes on `no-transcript-resolved`, which covers both
  * "no pointer at all" and "a pointer that provably belongs to another
  * session" — including a stale one left by a sibling session in the same
- * project directory. An `aeg-core` bin briefly existed
+ * project directory. A bin of the earlier core package briefly existed
  * only so `registry-scaffold.ts`'s classifier had a candidate to place an
- * `enforcement.md` stub row for; it shipped to nobody (`aeg-core`'s `files`
+ * `enforcement.md` stub row for; it shipped to nobody (that package's `files`
  * is `["src", …]`) and made the row cite a path no adopter has. The row now
  * cites this shipped check directly, as `main-branch-refusal`'s row does,
  * so the bin had no remaining purpose

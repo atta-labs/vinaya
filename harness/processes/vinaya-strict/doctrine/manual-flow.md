@@ -11,28 +11,28 @@ Companion to `process.md` (the eleven-phase walkthrough), `state-machine.md` (th
 
 ---
 
-## 0. Starting and maintaining a Vinaya repo (`aeg.sh`)
+## 0. Starting and maintaining a Vinaya repo (the scaffolder script)
 
 Vinaya "init" is not software — it is a **state the repo is in**. A repo is running Vinaya when **everything the flow references is present**:
 
 1. **The model layer** — `harness/processes/vinaya-strict/` scaffold (exists ONCE, in the process folder only): `state-machine.md`, `process.md`, `manual-flow.md`, `tranche-model.md`, `roles/`, `skills/` (the Vinaya skills — canonical home); plus `projects.md` only once multi-project.
 2. **The living-state layer** — forge-native. State only, never the model: active/blocked/next is derived from Issue/branch/PR state, and completed-work history, lessons, per-project operational state, and ratification items live in `git log`/PR history, pinned Issues, and the `needs:principal-input` label respectively.
 3. **The enforcement layer (referenced by the model, so it must travel with it):**
-   - Blast-radius collision domains (conflicts are package-level, `tranche-model.md` §5) — live-derived from `package.json`'s `workspaces` (or `pnpm-workspace.yaml`'s `packages:` list, on a pnpm repo — pnpm ignores `package.json`'s `workspaces` key entirely) for `packages/*`, plus a built-in cross-cutting default set (lockfile, monorepo config, CI, git hooks); `vinaya.config.json`'s `blastRadius.extraDomains` for anything beyond those. No file to scaffold — the legacy static `.aeg/packages` list is retired, no longer read at all.
+   - Blast-radius collision domains (conflicts are package-level, `tranche-model.md` §5) — live-derived from `package.json`'s `workspaces` (or `pnpm-workspace.yaml`'s `packages:` list, on a pnpm repo — pnpm ignores `package.json`'s `workspaces` key entirely) for `packages/*`, plus a built-in cross-cutting default set (lockfile, monorepo config, CI, git hooks); `vinaya.config.json`'s `blastRadius.extraDomains` for anything beyond those. No file to scaffold — the retired static packages list, no longer read at all.
    - the `verify-docs` script (`harness/processes/vinaya-strict/checks/standalone/verify-docs.ts`) — the doc-tier gate. In this repo it runs at authoring time (`open-pr.ts` / `bun run verify-docs --pr`); the CI-side counterparts are the `brief-shape`/`doc-coverage` checks in `.github/workflows/vinaya-checks.yml`. (In the attalabs reference implementation it ran as a step of that repo's consolidated gate job.)
    - the Issue template restricting Issues to deps / conflicts / project label / ticket link, and the CI check rejecting forbidden planning fields (`tranche-model.md` §9.3).
    - the generated agent-surface skill view (e.g. `.claude/skills/`) — derived from `doctrine/skills/`.
 4. At least one tranche exists on the forge (a Milestone plus its labeled Issues), and the role docs are reachable.
 
-You can create that by hand, or use **`aeg.sh`** — one self-contained, downloadable shell script (from the Vinaya site). It is a **dumb scaffolder**: it writes files, nothing else. It does not dispatch agents, query the forge, or reason — that's a tool's or a human's job. Self-contained (scaffold embedded, no network) so you can read every byte first. It lays down **every layer above** — not just `vinaya-strict/` — so the unit it produces is complete: nothing the model references is missing. Subcommands:
+You can create that by hand, or use **the scaffolder script** — one self-contained, downloadable shell script (from the Vinaya site). It is a **dumb scaffolder**: it writes files, nothing else. It does not dispatch agents, query the forge, or reason — that's a tool's or a human's job. Self-contained (scaffold embedded, no network) so you can read every byte first. It lays down **every layer above** — not just `vinaya-strict/` — so the unit it produces is complete: nothing the model references is missing. Subcommands:
 
 ```
-aeg init [folder]                       # scaffold the repo (once): model + enforcement + skills
-aeg add-project <name> --path <folder>  # register a project (creates/appends projects.md + stubs)
-aeg generate-skills                     # regenerate the agent-surface skill view from doctrine/skills/
+<scaffolder> init [folder]                  # scaffold the repo (once): model + enforcement + skills
+<scaffolder> add-project <name> --path <folder>  # register a project (creates/appends projects.md + stubs)
+<scaffolder> generate-skills                # regenerate the agent-surface skill view from doctrine/skills/
 ```
 
-`init` scaffolds the enforcement layer (the verify-docs workflow + script, the Issue template/CI check — blast-radius collision domains need no scaffolded file, see above) and the skills alongside `vinaya-strict/`, because the model docs reference all of them — a unit missing any of them references a gate that isn't there. `add-project` stores the `--path` verbatim (never derives it), refuses to overwrite an existing folder or re-register a name, and on first use promotes a single-project repo to multi-project. `generate-skills` writes the agent-specific skill view (this host's own skill directory, e.g. `.claude/skills/`, or another agent's equivalent) from the canonical skills in `doctrine/skills/` — so the canonical skills travel with the unit and the loadable view is rebuilt, never authored by hand. See `projects.md`. Tasks themselves are **forge Issues**, created by the Planner on the forge — not by `aeg.sh`.
+`init` scaffolds the enforcement layer (the verify-docs workflow + script, the Issue template/CI check — blast-radius collision domains need no scaffolded file, see above) and the skills alongside `vinaya-strict/`, because the model docs reference all of them — a unit missing any of them references a gate that isn't there. `add-project` stores the `--path` verbatim (never derives it), refuses to overwrite an existing folder or re-register a name, and on first use promotes a single-project repo to multi-project. `generate-skills` writes the agent-specific skill view (this host's own skill directory, e.g. `.claude/skills/`, or another agent's equivalent) from the canonical skills in `doctrine/skills/` — so the canonical skills travel with the unit and the loadable view is rebuilt, never authored by hand. See `projects.md`. Tasks themselves are **forge Issues**, created by the Planner on the forge — not by the scaffolder script.
 
 ---
 
@@ -59,7 +59,7 @@ A **task is a forge Issue.** Its status is never written anywhere — it is **de
 | `dropped` | Issue closed `NOT_PLANNED` — decided against, not done |
 | `incoherent` | Issue closed `COMPLETED` with no merged PR — done-but-unprovable, surfaced for a human |
 
-This table is a **reader's summary, not the source.** The authoritative list is `DERIVED_STATUSES` + the ordered `DERIVATION_RULES` in `@attalabs/aeg-core`'s state-machine model, rendered live at `/docs/state-machine`; order is load-bearing there in ways a flat table cannot show.
+This table is a **reader's summary, not the source.** The authoritative list is `DERIVED_STATUSES` + the ordered `DERIVATION_RULES` in `@attalabs/process-vinaya`'s state-machine model, rendered live at `/docs/state-machine`; order is load-bearing there in ways a flat table cannot show.
 
 So **no role ever writes status.** Opening the PR *is* the in-review signal; merging *is* the done signal. To see the board you query the forge (`gh pr list`, the Issues view, a project board) — you never read status from a file. The plan is the tranche's Milestone plus its labeled Issues, each declaring its own dependency/conflict edges; see `tranche-model.md`.
 

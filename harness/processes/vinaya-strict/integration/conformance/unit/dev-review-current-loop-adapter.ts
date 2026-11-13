@@ -485,7 +485,7 @@ const DRIVERS: Record<string, Driver> = {
     return runAndObserve(
       world,
       { task: world.task, agent: 'codex' },
-      developerPublishesViaToolsDeps(world, { changedPaths: ['packages/aeg-core/src/x.ts'] })
+      developerPublishesViaToolsDeps(world, { changedPaths: ['packages/core/src/x.ts'] })
     )
   }
 }

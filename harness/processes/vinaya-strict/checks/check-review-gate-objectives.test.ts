@@ -33,7 +33,7 @@ describe('resolveFrozenPauseBoundRuling — repeated newest-round attempts', () 
     const text = `Ruling ${ordinal}`
     return {
       binding: `1-${ordinal}|esc-${ordinal}|${pauseBoundRulingDigest(text)}`,
-      comment: { body: `<!-- aeg:principal:ruling:1-${ordinal} -->\n${text}`, author: principal }
+      comment: { body: `<!-- vinaya:principal:ruling:1-${ordinal} -->\n${text}`, author: principal }
     }
   }
 
@@ -42,7 +42,7 @@ describe('resolveFrozenPauseBoundRuling — repeated newest-round attempts', () 
     const comments = [
       ...rulings.map(({ comment }) => comment),
       ...rulings.map(({ binding }) => ({
-        body: `<!-- aeg:developer:round-4 -->\nPause-bound ruling: ${binding}`,
+        body: `<!-- vinaya:developer:round-4 -->\nPause-bound ruling: ${binding}`,
         author: principal
       }))
     ]
@@ -59,8 +59,8 @@ describe('resolveFrozenPauseBoundRuling — repeated newest-round attempts', () 
     const first = ruling(1)
     const comments = [
       first.comment,
-      { body: `<!-- aeg:developer:round-4 -->\nPause-bound ruling: ${first.binding}`, author: principal },
-      { body: '<!-- aeg:developer:round-4 -->\nHead: abc', author: principal }
+      { body: `<!-- vinaya:developer:round-4 -->\nPause-bound ruling: ${first.binding}`, author: principal },
+      { body: '<!-- vinaya:developer:round-4 -->\nHead: abc', author: principal }
     ]
 
     const resolved = resolveFrozenPauseBoundRuling(1, comments, [principal], () => [])
@@ -72,7 +72,7 @@ describe('resolveFrozenPauseBoundRuling — repeated newest-round attempts', () 
     const only = ruling(1)
     const comments = [
       only.comment,
-      { body: `<!-- aeg:developer:round-4 -->\nPause-bound ruling: ${only.binding}`, author: principal }
+      { body: `<!-- vinaya:developer:round-4 -->\nPause-bound ruling: ${only.binding}`, author: principal }
     ]
 
     const resolved = resolveFrozenPauseBoundRuling(1, comments, [principal], () => [])
@@ -529,9 +529,9 @@ process.exit(1)
       prView: {
         number: 1,
         comments: [
-          { body: `<!-- aeg:principal:ruling:1-1 -->\n${rulingText}\n`, author: { login: 'daniboomerang' } },
+          { body: `<!-- vinaya:principal:ruling:1-1 -->\n${rulingText}\n`, author: { login: 'daniboomerang' } },
           {
-            body: `<!-- aeg:developer:round-2 -->\nHead: ${sha}\nPause-bound ruling: ${frozen}`,
+            body: `<!-- vinaya:developer:round-2 -->\nHead: ${sha}\nPause-bound ruling: ${frozen}`,
             author: { login: 'daniboomerang' }
           },
           { body: verdict('APPROVE'), author: { login: 'daniboomerang' } },
@@ -576,7 +576,7 @@ process.exit(1)
     const { prView, frozen } = pauseBoundFixture(sha, '')
     const echoed = pauseBoundFixture(sha, frozen).prView
     echoed.comments[0] = {
-      body: '<!-- aeg:principal:ruling:1-1 -->\nAn edited ruling.\n',
+      body: '<!-- vinaya:principal:ruling:1-1 -->\nAn edited ruling.\n',
       author: { login: 'daniboomerang' }
     }
     void prView

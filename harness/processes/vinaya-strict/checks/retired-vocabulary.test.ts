@@ -6,6 +6,7 @@ import { describe, expect, it } from 'bun:test'
 import { PLAN_ON_DISK_PATTERNS, rulesForGroup } from '../tools/prose-rules'
 import { FORGE_NUMBER_PATTERN as FORGE_NUMBER_REGEXP } from '../tools/reader-resolvable-prose'
 import { DOCTRINE_REPO_PATHS, doctrineRepoPath } from '../tools/doctrine/doctrine-map'
+import { LEGACY_PROJECT_DIR, LEGACY_TRANCHES_DIR } from '../tools/legacy-paths'
 
 /**
  * The doctrine sweep, as a check instead of a habit.
@@ -26,8 +27,8 @@ import { DOCTRINE_REPO_PATHS, doctrineRepoPath } from '../tools/doctrine/doctrin
  * `reader-resolvable-prose.ts`'s `PRODUCT_SLUG_SCOPE`, proved by
  * `reader-resolvable-prose.test.ts`, so a change to one package's files can
  * no longer pass this package's cached test result at the push hook (a
- * CLI-only diff never marks `aeg-core` affected, so a rule about CLI files
- * living in an `aeg-core` test never ran on that push at all).
+ * CLI-only diff never marks the process package affected, so a rule about CLI files
+ * living in a process-package test never ran on that push at all).
  *
  * Five review rounds each declared the decision-log claim swept, and each time
  * it resurfaced a few lines from where the previous pass fixed it — usually in
@@ -41,7 +42,7 @@ import { DOCTRINE_REPO_PATHS, doctrineRepoPath } from '../tools/doctrine/doctrin
  * failure with the file and line printed.
  *
  * A second, related class joined this suite later: `RETIRED_IN_PRODUCT` also
- * bans a forge number cited bare in the doctrine `aeg-root/**`
+ * bans a forge number cited bare in the doctrine the product
  * publishes. It is not retired — it is the product's live vocabulary — but
  * citing one as an unexplained doctrine reference is exactly the residue the
  * ruling that ended the decision log already named: "a decision id, a
@@ -51,26 +52,26 @@ import { DOCTRINE_REPO_PATHS, doctrineRepoPath } from '../tools/doctrine/doctrin
  * enforcement covered `D-###` and stopped; forge numbers and slugs survived
  * unwatched until this pattern (and the tranche-slug pattern below) closed
  * the gap. `FORGE_NUMBER_PATTERN` and `LEGACY_SLUG_PATTERN` are scoped to
- * `aeg-root` only via `PATTERN_SCOPE` — that directory is pure doctrine
+ * the doctrine paths only via `PATTERN_SCOPE` — that directory is pure doctrine
  * prose, no test fixtures, so a blind grep there cannot mistake a legitimate
  * occurrence for a citation. The tranche-slug pattern once lived here too,
- * scoped wider than `aeg-root` to also reach product code
+ * scoped wider than the doctrine paths to also reach product code
  * (`apps/cli/src`/`.github/workflows`/`.vinaya`/two READMEs) — that wider
  * reach, and the pattern itself, now belong entirely to
  * `reader-resolvable-prose.ts`'s `PRODUCT_SLUG_SCOPE`: this
  * suite grepping another package's files let a CLI-only push slip past the
  * rule, since the push hook's affected-test-suite run never touches
- * `aeg-core` for a CLI-only diff.
+ * the process package for a CLI-only diff.
  *
  * A third failure mode, found by post-merge review, joined coverage to
  * vacuity: `[a-z][a-z-]+-v[0-9]` only sees a tranche slug that ends `-vN`.
- * Four of this repo's own archived tranches — `aeg-governance-hardening`,
- * `aeg-consolidation`, `aeg-studio-cleanup`, `herald-onto-engine` — predate
+ * Four of this repo's own archived tranches
+ * (one of them for the Herald product) predate
  * that suffix convention, and the shape-based pattern is structurally blind
  * to them; its self-guard sample happened to be drawn
  * from the class the pattern already covers, so it proved non-vacuity
  * without ever proving coverage. `LEGACY_SLUG_PATTERN` below closes that:
- * derived from `aeg-root/tranches/completed/*.md` filenames — the
+ * derived from the retired archive's `completed/*.md` filenames — the
  * authoritative list of what a real slug looks like — instead of a
  * hand-shaped regex guess, so it cannot drift from reality the way the
  * `-vN` guess did.
@@ -80,7 +81,7 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
 /**
  * Legacy-style tranche slugs that predate the `-vN` naming convention.
- * `aeg-root/tranches/completed` — the archive these would normally be read
+ * The retired tranche-file archive — the archive these would normally be read
  * live from — is legitimately absent in this repo (task 4's ratified
  * boundary — attalabs' operational archive, not doctrine). This suite's
  * subject is whether `LEGACY_SLUG_PATTERN` catches the class the `-vN`
@@ -110,9 +111,9 @@ const LEGACY_SLUG_PATTERN = LEGACY_SLUGS.length > 0 ? `(${LEGACY_SLUGS.join('|')
 const RETIRED_IN_PRODUCT = [
   ...MODULE_PATTERNS.filter((pattern) => !PLAN_ON_DISK_PATTERNS.includes(pattern)),
   // A pull-request or Issue number cited as an unexplained parenthetical —
-  // `#NNN` — inside the doctrine `aeg-root/**` publishes. It
+  // `#NNN` — inside the doctrine the product publishes. It
   // resolves only inside this repo's own tracker; an adopter reading the
-  // installed doc has no forge to look it up in. Scoped to `aeg-root` only
+  // installed doc has no forge to look it up in. Scoped to the doctrine paths only
   // via `PATTERN_SCOPE` below, not the full `PRODUCT` surface: the same
   // digit shape is the live PR/Issue-number grammar the product's own code
   // parses everywhere else (`Closes #N`, golden fixtures, coherence
@@ -132,10 +133,10 @@ const RETIRED_IN_PRODUCT = [
  * every `PRODUCT` path. What's banned is narrower than the string: citing
  * one as an unexplained doctrine reference.
  *
- * `FORGE_NUMBER_PATTERN` and `LEGACY_SLUG_PATTERN` scope to `aeg-root` only
+ * `FORGE_NUMBER_PATTERN` and `LEGACY_SLUG_PATTERN` scope to the doctrine paths only
  * — pure doctrine prose, no test fixtures live there, so a blind grep can't
  * mistake a legitimate occurrence for a citation. Both members here stay
- * aeg-root-only; neither needs the wider, product-code-reaching surface the
+ * doctrine-only; neither needs the wider, product-code-reaching surface the
  * tranche-slug pattern used to carry in this map. See the module header for
  * where that pattern and its wider surface live now.
  */
@@ -157,10 +158,10 @@ const PATTERN_SCOPE: Record<string, string[]> = {
   // own check rather than through this package's grep of another package's
   // files — see the module header above.
   //
-  // LEGACY_SLUG_PATTERN stays aeg-root-only, deliberately not widened the way
+  // LEGACY_SLUG_PATTERN stays doctrine-only, deliberately not widened the way
   // the VN pattern used to be: every slug it can ever match is, by
   // construction, already archived (derived from
-  // aeg-root/tranches/completed/*.md) — citing a closed tranche is the safe
+  // the retired archive's completed/*.md) — citing a closed tranche is the safe
   // case (same durability class as a closed PR), not the live-citation
   // problem the (now-removed) widening existed to catch.
   ...(LEGACY_SLUG_PATTERN ? { [LEGACY_SLUG_PATTERN]: [...DOCTRINE_REPO_PATHS] } : {})
@@ -246,7 +247,7 @@ const EXEMPT = [
   'docs/decisions-legacy.md',
   'apps/herald-ai/docs/',
   'apps/vada-ai/docs/',
-  'aeg-root/tranches/completed/',
+  `${LEGACY_TRANCHES_DIR}/completed/`,
   'harness/processes/vinaya-strict/tools/docs/published-prose',
   'harness/processes/vinaya-strict/checks/retired-vocabulary.test.ts',
   // The task 7 CheckSpec adapter (see the module header above) — it
@@ -271,7 +272,7 @@ const EXEMPT = [
  * The scope `RETIRED_IN_PRODUCT` checks against.
  *
  * Repo-wide (`['.']`), not an enumerated adopter-surface list. It used to be
- * a 7-path array (`aeg-root`, `packages/aeg-core`, `harness/processes/vinaya-strict/tools/task-contract/forge`,
+ * a 7-path array (the retired doctrine root, the retired core package, `harness/processes/vinaya-strict/tools/task-contract/forge`,
  * `apps/vinaya`, `.vinaya`, and 2 of 22 `.claude/skills`) — but an enumerated
  * list has the exact blind-spot shape that let a `D-###` citation sit
  * unwatched in root `CLAUDE.md` and a dangling reference survive a real
@@ -288,9 +289,9 @@ const PRODUCT = ['.']
  * Repo-wide (`['.']`), not an enumerated list — same defect and same fix as
  * `PRODUCT` above: an enumerated surface has the exact blind-spot shape that
  * lets a new path go unwatched, and it drifted concretely here. The prior
- * 8-path list (`.aeg`, `aeg-root`, `.claude`, `.github`, `.vinaya`,
- * `packages/aeg-core`, `apps/vinaya`, `harness/processes/vinaya-strict/tools/task-contract/forge`) named three
- * paths this repo doesn't have (`.aeg`, `.claude`, `apps/vinaya` — leftovers
+ * 8-path list (the retired static packages file, the retired doctrine root, `.claude`, `.github`, `.vinaya`,
+ * the retired core package, `apps/vinaya`, `harness/processes/vinaya-strict/tools/task-contract/forge`) named three
+ * paths this repo doesn't have (the static packages file, `.claude`, `apps/vinaya` — leftovers
  * from the attalabs layout this suite was copied from) and one tool's own
  * directory (`.claude`) that has no business in an agent-agnostic product's
  * test. GNU grep exits non-zero on a missing path, which `grep()` below reads
@@ -460,8 +461,8 @@ const SAMPLES: Record<string, string> = {
   ',\\)': 'the seam contract (planner-brief contract,) named here',
   '\\(\\.\\)': 'forces every agent back for the rules. (.)',
   '[Tt]opology files?': 'the Planner edits the thin topology file at plan time',
-  'aeg-root/tranches/': 'every active tranche file sits in aeg-root/tranches/',
-  'aeg-project/': 'append the retrospective to aeg-project/lessons.md'
+  [`${LEGACY_TRANCHES_DIR}/`]: `every active tranche file sits in ${LEGACY_TRANCHES_DIR}/`,
+  [`${LEGACY_PROJECT_DIR}/`]: `append the retrospective to ${LEGACY_PROJECT_DIR}/lessons.md`
 }
 
 describe('the gate can see what it bans', () => {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: issue-parts-coverage. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: issue-parts-coverage. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkPartsCiteDefinedObjectives` — one of the five write-only rules named
  * apart. `validates: 'issue'`: `## Parts` citing a real Objective id
  * is a property of a task Issue's own body, never a pull request's.

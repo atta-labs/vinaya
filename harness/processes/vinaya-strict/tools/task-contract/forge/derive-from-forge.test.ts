@@ -11,7 +11,7 @@ const { deriveTrancheFromForge, trancheFromIssues } = await import('./derive-fro
 
 const OWNER = 'atta-labs'
 const REPO = 'vinaya'
-const SLUG = 'aeg-seam-hardening-v1'
+const SLUG = 'sample-tranche-v1'
 
 const MILESTONES = [{ title: SLUG, description: 'Harden the seams.', state: 'open' }]
 

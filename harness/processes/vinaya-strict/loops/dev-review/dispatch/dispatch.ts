@@ -628,7 +628,7 @@ export const MAX_TEE_BYTES = 8 * 1024 * 1024
  * `gh auth token`), so its raw bytes are exactly the bytes that must never
  * reach disk unscrubbed:
  *
- *  1. **Redacted.** Every chunk goes through `@attalabs/aeg-core`'s `redact` —
+ *  1. **Redacted.** Every chunk goes through `@attalabs/process-vinaya`'s `redact` —
  *     the same function every outbox line already passes through — so a
  *     GitHub token or an `Authorization: Bearer` value is replaced before it
  *     is written, and an absolute path under the home directory is rewritten
@@ -764,7 +764,7 @@ export function backgroundShapeDetectorSource(): string {
 
 /**
  * The runtime twin of `isWholeSuiteTestPlanLine`
- * (`@attalabs/aeg-core`'s `issue-validation.ts`) — same four whole-suite
+ * (`@attalabs/process-vinaya`'s `issue-validation.ts`) — same four whole-suite
  * shapes (a bare `bun test`, `bun test` on a directory, any `bunx turbo
  * test` form, `vitest run` on a package), reimplemented here rather than
  * imported because this source runs embedded, as a string, inside the
@@ -2790,7 +2790,7 @@ export function parseCodexResumeId(stdout: string): string | null {
  * splicing a `resolveRepo()` result into its own outbox path — duplicated
  * here rather than imported, since `log-sink.ts` is out of this task's
  * `## Surface`. `resolveRepo()` can return an `VINAYA_REPO` env value parsed by
- * `parseOwnerRepo` (`@attalabs/aeg-forge-state`), which accepts anything
+ * `parseOwnerRepo` (in the forge-state modules), which accepts anything
  * shaped `owner/repo` — including a `repo` half containing `../` — so a
  * segment failing this check is treated exactly like a null `resolveRepo()`
  * result (`unresolved`), never spliced unchecked into a filesystem path.
@@ -3454,7 +3454,7 @@ export function launchRecordMatchesRun(
  * produces, unchanged. The tee holds the vendor's raw stream — for Claude,
  * `--output-format stream-json`, the identical per-message
  * `{type:"assistant", message:{id, usage}}` shape a real transcript file
- * carries — so `summarizeTranscript` (aeg-core's already-shipped,
+ * carries — so `summarizeTranscript` (the process package's already-shipped,
  * already-tested dedup-by-message-id-then-sum reader) applies to it
  * unchanged; this function's own job is only to find the right file.
  *
@@ -3814,7 +3814,7 @@ export function readDispatchUsage(
 
 /**
  * The generic launcher's own honest classification
- * — never `@attalabs/aeg-core`'s `normalizeOutcome`, which requires
+ * — never `@attalabs/process-vinaya`'s `normalizeOutcome`, which requires
  * `artifactsPresent`/`postconditionsMet` this generic function has no way to
  * check (that verification is a per-role caller's own concern, e.g. the
  * dev-review-loop's PR-open check — out of this file's boundary). Mirrors
@@ -5888,7 +5888,7 @@ export async function dispatchRole(
         // at least got a vendor session running — this is CLI-local
         // bookkeeping (`DispatchHandle.failureReason`/the launch record),
         // never the `dispatch_failed` log event's own `reason` field above
-        // (that field's schema lives in `@attalabs/aeg-core`, out of this
+        // (that field's schema lives in `@attalabs/process-vinaya`, out of this
         // task's surface, and keeps reporting the real event class —
         // `'timeout'` — unchanged).
         //

@@ -267,7 +267,7 @@ describe('validateIssueContent — the content checks', () => {
 
   it('refuses an Issue whose `## Premises` line the checkout does not hold', () => {
     const body =
-      '**Boundary** — a task.\n\n**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`\n\n**Traps to avoid** — see `aeg-root/process.md`.\n\n## Premises\n\n`src/a.ts` contains `drainOutbox`\n'
+      '**Boundary** — a task.\n\n**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`\n\n**Traps to avoid** — see `doctrine/process.md`.\n\n## Premises\n\n`src/a.ts` contains `drainOutbox`\n'
     const errors = validateIssueContent({
       body,
       labels: ['vinaya/tranche:demo'],
@@ -297,7 +297,7 @@ describe('validateIssueContent — the content checks', () => {
 
   it('refuses an Issue whose Boundary claims something already exists with no premise', () => {
     const body =
-      '**Boundary** — the cancellation signal is already wired, currently inert.\n\n**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`\n\n**Traps to avoid** — see `aeg-root/process.md`.\n'
+      '**Boundary** — the cancellation signal is already wired, currently inert.\n\n**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`\n\n**Traps to avoid** — see `doctrine/process.md`.\n'
     const errors = validateIssueContent({
       body,
       labels: ['vinaya/tranche:demo'],
@@ -326,7 +326,7 @@ describe('validateIssueContent — the content checks', () => {
 
   it('refuses a deferred premise with no declared `Depends-on`', () => {
     const body =
-      '**Boundary** — a task.\n\n**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`\n\n**Traps to avoid** — see `aeg-root/process.md`.\n\n## Premises\n\nafter #841: `src/a.ts` contains `drainOutbox`\n'
+      '**Boundary** — a task.\n\n**Dependency rationale** — `Depends-on: —` `Conflicts-with: —`\n\n**Traps to avoid** — see `doctrine/process.md`.\n\n## Premises\n\nafter #841: `src/a.ts` contains `drainOutbox`\n'
     const errors = validateIssueContent({
       body,
       labels: ['vinaya/tranche:demo'],
@@ -593,7 +593,7 @@ describe('arg extraction', () => {
 // gate (`checks/bin/check-brief-shape.ts`) applies. Grading every branch as
 // a task branch refuses a standalone `fix/*` PR for a `Closes #N` its branch
 // cannot carry, while CI passes the identical body — the divergence
-// `aeg-root/enforcement.md` rules out.
+// `doctrine/enforcement.md` rules out.
 describe('validateForgeWrite — branch grammar', () => {
   // A body carrying ≥2 brief-shape markers, so it is graded as a brief and the
   // non-brief-shaped bypass below cannot be what makes these cases pass.
@@ -811,7 +811,7 @@ describe('runBodyChecks — the ONE registry-runner call every forge-write path 
     const originalPath = process.env.PATH
     const config = Buffer.from(JSON.stringify({ principals: ['fixture-principal'] })).toString('base64')
     const comments = [
-      { body: `<!-- aeg:brief:v1 -->\nBrief hash: fixture\n${validPr}`, user: { login: 'fixture-principal' } }
+      { body: `<!-- vinaya:brief:v1 -->\nBrief hash: fixture\n${validPr}`, user: { login: 'fixture-principal' } }
     ]
     writeFileSync(
       join(dir, 'gh'),

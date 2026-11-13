@@ -6,7 +6,7 @@ import type { TranscriptSummary } from '../../../../../kernel/adapters/agents/cl
 /**
  * Every fixture here is a hand-built `TranscriptSummary` — this suite never
  * imports a collection adapter, deliberately. `TranscriptSummary` is the seam
- * (`aeg-root/tranche-model.md` §12): an adopter on a harness AEG has never
+ * (`doctrine/tranche-model.md` §12): an adopter on a harness Vinaya has never
  * seen implements collection themselves and reuses these renderers unchanged,
  * so the renderers must be provable without any host's transcript format in
  * sight. The Claude Code adapter's own tests live in

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: coherence. Thin adapter over `@attalabs/aeg-core`'s coherence
+ * Core check: coherence. Thin adapter over `@attalabs/process-vinaya`'s coherence
  * evaluators — mirrors `harness/processes/vinaya-strict/checks/standalone/verify-coherence.ts`'s
  * forge-fact assembly, but scoped to the CURRENT task branch's tranche
  * only (derived from `BRANCH`/the current git branch), the same
@@ -10,7 +10,7 @@
  *
  * Tranche state is read ONLY through a `StateSource`
  * (`createForgeSource`). Forge facts come only from the two primitives this
- * task's boundary re-exports from `@attalabs/aeg-core`: `fetchForgeFacts` and
+ * task's boundary re-exports from `@attalabs/process-vinaya`: `fetchForgeFacts` and
  * `fetchOpenIssuesByLabel`.
  *
  * Runs A1, A2, A3, T1, T2, T3, D1, R1, L1, L3 and L5 over the branch tranche,
@@ -595,7 +595,7 @@ async function main(): Promise<void> {
   const topologyIssues = new Set(tranche.tasks.map((t) => t.issue).filter((n): n is number => n !== null))
   const openNums = (openIssuesBySlug.get(slug) ?? []).map((i) => i.number)
   results.push(scopeT2ToPlanPr(checkT2(new Map([[slug, openNums]]), new Map([[slug, topologyIssues]]), slug), false))
-  // R1's project-registry half needs the registry passed in (aeg-core is pure).
+  // R1's project-registry half needs the registry passed in (the process package is pure).
   // Omitting it left that half silently dormant in the shipped CLI while the
   // governance docs stated R1 re-runs it — a documented-but-absent control.
   const registeredNames = readRegisteredProjectNames()

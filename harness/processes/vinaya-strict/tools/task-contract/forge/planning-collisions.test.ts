@@ -38,7 +38,7 @@ describe('resolveCollisionThreshold', () => {
 
 describe('pinnedFilesOf', () => {
   const tracked = [
-    'packages/aeg-core/src/issue-validation.ts',
+    'packages/core/src/issue-validation.ts',
     'apps/cli/src/lib/forge-write.ts',
     'harness/processes/vinaya-strict/integration/config/compose.ts',
     'harness/processes/vinaya-strict/integration/config-reference.ts'
@@ -48,11 +48,11 @@ describe('pinnedFilesOf', () => {
 
   it('reads the files a Boundary pins, through the renderer’s own extraction', () => {
     const body = bodyWith(
-      'In: the check itself. Pinned files: `packages/aeg-core/src/issue-validation.ts`, `apps/cli/src/lib/forge-write.ts`. Out: merging anything.'
+      'In: the check itself. Pinned files: `packages/core/src/issue-validation.ts`, `apps/cli/src/lib/forge-write.ts`. Out: merging anything.'
     )
     expect(pinnedFilesOf(body, tracked).sort()).toEqual([
       'apps/cli/src/lib/forge-write.ts',
-      'packages/aeg-core/src/issue-validation.ts'
+      'packages/core/src/issue-validation.ts'
     ])
   })
 
@@ -83,7 +83,7 @@ describe('pinnedFilesOf', () => {
 })
 
 describe('validateIssueContent — the pinned-file collision findings', () => {
-  const A = 'packages/aeg-core/src/issue-validation.ts'
+  const A = 'packages/core/src/issue-validation.ts'
   const B = 'apps/cli/src/lib/forge-write.ts'
   const C = 'harness/processes/vinaya-strict/integration/config/compose.ts'
 
@@ -173,7 +173,7 @@ describe('validateIssueContent — the pinned-file collision findings', () => {
 })
 
 describe('buildCollisionPeers — which peers each scope compares against', () => {
-  const A = 'packages/aeg-core/src/issue-validation.ts'
+  const A = 'packages/core/src/issue-validation.ts'
   const B = 'apps/cli/src/lib/forge-write.ts'
   const tracked = [A, B]
 

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseTranche } from '../task-contract/parse-tranche'
 import { DOCTRINE_TREE } from '../doctrine/doctrine-map'
+import { LEGACY_TRANCHES_DIR } from '../legacy-paths'
 import type { StateSource } from './contract'
 
 /** Default governance root when no config value is supplied — the doctrine
@@ -11,11 +12,8 @@ import type { StateSource } from './contract'
  * config flip, not a rewrite. */
 export const DEFAULT_GOVERNANCE_ROOT = DOCTRINE_TREE
 
-/** The retired tranche-file state an unconfigured file source still reads. */
-const LEGACY_TRANCHES_DIR = 'aeg-root/tranches'
-
 export type FileSourceConfig = {
-  /** Governance root to read from. Unset, tranches are read from the retired tranche-file state. */
+  /** Governance root to read from. Unset, tranches are read from the retired tranche-file directory (`LEGACY_TRANCHES_DIR`). */
   root?: string
 }
 

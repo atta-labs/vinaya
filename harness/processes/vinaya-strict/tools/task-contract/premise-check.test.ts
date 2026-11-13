@@ -7,7 +7,7 @@ describe('parsePremiseBlock', () => {
     const body = `## Summary
 
 **Premise:**
-- packages/aeg-core/src/docs/surfaced-manifest.ts contains: export function isSurfacedDoc
+- packages/core/src/docs/surfaced-manifest.ts contains: export function isSurfacedDoc
 - apps/herald-ai/web/src/lib/prompts.ts absent: SKEPTICAL_AUDITOR_PROMPT
 
 ## Test plan
@@ -16,7 +16,7 @@ describe('parsePremiseBlock', () => {
     expect(assertions).toEqual([
       {
         kind: 'contains',
-        path: 'packages/aeg-core/src/docs/surfaced-manifest.ts',
+        path: 'packages/core/src/docs/surfaced-manifest.ts',
         value: 'export function isSurfacedDoc'
       },
       { kind: 'absent', path: 'apps/herald-ai/web/src/lib/prompts.ts', value: 'SKEPTICAL_AUDITOR_PROMPT' }

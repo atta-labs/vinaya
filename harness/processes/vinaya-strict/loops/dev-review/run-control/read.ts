@@ -187,7 +187,7 @@ export function whereTheRunIs(row: TaskStatusRow): {
  * for this task at all — `handlers.ts` renders that as an empty page, per
  * the catalog's own boundary note, never as an error.
  *
- * `TaskEscalationPacket` (`@attalabs/aeg-core`) already carries its own
+ * `TaskEscalationPacket` (`@attalabs/process-vinaya`) already carries its own
  * `observedAt`/`freshness` fields (`ObservedSchema`, merged into the
  * schema directly) — they are set here, once, rather than through the
  * generic `Observed<T>` wrapper above, which would double them.

@@ -64,12 +64,12 @@ describe('isUrlPointer / pointerToPath', () => {
   it('recognizes http(s) pointers', () => {
     expect(isUrlPointer('https://example.com/docs')).toBe(true)
     expect(isUrlPointer('http://example.com/docs')).toBe(true)
-    expect(isUrlPointer('aeg-root/state-machine.md')).toBe(false)
+    expect(isUrlPointer('doctrine/state-machine.md')).toBe(false)
   })
 
   it('strips an anchor fragment', () => {
-    expect(pointerToPath('aeg-root/state-machine.md#section-9')).toBe('aeg-root/state-machine.md')
-    expect(pointerToPath('aeg-root/state-machine.md')).toBe('aeg-root/state-machine.md')
+    expect(pointerToPath('doctrine/state-machine.md#section-9')).toBe('doctrine/state-machine.md')
+    expect(pointerToPath('doctrine/state-machine.md')).toBe('doctrine/state-machine.md')
   })
 })
 
@@ -81,14 +81,14 @@ describe('parseDocOwners', () => {
         '',
         'packages/ui/topbar/**   .claude/skills/ui-components/SKILL.md',
         '   # indented comment',
-        'scripts/verify-docs.ts   aeg-root/state-machine.md   # trailing comment',
+        'scripts/verify-docs.ts   doctrine/state-machine.md   # trailing comment',
         ''
       ].join('\n')
     )
     expect(errors).toEqual([])
     expect(bindings).toEqual([
       { glob: 'packages/ui/topbar/**', pointer: '.claude/skills/ui-components/SKILL.md', lineNum: 3 },
-      { glob: 'scripts/verify-docs.ts', pointer: 'aeg-root/state-machine.md', lineNum: 5 }
+      { glob: 'scripts/verify-docs.ts', pointer: 'doctrine/state-machine.md', lineNum: 5 }
     ])
   })
 
@@ -103,7 +103,7 @@ describe('parseDocOwners', () => {
 describe('evaluateC5 — six required paths', () => {
   const OWNERS = [
     'packages/ui/topbar/**                            .claude/skills/ui-components/SKILL.md',
-    'scripts/verify-docs.ts                           aeg-root/state-machine.md',
+    'scripts/verify-docs.ts                           doctrine/state-machine.md',
     'packages/foo/**                                  https://example.com/foo-docs',
     'packages/dangling/**                             docs/does-not-exist.md'
   ].join('\n')
@@ -193,16 +193,16 @@ describe('evaluateC5 — six required paths', () => {
       false
     )
     expect(r.errors.length).toBe(1)
-    expect(r.errors[0]).toMatch(/aeg-root\/state-machine\.md/)
+    expect(r.errors[0]).toMatch(/doctrine\/state-machine\.md/)
   })
 })
 
 describe('isMechanicallyNeutralDiff — the Doc-neutral evidence predicate', () => {
   const NEUTRAL_DIFF = [
-    'diff --git a/packages/aeg-core/bin/verify-docs.ts b/packages/aeg-core/bin/verify-docs.ts',
+    'diff --git a/packages/core/bin/verify-docs.ts b/packages/core/bin/verify-docs.ts',
     'index 1111111..2222222 100644',
-    '--- a/packages/aeg-core/bin/verify-docs.ts',
-    '+++ b/packages/aeg-core/bin/verify-docs.ts',
+    '--- a/packages/core/bin/verify-docs.ts',
+    '+++ b/packages/core/bin/verify-docs.ts',
     '@@ -10,7 +10,7 @@ function foo() {',
     '-  // old comment',
     '+  // updated comment',
@@ -211,17 +211,17 @@ describe('isMechanicallyNeutralDiff — the Doc-neutral evidence predicate', () 
   ].join('\n')
 
   const BEHAVIOR_DIFF = [
-    'diff --git a/packages/aeg-core/bin/verify-docs.ts b/packages/aeg-core/bin/verify-docs.ts',
+    'diff --git a/packages/core/bin/verify-docs.ts b/packages/core/bin/verify-docs.ts',
     'index 1111111..2222222 100644',
-    '--- a/packages/aeg-core/bin/verify-docs.ts',
-    '+++ b/packages/aeg-core/bin/verify-docs.ts',
+    '--- a/packages/core/bin/verify-docs.ts',
+    '+++ b/packages/core/bin/verify-docs.ts',
     '@@ -10,7 +10,7 @@ function foo() {',
     '-  return 1',
     '+  return 2',
     ' }'
   ].join('\n')
 
-  const PATH = 'packages/aeg-core/bin/verify-docs.ts'
+  const PATH = 'packages/core/bin/verify-docs.ts'
 
   it('comment-only +/- lines → neutral', () => {
     expect(isMechanicallyNeutralDiff(NEUTRAL_DIFF, PATH)).toBe(true)
@@ -242,24 +242,24 @@ describe('isMechanicallyNeutralDiff — the Doc-neutral evidence predicate', () 
   describe('adversarial — real code shaped like a comment prefix (code-review finding, task 4)', () => {
     it('TS generator method (`*gen() {`) is NOT misclassified as a `*`-prefixed comment continuation', () => {
       const diff = [
-        '--- a/packages/aeg-core/src/foo.ts',
-        '+++ b/packages/aeg-core/src/foo.ts',
+        '--- a/packages/core/src/foo.ts',
+        '+++ b/packages/core/src/foo.ts',
         '@@ -1,3 +1,3 @@',
         '-  gen() { return 1 }',
         '+  *gen() { return 2 }'
       ].join('\n')
-      expect(isMechanicallyNeutralDiff(diff, 'packages/aeg-core/src/foo.ts')).toBe(false)
+      expect(isMechanicallyNeutralDiff(diff, 'packages/core/src/foo.ts')).toBe(false)
     })
 
     it('TS private class field (`#count = 0`) is NOT misclassified as a `#`-prefixed comment', () => {
       const diff = [
-        '--- a/packages/aeg-core/src/foo.ts',
-        '+++ b/packages/aeg-core/src/foo.ts',
+        '--- a/packages/core/src/foo.ts',
+        '+++ b/packages/core/src/foo.ts',
         '@@ -1 +1 @@',
         '-  #count = 0',
         '+  #count = 100'
       ].join('\n')
-      expect(isMechanicallyNeutralDiff(diff, 'packages/aeg-core/src/foo.ts')).toBe(false)
+      expect(isMechanicallyNeutralDiff(diff, 'packages/core/src/foo.ts')).toBe(false)
     })
 
     it('a shebang change (`#!/bin/bash` → `#!/usr/bin/env bash`) is NOT neutral even though it starts with `#`', () => {

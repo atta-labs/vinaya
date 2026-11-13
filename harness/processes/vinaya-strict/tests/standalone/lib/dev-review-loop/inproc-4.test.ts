@@ -120,7 +120,7 @@ describe('devReviewLoop — issue-711 O6: a reviewer whose objective results do 
   it('an under-reporting reviewer on attempt 1 recovers on the fresh retry — the round publishes, never pauses', async () => {
     const world = makeWorld({
       frozenBrief:
-        '<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\nO2. Do the other thing.\n\n## Planner rationale\n\nOut of scope for facts.\n',
+        '<!-- vinaya:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\nO2. Do the other thing.\n\n## Planner rationale\n\nOut of scope for facts.\n',
       roleOutcomes: {
         1: {
           // Attempt 1 omits O2 entirely — `checkObjectiveIdCoverage` refuses
@@ -174,7 +174,7 @@ describe('devReviewLoop — issue-711 O6: a reviewer whose objective results do 
   it('an under-reporting reviewer that never recovers pauses as infrastructure, naming its objective results — never a silently-accepted partial report', async () => {
     const world = makeWorld({
       frozenBrief:
-        '<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\nO2. Do the other thing.\n\n## Planner rationale\n\nOut of scope for facts.\n',
+        '<!-- vinaya:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\nO2. Do the other thing.\n\n## Planner rationale\n\nOut of scope for facts.\n',
       roleOutcomes: {
         1: {
           // Both attempts omit O2 — coverage never recovers, so this

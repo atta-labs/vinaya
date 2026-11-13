@@ -298,11 +298,11 @@ describe('checkPublicationPreconditions (O7)', () => {
   it('publishes a changed path that crosses an out: glob, recording it with the glob', () => {
     const r = checkPublicationPreconditions({
       ...ok,
-      changedPaths: ['apps/cli/src/lib/x.ts', 'packages/aeg-core/src/x.ts']
+      changedPaths: ['apps/cli/src/lib/x.ts', 'packages/core/src/x.ts']
     })
     expect(r).toEqual({
       ok: true,
-      beyondSurface: [{ path: 'packages/aeg-core/src/x.ts', reason: 'out', glob: 'packages' }]
+      beyondSurface: [{ path: 'packages/core/src/x.ts', reason: 'out', glob: 'packages' }]
     })
   })
 

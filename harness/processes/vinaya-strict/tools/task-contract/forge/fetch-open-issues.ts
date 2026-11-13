@@ -6,10 +6,9 @@
  *
  * Read-only, always. No writes, no labels, no comments.
  *
- * Lives in `@attalabs/aeg-forge-state`, not `@attalabs/aeg-core` (an
- * aeg-core-purity fix) — `@attalabs/aeg-core/src` is zero-I/O and this
- * module performs `@octokit/graphql` I/O. Re-exported from `@attalabs/aeg-core`
- * for every existing call site that imports it from there.
+ * Lives with the forge-state modules, apart from the process's pure grammar
+ * modules: those are zero-I/O and this module performs `@octokit/graphql`
+ * I/O.
  */
 
 import { graphql } from '@octokit/graphql'
@@ -27,8 +26,7 @@ type LabeledIssuesResponse = {
  * Fetch open issues (number + body + labels) for each active tranche slug
  * in one batched query. Returns a Map from slug → ForgeIssue[].
  *
- * Extended for R1 (the rationale-completeness gate — aeg-governance-hardening
- * task 1) to carry `body`/`labels` alongside `number`; T2 (orphan-task) only
+ * Extended for R1 (the rationale-completeness gate) to carry `body`/`labels` alongside `number`; T2 (orphan-task) only
  * needs the number, R1 needs the body to run `checkIssueRationale` against.
  * One batched query, no per-issue round-trips, for both checks.
  */

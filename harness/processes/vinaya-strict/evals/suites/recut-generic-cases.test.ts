@@ -537,7 +537,7 @@ describe('the developer mapping', () => {
       expect(statement).toContain(`${Object.keys(p.failToPass).length} file`)
     }
     // A scope naming a process term is left out of the statement, never written into it.
-    const named = { ...caseById(developerCases, 'pr-1060'), scope: { in: ['aeg-root/roles/developer.md'], out: [] } }
+    const named = { ...caseById(developerCases, 'pr-1060'), scope: { in: ['docs/roles/developer.md'], out: [] } }
     expect(findBannedTerms(generatedDeveloperStatement(named))).toEqual([])
   })
 })
@@ -643,7 +643,7 @@ describe('the reviewer mapping', () => {
     for (const c of reviewerCases) expect(findBannedTerms(generatedReviewerStatement(c))).toEqual([])
     const named = {
       ...caseById(reviewerCases, 'code-logic'),
-      patch: { ...caseById(reviewerCases, 'code-logic').patch, file: 'aeg-root/roles/reviewer.md' }
+      patch: { ...caseById(reviewerCases, 'code-logic').patch, file: 'docs/roles/reviewer.md' }
     }
     expect(generatedReviewerStatement(named as ReviewCase)).toBe(
       'Review this change for defects against the base revision.'

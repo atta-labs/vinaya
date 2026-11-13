@@ -4,17 +4,21 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { FROZEN_BRIEF_MARKER, REGION_PREFIX } from '../../legacy-markers'
 import { afterEach, describe, expect, it } from 'bun:test'
 
 /**
  * `vinaya pr create` no longer splits a brief section out of the body
  * (plan-brief-v1 task 2, #427) — the brief lives on the task Issue's frozen
- * `aeg:brief:v1` comment (`vinaya task dispatch`), never in the PR body. This
+ * `vinaya:brief:v1` comment (`vinaya task dispatch`), never in the PR body. This
  * file, which used to exercise the retired split end to end, now covers its
- * replacement: a body still carrying either legacy `aeg:brief:start`/
- * `aeg:brief:end` marker is refused outright, and an ordinary new-shaped body
+ * replacement: a body still carrying either legacy retired brief-start/
+ * brief-end marker is refused outright, and an ordinary new-shaped body
  * (no `## Reference` section at all) opens clean, unaffected.
  */
+
+const LEGACY_BRIEF_START = `${FROZEN_BRIEF_MARKER.old}:start`
+const LEGACY_BRIEF_END = `${FROZEN_BRIEF_MARKER.old}:end`
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..', '..', 'apps', 'cli')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -39,7 +43,7 @@ type CliResult = { status: number; stdout: string; stderr: string }
  * `vinaya` dispatch this test process is itself running inside of —
  * inherited into a spawned `vinaya` child by a plain `{ ...process.env }`
  * spread, they let `resolveMeteringCapability`/`recoverUsageFromDispatchTee`
- * (`@attalabs/aeg-core`, `lib/dispatch.ts`) find and read this real session's
+ * (the process package, `lib/dispatch.ts`) find and read this real session's
  * own Stop-hook transcript pointer or launch-record tee, regardless of the
  * child's own throwaway `cwd` (both key off these env vars, never the
  * caller's `cwd` — found live: a fixture repo in a fresh `mkdtempSync` dir
@@ -144,14 +148,14 @@ const BRIEF_TEXT = [
 
 function newShapedBody(): string {
   return [
-    '<!-- AEG:CLOSES:START -->',
+    '<!-- VINAYA:CLOSES:START -->',
     'Closes #42',
-    '<!-- AEG:CLOSES:END -->',
+    '<!-- VINAYA:CLOSES:END -->',
     '',
     '**For:** Sonnet (coding-agent CLI)',
-    '<!-- AEG:PROJECT:START -->',
+    '<!-- VINAYA:PROJECT:START -->',
     '**Project:** vinaya',
-    '<!-- AEG:PROJECT:END -->',
+    '<!-- VINAYA:PROJECT:END -->',
     '',
     '## Decisions',
     '',
@@ -165,15 +169,15 @@ function newShapedBody(): string {
     '',
     'Touches `harness/processes/vinaya-strict/tools/pull-request/bin/pr.ts` only.',
     '',
-    '<!-- AEG:TIER:START -->',
+    '<!-- VINAYA:TIER:START -->',
     '**Tier:** 1',
-    '<!-- AEG:TIER:END -->',
+    '<!-- VINAYA:TIER:END -->',
     ''
   ].join('\n')
 }
 
 describe('vinaya pr create — refuses a body still carrying the retired brief split (plan-brief-v1 task 2, #427)', () => {
-  it('a body carrying <!-- aeg:brief:start --> is refused — gh is never invoked', () => {
+  it('a body carrying the legacy brief-start marker is refused — gh is never invoked', () => {
     const repo = initRepo()
     const bodyPath = join(repo, 'pr-body.md')
     writeFileSync(
@@ -182,11 +186,11 @@ describe('vinaya pr create — refuses a body still carrying the retired brief s
         newShapedBody(),
         '---',
         '',
-        '<!-- aeg:brief:start -->',
+        `<!-- ${LEGACY_BRIEF_START} -->`,
         '## Reference — the dispatched brief',
         '',
         BRIEF_TEXT,
-        '<!-- aeg:brief:end -->',
+        `<!-- ${LEGACY_BRIEF_END} -->`,
         ''
       ].join('\n')
     )
@@ -198,16 +202,16 @@ describe('vinaya pr create — refuses a body still carrying the retired brief s
       path
     )
     expect(r.status).toBe(1)
-    expect(r.stderr).toContain('aeg:brief:start')
+    expect(r.stderr).toContain(LEGACY_BRIEF_START)
     expect(r.stderr).toContain('pr-brief-comment')
 
     expect(readFileSync(callLogPath, 'utf-8')).toBe('')
   })
 
-  it('a body carrying only the trailing <!-- aeg:brief:end --> marker (unpaired) is still refused', () => {
+  it('a body carrying only the trailing legacy brief-end marker (unpaired) is still refused', () => {
     const repo = initRepo()
     const bodyPath = join(repo, 'pr-body.md')
-    writeFileSync(bodyPath, `${newShapedBody()}\n<!-- aeg:brief:end -->\n`)
+    writeFileSync(bodyPath, `${newShapedBody()}\n<!-- ${LEGACY_BRIEF_END} -->\n`)
     const { path, callLogPath } = stubGh('https://github.com/acme/widget/pull/42')
 
     const r = runCli(
@@ -216,7 +220,7 @@ describe('vinaya pr create — refuses a body still carrying the retired brief s
       path
     )
     expect(r.status).toBe(1)
-    expect(r.stderr).toContain('aeg:brief:end')
+    expect(r.stderr).toContain(LEGACY_BRIEF_END)
     expect(readFileSync(callLogPath, 'utf-8')).toBe('')
   })
 
@@ -232,7 +236,7 @@ describe('vinaya pr create — refuses a body still carrying the retired brief s
     const sentBody = readFileSync(createBodyLogPath, 'utf-8')
     expect(sentBody).toContain('## Decisions')
     expect(sentBody).not.toContain('## Reference')
-    expect(sentBody).not.toContain('aeg:brief')
+    expect(sentBody).not.toContain(FROZEN_BRIEF_MARKER.old)
   })
 
   // O1: `pr create` used to splice a token table into the body it sent. Token
@@ -248,7 +252,7 @@ describe('vinaya pr create — refuses a body still carrying the retired brief s
     expect(r.status).toBe(0)
 
     const sentBody = readFileSync(createBodyLogPath, 'utf-8')
-    expect(sentBody).not.toContain('AEG:TOKENS')
+    expect(sentBody).not.toContain(`${REGION_PREFIX.old}:TOKENS`)
     expect(sentBody).not.toContain('Token report')
     expect(sentBody).toContain('## Decisions')
   })
@@ -262,7 +266,7 @@ describe('vinaya pr create — refuses a body still carrying the retired brief s
         newShapedBody(),
         '## Decisions',
         '',
-        'This task retires the `<!-- aeg:brief:start -->`/`<!-- aeg:brief:end -->` marker pair — a body still carrying either as a real, own-line marker is refused.'
+        `This task retires the \`<!-- ${LEGACY_BRIEF_START} -->\`/\`<!-- ${LEGACY_BRIEF_END} -->\` marker pair — a body still carrying either as a real, own-line marker is refused.`
       ].join('\n')
     )
     const { path, createBodyLogPath } = stubGh('https://github.com/acme/widget/pull/45')

@@ -1,7 +1,7 @@
 /**
  * End-to-end: `vinaya check --plan` / `--plan --json` resolving the `roles`
  * config block against the REAL bundled doctrine (`resolveDoctrineRoot()`
- * finds this monorepo's own `aeg-root/` via its vendored-dev fallback,
+ * finds this monorepo's own `the retired doctrine root/` via its vendored-dev fallback,
  * exactly as `doctrine.test.ts` relies on) — an override and an additive
  * role resolve, render, and validate, and every malformed variant fails
  * closed with a named error, mirroring `check-flip.test.ts`'s own

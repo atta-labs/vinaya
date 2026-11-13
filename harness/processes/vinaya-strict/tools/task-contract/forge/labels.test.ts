@@ -1,7 +1,8 @@
 import type { RawTaskFacts } from '../tranche-types'
 import { describe, expect, it } from 'vitest'
+import { COMMENT_MARKER_PREFIX } from '../../legacy-markers'
 import {
-  AEG_BLOCKED_LABEL,
+  BLOCKED_LABEL,
   findTrancheSlug,
   hasLabel,
   trancheLabel,
@@ -17,6 +18,8 @@ import {
   matchesLabel
 } from './labels'
 import { mapForgeFacts } from './map-forge-facts'
+
+const RETIRED_PREFIX = COMMENT_MARKER_PREFIX.old
 
 const CATEGORIES: LabelCategory[] = ['state', 'tier', 'tranche', 'needs', 'waiver', 'flag', 'kind', 'type']
 
@@ -85,9 +88,9 @@ describe('LABELS — shape', () => {
     }
   })
 
-  it('no id carries the retired aeg name', () => {
+  it('no id carries the retired product name', () => {
     for (const l of LABELS) {
-      expect(l.id.includes('aeg')).toBe(false)
+      expect(l.id.includes(RETIRED_PREFIX)).toBe(false)
     }
   })
 
@@ -175,7 +178,7 @@ describe('LABELS — shape', () => {
 describe('label() — the only sanctioned constructor', () => {
   it('names the labels the detection bins MINT on first fire — never a literal in the bin', () => {
     // Both bins create their own label the first time they fire. A literal
-    // there would have minted a retired `aeg:`-named label.
+    // there would have minted a retired-prefix label.
     expect(label('direct-main-push')).toBe('vinaya/direct-main-push')
     expect(label('dead-branch-push')).toBe('vinaya/dead-branch-push')
   })
@@ -220,7 +223,7 @@ describe('matchesLabel() / hasLabel()', () => {
   })
 
   it('rejects the pre-vinaya/ name — the transition window is closed', () => {
-    expect(matchesLabel('blocked', 'aeg:blocked')).toBe(false)
+    expect(matchesLabel('blocked', `${RETIRED_PREFIX}:blocked`)).toBe(false)
     expect(matchesLabel('tier-1', 'tier:1')).toBe(false)
     expect(matchesLabel('waiver-review', 'waiver:review')).toBe(false)
     expect(matchesLabel('tranche', 'tranche:deprecation-v1')).toBe(false)
@@ -229,9 +232,9 @@ describe('matchesLabel() / hasLabel()', () => {
   it('rejects the old colon grammar on the labels that used it (#614 addendum)', () => {
     expect(matchesLabel('state-object', 'vinaya:state-object')).toBe(false)
     expect(matchesLabel('state-object', 'vinaya/state-object')).toBe(true)
-    expect(matchesLabel('direct-main-push', 'aeg:direct-main-push')).toBe(false)
-    expect(matchesLabel('dead-branch-push', 'aeg:dead-branch-push')).toBe(false)
-    expect(matchesLabel('incoherent', 'aeg:incoherent')).toBe(false)
+    expect(matchesLabel('direct-main-push', `${RETIRED_PREFIX}:direct-main-push`)).toBe(false)
+    expect(matchesLabel('dead-branch-push', `${RETIRED_PREFIX}:dead-branch-push`)).toBe(false)
+    expect(matchesLabel('incoherent', `${RETIRED_PREFIX}:incoherent`)).toBe(false)
     expect(matchesLabel('backlog', 'vinaya:backlog')).toBe(false)
     expect(matchesLabel('backlog', 'vinaya/backlog')).toBe(true)
   })
@@ -296,14 +299,14 @@ describe('trancheSlugLengthError() — GitHub’s 50-character cap', () => {
   })
 })
 
-describe('AEG_BLOCKED_LABEL — tied to its LABELS entry', () => {
-  it("resolves to the namespaced 'vinaya/blocked' — the aeg: name is retired", () => {
-    expect(AEG_BLOCKED_LABEL).toBe('vinaya/blocked')
-    expect(AEG_BLOCKED_LABEL).toBe(label('blocked'))
+describe('BLOCKED_LABEL — tied to its LABELS entry', () => {
+  it("resolves to the namespaced 'vinaya/blocked' — the retired-prefix name is retired", () => {
+    expect(BLOCKED_LABEL).toBe('vinaya/blocked')
+    expect(BLOCKED_LABEL).toBe(label('blocked'))
   })
 
   it('has a matching LABELS entry in the state category, so constant and vocabulary cannot drift', () => {
-    const entry = LABELS.find((l: Label) => l.id === AEG_BLOCKED_LABEL)
+    const entry = LABELS.find((l: Label) => l.id === BLOCKED_LABEL)
     expect(entry).toBeDefined()
     expect(entry?.category).toBe('state')
     expect(entry?.form).toBe('literal')
@@ -315,7 +318,7 @@ describe('AEG_BLOCKED_LABEL — tied to its LABELS entry', () => {
       stateReason: null,
       closedAt: null,
       assigneesCount: 0,
-      labels: [AEG_BLOCKED_LABEL]
+      labels: [BLOCKED_LABEL]
     }
     const raw: RawTaskFacts = { issue, refExists: false, pullRequest: null, closedByActor: null }
     expect(mapForgeFacts(raw)?.blockedLabel).toBe(true)
@@ -324,7 +327,13 @@ describe('AEG_BLOCKED_LABEL — tied to its LABELS entry', () => {
 
   it('the mapper no longer reads the pre-vinaya/ name — the forge was renamed', () => {
     const raw: RawTaskFacts = {
-      issue: { state: 'OPEN', stateReason: null, closedAt: null, assigneesCount: 0, labels: ['aeg:blocked'] },
+      issue: {
+        state: 'OPEN',
+        stateReason: null,
+        closedAt: null,
+        assigneesCount: 0,
+        labels: [`${RETIRED_PREFIX}:blocked`]
+      },
       refExists: false,
       pullRequest: null,
       closedByActor: null

@@ -2,23 +2,23 @@
 
 /**
  * check-no-disk-state — CI gate (#512) blocking new on-disk state-file
- * creation: a live `aeg-root/tranches/*.md` topology file (other than
+ * creation: a live topology file under the retired tranche-file directory (other than
  * `README.md`, at any depth including `completed/**` when newly added) —
  * the residue class this task's Part B proved unnecessary
- * (`aeg-drift-prevention-v1.md` deleted, forge derivation covers it) — or
+ * (deleted, forge derivation covers it) — or
  * any newly-added `*.tokens.md` file, anywhere in the repo (tokens
  * live in the PR body, not a committed ledger). Pure predicate lives in
- * `isNewDiskStateFile` (`@attalabs/aeg-core`) — this is a thin CLI/I/O shim.
+ * `isNewDiskStateFile` (`checks/no-disk-state.ts`) — this is a thin CLI/I/O shim.
  *
  * Status-aware (`git diff --name-status`), not path-shape-only: editing an
- * EXISTING file under `aeg-root/tranches/completed/**` (the 15 legacy
+ * EXISTING file under the retired archive's `completed/` directory (the 15 legacy
  * archive files) stays legal — only genuinely NEW files there are
  * refused, closing the gap a path-shape-only exemption would leave open (a
  * brand-new file smuggled into `completed/` to dodge the top-level check).
- * A top-level active topology file (directly under `aeg-root/tranches/`,
+ * A top-level active topology file (directly under the retired tranche-file directory,
  * not a subdirectory) fails on add OR edit — that class shouldn't exist at
  * all post-cutover. Deleted files are never checked (this task's own
- * removal of `aeg-drift-prevention-v1.md` must not trip it).
+ * removal of a topology file must not trip it).
  *
  * Usage (CI): bun harness/processes/vinaya-strict/checks/standalone/check-no-disk-state.ts
  * Exit code: 0 (pass / no matching file in the diff) or 1 (a new/edited

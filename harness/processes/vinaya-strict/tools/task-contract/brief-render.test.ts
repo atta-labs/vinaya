@@ -10,6 +10,8 @@ import {
   parseIssueTestPlan
 } from './issue-validation'
 import { NO_GATE_CUTOVERS } from './gate-cutovers'
+import { COMMENT_MARKER_PREFIX } from '../legacy-markers'
+import { LEGACY_DOCTRINE_ROOT } from '../legacy-paths'
 import { objectivesOf } from './objectives'
 import { readTierFromPrBody } from './pr-tier'
 import {
@@ -54,15 +56,15 @@ const ISSUE_BODY = `
 [review-convergence-v1] 42 — a fixture task for the renderer
 
 **Tier:** 1
-**Project:** aeg-core
+**Project:** core
 
 ## Planner's rationale
 
-**Boundary** — Do the thing in \`packages/aeg-core/src/fixture.ts\`. Keep it small.
+**Boundary** — Do the thing in \`packages/core/src/fixture.ts\`. Keep it small.
 
 **Sizing** — Passes all four tests.
 
-**Project(s) + blast radius** — \`Project: aeg-core\`. No shared-package fan-out.
+**Project(s) + blast radius** — \`Project: core\`. No shared-package fan-out.
 
 **Dependency rationale** — \`Depends-on: —\` — nothing this task needs already exists elsewhere.
 
@@ -81,12 +83,12 @@ function baseFacts(overrides: Partial<BriefFacts> = {}): BriefFacts {
     taskId: '42',
     title: 'a fixture task for the renderer',
     issue: 42,
-    projects: ['aeg-core'],
+    projects: ['core'],
     dependsOn: [],
     conflictsWith: [],
     rationale: parseRationaleFields(ISSUE_BODY),
     objectives: [{ id: 'O1', text: 'A fixture objective for the renderer.' }],
-    surface: { in: ['packages/aeg-core/src'], out: [] },
+    surface: { in: ['packages/core/src'], out: [] },
     parts: [{ n: 1, objectiveIds: [1], text: 'Do the thing in the fixture package.' }],
     testPlan: {
       kind: 'commands',
@@ -110,9 +112,7 @@ function baseFacts(overrides: Partial<BriefFacts> = {}): BriefFacts {
     },
     dispatchReady: true,
     dispatchBlockers: [],
-    surfaceFiles: [
-      { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' }
-    ],
+    surfaceFiles: [{ path: 'packages/core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/core' }],
     consumersOf: () => [],
     docOwnersContent: null,
     sourceRevision: FIXTURE_REVISION,
@@ -120,8 +120,8 @@ function baseFacts(overrides: Partial<BriefFacts> = {}): BriefFacts {
     // expectation in this file was written against the commands it renders.
     cliInvocation: 'bun apps/cli/src/index.ts',
     localGateCommands: {
-      dispatchReadiness: 'bun packages/aeg-core/bin/verify-dispatch.ts',
-      docCoverage: 'bun packages/aeg-core/bin/verify-docs.ts'
+      dispatchReadiness: 'bun packages/core/bin/verify-dispatch.ts',
+      docCoverage: 'bun packages/core/bin/verify-docs.ts'
     },
     ...overrides
   }
@@ -147,11 +147,11 @@ describe('extractBoundaryFilePaths (task 5, Issue #447, O3)', () => {
   it('extracts every backtick-wrapped, path-shaped token, deduplicated in order', () => {
     const text =
       "In: `apps/cli/src/lib/dispatch-task.ts` and `apps/cli/src/lib/brief-assembly.ts`'s result type, " +
-      'plus `packages/aeg-core/src/brief-render.ts` again.'
+      'plus `packages/core/src/brief-render.ts` again.'
     expect(extractBoundaryFilePaths(text)).toEqual([
       'apps/cli/src/lib/dispatch-task.ts',
       'apps/cli/src/lib/brief-assembly.ts',
-      'packages/aeg-core/src/brief-render.ts'
+      'packages/core/src/brief-render.ts'
     ])
   })
 
@@ -168,8 +168,8 @@ describe('extractBoundaryFilePaths (task 5, Issue #447, O3)', () => {
   })
 
   it('uses the gate grammar, which ignores bare filenames in Boundary text', () => {
-    const text = 'the Step 0 line — `aeg-root/aeg-manual-flow.md`, `process.md`, `roles/developer.md`'
-    expect(extractBoundaryFilePaths(text)).toEqual(['aeg-root/aeg-manual-flow.md', 'roles/developer.md'])
+    const text = 'the Step 0 line — `doctrine/manual-flow.md`, `process.md`, `roles/developer.md`'
+    expect(extractBoundaryFilePaths(text)).toEqual(['doctrine/manual-flow.md', 'roles/developer.md'])
   })
 })
 
@@ -231,8 +231,8 @@ describe('renderBrief', () => {
     // (this same task) accepts — see this task's own §9 self-render proof in
     // the PR's round-1 comment for that path exercised end-to-end.
     const facts = baseFacts({
-      surface: { in: ['aeg-root'], out: [] },
-      surfaceFiles: [{ path: 'aeg-root/roles/developer.md', sha256: 'a'.repeat(64), packageName: null }]
+      surface: { in: [LEGACY_DOCTRINE_ROOT], out: [] },
+      surfaceFiles: [{ path: `${LEGACY_DOCTRINE_ROOT}/roles/developer.md`, sha256: 'a'.repeat(64), packageName: null }]
     })
     const result = renderBrief(facts, TEMPLATE)
     expect(result.ok).toBe(true)
@@ -419,31 +419,31 @@ describe('renderBrief', () => {
   describe('surface-filtered surface map (task 12, Issue #469, O2, O3)', () => {
     it('excludes a Boundary-named file the Issue Surface out: glob covers, even though in: would otherwise admit it', () => {
       const facts = baseFacts({
-        surface: { in: ['packages/aeg-core'], out: ['packages/aeg-core/bin'] },
+        surface: { in: ['packages/core'], out: ['packages/core/bin'] },
         surfaceFiles: [
-          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' },
-          { path: 'packages/aeg-core/bin/open-pr.ts', sha256: 'b'.repeat(64), packageName: '@attalabs/aeg-core' }
+          { path: 'packages/core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/core' },
+          { path: 'packages/core/bin/open-pr.ts', sha256: 'b'.repeat(64), packageName: '@attalabs/core' }
         ]
       })
       const result = renderBrief(facts, TEMPLATE)
       expect(result.ok).toBe(true)
       if (!result.ok) return
-      expect(result.brief).toContain('packages/aeg-core/src/fixture.ts')
-      expect(result.brief).not.toContain('packages/aeg-core/bin/open-pr.ts')
+      expect(result.brief).toContain('packages/core/src/fixture.ts')
+      expect(result.brief).not.toContain('packages/core/bin/open-pr.ts')
     })
 
     it('excludes a Boundary-named file no in: glob covers at all', () => {
       const facts = baseFacts({
-        surface: { in: ['packages/aeg-core/src'], out: [] },
+        surface: { in: ['packages/core/src'], out: [] },
         surfaceFiles: [
-          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' },
-          { path: 'apps/cli/src/lib/unrelated-file.ts', sha256: 'b'.repeat(64), packageName: '@attalabs/aeg-cli' }
+          { path: 'packages/core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/core' },
+          { path: 'apps/cli/src/lib/unrelated-file.ts', sha256: 'b'.repeat(64), packageName: '@attalabs/cli' }
         ]
       })
       const result = renderBrief(facts, TEMPLATE)
       expect(result.ok).toBe(true)
       if (!result.ok) return
-      expect(result.brief).toContain('packages/aeg-core/src/fixture.ts')
+      expect(result.brief).toContain('packages/core/src/fixture.ts')
       expect(result.brief).not.toContain('apps/cli/src/lib/unrelated-file.ts')
     })
 
@@ -452,22 +452,20 @@ describe('renderBrief', () => {
         surface: { in: ['*'], out: [] },
         surfaceFiles: [
           { path: 'README.md', sha256: 'a'.repeat(64), packageName: null },
-          { path: 'packages/aeg-core/src/nested.ts', sha256: 'b'.repeat(64), packageName: '@attalabs/aeg-core' }
+          { path: 'packages/core/src/nested.ts', sha256: 'b'.repeat(64), packageName: '@attalabs/core' }
         ]
       })
       const result = renderBrief(facts, TEMPLATE)
       expect(result.ok).toBe(true)
       if (!result.ok) return
       expect(result.brief).toContain('README.md')
-      expect(result.brief).not.toContain('packages/aeg-core/src/nested.ts')
+      expect(result.brief).not.toContain('packages/core/src/nested.ts')
     })
 
     it('refuses rather than rendering an empty surface map when Surface admits none of the Boundary-named files', () => {
       const facts = baseFacts({
-        surface: { in: ['aeg-root'], out: [] },
-        surfaceFiles: [
-          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' }
-        ]
+        surface: { in: [LEGACY_DOCTRINE_ROOT], out: [] },
+        surfaceFiles: [{ path: 'packages/core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/core' }]
       })
       const result = renderBrief(facts, TEMPLATE)
       expect(result.ok).toBe(false)
@@ -479,18 +477,18 @@ describe('renderBrief', () => {
     // carries at least one premise pin; refuse, naming the surface, rather
     // than render an empty `**Premise:**` block when nothing can be pinned.
     it('refuses, naming the surface, when the Boundary names zero files even though the Surface resolves to real tracked files', () => {
-      const facts = baseFacts({ surface: { in: ['aeg-root'], out: [] }, surfaceFiles: [] })
+      const facts = baseFacts({ surface: { in: [LEGACY_DOCTRINE_ROOT], out: [] }, surfaceFiles: [] })
       const result = renderBrief(facts, TEMPLATE)
       expect(result.ok).toBe(false)
       if (result.ok) return
       expect(result.missing.some((m) => /Premise pins/.test(m))).toBe(true)
-      expect(result.missing.some((m) => /aeg-root/.test(m))).toBe(true)
+      expect(result.missing.some((m) => m.includes(LEGACY_DOCTRINE_ROOT))).toBe(true)
     })
 
     it('refuses, naming the surface, when every Boundary-named file is a not-yet-created entry with no sha256 to pin', () => {
       const facts = baseFacts({
-        surface: { in: ['packages/aeg-core/src'], out: [] },
-        surfaceFiles: [{ path: 'packages/aeg-core/src/new-file.ts', sha256: null, packageName: '@attalabs/aeg-core' }]
+        surface: { in: ['packages/core/src'], out: [] },
+        surfaceFiles: [{ path: 'packages/core/src/new-file.ts', sha256: null, packageName: '@attalabs/core' }]
       })
       const result = renderBrief(facts, TEMPLATE)
       expect(result.ok).toBe(false)
@@ -500,27 +498,23 @@ describe('renderBrief', () => {
 
     it('renders at least one premise pin when the surface resolves to a real, admitted tracked file', () => {
       const facts = baseFacts({
-        surface: { in: ['packages/aeg-core/src'], out: [] },
-        surfaceFiles: [
-          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' }
-        ]
+        surface: { in: ['packages/core/src'], out: [] },
+        surfaceFiles: [{ path: 'packages/core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/core' }]
       })
       const result = renderBrief(facts, TEMPLATE)
       expect(result.ok).toBe(true)
       if (!result.ok) return
       const premiseBlock = /\*\*Premise:\*\*\n([\s\S]*?)(\n##|\n\n##|$)/.exec(result.brief)?.[1]?.trim() ?? ''
       expect(premiseBlock.length).toBeGreaterThan(0)
-      expect(premiseBlock).toContain('packages/aeg-core/src/fixture.ts')
+      expect(premiseBlock).toContain('packages/core/src/fixture.ts')
     })
   })
 
   describe('Modify lists pinned files independently of the Surface directory count', () => {
     it('keeps the pinned file under Modify and displays the wider Surface separately', () => {
       const facts = baseFacts({
-        surface: { in: ['packages/aeg-core/src', 'apps/cli/src/lib', 'apps/cli/src/commands'], out: [] },
-        surfaceFiles: [
-          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' }
-        ]
+        surface: { in: ['packages/core/src', 'apps/cli/src/lib', 'apps/cli/src/commands'], out: [] },
+        surfaceFiles: [{ path: 'packages/core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/core' }]
       })
       const result = renderBrief(facts, TEMPLATE)
       expect(result.ok).toBe(true)
@@ -530,7 +524,7 @@ describe('renderBrief', () => {
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean)
-      expect(modifyLines).toEqual(['- packages/aeg-core/src/fixture.ts'])
+      expect(modifyLines).toEqual(['- packages/core/src/fixture.ts'])
       expect(result.brief).toContain('**Surface in:**')
       expect(modifyBlock).toContain('fixture.ts')
 
@@ -543,16 +537,14 @@ describe('renderBrief', () => {
 
     it('a Boundary naming as many (or more) files than there are Surface in: directories keeps the file list under Modify, unchanged', () => {
       const facts = baseFacts({
-        surface: { in: ['packages/aeg-core/src'], out: [] },
-        surfaceFiles: [
-          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' }
-        ]
+        surface: { in: ['packages/core/src'], out: [] },
+        surfaceFiles: [{ path: 'packages/core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/core' }]
       })
       const result = renderBrief(facts, TEMPLATE)
       expect(result.ok).toBe(true)
       if (!result.ok) return
       const modifyBlock = /\*\*Modify:\*\*\n([\s\S]*?)\n\n/.exec(result.brief)?.[1] ?? ''
-      expect(modifyBlock.trim()).toBe('- packages/aeg-core/src/fixture.ts')
+      expect(modifyBlock.trim()).toBe('- packages/core/src/fixture.ts')
     })
 
     it('keeps files when both pins land in one directory and the Surface also allows another', () => {
@@ -576,10 +568,8 @@ describe('renderBrief', () => {
 
     it('keeps glob entries out of Modify', () => {
       const facts = baseFacts({
-        surface: { in: ['packages/aeg-core/src/**', 'apps/cli/src/lib/*'], out: [] },
-        surfaceFiles: [
-          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' }
-        ]
+        surface: { in: ['packages/core/src/**', 'apps/cli/src/lib/*'], out: [] },
+        surfaceFiles: [{ path: 'packages/core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/core' }]
       })
       const result = renderBrief(facts, TEMPLATE)
       expect(result.ok).toBe(true)
@@ -589,7 +579,7 @@ describe('renderBrief', () => {
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean)
-      expect(modifyLines).toEqual(['- packages/aeg-core/src/fixture.ts'])
+      expect(modifyLines).toEqual(['- packages/core/src/fixture.ts'])
     })
   })
 
@@ -710,17 +700,14 @@ describe('renderBrief', () => {
   })
 
   it('§4 Out of surface is rendered from the Issue Surface out: list, never a placeholder', () => {
-    const result = renderBrief(
-      baseFacts({ surface: { in: ['packages/aeg-core/src'], out: ['packages/aeg-core/tests'] } }),
-      ''
-    )
+    const result = renderBrief(baseFacts({ surface: { in: ['packages/core/src'], out: ['packages/core/tests'] } }), '')
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.brief).toContain('**Out of surface:** packages/aeg-core/tests')
+    expect(result.brief).toContain('**Out of surface:** packages/core/tests')
     expect(result.brief).not.toContain('named explicitly by the Planner')
     // The line states the recording rule: a change beyond the Surface is
     // published and recorded in the pull request body, never refused.
-    expect(result.brief).toContain(`**Out of surface:** packages/aeg-core/tests${BEYOND_SURFACE_RECORDING_RULE}`)
+    expect(result.brief).toContain(`**Out of surface:** packages/core/tests${BEYOND_SURFACE_RECORDING_RULE}`)
     expect(BEYOND_SURFACE_RECORDING_RULE).toContain(
       "records each such path in the pull request body's beyond-Surface block"
     )
@@ -760,10 +747,10 @@ describe('renderBrief', () => {
   it('a covered consumer gets a separate test coverage line and the rendered surface passes checkConsumerTests', () => {
     const result = renderBrief(
       baseFacts({
-        surface: { in: ['packages/aeg-core/src', 'packages/aeg-core/bin', 'apps/cli/tests'], out: [] },
+        surface: { in: ['packages/core/src', 'packages/core/bin', 'apps/cli/tests'], out: [] },
         consumersOf: () => ['apps/cli'],
         surfaceFiles: [
-          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' },
+          { path: 'packages/core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/core' },
           { path: 'apps/cli/tests/checks/fixture.test.ts', sha256: 'b'.repeat(64), packageName: null }
         ]
       }),
@@ -773,18 +760,18 @@ describe('renderBrief', () => {
     if (!result.ok) return
     const section4 = /## 4\. Technical surface map[\s\S]*?(?=\n## 5\.)/.exec(result.brief)?.[0] ?? ''
     const modifyBlock = /\*\*Modify:\*\*\n([\s\S]*?)\n\n/.exec(section4)?.[1] ?? ''
-    expect(modifyBlock).not.toContain('- packages/aeg-core/bin\n')
+    expect(modifyBlock).not.toContain('- packages/core/bin\n')
     expect(modifyBlock).toContain('apps/cli/tests/checks/fixture.test.ts')
-    expect(section4).toMatch(/consumer-tests: apps\/cli\/tests \(covers @attalabs\/aeg-core\)/)
+    expect(section4).toMatch(/consumer-tests: apps\/cli\/tests \(covers @attalabs\/core\)/)
     expect(section4).not.toMatch(/consumer-tests: none —/)
 
-    const validated = checkConsumerTests(result.brief, (pkg) => (pkg === 'aeg-core' ? ['apps/cli'] : []))
+    const validated = checkConsumerTests(result.brief, (pkg) => (pkg === 'core' ? ['apps/cli'] : []))
     expect(validated.status).toBe('pass')
   })
 
   // Round 2 review, BLOCKER: the covering file can be a COLOCATED test
   // (`packages/widgets/src/foo.test.ts`, the layout `packages/widgets` and
-  // `packages/aeg-core` already use in this repo) with no `tests`/`specs`
+  // `packages/core` already use in this repo) with no `tests`/`specs`
   // ancestor to name — the prior fallback named the file's bare containing
   // directory, which neither of `checkConsumerTests`'s two accepted forms
   // (a real `.test.<ext>` file, or a `tests`/`specs`-segment directory)
@@ -793,10 +780,10 @@ describe('renderBrief', () => {
   it('a covered consumer with a COLOCATED covering test (no tests/specs ancestor) names the file itself, and the rendered §4 passes checkConsumerTests', () => {
     const result = renderBrief(
       baseFacts({
-        surface: { in: ['packages/aeg-core/src', 'packages/aeg-core/bin', 'packages/widgets/src'], out: [] },
+        surface: { in: ['packages/core/src', 'packages/core/bin', 'packages/widgets/src'], out: [] },
         consumersOf: () => ['packages/widgets'],
         surfaceFiles: [
-          { path: 'packages/aeg-core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/aeg-core' },
+          { path: 'packages/core/src/fixture.ts', sha256: 'a'.repeat(64), packageName: '@attalabs/core' },
           { path: 'packages/widgets/src/fixture.test.ts', sha256: 'b'.repeat(64), packageName: null }
         ]
       }),
@@ -805,10 +792,10 @@ describe('renderBrief', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     const section4 = /## 4\. Technical surface map[\s\S]*?(?=\n## 5\.)/.exec(result.brief)?.[0] ?? ''
-    expect(section4).toMatch(/consumer-tests: packages\/widgets\/src\/fixture\.test\.ts \(covers @attalabs\/aeg-core\)/)
+    expect(section4).toMatch(/consumer-tests: packages\/widgets\/src\/fixture\.test\.ts \(covers @attalabs\/core\)/)
     expect(section4).not.toMatch(/consumer-tests: none —/)
 
-    const validated = checkConsumerTests(result.brief, (pkg) => (pkg === 'aeg-core' ? ['packages/widgets'] : []))
+    const validated = checkConsumerTests(result.brief, (pkg) => (pkg === 'core' ? ['packages/widgets'] : []))
     expect(validated.status).toBe('pass')
   })
 
@@ -877,10 +864,10 @@ describe('renderBrief', () => {
       expect(result.ok).toBe(true)
       if (!result.ok) return
       // The three prefixes the Boundary named — the doctrine tree, the
-      // aeg-core gate bins, and the vendored CLI entry. An `npm install` of
+      // process gate bins, and the vendored CLI entry. An `npm install` of
       // this package puts none of them anywhere the reader can reach.
-      expect(result.brief).not.toContain('aeg-root/')
-      expect(result.brief).not.toContain('packages/aeg-core/bin/')
+      expect(result.brief).not.toContain(`${LEGACY_DOCTRINE_ROOT}/`)
+      expect(result.brief).not.toContain('packages/core/bin/')
       expect(result.brief).not.toContain('apps/cli/src/index.ts')
     })
 
@@ -1020,7 +1007,7 @@ describe('renderBrief', () => {
 // blast radius and no Dependency rationale; the render writes §3 itself.
 describe('renderBrief — a single-fix Issue with no Dependency rationale', () => {
   const SINGLE_FIX_BODY = ISSUE_BODY.replace('**Sizing** — Passes all four tests.\n\n', '')
-    .replace('**Project(s) + blast radius** — `Project: aeg-core`. No shared-package fan-out.\n\n', '')
+    .replace('**Project(s) + blast radius** — `Project: core`. No shared-package fan-out.\n\n', '')
     .replace('**Dependency rationale** — `Depends-on: —` — nothing this task needs already exists elsewhere.\n\n', '')
 
   it('is the single-fix form the Issue gate accepts', () => {
@@ -1071,13 +1058,20 @@ describe('renderBrief — end-to-end from a real Issue body (#426 fixture)', () 
       taskId: '1',
       title: 'The Issue carries every judgment section of the brief; brief render refuses on a gap',
       issue: 426,
-      projects: ['aeg-core', 'cli', 'sources'],
+      projects: [`${COMMENT_MARKER_PREFIX.old}-core`, 'cli', 'sources'], // the recorded fixture names the retired project,
       rationale: parseRationaleFields(ISSUE_426_BODY),
       objectives: (() => {
         const parsed = objectivesOf(ISSUE_426_BODY)
         return parsed.ok ? parsed.objectives : []
       })(),
       surface: surface.value,
+      surfaceFiles: [
+        {
+          path: `packages/${COMMENT_MARKER_PREFIX.old}-core/src/fixture.ts`,
+          sha256: 'a'.repeat(64),
+          packageName: '@attalabs/core'
+        }
+      ],
       parts: parts.value,
       testPlan: testPlan.value,
       stopConditions: stopConditions.value
@@ -1133,10 +1127,10 @@ describe('renderBrief — the `## Premises` section', () => {
       baseFacts({
         premises: [
           {
-            path: 'packages/aeg-core/src/fixture.ts',
+            path: 'packages/core/src/fixture.ts',
             text: 'export function fixture(',
             afterIssue: null,
-            line: '`packages/aeg-core/src/fixture.ts` contains `export function fixture(`'
+            line: '`packages/core/src/fixture.ts` contains `export function fixture(`'
           }
         ]
       }),
@@ -1145,7 +1139,7 @@ describe('renderBrief — the `## Premises` section', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.brief).toContain('## Premises')
-    expect(result.brief).toContain('- `packages/aeg-core/src/fixture.ts` contains `export function fixture(`')
+    expect(result.brief).toContain('- `packages/core/src/fixture.ts` contains `export function fixture(`')
     expect(result.brief.indexOf('## Premises')).toBeLessThan(result.brief.indexOf('## 2. Context'))
   })
 
@@ -1154,10 +1148,10 @@ describe('renderBrief — the `## Premises` section', () => {
       baseFacts({
         premises: [
           {
-            path: 'packages/aeg-core/src/fixture.ts',
+            path: 'packages/core/src/fixture.ts',
             text: 'drainOutbox',
             afterIssue: 841,
-            line: 'after #841: `packages/aeg-core/src/fixture.ts` contains `drainOutbox`'
+            line: 'after #841: `packages/core/src/fixture.ts` contains `drainOutbox`'
           }
         ]
       }),
@@ -1165,7 +1159,7 @@ describe('renderBrief — the `## Premises` section', () => {
     )
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.brief).toContain('- after #841: `packages/aeg-core/src/fixture.ts` contains `drainOutbox`')
+      expect(result.brief).toContain('- after #841: `packages/core/src/fixture.ts` contains `drainOutbox`')
     }
   })
 
@@ -1173,7 +1167,7 @@ describe('renderBrief — the `## Premises` section', () => {
     const result = renderBrief(
       baseFacts({
         premises: [
-          { path: 'packages/aeg-core/src/fixture.ts', text: 'fixture', afterIssue: null, line: '`x` contains `y`' }
+          { path: 'packages/core/src/fixture.ts', text: 'fixture', afterIssue: null, line: '`x` contains `y`' }
         ]
       }),
       TEMPLATE

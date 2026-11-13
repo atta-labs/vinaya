@@ -99,7 +99,7 @@ export function normaliseLines(region: string, repoRoot: string): string[] {
     // property. An earlier revision matched any interior segment sitting before
     // a known directory name, which collapsed two genuinely different in-repo
     // files onto one line — `packages/widgets/tests/a.spec.ts` and
-    // `packages/aeg-core/tests/a.spec.ts` both became `packagestests/a.spec.ts`
+    // `packages/core/tests/a.spec.ts` both became `packagestests/a.spec.ts`
     // — and a body containing both then compared MATCH. That is the exact
     // false-MATCH class this command refuses a dirty worktree to prevent, and
     // it was reachable from pull-request text alone.

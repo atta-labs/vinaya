@@ -340,7 +340,7 @@ describe('writeReviewerCandidateInputs — O1, the brief/PR body/diff/prior-find
     const src = writeSourceWorktree()
     const candidate = buildReviewerCandidate(root, 9001, 1, src) as string
     const frozenBrief =
-      '<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\n\n## Objectives\n\nO1. Do the thing, exactly, with | and `backticks`.\n'
+      '<!-- vinaya:brief:v1 -->\nBrief hash: deadbeef\n\n## Objectives\n\nO1. Do the thing, exactly, with | and `backticks`.\n'
 
     writeReviewerCandidateInputs(candidate, {
       brief: frozenBrief,

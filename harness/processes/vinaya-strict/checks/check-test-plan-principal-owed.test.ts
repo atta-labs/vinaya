@@ -48,7 +48,7 @@ describe("runTestPlanCheck — the frozen brief's [live] lines, failing closed",
   const PRINCIPAL = 'the-principal'
   const PLAN = 'Closes #42\n\n## 9. Test Plan\n\n- [x] **[principal]** looked at it\n'
   const briefComment = (plan: string) => ({
-    body: `<!-- aeg:brief:v1 -->\nBrief hash: x\n# Brief\n\n## 9. Test Plan\n\n${plan}\n`,
+    body: `<!-- vinaya:brief:v1 -->\nBrief hash: x\n# Brief\n\n## 9. Test Plan\n\n${plan}\n`,
     author: { login: PRINCIPAL }
   })
   const LIVE_BRIEF = briefComment(`\`\`\`\nbun test a.test.ts\n\`\`\`\n\n- **[live]** ${COMMAND}`)

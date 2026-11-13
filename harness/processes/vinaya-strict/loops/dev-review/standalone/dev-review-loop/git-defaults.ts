@@ -222,7 +222,7 @@ export function defaultPatchIdOf(sha: string): string | null {
 /**
  * O6: every event this loop emits, checked against its own
  * per-discriminant shape before `meta`/`subject` exist — derived from
- * `DevReviewLoopEventSchema` (`@attalabs/aeg-core`), the exact schema
+ * `DevReviewLoopEventSchema` (`@attalabs/process-vinaya`), the exact schema
  * `log-sink.ts` validates the FULL envelope against, minus the two fields
  * only `buildHeader` can fill in. Built once, from the schema the package
  * already exports — no second, hand-maintained field list to drift from

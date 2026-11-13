@@ -430,7 +430,7 @@ describe('renderDeveloperDoctrineBlock', () => {
     expect(block).toContain('THE SHORT VERSION.')
     expect(block).toContain('## Stop conditions')
     expect(block).toContain('bun apps/cli/src/index.ts doctrine --role developer --print')
-    expect(block).not.toContain('aeg-root/roles/developer.md')
+    expect(block).not.toContain('executing/developer/doctrine.md')
   })
 
   it('says a dispatched session gives no read receipt, and a missing doctrine still sends no block (O1, O3)', () => {

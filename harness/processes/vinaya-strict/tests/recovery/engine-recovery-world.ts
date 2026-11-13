@@ -191,7 +191,10 @@ function recovery(world: World, loopState: () => TaskInput['loopState']): Recove
     prNumber: () => 31,
     fetchLoopHistory: () =>
       loopHistoryFromComments(
-        world.markers.map((round) => ({ body: `<!-- aeg:developer:round-${round} -->\nHead: h${round}`, author: 'p' })),
+        world.markers.map((round) => ({
+          body: `<!-- vinaya:developer:round-${round} -->\nHead: h${round}`,
+          author: 'p'
+        })),
         ['p'],
         () => 'unknown'
       ),

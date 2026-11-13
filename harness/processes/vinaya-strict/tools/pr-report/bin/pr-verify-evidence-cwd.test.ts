@@ -10,7 +10,7 @@ import { describe, expect, it } from 'bun:test'
  *
  * `buildReport()` spawns the gate suite with `cwd: process.cwd()`, and several
  * gates resolve their scan root from it. From a subdirectory there is no
- * `aeg-root/` above them, so a whole class of findings silently vanishes from
+ * a doctrine folder above them, so a whole class of findings silently vanishes from
  * the regenerated Group B — and a published block with exactly those findings
  * deleted compares MATCH. Two reviewers demonstrated it independently.
  *

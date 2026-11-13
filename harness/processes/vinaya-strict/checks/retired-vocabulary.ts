@@ -1,5 +1,5 @@
 /**
- * Retired vocabulary — mechanisms genuinely gone from AEG's own methodology
+ * Retired vocabulary — mechanisms genuinely gone from Vinaya's own methodology
  * (the decision log, the lock, the `team-leader` role, the `D-###` decision
  * id, …) with no legitimate positive occurrence anywhere but the exempt
  * lists below. This is `retired-vocabulary.test.ts`'s `RETIRED` array and

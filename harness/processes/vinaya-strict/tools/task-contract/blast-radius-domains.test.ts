@@ -11,13 +11,13 @@ describe('deriveWorkspacePackageDomains', () => {
     const workspaces = ['apps/*', 'packages/*']
     const listDirs = (dir: string): string[] => {
       if (dir === 'apps') return ['cli']
-      if (dir === 'packages') return ['aeg-core', 'aeg-forge-state', 'aeg-types', 'sources', 'typescript-config']
+      if (dir === 'packages') return ['core', 'forge-state', 'shared-types', 'sources', 'typescript-config']
       return []
     }
     expect(deriveWorkspacePackageDomains(workspaces, listDirs)).toEqual([
-      'packages/aeg-core',
-      'packages/aeg-forge-state',
-      'packages/aeg-types',
+      'packages/core',
+      'packages/forge-state',
+      'packages/shared-types',
       'packages/sources',
       'packages/typescript-config'
     ])
@@ -45,7 +45,7 @@ describe('deriveWorkspacePackageDomains', () => {
     expect(deriveWorkspacePackageDomains(['packages/*-legacy'], () => ['x'])).toEqual([])
   })
 
-  it('exactly matches attalabs\' real static .aeg/packages "packages/*" section', () => {
+  it('exactly matches attalabs\' real static packages-file "packages/*" section', () => {
     // attalabs' real `package.json` `workspaces` array (no globs — every
     // member listed explicitly), read 2026-08-19.
     const attalabsWorkspaces = [
@@ -80,7 +80,7 @@ describe('deriveWorkspacePackageDomains', () => {
       'packages/ui',
       'tools/admin'
     ]
-    // attalabs' real `.aeg/packages`, "shared packages" section, read
+    // attalabs' real static packages file, "shared packages" section, read
     // 2026-08-19 — the before/after proof this task's brief requires (§7).
     const staticFileDomains = [
       'packages/adapter-langgraph',
@@ -202,7 +202,7 @@ describe('deriveBuiltinCrossCuttingDefaults', () => {
     }
   })
 
-  it("exactly matches attalabs' real static .aeg/packages cross-cutting section", () => {
+  it("exactly matches attalabs' real static packages-file cross-cutting section", () => {
     // attalabs' real repo root, read 2026-08-19: bun.lock present, no other
     // lockfile; turbo.json/biome.json/tsconfig.json/.github/workflows/.husky
     // all present.

@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test'
  * 1. Squash-merge closer fact loss: GitHub's `ClosedEvent.closer` can be a
  *    `Commit` (squash-merge whose message contains `Closes #N`, rather than
  *    native PR-auto-close linkage — this repo's own
- *    `<!-- AEG:CLOSES:START -->` convention produces exactly this shape).
+ *    `<!-- VINAYA:CLOSES:START -->` convention produces exactly this shape).
  *    When that happens, the `... on PullRequest { ... }` inline fragment
  *    matches nothing and GraphQL returns `{}` — an empty object, not `null`
  *    — so `extractRawFromResponse` must not treat it as a valid PR.

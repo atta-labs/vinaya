@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { type DocsCoherenceEntry, evaluateDocsCoherence } from './docs-coherence'
 import { parseDocFrontmatter } from './parse-doc'
+import { COMMENT_MARKER_PREFIX } from '../../tools/legacy-markers'
 
 const FIXTURES = join(__dirname, 'fixtures', 'docs-coherence')
 
@@ -50,7 +51,11 @@ describe('evaluateDocsCoherence: broken tree', () => {
   })
 
   it('does not flag the dangling link inside an excluded tranche file', () => {
-    expect(result.errors.some((e) => e.includes('roles/does-not-exist.md" in "tranches/aeg-fake.md"'))).toBe(false)
+    expect(
+      result.errors.some((e) =>
+        e.includes(`roles/does-not-exist.md" in "tranches/${COMMENT_MARKER_PREFIX.old}-fake.md"`)
+      )
+    ).toBe(false)
   })
 
   it('does not flag the dangling link inside a doc excluded via surfaced: false override', () => {

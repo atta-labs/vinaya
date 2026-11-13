@@ -103,9 +103,9 @@ describe('doctrine pointer content (atta-labs/vinaya#41 — honest adopter entry
     // never framed as something present in the adopter's own repo tree.
     expect(governanceSection).not.toContain('vinaya-strict/')
     const fullDoctrineSection = content.split('## Where the full doctrine lives')[1] ?? ''
-    const aegRootMentions = content.split('vinaya-strict/').length - 1
-    const aegRootMentionsInFullDoctrineSection = fullDoctrineSection.split('vinaya-strict/').length - 1
-    expect(aegRootMentions).toBe(aegRootMentionsInFullDoctrineSection)
+    const doctrineMentions = content.split('vinaya-strict/').length - 1
+    const doctrineMentionsInFullDoctrineSection = fullDoctrineSection.split('vinaya-strict/').length - 1
+    expect(doctrineMentions).toBe(doctrineMentionsInFullDoctrineSection)
   })
 
   it('names how to see what is running and how to extend, using only shipped commands', () => {

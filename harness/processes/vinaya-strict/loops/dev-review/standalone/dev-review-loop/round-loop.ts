@@ -115,7 +115,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       // observation call sites — never inferred from `decision` itself,
       // since `assessGate`'s red branch returns a bare `dispatch_developer`
       // with no reason tag: `Decision`/`PauseReason` live in
-      // `packages/aeg-core`, out of this task's declared Surface) is true
+      // the process package, out of this task's declared Surface) is true
       // exactly when THIS dispatch is the driver sending
       // the developer back for a red mechanical gate — the one case that
       // needs the head-change wait (Traps: never re-read the gate in a
@@ -704,7 +704,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       // O5: an infrastructure outcome from either role (after its own
       // one-retry inside `dispatchReviewer`) is a driver-decided pause —
       // there is no `Observations` kind for it (adding one would edit
-      // `packages/aeg-core`, out of this task's declared Surface) — but
+      // the process package, out of this task's declared Surface) — but
       // `driverDecidedPauseEvents` logs the same
       // `stop_condition_met`/`paused`/`round_ended`/`journal_finalized`
       // events every policy-decided pause gets (a round-2 code-review MAJOR

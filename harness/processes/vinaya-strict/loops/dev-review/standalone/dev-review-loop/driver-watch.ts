@@ -117,14 +117,14 @@ import { AGENT_VENDOR_NAMES } from '../../dispatch/dispatch.js'
 export type DriverEndReason = 'merged' | 'closed' | 'cancelled'
 
 /**
- * `runDriverLoop`'s own terminal decision — `Decision` (`@attalabs/aeg-core`,
+ * `runDriverLoop`'s own terminal decision — `Decision` (`@attalabs/process-vinaya`,
  * the pure policy layer) widened by exactly the three facts above, none of
  * which `assessRound` could ever decide (they are facts about the PULL
  * REQUEST, never a round's verdicts) — never added to `Decision` itself,
  * the same "driver-decided, never a policy-layer type" precedent
  * `'infrastructure'`/`'stale_driver'` already set ("Infrastructure
  * failures", `harness/processes/vinaya-strict/loops/dev-review/loop.md`) and this task's own declared
- * Surface keeps: `packages/aeg-core` stays untouched by this member.
+ * Surface keeps: the process package stays untouched by this member.
  */
 export type DriverDecision = Decision | { type: 'ended'; reason: DriverEndReason }
 

@@ -5,9 +5,11 @@ import { join } from 'node:path'
 import * as realChildProcess from 'node:child_process'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { FROZEN_BRIEF_MARKER } from '../../tools/legacy-markers'
+import { LEGACY_TRANCHES_DIR } from '../../tools/legacy-paths'
 
 /**
- * Regression coverage for aeg-governance-hardening task 21 (#351) —
+ * Regression coverage:
  * `currentFindingCounts()` previously fed `verify-docs`/`verify-coherence`
  * through `sh()`/`shJson()`, which swallow ANY non-zero exit to `''`/`null`.
  * Both tools exit non-zero exactly when findings exist, so the baseline
@@ -25,7 +27,7 @@ const spawnSyncMock = mock()
 // `mockImplementation`); a call this suite's own currentFindingCounts/
 // resolvePremiseBriefText tests never make.
 const execFileSyncMock = mock()
-// `tranchesAttachedToMilestone` (`@attalabs/aeg-forge-state`, issue-586 O1)
+// `tranchesAttachedToMilestone` (the forge-state modules)
 // fetches labels only, paginated, through the forge client's own ASYNC
 // buffered call (`promisify(execFile)`) — a different `node:child_process`
 // primitive than the sync one every other call in this suite uses, stubbed
@@ -226,7 +228,7 @@ describe('currentFindingCounts', () => {
    * atta-labs/vinaya#173. `captureStreams` used to concatenate stdout and
    * stderr before parsing, on the stated premise that neither tool writes to
    * stderr on its clean `--json` path. `verify-coherence` does: it probes
-   * `aeg-root/tranches` off the base ref, the forge-native cutover deleted
+   * the retired tranche-file directory off the base ref, the forge-native cutover deleted
    * those directories, and `git` prints a `fatal:` line per probe while the
    * tool itself exits 0 with correct results. One such line made `JSON.parse`
    * throw and the baseline reported UNAVAILABLE on EVERY dispatch check.
@@ -238,8 +240,8 @@ describe('currentFindingCounts', () => {
         return {
           stdout: JSON.stringify({ summary: { passed: 10, failed: 0, info: 6 } }),
           stderr: [
-            'fatal: Not a valid object name origin/main:aeg-root/tranches',
-            "fatal: path 'aeg-root/tranches/x.md' does not exist in 'origin/main'",
+            `fatal: Not a valid object name origin/main:${LEGACY_TRANCHES_DIR}`,
+            `fatal: path '${LEGACY_TRANCHES_DIR}/x.md' does not exist in 'origin/main'`,
             ''
           ].join('\n'),
           status: 0
@@ -256,7 +258,7 @@ describe('currentFindingCounts', () => {
         tool: 'verify-coherence',
         findingCount: 0,
         unavailable: false,
-        diagnostic: 'fatal: Not a valid object name origin/main:aeg-root/tranches'
+        diagnostic: `fatal: Not a valid object name origin/main:${LEGACY_TRANCHES_DIR}`
       }
     ])
   })
@@ -267,7 +269,7 @@ describe('currentFindingCounts', () => {
       if (args.some((a) => a.endsWith('/standalone/verify-coherence.ts'))) {
         return {
           stdout: JSON.stringify({ summary: { passed: 2, failed: 4, info: 0 } }),
-          stderr: 'fatal: Not a valid object name origin/main:aeg-root/tranches\n',
+          stderr: `fatal: Not a valid object name origin/main:${LEGACY_TRANCHES_DIR}\n`,
           status: 1
         }
       }
@@ -280,7 +282,7 @@ describe('currentFindingCounts', () => {
         tool: 'verify-coherence',
         findingCount: 4,
         unavailable: false,
-        diagnostic: 'fatal: Not a valid object name origin/main:aeg-root/tranches'
+        diagnostic: `fatal: Not a valid object name origin/main:${LEGACY_TRANCHES_DIR}`
       }
     ])
   })
@@ -432,7 +434,7 @@ describe('(d) sh()/shJson() other call sites are untouched', () => {
 })
 
 /**
- * aeg-governance-hardening task 23 (#360) — the prior-tranche archival
+ * The prior-tranche archival
  * resolution's `gh issue list` called with no explicit repo target, which silently returns
  * `[]` from a linked worktree checkout (the only environment this script runs
  * in during real dispatch) even when real open Issues exist. Reproduced live
@@ -466,7 +468,7 @@ describe('(e) every gh invocation carries an explicit repo target (Part 1, task 
     // variables make it redundant — is the fifth. 6, not 5:
     // `fetchBacklogIssuePrsBatch`'s own `gh pr list` call (issue-586, O2) is
     // the sixth. Back to 5: the open-Issues read of the prior-tranche archival
-    // resolution moved to `@attalabs/aeg-forge-state`, which reads through the
+    // resolution moved to the forge-state modules, which read through the
     // async Issue list.
     expect(ghCommands.length).toBe(5)
     for (const argsText of ghCommands) {
@@ -673,7 +675,7 @@ describe('(#179) an outage reason outranks an incidental stderr line', () => {
       if (args.some((a) => a.endsWith('/standalone/verify-coherence.ts'))) {
         return {
           stdout: JSON.stringify({ forgeUnavailable: true, summary: { failed: 0 } }),
-          stderr: 'fatal: Not a valid object name origin/main:aeg-root/tranches\n',
+          stderr: `fatal: Not a valid object name origin/main:${LEGACY_TRANCHES_DIR}\n`,
           status: 1
         }
       }
@@ -690,7 +692,7 @@ describe('(#179) an outage reason outranks an incidental stderr line', () => {
  * task 4, Issue #483, O3 — `resolvePremiseBriefText` is `--premise`'s
  * Issue-derived mode's own resolver, extracted so it never needs a spawned
  * `gh`/forge fixture to test (security review, PR #503 round 2, BLOCKER:
- * this exact seam previously matched only the literal `aeg:brief:v1` marker,
+ * this exact seam previously matched only the literal retired-spelling frozen-brief marker,
  * so `--premise` hard-refused every dispatch of a task whose brief had been
  * corrected via `--supersede` — precisely the scenario that flag exists for).
  */
@@ -699,7 +701,10 @@ describe('resolvePremiseBriefText (security review, PR #503 round 2, BLOCKER)', 
 
   it('resolves a plain v1 frozen brief', () => {
     const comments = [
-      { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nOriginal brief text.', author: { login: PRINCIPAL } }
+      {
+        body: `<!-- ${FROZEN_BRIEF_MARKER.old}:v1 -->\nBrief hash: abc\nOriginal brief text.`,
+        author: { login: PRINCIPAL }
+      }
     ]
     const result = resolvePremiseBriefText(comments, 483, [PRINCIPAL])
     expect(result).toEqual({ ok: true, text: 'Original brief text.' })
@@ -707,9 +712,12 @@ describe('resolvePremiseBriefText (security review, PR #503 round 2, BLOCKER)', 
 
   it('resolves the NEWEST version after --supersede, never the superseded v1', () => {
     const comments = [
-      { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nWrong tier, wrong file.', author: { login: PRINCIPAL } },
       {
-        body: '<!-- aeg:brief:v2 -->\nBrief hash: def\nSupersedes: url — wrong tier\nCorrected brief text.',
+        body: `<!-- ${FROZEN_BRIEF_MARKER.old}:v1 -->\nBrief hash: abc\nWrong tier, wrong file.`,
+        author: { login: PRINCIPAL }
+      },
+      {
+        body: `<!-- ${FROZEN_BRIEF_MARKER.old}:v2 -->\nBrief hash: def\nSupersedes: url — wrong tier\nCorrected brief text.`,
         author: { login: PRINCIPAL }
       }
     ]
@@ -719,7 +727,10 @@ describe('resolvePremiseBriefText (security review, PR #503 round 2, BLOCKER)', 
 
   it('refuses (never falls back to a forged comment) when the only frozen-brief-shaped comment is not principal-authored', () => {
     const comments = [
-      { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nForged brief.', author: { login: 'an-impostor' } }
+      {
+        body: `<!-- ${FROZEN_BRIEF_MARKER.old}:v1 -->\nBrief hash: abc\nForged brief.`,
+        author: { login: 'an-impostor' }
+      }
     ]
     const result = resolvePremiseBriefText(comments, 483, [PRINCIPAL])
     expect(result.ok).toBe(false)
@@ -740,7 +751,10 @@ describe('resolvePremiseBriefText (security review, PR #503 round 2, BLOCKER)', 
 
   it('counts only the list the caller passes — a brief by an author left off it is refused', () => {
     const comments = [
-      { body: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nOriginal brief text.', author: { login: PRINCIPAL } }
+      {
+        body: `<!-- ${FROZEN_BRIEF_MARKER.old}:v1 -->\nBrief hash: abc\nOriginal brief text.`,
+        author: { login: PRINCIPAL }
+      }
     ]
     const result = resolvePremiseBriefText(comments, 483, ['adopter-principal'])
     expect(result.ok).toBe(false)

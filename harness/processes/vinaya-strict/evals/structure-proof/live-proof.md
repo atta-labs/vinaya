@@ -82,7 +82,7 @@ adding the missing file alone does not clear the pause. Only rulings posted afte
    ```
 
 3. **Post the ruling** on the task Issue, after that brief: a comment whose first line is the ruling marker line the
-   pause comment names (`aeg:principal:ruling:<ref>-<ordinal>`), with an ordinal greater than the one the pause was
+   pause comment names (`vinaya:principal:ruling:<ref>-<ordinal>`), with an ordinal greater than the one the pause was
    raised under, followed by the decision (resume).
 
 The refused step was never recorded as completed, so the resumed run runs it again at the new revision, reads the

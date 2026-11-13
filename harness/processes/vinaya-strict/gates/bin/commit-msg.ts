@@ -7,7 +7,7 @@
 // this repo's `Type(scope): Description` convention — never a staged diff,
 // which is what `pre-commit`/`pre-push` validate instead.
 //
-// The type vocabulary is `@attalabs/aeg-core`'s `COMMIT_TYPE_STYLE`/
+// The type vocabulary is `@attalabs/process-vinaya`'s `COMMIT_TYPE_STYLE`/
 // `COMMIT_TYPES` — the same list `checkForgeTitle` enforces on PR/Issue
 // titles. One list, every call site (including this file's own error text);
 // never a second copy here.

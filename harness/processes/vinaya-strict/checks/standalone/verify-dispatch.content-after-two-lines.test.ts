@@ -2,8 +2,8 @@ import { describe, expect, it } from 'bun:test'
 import { contentAfterTwoLines } from '../../tools/task-contract/brief-validation'
 
 /**
- * `contentAfterTwoLines` is now the ONE promoted `@attalabs/aeg-core` export
- * (plan-brief-v1 task 3, #428) — `verify-dispatch.ts` imports it from
+ * `contentAfterTwoLines` is now the ONE promoted export
+ * of the task-contract module — `verify-dispatch.ts` imports it from
  * `../src/index` rather than carrying its own copy, the same promoted
  * export `apps/cli`'s `dispatch-task.ts` and `check-brief-shape.ts` import
  * back. These vectors are pinned identically in
@@ -15,12 +15,12 @@ import { contentAfterTwoLines } from '../../tools/task-contract/brief-validation
 const CONTENT_AFTER_TWO_LINES_VECTORS: Array<{ name: string; input: string; expected: string }> = [
   {
     name: 'marker, hash line, then brief text with a trailing newline',
-    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc123\nThe brief text.\nMore text.\n',
+    input: '<!-- vinaya:brief:v1 -->\nBrief hash: abc123\nThe brief text.\nMore text.\n',
     expected: 'The brief text.\nMore text.\n'
   },
   {
     name: 'marker and hash line only, no body at all',
-    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc123',
+    input: '<!-- vinaya:brief:v1 -->\nBrief hash: abc123',
     expected: ''
   },
   {
@@ -30,18 +30,18 @@ const CONTENT_AFTER_TWO_LINES_VECTORS: Array<{ name: string; input: string; expe
   },
   {
     name: 'exactly two lines (no third line to slice out)',
-    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc123\n',
+    input: '<!-- vinaya:brief:v1 -->\nBrief hash: abc123\n',
     expected: ''
   },
   {
     name: 'a blank line immediately after the hash line survives verbatim',
-    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc\n\nBrief text after a blank line.\n',
+    input: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\n\nBrief text after a blank line.\n',
     expected: '\nBrief text after a blank line.\n'
   },
   {
     name: 'brief text that itself contains a line starting with the marker string',
-    input: '<!-- aeg:brief:v1 -->\nBrief hash: abc\nSee <!-- aeg:brief:v1 --> for details.\n',
-    expected: 'See <!-- aeg:brief:v1 --> for details.\n'
+    input: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nSee <!-- vinaya:brief:v1 --> for details.\n',
+    expected: 'See <!-- vinaya:brief:v1 --> for details.\n'
   }
 ]
 

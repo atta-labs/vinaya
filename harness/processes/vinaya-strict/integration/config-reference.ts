@@ -370,7 +370,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     key: 'blastRadius',
     type: 'object (optional)',
     semantics: [
-      '`checkBlastRadiusScope`’s collision-domain declaration surface — the sanctioned "I need one more domain" path. The legacy static `.aeg/packages` file is retired; this is the only way to declare a domain beyond live derivation. Every `packages/*` workspace member is derived live at check time (from `package.json`’s `workspaces`, or `pnpm-workspace.yaml`’s `packages:` list on a pnpm repo), and a built-in default set covers the common cross-cutting paths by presence-check (whichever lockfile exists, `turbo.json`/`biome.json`/`tsconfig.json`, `.github/workflows`, `.husky`) — this key is for anything beyond those two.'
+      '`checkBlastRadiusScope`’s collision-domain declaration surface — the sanctioned "I need one more domain" path. The legacy static packages file is retired; this is the only way to declare a domain beyond live derivation. Every `packages/*` workspace member is derived live at check time (from `package.json`’s `workspaces`, or `pnpm-workspace.yaml`’s `packages:` list on a pnpm repo), and a built-in default set covers the common cross-cutting paths by presence-check (whichever lockfile exists, `turbo.json`/`biome.json`/`tsconfig.json`, `.github/workflows`, `.husky`) — this key is for anything beyond those two.'
     ],
     example: `{ "blastRadius": { "extraDomains": ["migrations", "packages/generated"] } }`
   },
@@ -456,8 +456,8 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     example: `{
   "proseGates": {
     "sourceComments": {
-      "globs": ["apps/cli/src", "packages/aeg-core/src"],
-      "allowlist": ["packages/aeg-core/src/golden-forge-vs-file.test.ts"],
+      "globs": ["apps/cli/src", "packages/core/src"],
+      "allowlist": ["packages/core/src/golden-forge-vs-file.test.ts"],
       "severity": "error"
     }
   }
@@ -469,7 +469,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     semantics: [
       "Repo-relative directory (or file) roots swept recursively for `.ts` files — a prefix match, like `PRODUCT_SLUG_SCOPE`, never a shell glob pattern despite the field's name. Unset (the default) leaves the class dormant: no directory is swept."
     ],
-    example: `{ "globs": ["apps/cli/src", "packages/aeg-core/src", "packages/aeg-forge-state/src"] }`
+    example: `{ "globs": ["apps/cli/src", "packages/core/src", "packages/forge-state/src"] }`
   },
   {
     key: 'proseGates.sourceComments.allowlist',
@@ -477,7 +477,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     semantics: [
       'Exact repo-relative file paths skipped entirely by the source-comment class — for a test fixture that deliberately pins a historical tranche name or forge number in a comment, where rewriting the citation away would break the thing the fixture exists to prove. Not a pattern; every entry is a full path.'
     ],
-    example: `{ "allowlist": ["packages/aeg-core/src/golden-forge-vs-file.test.ts"] }`
+    example: `{ "allowlist": ["packages/core/src/golden-forge-vs-file.test.ts"] }`
   },
   {
     key: 'proseGates.sourceComments.severity',
@@ -750,7 +750,7 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     type: 'object (optional)',
     semantics: [
       "The Issue/PR number below which each of five gates is grandfathered — an Issue or pull request older than a gate's cutover passes it unconditionally. Every field is optional; **an absent key, or an absent field within it, means NO cutover for that gate — it applies to every Issue/PR from number 1.** A brand-new repository declares none, so its Issue 1 is refused without `## Objectives`, the brief sections, and `## Documentation` exactly as a high-numbered Issue is, and its pull requests are held to the brief-shape rules from PR 1.",
-      "This key exists ONLY for a repository whose Issues or pull requests PREDATE a gate: set it to the number from which that gate first applied, so the older stock keeps passing while everything from the cutover on is enforced. A repository that has always had the gates leaves this unset. The values were once hardcoded constants inside `@attalabs/aeg-core` (`OBJECTIVES_SINCE_ISSUE` etc.); moving them here is what lets every adopter's gates apply from Issue 1 by default.",
+      "This key exists ONLY for a repository whose Issues or pull requests PREDATE a gate: set it to the number from which that gate first applied, so the older stock keeps passing while everything from the cutover on is enforced. A repository that has always had the gates leaves this unset. The values were once hardcoded constants inside `@attalabs/process-vinaya` (`OBJECTIVES_SINCE_ISSUE` etc.); moving them here is what lets every adopter's gates apply from Issue 1 by default.",
       "Read from the working-tree `vinaya.config.json` (not the default-branch trust anchor) by the Issue-write, coherence, and brief-shape gates, and from the default-branch trust anchor by the review-gate's own objectives grading (the same source as `reviewPolicy`/`principals`) — these are content-shape cutovers of the same reviewed-committed trust class as the source constants they replace, never a merge-authority lever like `reviewPolicy`."
     ],
     example: `{

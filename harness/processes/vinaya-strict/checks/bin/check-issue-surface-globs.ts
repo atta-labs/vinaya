@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: issue-surface-globs. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: issue-surface-globs. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkSurfaceGlobsResolve` — one of the five write-only rules named
  * apart. `validates: 'issue'`: a `## Surface` `in:` glob resolving to a
  * real tracked file is a property of a task Issue's own body, never a pull

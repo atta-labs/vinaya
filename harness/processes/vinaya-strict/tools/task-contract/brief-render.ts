@@ -205,7 +205,7 @@ export type SurfaceFileFact = {
   path: string
   /** `null` for a file that does not exist yet on disk (a "Create" entry) — a not-yet-created file has no current sha256 to pin. */
   sha256: string | null
-  /** The owning workspace package's own `name` field (e.g. `@attalabs/aeg-core`) — never a directory path; this is what feeds `bunx turbo test --filter=<packageName>` directly. */
+  /** The owning workspace package's own `name` field (e.g. `@attalabs/core`) — never a directory path; this is what feeds `bunx turbo test --filter=<packageName>` directly. */
   packageName: string | null
 }
 

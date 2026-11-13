@@ -1,8 +1,8 @@
 /**
  * Batched resolver for `checkClosesN`'s reverse-direction check (Layer 1
- * reverse, `@attalabs/aeg-core`'s `coherence-checks.ts`) — given the
+ * reverse, the process's `checks/coherence-checks.ts`) — given the
  * Issue numbers a PR body's `Closes #N` references, resolves each to its
- * AEG task identity (`resolveTaskIssueRef`) if it's a real task Issue, or
+ * task identity (`resolveTaskIssueRef`) if it's a real task Issue, or
  * `null` if it's an ordinary (non-task) Issue.
  *
  * One batched GraphQL query aliases `issue(number: N)` per referenced

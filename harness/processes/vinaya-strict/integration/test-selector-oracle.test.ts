@@ -129,7 +129,7 @@ const INCIDENT_CHANGE_SETS: Record<string, string[]> = {
     'harness/kernel/connectors/checkpoint/control-store/index.ts',
     'harness/kernel/connectors/checkpoint/control-store/local.test.ts',
     'harness/kernel/connectors/checkpoint/control-store/local.ts',
-    'packages/aeg-core/src/index.ts'
+    'packages/core/src/index.ts'
   ],
   'task-files-v1/1 — a6d9640c, the one-runtime-directory first push': [
     '.changeset/task-files-v1-1-one-runtime-directory.md',
@@ -431,7 +431,7 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
   it('across a package barrel, every divergence is the barrel — never a relative edge the selector lost', () => {
     const testFiles = realRepoTestFiles()
     const oracle = bundlerOracle(REPO_ROOT, testFiles)
-    const barrel = join(REPO_ROOT, 'packages/aeg-core/src/index.ts')
+    const barrel = join(REPO_ROOT, 'packages/core/src/index.ts')
     const sample = [
       'harness/processes/vinaya-strict/tools/task-contract/review-input-manifest.ts',
       'harness/kernel/gates/checks/anchored-region.ts',
@@ -551,7 +551,7 @@ describe('Issue #702, O2 — the exact regression: a log-sink.ts-only change now
 })
 
 describe('Issue #702, O2 — every test file the Origin’s own grep identifies is now selected', () => {
-  // Re-run live, never special-cased by path (`aeg-root` trap for this task):
+  // Re-run live, never special-cased by path (the retired doctrine-root trap for this task):
   // the same pattern the Origin's own grep used, so this test still passes
   // when a new spawning test is added tomorrow and still fails honestly if
   // this task's own edge regresses.

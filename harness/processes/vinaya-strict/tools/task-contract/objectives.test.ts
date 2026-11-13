@@ -66,7 +66,7 @@ describe('objectivesOf', () => {
   })
 
   it('refuses an objective that is little more than a bare file path', () => {
-    const result = objectivesOf('## Objectives\n\nO1. Edits `packages/aeg-core/src/objectives.ts` directly.\n')
+    const result = objectivesOf('## Objectives\n\nO1. Edits `packages/core/src/objectives.ts` directly.\n')
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.errors.join(' ')).toMatch(/little more than a file path/)

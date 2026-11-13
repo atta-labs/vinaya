@@ -309,7 +309,7 @@ describe('compareManifest', () => {
 describe('pauseBoundRulingFromResolution — the slot comes from the consumed resolution alone', () => {
   const allowlist = ['principal']
   const ruling = (ref: number, k: number, text: string) => ({
-    body: `<!-- aeg:principal:ruling:${ref}-${k} -->\n${text}\n`,
+    body: `<!-- vinaya:principal:ruling:${ref}-${k} -->\n${text}\n`,
     author: 'principal'
   })
   const resolution = {

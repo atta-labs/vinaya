@@ -6,6 +6,7 @@ import {
   RETIRED_PATTERNS,
   scanRetiredVocabulary
 } from './retired-vocabulary'
+import { LEGACY_PROJECT_DIR, LEGACY_TRANCHES_DIR } from '../tools/legacy-paths'
 
 /**
  * Unlike `retired-vocabulary.test.ts` (which proves the vitest suite's own
@@ -43,14 +44,14 @@ describe('scanRetiredVocabulary', () => {
       ',\\)': 'the seam contract (planner-brief contract,) named here',
       '\\(\\.\\)': 'forces every agent back for the rules. (.)',
       '[Tt]opology files?': 'the Planner edits the thin topology file at plan time',
-      'aeg-root/tranches/': 'every active tranche file sits in aeg-root/tranches/',
-      'aeg-project/': 'append the retrospective to aeg-project/lessons.md'
+      [`${LEGACY_TRANCHES_DIR}/`]: `every active tranche file sits in ${LEGACY_TRANCHES_DIR}/`,
+      [`${LEGACY_PROJECT_DIR}/`]: `append the retrospective to ${LEGACY_PROJECT_DIR}/lessons.md`
     }
 
     for (const pattern of RETIRED_PATTERNS) {
       const sample = samples[pattern]
       expect(sample, `no sample for pattern ${pattern} — add one`).toBeDefined()
-      const findings = scanRetiredVocabulary([{ path: 'aeg-root/some-doc.md', content: sample as string }])
+      const findings = scanRetiredVocabulary([{ path: 'doctrine/some-doc.md', content: sample as string }])
       expect(
         findings.some((f) => f.pattern === pattern),
         `pattern never matched its own sample: ${pattern}`
@@ -60,21 +61,21 @@ describe('scanRetiredVocabulary', () => {
 
   it('never matches "decision logic" — ordinary English stays legal', () => {
     const findings = scanRetiredVocabulary([
-      { path: 'aeg-root/some-doc.md', content: 'all decision logic lives in the evaluator' }
+      { path: 'doctrine/some-doc.md', content: 'all decision logic lives in the evaluator' }
     ])
     expect(findings).toEqual([])
   })
 
   it('never matches a decision record whose file name ends in "-decisions.md"', () => {
     const findings = scanRetiredVocabulary([
-      { path: 'aeg-root/some-doc.md', content: '| [0001](0001-record-architecture-decisions.md) | Accepted |' }
+      { path: 'doctrine/some-doc.md', content: '| [0001](0001-record-architecture-decisions.md) | Accepted |' }
     ])
     expect(findings).toEqual([])
   })
 
   it('skips a file whose path carries a RETIRED_EXEMPT_SUBSTRINGS entry', () => {
     const findings = scanRetiredVocabulary([
-      { path: 'aeg-root/tranches/completed/old-tranche.md', content: 'a decision-log entry is required' }
+      { path: `${LEGACY_TRANCHES_DIR}/completed/old-tranche.md`, content: 'a decision-log entry is required' }
     ])
     expect(findings).toEqual([])
   })
@@ -89,11 +90,11 @@ describe('scanRetiredVocabulary', () => {
 
   it('reports the real file and 1-indexed line of a match', () => {
     const findings = scanRetiredVocabulary([
-      { path: 'aeg-root/glossary.md', content: 'line one\nline two\napproves locks\n' }
+      { path: 'doctrine/glossary.md', content: 'line one\nline two\napproves locks\n' }
     ])
     expect(findings).toEqual([
       {
-        file: 'aeg-root/glossary.md',
+        file: 'doctrine/glossary.md',
         line: 3,
         pattern: 'approves locks',
         message: expect.stringContaining('retired Vinaya mechanism'),
@@ -106,14 +107,14 @@ describe('scanRetiredVocabulary', () => {
   it('flags the plan-on-disk layout in any doctrine page but the tranche model', () => {
     const content = [
       'Topology files list the edges.',
-      'the archive is aeg-root/tranches/completed/',
-      'state lives under aeg-project/state.md'
+      `the archive is ${LEGACY_TRANCHES_DIR}/completed/`,
+      `state lives under ${LEGACY_PROJECT_DIR}/state.md`
     ].join('\n')
-    const findings = scanRetiredVocabulary([{ path: '/repo/aeg-root/state-machine.md', content }])
+    const findings = scanRetiredVocabulary([{ path: '/repo/doctrine/state-machine.md', content }])
     expect(findings.map((f) => [f.line, f.pattern])).toEqual([
       [1, '[Tt]opology files?'],
-      [2, 'aeg-root/tranches/'],
-      [3, 'aeg-project/']
+      [2, `${LEGACY_TRANCHES_DIR}/`],
+      [3, `${LEGACY_PROJECT_DIR}/`]
     ])
   })
 
@@ -121,10 +122,10 @@ describe('scanRetiredVocabulary', () => {
     for (const pattern of PLAN_ON_DISK_PATTERNS) expect(PATTERN_EXEMPT[pattern]).toEqual(['/tranche-model.md'])
     const content = [
       '## 4. The thin tranche file — retired',
-      'There is no topology file, and aeg-root/tranches/ holds nothing but the archive; aeg-project/ is gone.',
+      `There is no topology file, and ${LEGACY_TRANCHES_DIR}/ holds nothing but the archive; ${LEGACY_PROJECT_DIR}/ is gone.`,
       'see the approves locks rule'
     ].join('\n')
-    const findings = scanRetiredVocabulary([{ path: '/repo/aeg-root/tranche-model.md', content }])
+    const findings = scanRetiredVocabulary([{ path: '/repo/doctrine/tranche-model.md', content }])
     expect(findings.map((f) => [f.line, f.pattern])).toEqual([[3, 'approves locks']])
   })
 

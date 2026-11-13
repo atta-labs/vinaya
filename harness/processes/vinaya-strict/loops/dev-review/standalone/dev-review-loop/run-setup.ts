@@ -477,7 +477,7 @@ export async function initializeRunBody(c: LoopRunContext): Promise<void> {
   // `paused`/`publish` decision still leaves ONE trace — inside this
   // task's Surface, so this is the role log `task status --follow`
   // already tails, never a second journal family (Traps to avoid). A
-  // forge journal event for the same exit needs a `packages/aeg-core`
+  // forge journal event for the same exit needs a process-package
   // schema change, out of this task's declared Surface, and is left for a
   // later task with that Surface.
   // `exitTraceWritten` guards every call site below (reexec success, an

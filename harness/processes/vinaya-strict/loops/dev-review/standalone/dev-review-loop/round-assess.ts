@@ -1,6 +1,6 @@
 /**
  * `dev-review-loop`'s round-assessment-glue concern — the generic wait/detect/route helpers a round uses
- * around `@attalabs/aeg-core`'s `assessRound` (the ENTIRE policy; this
+ * around `@attalabs/process-vinaya`'s `assessRound` (the ENTIRE policy; this
  * module never re-implements a stop condition or a round-outcome decision):
  * the round marker comment, diff-stat parsing, dispatch/resume escalation,
  * polling, durable-log-line waiting, and completion-event routing. Moved
@@ -690,7 +690,7 @@ export function routeCompletionEvents(
  * strict, since the failure mode this bounds (a real incident: five re-dispatches in
  * two minutes on one head) is a developer making no progress at all, not
  * one that needs several genuine attempts. Driver-owned rather than a
- * `packages/aeg-core` constant: this module's own declared Surface
+ * the process package constant: this module's own declared Surface
  * puts `packages` out of scope.
  */
 export const MAX_GATE_STALLED_TURNS = 2
@@ -718,12 +718,12 @@ export type DeveloperHandoff = {
  * The snapshot `persistLoopState` writes and `loadLoopState`/
  * `recoverLoopState` (`pause-resume.ts`) read back — phase, round, budgets,
  * held-result and delivered-findings identity, the exact fields
- * `LoopStateRecordSchema` (`@attalabs/aeg-core`) carries minus its own
+ * `LoopStateRecordSchema` (`@attalabs/process-vinaya`) carries minus its own
  * `version`/`kind`/`task`/`recordedAt` (supplied by the write wrapper).
  */
 export type LoopStateSnapshot = {
   round: number
-  /** Mirrors `Decision['type']` — a plain string so this module needn't import `packages/aeg-core`'s `Decision` type just to re-narrow it. */
+  /** Mirrors `Decision['type']` — a plain string so this module needn't import the process package's `Decision` type just to re-narrow it. */
   phase: string
   pauseReason?: string
   budgets: LoopBudgets
@@ -791,7 +791,7 @@ export function loadLoopState(task: number): ParsedRecord<LoopStateRecord> {
  * pause the DRIVER decides itself — O2's gate-stalled bound and O5's
  * reviewer-infrastructure failure, neither of which corresponds to an
  * `Observations` kind `assessRound` accepts (adding one would edit
- * `packages/aeg-core`, out of this module's declared Surface;
+ * the process package, out of this module's declared Surface;
  * `Decision`/`PauseReason` themselves are unchanged). Reuses
  * `stop_condition_met`'s existing, otherwise-unused `'principal_stop'`
  * condition and `paused`'s existing generic `'principal_item'` reason —

@@ -87,7 +87,7 @@ export type InitContext = {
   agents: Set<AgentVendor>
 }
 
-// --- neutral scaffold paths (never the doctrine tree / aeg-project) ---------
+// --- neutral scaffold paths (never the doctrine tree or a per-project notes directory) ---------
 export const CONFIG_PATH = 'vinaya.config.json'
 // Root AGENTS.md — the doctrine pointer. Root placement and the name are the
 // whole point: each agent vendor auto-loads one project file at session
@@ -2462,7 +2462,7 @@ export function buildInitOps(ctx: InitContext): Op[] {
  * `project:<name>` label. It is gone. Project is a **field, not a
  * label** — the `project:*` family was retired outright, `declaredProjects`
  * (`issue-validation.ts`) reads the Issue body's `**Project:**` field, and
- * `@attalabs/aeg-forge-state`'s `list-tasks.ts` explicitly ignores a residual
+ * the forge-state `list-tasks.ts` explicitly ignores a residual
  * `project:*` label. So the command's only forge-reaching op created a label
  * that no shipped consumer read, while making an otherwise purely local
  * command require a GitHub remote and credentials.

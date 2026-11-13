@@ -2,11 +2,11 @@
 
 /**
  * check-branch-topology — thin CLI/I/O shim for the branch↔topology
- * gate wired into `.husky/pre-push` (aeg-governance-hardening task 32,
- * #399). Derives the tranche from the forge (`@attalabs/aeg-forge-state`,
- * task aeg-forge-state-v1 3a — a Milestone + `vinaya/tranche:<slug>`-labeled
+ * gate wired into `.husky/pre-push`.
+ * Derives the tranche from the forge (the forge-state modules in `tools/task-contract/forge/`:
+ * a Milestone + `vinaya/tranche:<slug>`-labeled
  * Issues) and hands the result to the pure evaluator `checkBranchTopology`
- * (@attalabs/aeg-core), which answers row membership from `topology.tasks`. No
+ * (`checks/branch-topology-gate.ts`), which answers row membership from `topology.tasks`. No
  * check logic lives here.
  *
  * Refusal reasons print to stderr byte-identical to the inline messages the
@@ -24,6 +24,7 @@
 import { deriveTrancheFromForge } from '../../tools/task-contract/forge/derive-from-forge'
 import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
 import { checkBranchTopology, taskBranchTopologyFields } from '../branch-topology-gate'
+import { LEGACY_TRANCHES_DIR } from '../../tools/legacy-paths'
 
 if (import.meta.main) {
   const branch = process.argv[2]
@@ -39,7 +40,7 @@ if (import.meta.main) {
     process.exit(0)
   }
 
-  const topoPath = `aeg-root/tranches/${fields.tranche}.md`
+  const topoPath = `${LEGACY_TRANCHES_DIR}/${fields.tranche}.md`
 
   const repo = await resolveRepo()
   if (!repo) {

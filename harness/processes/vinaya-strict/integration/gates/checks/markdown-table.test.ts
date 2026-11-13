@@ -9,7 +9,7 @@ const ENFORCEMENT_PATH = join(REPO_ROOT, 'harness/processes/vinaya-strict/doctri
 /**
  * Round-trip proof that `enforcement.md`'s Ring 0/1/2 gate tables still
  * parse correctly through the same `findTable`/`rowToRecord` path the live
- * `/aeg` page uses. Every row ends with an `implementation` column, resolved
+ * gate-rings page uses. Every row ends with an `implementation` column, resolved
  * by header name — this guards against the column having been inserted
  * mid-row or the tables having been reshaped.
  */
@@ -52,7 +52,7 @@ describe('enforcement.md Ring 0/1/2 tables (implementation column)', () => {
       }
     }
     // "Staleness audits" (Ring 2) is a dispatched human/agent process, not a
-    // deterministic script — apps/vinaya/web/src/lib/aeg/rings.ts already
+    // deterministic script — the web page that lists the gate rings already
     // documents this same absence for its own CI-job matching.
     expect(missingImplementation).toEqual(['**Staleness audits**'])
   })

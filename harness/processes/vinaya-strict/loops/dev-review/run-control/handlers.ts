@@ -201,7 +201,7 @@ type RawTaskIssue = { number: number; title: string; labels: Array<{ name: strin
  * <tranche> <n>` preparation performs to find the Issue for an ordinal (an
  * open Issue labeled `vinaya/tranche:<slug>` whose title's ordinal matches
  * `<n>`), reusing the identical title/label parser (`resolveTaskIssueRef`,
- * `@attalabs/aeg-forge-state`) rather than a second regex.
+ * the forge-state modules) rather than a second regex.
  *
  * This lives BESIDE `resolveIssueForRef` deliberately, and reads differently:
  * `resolveIssueForRef` resolves through the task-status list but skips its

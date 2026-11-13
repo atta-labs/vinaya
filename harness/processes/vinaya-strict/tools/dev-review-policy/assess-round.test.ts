@@ -764,8 +764,8 @@ describe('assessRound — the same mechanical failure twice pauses the loop', ()
 
   it('two consecutive red gates with the same failure → pause(repeat_failure) naming the message as reported', () => {
     const { events, decisions } = runScenario(freshState(), [
-      fakeGate(1, false, { failure: premiseMismatch('10:00:00', 'aeg-a1b2c3d', 41201, 1200) }),
-      fakeGate(1, false, { failure: premiseMismatch('10:07:31', 'aeg-9f8e7d6', 41999, 1873) })
+      fakeGate(1, false, { failure: premiseMismatch('10:00:00', 'vinaya-a1b2c3d', 41201, 1200) }),
+      fakeGate(1, false, { failure: premiseMismatch('10:07:31', 'vinaya-9f8e7d6', 41999, 1873) })
     ])
 
     // The first red gate is an ordinary send-back; the second is the stop.
@@ -773,7 +773,7 @@ describe('assessRound — the same mechanical failure twice pauses the loop', ()
     expect(decisions[1]).toEqual({
       type: 'pause',
       reason: 'repeat_failure',
-      detail: premiseMismatch('10:07:31', 'aeg-9f8e7d6', 41999, 1873)
+      detail: premiseMismatch('10:07:31', 'vinaya-9f8e7d6', 41999, 1873)
     })
     expect(events.filter((e) => e.event === 'stop_condition_met')).toMatchObject([{ condition: 'repeat_failure' }])
     expect(events.some((e) => e.event === 'journal_finalized' && 'result' in e && e.result === 'stopped')).toBe(true)
@@ -781,9 +781,9 @@ describe('assessRound — the same mechanical failure twice pauses the loop', ()
 
   it('a near miss is not a repeat: two different premise pins keep the loop going', () => {
     const { decisions } = runScenario(freshState(), [
-      fakeGate(1, false, { failure: premiseMismatch('10:00:00', 'aeg-a1b2c3d', 41201, 1200) }),
+      fakeGate(1, false, { failure: premiseMismatch('10:00:00', 'vinaya-a1b2c3d', 41201, 1200) }),
       fakeGate(1, false, {
-        failure: premiseMismatch('10:07:31', 'aeg-9f8e7d6', 41999, 1873).replace('maxRounds', 'reviewers')
+        failure: premiseMismatch('10:07:31', 'vinaya-9f8e7d6', 41999, 1873).replace('maxRounds', 'reviewers')
       })
     ])
 
@@ -876,10 +876,10 @@ describe('assessRound — a repeat needs a finished Developer attempt between th
 describe('normalizeFailureSignature — what varies is ignored, what distinguishes is kept', () => {
   it('two runs of the same failure share a signature across timestamps, temp paths, process ids and durations', () => {
     const a = normalizeFailureSignature(
-      '2026-09-28T10:00:00.123Z forge read failed in /var/folders/rp/T/aeg-1a2b3c4 (pid 41201) after 1200ms at 4f0807fab8bb7a4c'
+      '2026-09-28T10:00:00.123Z forge read failed in /var/folders/rp/T/vinaya-1a2b3c4 (pid 41201) after 1200ms at 4f0807fab8bb7a4c'
     )
     const b = normalizeFailureSignature(
-      '2026-09-29T02:41:07Z forge read failed in /private/tmp/aeg-99ff00e (pid=8) after 3.4s at 1f4ed5c7aa19'
+      '2026-09-29T02:41:07Z forge read failed in /private/tmp/vinaya-99ff00e (pid=8) after 3.4s at 1f4ed5c7aa19'
     )
     expect(a).toBe(b)
     // Volatile tokens are replaced, never deleted — the sentence still reads.
@@ -975,7 +975,7 @@ describe('assessRound — buildRoundRecord collects deferred findings (O4)', () 
         {
           id: 'F1',
           severity: 'MAJOR',
-          location: 'packages/aeg-core/src/x.ts:42',
+          location: 'packages/core/src/x.ts:42',
           description: 'the unchanged finding',
           state: null,
           policyTreatment: 'non_blocking',
@@ -994,7 +994,7 @@ describe('assessRound — buildRoundRecord collects deferred findings (O4)', () 
     expect(state.rounds[0]?.deferred).toEqual([
       {
         severity: 'MAJOR',
-        location: 'packages/aeg-core/src/x.ts:42',
+        location: 'packages/core/src/x.ts:42',
         reason: 'unchanged-line',
         description: 'the unchanged finding'
       }

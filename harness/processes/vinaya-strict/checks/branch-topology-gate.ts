@@ -3,7 +3,7 @@ import type { Tranche } from '../tools/task-contract/types'
 /**
  * Branch↔topology gate. Pure — no
  * `fs`, no shell-outs. The CLI shim (`bin/check-branch-topology.ts`) derives
- * the tranche from the forge (`@attalabs/aeg-forge-state`)
+ * the tranche from the forge (the forge-state modules)
  * and passes the result (or `null` when no tranche
  * data could be derived) in here.
  *

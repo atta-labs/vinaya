@@ -144,7 +144,7 @@ export type ProjectField = {
  * that much the two share. They are not otherwise interchangeable and this
  * function does not pretend they are: `declaredProjects` splits on `/[,/]/` and
  * DROPS a non-slug segment, while this one splits on `,` (the documented
- * grammar) and REPORTS it. On `**Project:** vinaya / aeg-core` they disagree by
+ * grammar) and REPORTS it. On `**Project:** vinaya / core` they disagree by
  * construction. The shared peel set is what keeps a wrapper from costing a real
  * name its shape in one reader and not the other — the drift that silently
  * dropped the project of every plain-form Issue once before; it is not a claim
@@ -367,7 +367,7 @@ export async function fetchTrancheIssuesAsync(owner: string, repo: string, slug:
  * (title typo) doesn't invalidate the label's membership signal.
  *
  * Used by `checkClosesN`'s reverse-direction check (Layer 1 reverse,
- * `@attalabs/aeg-core`'s `coherence-checks.ts`).
+ * the process's `coherence-checks.ts`).
  */
 export function resolveTaskIssueRef(title: string, labels: string[]): TaskIssueRef | null {
   const m = title.match(TITLE_PATTERN)

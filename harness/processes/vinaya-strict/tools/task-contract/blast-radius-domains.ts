@@ -1,7 +1,7 @@
 /**
  * Live derivation of `checkBlastRadiusScope`'s collision-domain list.
  *
- * The list used to be 100% hand-authored in `.aeg/packages` (see that file's
+ * The list used to be 100% hand-authored in the retired static packages file (see that file's
  * own header for the doctrine this module now mechanizes). Two of its three
  * sections are derivable or defaultable, and this module produces both,
  * pure — every filesystem read is injected by the caller (`open-issue.ts`),
@@ -13,7 +13,7 @@
  *    `workspaces` key in `package.json` at all, so both sources are read and
  *    combined by the caller before this function ever sees them) that
  *    resolves under `packages/` is a shared collision domain BY CONSTRUCTION
- *    (this repo's own doctrine, `.aeg/packages`'s header). A workspace member
+ *    (this repo's own doctrine, the retired static packages file's header). A workspace member
  *    three directories deep (`packages/agents/vada-fusion`) still collapses
  *    to its top-level directory (`packages/agents`) — the domain is the
  *    directory, not the individual package, because that is the granularity
@@ -28,7 +28,7 @@
  *    structure, but detectable by convention: presence-check a fixed
  *    candidate list rather than assuming any one of them exists.
  *
- * Neither function reads `.aeg/packages` or `vinaya.config.json`'s
+ * Neither function reads the retired static packages file or `vinaya.config.json`'s
  * `blastRadius.extraDomains` — those stay additive, read by the caller and
  * unioned on top (see `open-issue.ts`'s `readSharedPackages`).
  */
@@ -168,7 +168,7 @@ export function parsePnpmWorkspaceYaml(content: string): string[] {
  * The built-in cross-cutting candidates, in the fixed order every derived
  * list reports them — the same order the doctrine names them
  * (`harness/processes/vinaya-strict/doctrine/tranche-model.md` §5) and the order attalabs' own static
- * `.aeg/packages` already lists them in, so a diff against that file reads
+ * packages file already lists them in, so a diff against that file reads
  * as a true empty diff rather than a reordering.
  *
  * Exactly one of the four lockfile names is expected to exist per repo — all

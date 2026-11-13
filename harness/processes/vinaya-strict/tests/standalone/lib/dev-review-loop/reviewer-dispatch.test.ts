@@ -207,7 +207,7 @@ describe('buildVerdictFromReview — objective-id coverage, the same rule `revie
     expect(result.rendered).toMatch(/O1: MET — PR body:Decisions \(prose note\)/)
   })
 
-  it('a NOT MET citing a role file (aeg-root/roles/…) is reclassified MET (prose note) too', () => {
+  it('a NOT MET citing a role file (executing/…/doctrine.md) is reclassified MET (prose note) too', () => {
     const result = build(
       completedReview('reviewer', {
         objectiveResults: [notMet('O1', 'harness/processes/vinaya-strict/executing/developer/doctrine.md'), met('O2')]
@@ -232,7 +232,7 @@ describe('buildVerdictFromReview — objective-id coverage, the same rule `revie
         ]
       })
     )
-    // `assessRound` (`@attalabs/aeg-core`) is what actually turns this
+    // `assessRound` (`@attalabs/process-vinaya`) is what actually turns this
     // `met: false` into a `changes_requested` round outcome — out of this
     // function's own scope. What THIS function must never do is erase the
     // fact that O1 is unmet just because it cites a real file.
@@ -719,8 +719,8 @@ describe('deferral helpers (O2/O3)', () => {
   })
 
   it('makeInSurfacePredicate uses globCoversPath over the finding file', () => {
-    const pred = makeInSurfacePredicate(['packages/aeg-core/src', 'apps/cli/src/lib'])
-    expect(pred('packages/aeg-core/src/x.ts:1')).toBe(true)
+    const pred = makeInSurfacePredicate(['packages/core/src', 'apps/cli/src/lib'])
+    expect(pred('packages/core/src/x.ts:1')).toBe(true)
     expect(pred('apps/log-server/y.ts:1')).toBe(false)
   })
 
@@ -729,12 +729,12 @@ describe('deferral helpers (O2/O3)', () => {
       round: 1,
       previousRoundHead: null,
       head: 'h1',
-      surface: { in: ['packages/aeg-core/src'], out: [] },
+      surface: { in: ['packages/core/src'], out: [] },
       changedPaths: ['apps/log-server/changed.ts'],
       unifiedDiff: () => 'diff'
     })
     expect(ctx1.changedLine).toBeUndefined()
-    expect(ctx1.inSurface?.('packages/aeg-core/src/a.ts:1')).toBe(true)
+    expect(ctx1.inSurface?.('packages/core/src/a.ts:1')).toBe(true)
     expect(ctx1.changedFile?.('apps/log-server/changed.ts:4')).toBe(true)
     expect(ctx1.changedFile?.('apps/log-server/other.ts:4')).toBe(false)
   })
@@ -744,8 +744,8 @@ describe('deferral helpers (O2/O3)', () => {
       round: 1,
       previousRoundHead: null,
       head: 'h1',
-      surface: { in: ['packages/aeg-core/src'], out: [] },
-      changedPaths: ['packages/aeg-core/src/a.ts', 'apps/log-server/changed.ts']
+      surface: { in: ['packages/core/src'], out: [] },
+      changedPaths: ['packages/core/src/a.ts', 'apps/log-server/changed.ts']
     })
     const policy = { ...DEFAULT_REVIEW_POLICY, codeReviewThreshold: 'MAJOR' as const }
     const evaluated = evaluateCodeReview(
@@ -767,7 +767,7 @@ describe('deferral helpers (O2/O3)', () => {
       round: 1,
       previousRoundHead: null,
       head: 'h1',
-      surface: { in: ['packages/aeg-core/src'], out: [] },
+      surface: { in: ['packages/core/src'], out: [] },
       changedPaths: null
     })
     expect(ctx.inSurface).toBeUndefined()
@@ -837,7 +837,7 @@ describe('buildVerdictFromReview — deferral context (O2/O3/O4)', () => {
     findings: [
       {
         severity: 'MAJOR',
-        file: 'packages/aeg-core/src/x.ts',
+        file: 'packages/core/src/x.ts',
         line: 99,
         description: 'perf regression on unchanged code'
       }
@@ -852,7 +852,7 @@ describe('buildVerdictFromReview — deferral context (O2/O3/O4)', () => {
     expect(result.observation.findings).toHaveLength(1)
     expect(result.observation.findings[0]).toMatchObject({
       severity: 'MAJOR',
-      location: 'packages/aeg-core/src/x.ts:99',
+      location: 'packages/core/src/x.ts:99',
       description: 'perf regression on unchanged code',
       policyTreatment: 'non_blocking',
       deferred: 'unchanged-line'

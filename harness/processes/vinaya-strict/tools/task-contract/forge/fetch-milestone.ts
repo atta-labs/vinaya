@@ -17,11 +17,11 @@ export type MilestoneFacts = {
 
 /**
  * Reads the `Release:` field from a Milestone description — this package's
- * own copy of the grammar `@attalabs/aeg-core`'s `milestone-validation.ts`
+ * own copy of the grammar the process's `milestone-validation.ts`
  * defines: line-anchored, `**`-optional
  * on both sides, code fences stripped first, first match wins. Duplicated
- * rather than imported because this package sits BELOW `aeg-core` in the
- * dependency graph (`aeg-core → aeg-forge-state`) and cannot import back up
+ * rather than imported because the forge-state modules sit BELOW the
+ * process's grammar modules in the dependency graph and cannot import back up
  * — the same layering that already gives `Project:` two independent readers
  * (`list-tasks.ts`'s `PROJECT_FIELD` and `issue-validation.ts`'s
  * `declaredProjects`). This reader is tolerant, not a gate: a malformed or
@@ -67,7 +67,7 @@ function intentsSection(text: string): string | null {
  * matching `slug` in a Milestone's description (a settled decision). A
  * label with no intent line resolves to `''`,
  * exactly as an unmilestoned tranche did before this task. Same intents
- * grammar as `@attalabs/aeg-core`'s `milestone-validation.ts`, duplicated for
+ * grammar as the process's `milestone-validation.ts`, duplicated for
  * the same layering reason `releaseFromDescription` is.
  */
 export function intentGoalForSlug(description: string, slug: string): string {

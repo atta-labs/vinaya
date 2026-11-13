@@ -22,6 +22,7 @@ import {
   type TaskSurfaceFacts
 } from '../tools/task-contract/issue-validation'
 import { parseTaskBranchIdentity } from '../tools/task-contract/task-branch-identity'
+import { LEGACY_TRANCHES_DIR } from '../tools/legacy-paths'
 import { isPrincipal } from '../tools/task-contract/waiver-label'
 import type { ForgeIssue, TaskIssueRef } from '../tools/task-contract/tranche-types'
 import type { GhIssue } from '../../../kernel/adapters/code-host/github/gh'
@@ -52,7 +53,7 @@ export function isGrandfathered(isoDate: string | null | undefined): boolean {
  * exempted from blocking. Unlike A1/A2/A3/T3's date-based cutoff, an Issue
  * body carries no reliable "authored under which grammar" timestamp, so this
  * is an explicit number set rather than a date proxy — populated once, at
- * `aeg-governance-hardening` task 1 implementation time, with exactly the
+ * the time that rule was first implemented, with exactly the
  * active-tranche task Issues that failed `checkIssueRationale` against the
  * live forge (see the task's PR body for the list + counts).
  *
@@ -485,9 +486,9 @@ function resolveDepEntry(
 }
 
 /**
- * `ForgeIssue` lives in `@attalabs/aeg-types` (an aeg-core-purity fix) —
+ * `ForgeIssue` lives in the task-contract types (`tools/task-contract/types.ts`) (a purity fix) —
  * re-exported here since every existing call site imports it from
- * `@attalabs/aeg-core`.
+ * `@attalabs/process-vinaya`.
  */
 export type { ForgeIssue }
 
@@ -510,12 +511,12 @@ export type { ForgeIssue }
  * `grandfatheredIssues`: `R1_GRANDFATHERED_ISSUES` — pre- stock,
  * reported as `info`, never `fail`.
  * `registeredNames`: the registry's project names, read by the caller
- * (aeg-core is pure). Defaults to `[]`, which leaves the registry half
+ * (the process package is pure). Defaults to `[]`, which leaves the registry half
  * dormant — so a caller that has no registry to hand keeps R1's prior
  * behaviour exactly.
  * `objectivesSinceIssue`: the resolved Objectives cutover
  * (`gateCutovers.objectivesSinceIssue`, resolved by the caller from
- * `vinaya.config.json` — aeg-core is pure), threaded into `checkIssueObjectives`.
+ * `vinaya.config.json` — the process package is pure), threaded into `checkIssueObjectives`.
  * `null` means NO cutover (grade every open Issue from 1, O1); `undefined`
  * (an omitting caller, e.g. a test) falls through to `checkIssueObjectives`'s
  * own default (this repo's historical cutover).
@@ -902,7 +903,7 @@ export function extractClosesReferences(prBody: string): Set<number> {
  * bypassed for this direction (returns ok:true).
  *
  * Reverse direction (added: a branch NOT named `task/<tranche>/<n>` that
- * nonetheless closes a real AEG task Issue must be named after that task —
+ * nonetheless closes a real Vinaya task Issue must be named after that task —
  * the gap that let a real feature branch implement a real Issue with zero
  * forge-visible status. Runs for ANY branch, gated on `taskIssueRefs` being
  * supplied: each `Closes #N` the body references is looked up in the map;
@@ -915,7 +916,7 @@ export function extractClosesReferences(prBody: string): Set<number> {
  *
  * Pure function; reads from injected parameters. The CLI entry-point wires
  * in BRANCH + PR_BODY env vars (forward) and a batched forge lookup
- * (reverse, see `@attalabs/aeg-forge-state`'s `fetchTaskIssueRefs`).
+ * (reverse, see the forge-state modules's `fetchTaskIssueRefs`).
  */
 export function checkClosesNTopology(
   branch: string,
@@ -964,7 +965,7 @@ export function checkClosesNTopology(
   if (!trancheFile) {
     return {
       ok: false,
-      message: `closes-n: branch "${branch}" references tranche "${trancheSlug}" but no topology file found at aeg-root/tranches/${trancheSlug}.md. Ensure the tranche file exists before opening the PR.`
+      message: `closes-n: branch "${branch}" references tranche "${trancheSlug}" but no topology file found at ${LEGACY_TRANCHES_DIR}/${trancheSlug}.md. Ensure the tranche file exists before opening the PR.`
     }
   }
 

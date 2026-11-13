@@ -107,7 +107,7 @@ export function resolveGateStep(
 export type CoreCheckRing = 0 | 1 | 2
 
 /**
- * The core AEG gates an adopter's repo actually runs, expressed as ordinary
+ * The core Vinaya gates an adopter's repo actually runs, expressed as ordinary
  * `CheckSpec`s — the exact shape a `vinaya.config.json` entry produces. No
  * extra field, no privileged flag: this IS the no-privileged-API proof, not
  * a stylistic choice. See `tests/checks/no-privileged-api.test.ts`.
@@ -621,7 +621,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       timeoutMs: 30_000,
       // BRANCH falls back to git; VINAYA_REPO falls back to `git remote`.
       // Tokens forwarded because the bin reaches the forge through
-      // `createForgeSource` → `@attalabs/aeg-forge-state`'s token resolution
+      // `createForgeSource` → the forge-state modules' token resolution (`tools/task-contract/forge/`)
       // (GITHUB_TOKEN, then GH_TOKEN, then a `gh auth token` subprocess)
       // — the subprocess tier fails on CI runners, so without forwarding
       // the check cannot reach the forge there. Same reasoning as
@@ -972,7 +972,7 @@ const REGISTRY: ReadonlyArray<readonly [CheckSpec, CoreCheckRing]> = [
       run: bin('check-token-collection-wired'),
       scope: 'full',
       timeoutMs: 15_000,
-      // `resolveMeteringCapability` (`@attalabs/aeg-core`) reads
+      // `resolveMeteringCapability` (`kernel/adapters/agents/claude-code/claude-code-transcript.ts`) reads
       // `CLAUDE_PROJECT_DIR`/`CLAUDE_CODE_SESSION_ID` directly — both must be
       // declared or the runner strips them before spawn (the same env-stripping
       // trap `brief-shape`'s `BRANCH` comment above names) and the pointer-file
@@ -1073,7 +1073,7 @@ export function coreCheckRegistry(): CheckSpec[] {
 /** `name` -> `ring`, derived from the same `REGISTRY` pairing `coreCheckRegistry()`
  * reads — never out of sync with it by construction. Consulted by
  * `harness/processes/vinaya-strict/checks/registry-scaffold.ts` indirectly, through the
- * aeg-core-local mirror in `gate-audience.ts` (aeg-core cannot import this
+ * process-local mirror in `gate-audience.ts` (that module cannot import this
  * module — see that file's own doc comment for why); `gate-audience.test.ts`-
  * style coupling assertions in this package keep the two in sync. */
 export const CORE_CHECK_RING: Readonly<Record<string, CoreCheckRing>> = Object.fromEntries(

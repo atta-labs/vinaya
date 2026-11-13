@@ -2,7 +2,7 @@
 
 /**
  * Core check: quoted-command. Thin adapter over
- * `@attalabs/aeg-core`'s `findCitedQuotes`/`evaluateCitedQuotes` — a doc that
+ * `@attalabs/process-vinaya`'s `findCitedQuotes`/`evaluateCitedQuotes` — a doc that
  * quotes a command/config line verbatim, in backticks, as a statement of
  * present fact goes stale silently once the thing it quotes changes.
  *

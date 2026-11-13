@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: brief-shape. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: brief-shape. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkBriefSections` — mirrors `harness/processes/vinaya-strict/checks/standalone/verify-brief.ts`'s
  * input assembly (PR_BODY/BRANCH env, tier via `readTierFromPrBody`, the
  * non-task/non-brief-shaped bypass, `requireClosesN: isTaskBranch(branch)`),
  * but emits the check contract (JSON lines on stderr, exit 0/1)
  * instead of human text — the reason this is a new executable rather than a
- * wrapper around `bin/*` (`packages/aeg-core/bin/*` is out of this task's
+ * wrapper around `bin/*` (the process `checks/bin` folder is out of this task's
  * boundary to edit).
  *
  * scope: diff — the PR body is what's graded; the one filesystem read added
@@ -105,7 +105,7 @@ function readManifest(dir: string): PackageManifest | null {
 
 /**
  * `checkConsumerTests`'s consumer enumeration (a round-2 ruling) —
- * `@attalabs/aeg-core`'s `buildConsumersOf`, the SAME
+ * `@attalabs/process-vinaya`'s `buildConsumersOf`, the SAME
  * enumeration `harness/processes/vinaya-strict/checks/standalone/verify-brief.ts` wires for the
  * authoring-time entry point, so CI and pre-dispatch can never disagree
  * about which workspace members count as consumers.

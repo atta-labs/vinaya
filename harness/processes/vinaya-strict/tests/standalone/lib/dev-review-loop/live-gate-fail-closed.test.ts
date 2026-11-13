@@ -3,7 +3,7 @@
  * fails, the `[live]` lines the task owes are unknown, so the task never
  * concludes on it — the round ends as an infrastructure failure, retried
  * through the existing infrastructure-retry path, with nothing run and no
- * `AEG:LIVE` record claiming anything.
+ * `VINAYA:LIVE` record claiming anything.
  */
 
 import { readFileSync } from 'node:fs'
@@ -29,7 +29,7 @@ const LIVE =
 /** A frozen brief whose §9 carries a command line and, when given, `[live]` items. */
 function briefWith(live: string[]): string {
   return [
-    '<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\n',
+    '<!-- vinaya:brief:v1 -->\nBrief hash: deadbeef\nDo the thing.\n\n## Objectives\n\nO1. Do the thing.\n',
     '## 9. Test Plan',
     '',
     '```',

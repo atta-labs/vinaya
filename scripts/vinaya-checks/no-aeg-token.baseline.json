@@ -71,6 +71,26 @@
     {
       "glob": "harness/processes/vinaya-strict/tools/prose-rules.ts",
       "reason": "The retired-name prose rule: it must spell the word it bans."
+    },
+    {
+      "glob": "harness/processes/vinaya-strict/tools/task-contract/**/fixtures/issue-*-body.md",
+      "reason": "Recorded Issue-body fixtures: task Issue bodies captured from the forge as cut, which the Issue and brief parsers must keep reading."
+    },
+    {
+      "glob": "harness/processes/vinaya-strict/integration/config/fixtures/config-golden/**",
+      "reason": "Configuration golden files: the configuration surface recorded as it was emitted, which the configuration tests compare against as recorded."
+    },
+    {
+      "glob": "harness/processes/vinaya-strict/fixtures/dev-review-architecture-invariants.json",
+      "reason": "A recorded architecture-invariants fixture: the review loop's module layout captured as it stood, which the architecture test compares against."
+    },
+    {
+      "glob": "harness/processes/vinaya-strict/tools/task-contract/fixtures/projects.md",
+      "reason": "A recorded projects-registry fixture: a projects file captured with historical tranche slugs, which the registry parser is tested on."
+    },
+    {
+      "glob": "harness/processes/vinaya-strict/tools/fixtures/doc-owners-with-bindings",
+      "reason": "A recorded documentation-owners fixture: an owners file captured with historical bindings, which the owners reader is tested on."
     }
   ],
   "baseline": {

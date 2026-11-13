@@ -13,19 +13,19 @@ function fixtureContent(): string {
     '',
     '| Action | Summary | Category | Description | Gate | What must be true before the action is allowed | Audience | implementation |',
     '| --- | --- | --- | --- | --- | --- | --- | --- |',
-    '| `git commit` | Ever pushed broken code? | hook | Refuses a bad commit. | **pre-commit** | Checks pass. | repo-own | `packages/aeg-core/bin/verify-task.ts` |',
+    '| `git commit` | Ever pushed broken code? | hook | Refuses a bad commit. | **pre-commit** | Checks pass. | repo-own | `harness/processes/vinaya-strict/checks/standalone/verify-task.ts` |',
     '',
     '## Ring 1 — Branch Rules',
     '',
     '| CI check | Summary | Category | Description | Re-verifies | Audience | implementation |',
     '| --- | --- | --- | --- | --- | --- | --- |',
-    '| Closes linkage | Ever merged without closing? | ci | Re-checks Closes #N. | The PR closes its Issue. | product | `packages/aeg-core/bin/verify-coherence.ts` |',
+    '| Closes linkage | Ever merged without closing? | ci | Re-checks Closes #N. | The PR closes its Issue. | product | `harness/processes/vinaya-strict/checks/standalone/verify-coherence.ts` |',
     '',
     '## Ring 2 — Audits',
     '',
     '| Mechanism | Summary | Category | Description | Runs | Catches | Audience | implementation |',
     '| --- | --- | --- | --- | --- | --- | --- | --- |',
-    '| Post-merge archivist | Ever wanted a record? | event | Records what shipped. | On every merge. | Missing provenance. | repo-own | `packages/aeg-core/bin/archive-task.ts` |',
+    '| Post-merge archivist | Ever wanted a record? | event | Records what shipped. | On every merge. | Missing provenance. | repo-own | `harness/processes/vinaya-strict/checks/standalone/archive-task.ts` |',
     ''
   ].join('\n')
 }
@@ -48,17 +48,17 @@ describe('computeScaffoldPlan', () => {
     expect(plan.stubs[0]?.ring).toBe('ring0')
   })
 
-  it('the no-guess class: a retired aeg-core bin with no registry entry gets NO stub, and is reported skipped', () => {
+  it('the no-guess class: a retired standalone bin with no registry entry gets NO stub, and is reported skipped', () => {
     const rows = parseEnforcementRegistry(fixtureContent())
-    const plan = computeScaffoldPlan(rows, ['packages/aeg-core/bin/some-brand-new-tool.ts'])
+    const plan = computeScaffoldPlan(rows, ['harness/processes/vinaya-strict/checks/standalone/some-brand-new-tool.ts'])
     expect(plan.stubs).toHaveLength(0)
     expect(plan.skipped).toHaveLength(1)
-    expect(plan.skipped[0]?.path).toBe('packages/aeg-core/bin/some-brand-new-tool.ts')
+    expect(plan.skipped[0]?.path).toBe('harness/processes/vinaya-strict/checks/standalone/some-brand-new-tool.ts')
   })
 
-  it('an internal (non-shipped) aeg-core gate — e.g. verify-task — also gets no stub', () => {
+  it('an internal (non-shipped) standalone gate — e.g. verify-task — also gets no stub', () => {
     const rows = parseEnforcementRegistry(fixtureContent())
-    const plan = computeScaffoldPlan(rows, ['packages/aeg-core/bin/verify-task.ts'])
+    const plan = computeScaffoldPlan(rows, ['harness/processes/vinaya-strict/checks/standalone/verify-task.ts'])
     // Already documented in the fixture's own Ring 0 row — not even a candidate.
     expect(plan.stubs).toHaveLength(0)
     expect(plan.skipped).toHaveLength(0)
@@ -66,7 +66,7 @@ describe('computeScaffoldPlan', () => {
 
   it('a candidate already named by an existing row produces no stub (never touches or duplicates it)', () => {
     const rows = parseEnforcementRegistry(fixtureContent())
-    const plan = computeScaffoldPlan(rows, ['packages/aeg-core/bin/verify-coherence.ts'])
+    const plan = computeScaffoldPlan(rows, ['harness/processes/vinaya-strict/checks/standalone/verify-coherence.ts'])
     expect(plan.stubs).toHaveLength(0)
     expect(plan.skipped).toHaveLength(0)
   })
@@ -91,7 +91,7 @@ describe('computeScaffoldPlan', () => {
     expect(plan.stubs[0]?.checkName).toBe('closes-n')
   })
 
-  it('an apps/cli bin with no CLI_CHECK_RING entry gets NO stub, and is reported skipped — the same no-guess discipline as the aeg-core-bin class', () => {
+  it('an apps/cli bin with no CLI_CHECK_RING entry gets NO stub, and is reported skipped — the same no-guess discipline as the standalone-bin class', () => {
     const rows = parseEnforcementRegistry(fixtureContent())
     const plan = computeScaffoldPlan(rows, ['harness/processes/vinaya-strict/checks/bin/check-some-brand-new-tool.ts'])
     expect(plan.stubs).toHaveLength(0)

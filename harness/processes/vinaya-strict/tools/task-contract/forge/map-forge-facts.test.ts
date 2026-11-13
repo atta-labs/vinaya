@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AEG_BLOCKED_LABEL, mapForgeFacts } from './map-forge-facts'
+import { BLOCKED_LABEL, mapForgeFacts } from './map-forge-facts'
 import type { RawTaskFacts } from '../tranche-types'
 
 type IssueOverride = Partial<NonNullable<RawTaskFacts['issue']>> | null
@@ -94,7 +94,7 @@ describe('mapForgeFacts', () => {
     it('is true when vinaya/blocked is present (Issue-scoped per state-machine §14)', () => {
       const facts = mapForgeFacts(
         rawBase({
-          issue: { state: 'OPEN', stateReason: null, assigneesCount: 1, labels: ['vinaya/tier:1', AEG_BLOCKED_LABEL] }
+          issue: { state: 'OPEN', stateReason: null, assigneesCount: 1, labels: ['vinaya/tier:1', BLOCKED_LABEL] }
         })
       )
       expect(facts?.blockedLabel).toBe(true)
@@ -119,7 +119,7 @@ describe('mapForgeFacts', () => {
       expect(facts?.prState).toBe('merged')
     })
 
-    it("CLOSED (without merge) → 'none' (AEG only models open/merged/none)", () => {
+    it("CLOSED (without merge) → 'none' (Vinaya only models open/merged/none)", () => {
       const facts = mapForgeFacts(rawBase({ pullRequest: { state: 'CLOSED', reviewDecision: null } }))
       expect(facts?.prState).toBe('none')
     })
@@ -141,7 +141,7 @@ describe('mapForgeFacts', () => {
       expect(facts?.reviewDecision).toBe('changes_requested')
     })
 
-    it("REVIEW_REQUIRED → 'none' (no effective AEG difference)", () => {
+    it("REVIEW_REQUIRED → 'none' (no effective Vinaya difference)", () => {
       const facts = mapForgeFacts(rawBase({ pullRequest: { state: 'OPEN', reviewDecision: 'REVIEW_REQUIRED' } }))
       expect(facts?.reviewDecision).toBe('none')
     })
@@ -260,7 +260,7 @@ describe('mapForgeFacts', () => {
     it('vinaya/blocked + open PR → blockedLabel set (deriveTranche treats blocked as winner)', () => {
       const facts = mapForgeFacts(
         rawBase({
-          issue: { state: 'OPEN', stateReason: null, assigneesCount: 1, labels: [AEG_BLOCKED_LABEL] },
+          issue: { state: 'OPEN', stateReason: null, assigneesCount: 1, labels: [BLOCKED_LABEL] },
           refExists: true,
           pullRequest: { state: 'OPEN', reviewDecision: 'CHANGES_REQUESTED' }
         })

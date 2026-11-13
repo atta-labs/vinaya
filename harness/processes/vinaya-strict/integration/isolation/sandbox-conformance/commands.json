@@ -137,7 +137,7 @@
       "id": "superseded-archival-gate",
       "forms": [
         "gh pr list --state merged --json number,headRefName,mergedAt | jq '[.[] | select(.headRefName | startswith(\"task/<tranche>/\"))] | sort_by(.mergedAt) | last'",
-        "gh pr view <N> --json comments | jq '.comments[].body | select(test(\"AEG.*provenance|provenance.*task\"; \"i\"))'"
+        "gh pr view <N> --json comments | jq '.comments[].body | select(test(\"Vinaya.*provenance|provenance.*task\"; \"i\"))'"
       ],
       "notRun": "the superseded prior-archival precondition — preserved as history, the doctrine says not to enforce it"
     },

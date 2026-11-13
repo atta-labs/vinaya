@@ -139,7 +139,7 @@ The Developer escalates through the escalation mechanism — a manual escalation
 - `severity: strategy` → Planner. Less common: the brief's approach has a structural problem; the work touches an undiscussed area.
 - `severity: product` → Principal. Rare: user-visible behavior the brief didn't address; a Type 1 decision is required.
 
-The task is marked `blocked` (an `aeg:blocked` label — the one status with no native forge fact) until a reply arrives. The responder (Planner or Principal) formulates a reply and the Developer resumes.
+The task is marked `blocked` (an `vinaya/blocked` label — the one status with no native forge fact) until a reply arrives. The responder (Planner or Principal) formulates a reply and the Developer resumes.
 
 **Type 1 during execution:** if the question needs an irreversible decision and the Principal isn't available, the Issue/PR stays labeled `needs:principal-input`; the next window resolves it. The Developer may terminate and resume via a follow-up dispatch after the window.
 

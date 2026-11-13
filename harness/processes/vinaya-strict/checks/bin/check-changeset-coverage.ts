@@ -23,7 +23,7 @@
  * optional, for the shared diff helper the bin calls, so a caller-supplied
  * diff base and the pre-commit staged evidence reach it.
  *
- * Release-branch exemption: reuses `@attalabs/aeg-core`'s own
+ * Release-branch exemption: reuses `@attalabs/process-vinaya`'s own
  * `CHANGESET_RELEASE_BRANCH` constant — the same one `check-body-bare-digits.ts`'s
  * Changesets-release exemption is keyed on. That check also live-fetches the
  * PR author; this one deliberately shells out to nothing but local git.

@@ -75,7 +75,7 @@ describe('every checks/bin executable carries mode 100755 in the git index', () 
           encoding: 'utf8',
           env: {
             ...stripVinayaEnv(),
-            PR_BODY: '## Scope\n\nSource execution.\n<!-- AEG:TIER:START -->\n**Tier:** 0\n<!-- AEG:TIER:END -->'
+            PR_BODY: '## Scope\n\nSource execution.\n<!-- VINAYA:TIER:START -->\n**Tier:** 0\n<!-- VINAYA:TIER:END -->'
           }
         }
       )

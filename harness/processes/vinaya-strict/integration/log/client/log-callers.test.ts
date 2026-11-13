@@ -316,7 +316,7 @@ const MOVED_SRC_FILES = ['loops/dev-review/flow-v2-events.ts', 'loops/dev-review
   (file) => `harness/processes/vinaya-strict/${file}`
 )
 
-/** The source that moved out of `apps/cli/src` and `packages/aeg-core/src` into the kernel, so these scans read it where it now lives. */
+/** The source that moved out of `apps/cli/src` and the process package's source into the kernel, so these scans read it where it now lives. */
 const MOVED_KERNEL_FILES = [
   'harness/kernel/adapters/agents/agent-stream.ts',
   'harness/kernel/adapters/agents/agent-vendors.ts',

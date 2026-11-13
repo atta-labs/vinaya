@@ -297,7 +297,7 @@ export function isReviewGateExemptBranch(_branch: string): boolean {
  * A verdict's own `VERDICT:` text is not, by itself, sufficient for "clean":
  * the comment's own FINDINGS block
  * is re-evaluated against `input.policy` (`evaluateCodeReview`/
- * `evaluateSecurityReview`, `@attalabs/aeg-core`'s pure evaluator), and an
+ * `evaluateSecurityReview`, the process package's pure evaluator), and an
  * `APPROVE`/`PASS` beside a finding at or above the threshold reads as not
  * clean here regardless — a reviewer's own clean-sounding verdict never
  * overrides the evaluator.

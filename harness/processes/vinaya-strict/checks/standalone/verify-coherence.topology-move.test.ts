@@ -2,6 +2,7 @@ import { execFileSync, execSync } from 'node:child_process'
 import * as realMilestone from '../../tools/task-contract/forge/fetch-milestone'
 import * as realTasks from '../../tools/task-contract/forge/list-tasks'
 import { describe, expect, it, mock } from 'bun:test'
+import { LEGACY_TRANCHES_DIR } from '../../tools/legacy-paths'
 
 /**
  * Regression coverage for the sweep's enumeration predicate (task 9, review
@@ -13,7 +14,7 @@ import { describe, expect, it, mock } from 'bun:test'
  *   - Plain deletion — the tranche disappeared from every repo-wide check
  *     (A1/A2/A3 included), a gate shrinking rather than failing.
  *   - Archival move (`tranches/x.md` → `tranches/completed/x.md`, the
- *     operation `aeg-root/process.md` and the Tranche Archivist role
+ *     operation `doctrine/process.md` and the Tranche Archivist role
  *     prescribe) — the destination candidate was suppressed because the
  *     source had already been seen, leaving an entry with `archived: false`
  *     built from the BASE ref's pre-move content, instead of `archived: true`
@@ -24,7 +25,7 @@ import { describe, expect, it, mock } from 'bun:test'
  * Both are invisible to `verify-coherence.test.ts` (which runs with
  * `prContext = null`) and to `verify-coherence.pr-head.test.ts` (which only
  * covers ADDING a file). Neither could be reproduced against this repo's real
- * `origin/main`, which carries no `aeg-root/tranches` tree at all — hence the
+ * `origin/main`, which carries no retired tranche-file tree at all — hence the
  * synthetic base ref below.
  *
  * Fixtures are built with git plumbing against a throwaway `GIT_INDEX_FILE`,
@@ -92,10 +93,10 @@ const { loadTrancheSweep } = await import('./verify-coherence')
 
 const FIXTURE_ENV = {
   ...process.env,
-  GIT_AUTHOR_NAME: 'AEG test fixture',
-  GIT_AUTHOR_EMAIL: 'aeg-test-fixture@localhost',
-  GIT_COMMITTER_NAME: 'AEG test fixture',
-  GIT_COMMITTER_EMAIL: 'aeg-test-fixture@localhost'
+  GIT_AUTHOR_NAME: 'Vinaya test fixture',
+  GIT_AUTHOR_EMAIL: 'vinaya-test-fixture@localhost',
+  GIT_COMMITTER_NAME: 'Vinaya test fixture',
+  GIT_COMMITTER_EMAIL: 'vinaya-test-fixture@localhost'
 }
 
 function trancheFileContent(slug: string, lifecycle: 'active' | 'complete'): string {
@@ -110,7 +111,7 @@ function trancheFileContent(slug: string, lifecycle: 'active' | 'complete'): str
     '',
     '| # | Task | Issue | Project(s) | Depends-on | Conflicts-with |',
     '|---|------|-------|-----------|------------|----------------|',
-    `| 1 | Synthetic ${lifecycle} task | #999999 | aeg | — | — |`,
+    `| 1 | Synthetic ${lifecycle} task | #999999 | sample | — | — |`,
     ''
   ].join('\n')
 }
@@ -144,12 +145,12 @@ function commitWithFiles(parent: string, files: Record<string, string>, message:
 }
 
 const SLUG = 'zzz-topology-move-fixture'
-const ACTIVE_PATH = `aeg-root/tranches/${SLUG}.md`
-const COMPLETED_PATH = `aeg-root/tranches/completed/${SLUG}.md`
+const ACTIVE_PATH = `${LEGACY_TRANCHES_DIR}/${SLUG}.md`
+const COMPLETED_PATH = `${LEGACY_TRANCHES_DIR}/completed/${SLUG}.md`
 
 describe('a PR that removes a topology file cannot narrow the sweep', () => {
   it('keeps an archival move on the PR head — archived: true, and the head’s own content', async () => {
-    // Base: the tranche is active, with a file under aeg-root/tranches/.
+    // Base: the tranche is active, with a file under the retired tranche-file directory.
     const base = commitWithFiles('origin/main', { [ACTIVE_PATH]: trancheFileContent(SLUG, 'active') }, 'fixture base')
     // Head: `git mv` to completed/, with the archival Lifecycle edit.
     const head = commitWithFiles(
@@ -233,7 +234,7 @@ describe('a PR that removes a topology file cannot narrow the sweep', () => {
    * lookup would reintroduce the false-red this fixture replaces.
    */
   it('fetches the forge for a deleted tranche whose Milestone is real, so its tasks survive the deletion', async () => {
-    const forgeFixturePath = `aeg-root/tranches/${FORGE_FIXTURE_SLUG}.md`
+    const forgeFixturePath = `${LEGACY_TRANCHES_DIR}/${FORGE_FIXTURE_SLUG}.md`
 
     // Base carries a topology file for the mocked-forge slug, with one row
     // that exists nowhere on the (mocked) forge; the PR deletes that file.

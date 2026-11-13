@@ -16,7 +16,7 @@
  * the existing frozen brief; `--supersede` is the one sanctioned way to
  * correct a wrong one — it APPENDS a new, higher-versioned comment naming
  * its predecessor and a reason, never touching the original. Every reader of
- * "the frozen brief" resolves the newest version (`@attalabs/aeg-core`'s
+ * "the frozen brief" resolves the newest version (`@attalabs/process-vinaya`'s
  * `resolveNewestFrozenBrief`) — `dispatchTask` (below) and the review loop
  * (`dev-review-loop.ts`'s `fetchFrozenBrief`) share the same resolver.
  *
@@ -451,7 +451,7 @@ async function widenSurface(issue: number, addedGlobs: string[], retryCommand: s
  * Pulls the leading `high`/`mid`/`fast` word out of the Issue's own
  * "Suggested agent-class" rationale field (`**Suggested agent-class** —
  * mid — <reason>`, `harness/processes/vinaya-strict/thinking/planner/doctrine.md`) — `parseRationaleFields`
- * (`@attalabs/aeg-core`) returns the whole labeled field, label included, so
+ * (`@attalabs/process-vinaya`) returns the whole labeled field, label included, so
  * this strips the label and keeps only the class word. `null` when the
  * field is absent, unparseable, or names a word outside the three-value
  * vocabulary — never a guess.
@@ -516,7 +516,7 @@ export function resolveModelForDispatch(
 
 /**
  * The NEWEST principal-authored frozen-brief comment on Issue `n`, or
- * `null` — `@attalabs/aeg-core`'s `resolveNewestFrozenBrief`, never a
+ * `null` — `@attalabs/process-vinaya`'s `resolveNewestFrozenBrief`, never a
  * v1-only scan: a supersession is an
  * APPENDED comment, so the guard below (and `--supersede`'s own predecessor
  * lookup) must see the highest version posted, not the first.

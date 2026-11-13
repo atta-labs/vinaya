@@ -4,9 +4,9 @@
  * verify-docs — tier-appropriate documentation gate.
  *
  * This is the HARD enforcement mechanism — the Archivist is advisory.
- * Per aeg-consolidation task 1, the check logic below is a thin CLI shim: it
+ * The check logic below is a thin CLI shim: it
  * resolves args/env, reads the filesystem/git, and calls the pure, tested
- * functions homed in `@attalabs/aeg-core`. The checks themselves — including their
+ * functions homed in the process's `checks/` modules. The checks themselves — including their
  * exact wording — live there now, not here.
  *
  * Modes:
@@ -471,7 +471,7 @@ function runC7(only?: ReadonlySet<string>): void {
  * **Deliberately not `PRODUCT_SLUG_SCOPE`.** That export landed in `#436`
  * and this brief anticipated folding into it. It answers a different
  * question — which product paths a tranche slug is banned from — and is
- * narrower, carrying no `packages/aeg-core/src` entry at all. Reusing it
+ * narrower, carrying no retired core-package source entry at all. Reusing it
  * would silently shrink this corpus back below what the doctrine states and
  * re-open the gap above. Two lists, because there are two questions.
  */

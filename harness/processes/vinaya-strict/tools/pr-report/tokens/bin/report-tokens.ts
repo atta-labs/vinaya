@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * report-tokens — **the Claude Code collection adapter** for AEG's
+ * report-tokens — **the Claude Code collection adapter** for Vinaya's
  * token-report obligation, and only that. `harness/processes/vinaya-strict/doctrine/tranche-model.md` §12
  * splits the obligation into three layers: every role reports its own turn's
  * usage (layer 1, portable), by whatever means its host offers (layer 2,
@@ -30,7 +30,7 @@
  * records that retraction.
  *
  * Thin I/O shim: resolves the transcript path, reads it, and calls the pure
- * functions homed in `@attalabs/aeg-core`. Mirrors `bin/archive-task.ts`'s
+ * functions homed in `@attalabs/process-vinaya`. Mirrors `bin/archive-task.ts`'s
  * split (I/O here, pure logic in `src/`).
  *
  * **Two ways in, both first-class.** `--transcript <path>` names the

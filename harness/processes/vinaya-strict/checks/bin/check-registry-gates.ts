@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: registry-gates. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: registry-gates. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkG1`–`checkG7` — mirrors `harness/processes/vinaya-strict/checks/standalone/verify-registry.ts`'s
  * input assembly (`harness/processes/vinaya-strict/doctrine/enforcement.md` parse, `.husky`/`.claude/hooks`
  * candidate-file glob, role/contract frontmatter, G4's `gh`-reachability
@@ -9,9 +9,9 @@
  * the check contract instead of human text.
  *
  * DIVERGES from `verify-registry.ts`'s own glob on one point:
- * that standalone tool also globs `packages/aeg-core/bin` as a `G2`
+ * that standalone tool also globs `the process package/bin` as a `G2`
  * candidate-file location.
- * `packages/aeg-core` is this monorepo's own package layout, not a fact any
+ * `the process package` is this monorepo's own package layout, not a fact any
  * shipped, adopter-facing check may assume — `verify-registry.ts` never
  * ships to an adopter (it is an internal-only tool this monorepo runs on
  * itself), so it keeps that probe; this shipped adapter drops it instead of
@@ -36,7 +36,7 @@
  * implementation-resolves half only.
  *
  * G6 is the one G-check that genuinely needs to live
- * here rather than in `aeg-core`'s standalone `verify-registry.ts`: it
+ * here rather than in `the process package`'s standalone `verify-registry.ts`: it
  * validates a doctrine row's `product`-audience claim against
  * `coreCheckRegistry()`, which only this package can import without closing
  * a dependency cycle — same reasoning `gate-audience.ts` documents for
@@ -46,7 +46,7 @@
  * `evaluateC5`/`.vinaya/doc-owners` already uses): G1–G6 validate
  * `harness/processes/vinaya-strict/doctrine/enforcement.md` against THIS monorepo's
  * own role doctrine and contracts under `harness/processes/vinaya-strict/` — the doctrine-authoring tree — a
- * fact about how AEG's own doctrine is developed, not something any
+ * fact about how Vinaya's own doctrine is developed, not something any
  * `vinaya init` install ever produces (settled by experiment: a fresh
  * `npm i @attalabs/vinaya` + `vinaya init --yes` repo carries no
  * doctrine tree at all — the doctrine ships read-only inside

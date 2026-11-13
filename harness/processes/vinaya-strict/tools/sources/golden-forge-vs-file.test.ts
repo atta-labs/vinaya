@@ -14,9 +14,9 @@ import { describe, expect, it } from 'bun:test'
  * Neither half of that comparison can run in this repo without
  * reintroducing an attalabs dependency:
  *   - the pinned commit SHA does not exist after `git filter-repo` rewrote
- *     every hash, and the file's directory (`aeg-root/iterations/`) is
+ *     every hash, and the file's directory (the retired iterations directory) is
  *     retired vocabulary;
- *   - `deriveTrancheFromForge` (`@attalabs/aeg-forge-state`) has no
+ *   - `deriveTrancheFromForge` (the forge-state module) has no
  *     fixture-injection seam — it always does a real `owner`/`repo`/`slug`
  *     GitHub Milestone+Issues lookup, see its own doc comment — and this
  *     repo's own forge has no comparable real tranche yet (no

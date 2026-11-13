@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: pr-report-density. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: pr-report-density. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkPrReportDensity` — reads `PR_BODY` and emits the check contract.
  *
  * scope: diff — reads only the PR body, never the whole repo.

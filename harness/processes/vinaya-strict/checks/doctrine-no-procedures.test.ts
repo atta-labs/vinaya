@@ -10,22 +10,22 @@ git status
 bun run test
 \`\`\`
 `
-    const findings = checkDoctrineNoProcedures([{ path: 'aeg-root/roles/developer.md', content }])
+    const findings = checkDoctrineNoProcedures([{ path: 'sample-root/roles/developer.md', content }])
     expect(findings).toHaveLength(1)
     expect(findings[0]?.message).toContain('vinaya')
   })
 
-  it('passes the same block inside the AEG:VENDOR-EXAMPLE anchor pair', () => {
+  it('passes the same block inside the VINAYA:VENDOR-EXAMPLE anchor pair', () => {
     const content = `# tranche-model
 
-<!-- AEG:VENDOR-EXAMPLE:START -->
+<!-- VINAYA:VENDOR-EXAMPLE:START -->
 \`\`\`
 git status
 bun run test
 \`\`\`
-<!-- AEG:VENDOR-EXAMPLE:END -->
+<!-- VINAYA:VENDOR-EXAMPLE:END -->
 `
-    const findings = checkDoctrineNoProcedures([{ path: 'aeg-root/tranche-model.md', content }])
+    const findings = checkDoctrineNoProcedures([{ path: 'sample-root/tranche-model.md', content }])
     expect(findings).toHaveLength(0)
   })
 
@@ -35,7 +35,7 @@ git status
 bun run test
 \`\`\`
 `
-    const findings = checkDoctrineNoProcedures([{ path: 'aeg-root/templates/pr-report-template.md', content }])
+    const findings = checkDoctrineNoProcedures([{ path: 'sample-root/templates/pr-report-template.md', content }])
     expect(findings).toHaveLength(0)
   })
 
@@ -44,7 +44,7 @@ bun run test
 git status
 \`\`\`
 `
-    const findings = checkDoctrineNoProcedures([{ path: 'aeg-root/roles/developer.md', content }])
+    const findings = checkDoctrineNoProcedures([{ path: 'sample-root/roles/developer.md', content }])
     expect(findings).toHaveLength(0)
   })
 
@@ -56,7 +56,7 @@ export function checkBriefSections(
 export function checkPremiseCoverage(
 \`\`\`
 `
-    const findings = checkDoctrineNoProcedures([{ path: 'aeg-root/state-machine.md', content }])
+    const findings = checkDoctrineNoProcedures([{ path: 'sample-root/state-machine.md', content }])
     expect(findings).toHaveLength(0)
   })
 
@@ -66,7 +66,7 @@ git status
 bun run test
 \`\`\`
 `
-    const findings = checkDoctrineNoProcedures([{ path: 'aeg-root/roles/developer.md', content }])
+    const findings = checkDoctrineNoProcedures([{ path: 'sample-root/roles/developer.md', content }])
     expect(findings).toHaveLength(1)
   })
 })

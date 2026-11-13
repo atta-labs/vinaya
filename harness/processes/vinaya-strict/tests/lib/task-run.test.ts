@@ -954,7 +954,7 @@ describe('runTask — --widen-surface continues a pre-pull-request widen-surface
   it('passes widenSurfaceInLine’s broader-out: refusal through verbatim', async () => {
     const calls: string[] = []
     const refusal =
-      'cannot widen `## Surface` — `packages/aeg-core/src` still falls under the broader `out:` glob `packages/aeg-core`.'
+      'cannot widen `## Surface` — `packages/core/src` still falls under the broader `out:` glob `packages/core`.'
     const run = runTask(
       INPUT,
       widenDeps(calls, {

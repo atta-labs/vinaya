@@ -124,7 +124,7 @@ function principalComment(body: string) {
 }
 
 function frozenBriefComment(): { body: string; author: { login: string } } {
-  return principalComment('<!-- aeg:brief:v1 -->\nBrief hash: deadbeef\n\nA brief body.')
+  return principalComment('<!-- vinaya:brief:v1 -->\nBrief hash: deadbeef\n\nA brief body.')
 }
 
 const ISSUES = [
@@ -159,7 +159,7 @@ const MERGED_TASK_PRS = [
 
 /** One past round: its marker, then its two verdicts six minutes later — a six-minute reviewing interval. */
 const MERGED_PR_COMMENTS = [
-  { ...principalComment('<!-- aeg:developer:round-1 -->\nHead: abc123'), createdAt: '2026-09-20T10:00:00.000Z' },
+  { ...principalComment('<!-- vinaya:developer:round-1 -->\nHead: abc123'), createdAt: '2026-09-20T10:00:00.000Z' },
   { ...principalComment('VERDICT: APPROVE\n\nJudged head: abc123'), createdAt: '2026-09-20T10:06:00.000Z' },
   { ...principalComment('VERDICT: PASS\n\nJudged head: abc123'), createdAt: '2026-09-20T10:06:00.000Z' }
 ]
@@ -173,7 +173,7 @@ const MERGED_PR_COMMENTS = [
  */
 const PUBLISHED_SUMMARY_COMMENTS = [
   {
-    ...principalComment('<!-- aeg:loop:published head=abc123 confidence=1:- -->'),
+    ...principalComment('<!-- vinaya:loop:published head=abc123 confidence=1:- -->'),
     createdAt: '2026-09-22T12:00:00.000Z'
   }
 ]

@@ -209,21 +209,21 @@ describe('regular-file body-file input is unaffected by the fix', () => {
   })
 })
 
-describe('resolveMilestoneToAttach (aeg-review-gate-v1 task 1 follow-up)', () => {
+describe('resolveMilestoneToAttach (sample-tranche-v1 task 1 follow-up)', () => {
   const activeLookup = vi.fn((slug: string) =>
-    slug === 'aeg-review-gate-v1' ? { number: 9, title: 'aeg-review-gate-v1' } : null
+    slug === 'sample-tranche-v1' ? { number: 9, title: 'sample-tranche-v1' } : null
   )
 
   it('attaches the legacy Milestone TITLE when the label is present, an open Milestone matches, and no explicit --milestone was given', () => {
-    const lookup = vi.fn().mockReturnValue({ number: 9, title: 'aeg-review-gate-v1' })
+    const lookup = vi.fn().mockReturnValue({ number: 9, title: 'sample-tranche-v1' })
     const result = resolveMilestoneToAttach(
-      ['vinaya/tranche:aeg-review-gate-v1', 'vinaya/tier:1'],
+      ['vinaya/tranche:sample-tranche-v1', 'vinaya/tier:1'],
       ['--title', 't'],
       false,
       lookup
     )
-    expect(result).toBe('aeg-review-gate-v1')
-    expect(lookup).toHaveBeenCalledWith('aeg-review-gate-v1')
+    expect(result).toBe('sample-tranche-v1')
+    expect(lookup).toHaveBeenCalledWith('sample-tranche-v1')
   })
 
   it('attaches an intent-declared Milestone by its OWN title, not the slug — gh resolves --milestone by title only', () => {
@@ -233,8 +233,8 @@ describe('resolveMilestoneToAttach (aeg-review-gate-v1 task 1 follow-up)', () =>
   })
 
   it('returns null on edit — creation-time behavior only, never force-attaches retroactively', () => {
-    const lookup = vi.fn().mockReturnValue({ number: 9, title: 'aeg-review-gate-v1' })
-    const result = resolveMilestoneToAttach(['vinaya/tranche:aeg-review-gate-v1'], ['--title', 't'], true, lookup)
+    const lookup = vi.fn().mockReturnValue({ number: 9, title: 'sample-tranche-v1' })
+    const result = resolveMilestoneToAttach(['vinaya/tranche:sample-tranche-v1'], ['--title', 't'], true, lookup)
     expect(result).toBeNull()
     expect(lookup).not.toHaveBeenCalled()
   })
@@ -249,7 +249,7 @@ describe('resolveMilestoneToAttach (aeg-review-gate-v1 task 1 follow-up)', () =>
   it('returns null when the caller already passed an explicit --milestone flag', () => {
     const lookup = vi.fn()
     const result = resolveMilestoneToAttach(
-      ['vinaya/tranche:aeg-review-gate-v1'],
+      ['vinaya/tranche:sample-tranche-v1'],
       ['--milestone', 'something-else'],
       false,
       lookup
@@ -260,7 +260,7 @@ describe('resolveMilestoneToAttach (aeg-review-gate-v1 task 1 follow-up)', () =>
 
   it('returns null when the caller passed --milestone=<value> inline-equals form', () => {
     const lookup = vi.fn()
-    const result = resolveMilestoneToAttach(['vinaya/tranche:aeg-review-gate-v1'], ['--milestone=x'], false, lookup)
+    const result = resolveMilestoneToAttach(['vinaya/tranche:sample-tranche-v1'], ['--milestone=x'], false, lookup)
     expect(result).toBeNull()
     expect(lookup).not.toHaveBeenCalled()
   })
@@ -273,18 +273,18 @@ describe('resolveMilestoneToAttach (aeg-review-gate-v1 task 1 follow-up)', () =>
 
   it('returns null when the lookup finds no attach target (e.g. the only match is a closed legacy Milestone)', () => {
     const lookup = vi.fn().mockReturnValue(null)
-    const result = resolveMilestoneToAttach(['vinaya/tranche:aeg-forge-state-v1'], ['--title', 't'], false, lookup)
+    const result = resolveMilestoneToAttach(['vinaya/tranche:other-tranche-v1'], ['--title', 't'], false, lookup)
     expect(result).toBeNull()
   })
 
   it('uses the first vinaya/tranche:<slug> label when multiple are somehow present', () => {
     const result = resolveMilestoneToAttach(
-      ['vinaya/tranche:aeg-review-gate-v1', 'vinaya/tranche:other-tranche'],
+      ['vinaya/tranche:sample-tranche-v1', 'vinaya/tranche:other-tranche'],
       ['--title', 't'],
       false,
       activeLookup
     )
-    expect(result).toBe('aeg-review-gate-v1')
+    expect(result).toBe('sample-tranche-v1')
   })
 })
 
@@ -401,7 +401,7 @@ const BODY_429 = readFileSync(join(__dirname, '../../../tools/task-contract/forg
 
 describe('parseEdgeFlag', () => {
   it('splits a comma-joined value into trimmed ids', () => {
-    expect(parseEdgeFlag('1, 2, aeg-x #3')).toEqual(['1', '2', 'aeg-x #3'])
+    expect(parseEdgeFlag('1, 2, sample-x #3')).toEqual(['1', '2', 'sample-x #3'])
   })
   it('treats every empty marker as no edges', () => {
     for (const marker of ['—', '–', '-', '', '  ']) expect(parseEdgeFlag(marker)).toEqual([])
@@ -476,7 +476,7 @@ function makeDeps(overrides: Partial<AmendDepsDeps> = {}): {
   const edited: Array<{ issue: string; body: string }> = []
   const logs: string[] = []
   const deps: AmendDepsDeps = {
-    fetchLabels: () => ['vinaya/tranche:aeg-forge-state-v1', 'vinaya/tier:1'],
+    fetchLabels: () => ['vinaya/tranche:other-tranche-v1', 'vinaya/tier:1'],
     fetchBody: () => BODY_429,
     editBody: (issue, body) => edited.push({ issue, body }),
     today: () => '2026-07-13',
@@ -505,11 +505,11 @@ describe('runAmendDeps', () => {
   })
 
   it('refuses on a round-trip mismatch and writes nothing (the gate, on real data)', () => {
-    // `aeg-governance-hardening #368, 5` — the bare `5` inherits the qualifier
-    // on parse (→ `aeg-governance-hardening 5`), so the read-back != requested.
+    // `sample-tranche-v1 #368, 5` — the bare `5` inherits the qualifier
+    // on parse (→ `sample-tranche-v1 5`), so the read-back != requested.
     const { deps, edited } = makeDeps()
     expect(() =>
-      runAmendDeps(parseAmendArgs(['429', '--depends-on', 'aeg-governance-hardening #368, 5', '--note', 'x']), deps)
+      runAmendDeps(parseAmendArgs(['429', '--depends-on', 'sample-tranche-v1 #368, 5', '--note', 'x']), deps)
     ).toThrow(/round-trip FAILED for Depends-on/)
     expect(edited).toHaveLength(0)
   })

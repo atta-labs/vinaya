@@ -129,7 +129,7 @@ describe('runReportForOpenPr — a body-check refusal returns an outcome, never 
         body: 'Closes #1',
         cwd
       })
-      const preEditBody = ['<!-- AEG:EVIDENCE:START -->', 'old', '<!-- AEG:EVIDENCE:END -->'].join('\n')
+      const preEditBody = ['<!-- VINAYA:EVIDENCE:START -->', 'old', '<!-- VINAYA:EVIDENCE:END -->'].join('\n')
 
       const outcome = await callNeverExiting(() => runReportForOpenPr('1', preEditBody, result, { branch: 'task/x' }))
 
@@ -145,7 +145,7 @@ describe('runReportForOpenPr — a body-check refusal returns an outcome, never 
 })
 
 describe('runReportForOpenPr — pre-existing outcome paths are unchanged (O3 boundary check)', () => {
-  it("a live body with no AEG:EVIDENCE anchor pair still returns 'splice-refused' — the earliest refusal step, untouched by this task's change", async () => {
+  it("a live body with no VINAYA:EVIDENCE anchor pair still returns 'splice-refused' — the earliest refusal step, untouched by this task's change", async () => {
     const cwd = tempCwd()
     const originalCwd = process.cwd()
     process.chdir(cwd)
@@ -187,9 +187,9 @@ describe('runReportForOpenPr — pre-existing outcome paths are unchanged (O3 bo
 const BODY_WITH_UNTICKED_PRINCIPAL = [
   'Closes #1',
   '',
-  '<!-- AEG:EVIDENCE:START -->',
+  '<!-- VINAYA:EVIDENCE:START -->',
   EVIDENCE_PLACEHOLDER_TEXT,
-  '<!-- AEG:EVIDENCE:END -->',
+  '<!-- VINAYA:EVIDENCE:END -->',
   '',
   '## Test Plan',
   '',
@@ -283,7 +283,7 @@ describe('a pushed evidence block survives the [principal] tick — evidence-fre
 // A Test-plan command whose result was reused from a cached green run gets a
 // prose note after its fence naming that run — its record time, its source,
 // and, for a per-file hit, how many files it covered. Those digits sit in
-// ordinary prose inside the `AEG:EVIDENCE` region, where `body-bare-digits`
+// ordinary prose inside the `VINAYA:EVIDENCE` region, where `body-bare-digits`
 // exempts only the `Head:`/`Summary:` lines and the headings: unbackticked,
 // `pr report --write`/`--push` refused the very body it had just generated,
 // on the ordinary path (the pre-push hook writes that cache on the one push
@@ -299,16 +299,16 @@ describe('the evidence block a reused Test-plan entry produces passes body-bare-
   const PER_FILE_HIT = { recordedAt: '2026-09-26T04:45:06.812Z', source: 'pre-push', files: REUSED_FILES }
   const EXACT_COMMAND_HIT = { recordedAt: '2026-09-26T04:45:06.812Z', source: 'pr-report' }
 
-  // `body-bare-digits` blanks an `AEG:EVIDENCE` region's `Head:` line and its
+  // `body-bare-digits` blanks an `VINAYA:EVIDENCE` region's `Head:` line and its
   // headings only when the region sits under its own canonical `## Evidence`
   // section (`isInCanonicalSection`) — so the block is graded where a real PR
   // body carries it, spliced into a live body, never as a bare string.
   const LIVE_BODY = [
     '## Evidence',
     '',
-    '<!-- AEG:EVIDENCE:START -->',
+    '<!-- VINAYA:EVIDENCE:START -->',
     EVIDENCE_PLACEHOLDER_TEXT,
-    '<!-- AEG:EVIDENCE:END -->',
+    '<!-- VINAYA:EVIDENCE:END -->',
     ''
   ].join('\n')
 
@@ -399,7 +399,7 @@ describe('a Test-plan entry that really ran renders exactly as before (O2)', () 
 
 // ---------------------------------------------------------------------------
 // #788 — a Test Plan naming `check --all` can never record it passing while
-// `evidence-fresh` inside that Group C run grades the very AEG:EVIDENCE block
+// `evidence-fresh` inside that Group C run grades the very VINAYA:EVIDENCE block
 // this same report is about to write. Group C leaves `evidence-fresh` out of
 // exactly those runs (O1), says so on one line (O2), and touches nothing else
 // (O3). The exclusion travels as an env var into the spawned `vinaya check`,
@@ -454,9 +454,9 @@ describe('renderGroupC — the O2 omission note for a `check --all` run (#788)',
     const LIVE_BODY = [
       '## Evidence',
       '',
-      '<!-- AEG:EVIDENCE:START -->',
+      '<!-- VINAYA:EVIDENCE:START -->',
       EVIDENCE_PLACEHOLDER_TEXT,
-      '<!-- AEG:EVIDENCE:END -->',
+      '<!-- VINAYA:EVIDENCE:END -->',
       ''
     ].join('\n')
     const result = await buildReport({

@@ -1,5 +1,5 @@
 /**
- * actions.ts — the canonical, aeg-core-owned enumeration of every AEG action
+ * actions.ts — the canonical, process-package-owned enumeration of every Vinaya action
  * that either crosses into GitHub or hands work across a role-seam contract.
  * Pure data, zero I/O, zero imports beyond the type itself — same discipline
  * as `waiver-label.ts`.

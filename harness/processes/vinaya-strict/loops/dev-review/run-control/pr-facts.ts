@@ -104,7 +104,7 @@ export function stripAnsi(raw: string): string {
 }
 
 /**
- * An HTML comment opener, the syntax every AEG control marker is written in
+ * An HTML comment opener, the syntax every Vinaya control marker is written in
  * (`<!-- vinaya:principal:ruling … -->`, `<!-- vinaya:loop:paused:… -->`,
  * `<!-- vinaya:developer:round-N -->`). Neutralized in forge text by escaping
  * the opening angle bracket: the text still reads as itself, and no reader
@@ -138,7 +138,7 @@ const VERDICT_LABEL = /^([ \t]*(?:\*{1,3}|_{1,3})?)VERDICT:/gim
  *    reported output, an annotation and a job log have no author at all, and
  *    anyone who can land a workflow file or a build step on the task's branch
  *    can write them. So the two grammars that carry authority in this system
- *    — an AEG control comment and a `VERDICT:` line — are defanged here,
+ *    — a Vinaya control comment and a `VERDICT:` line — are defanged here,
  *    leaving text that reads as itself and parses as nothing.
  * 4. **Cap** at the catalog's own ceiling, so no single field is unbounded.
  *

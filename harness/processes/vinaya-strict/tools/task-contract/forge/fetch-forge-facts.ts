@@ -2,7 +2,7 @@
  * Public entry point for the local GitHub read adapter.
  *
  * Given a list of tasks for a tranche, return a `Map<TaskId, ForgeFacts>`
- * matching the `ForgeFacts` contract (`@attalabs/aeg-types`). One batched GraphQL
+ * matching the `ForgeFacts` contract (the task-contract types). One batched GraphQL
  * query covers all tasks (issue + ref + latest PR per task, aliased) —
  * rate-limit-friendly and avoids aggregating REST `/reviews` for
  * `reviewDecision`.
@@ -18,10 +18,9 @@
  * SERVER-ONLY. Pulls `node:child_process` transitively via
  * `resolveGithubToken`.
  *
- * Lives in `@attalabs/aeg-forge-state`, not `@attalabs/aeg-core` (an
- * aeg-core-purity fix) — `@attalabs/aeg-core/src` is zero-I/O and this
- * module performs `@octokit/graphql` I/O. Re-exported from `@attalabs/aeg-core`
- * for every existing call site that imports it from there.
+ * Lives with the forge-state modules, apart from the process's pure grammar
+ * modules: those are zero-I/O and this module performs `@octokit/graphql`
+ * I/O.
  */
 
 import { graphql } from '@octokit/graphql'
@@ -104,7 +103,7 @@ type LabelIssuesResponse = {
 }
 
 /**
- * Parse the task ID from the AEG issue title convention:
+ * Parse the task ID from the Vinaya issue title convention:
  *   `[<tranche-slug>] <task-id> — <title>`
  *
  * Returns `null` for titles that do not follow the convention.

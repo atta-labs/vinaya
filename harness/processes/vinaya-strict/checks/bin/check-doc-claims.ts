@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: doc-claims. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: doc-claims. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkDocClaims` — every `VINAYA:CLAIM` marker in a doctrine page or source
  * comment re-asserted against the file it cites. A marker that parses as
  * neither form, and a binding whose cited file no longer holds its literal,

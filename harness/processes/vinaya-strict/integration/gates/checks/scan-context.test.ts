@@ -35,7 +35,7 @@ const HEAD = 'a'.repeat(40)
 const NUMSTAT = '2\t1\tharness/processes/vinaya-strict/tools/pr-report/bin/pr-report.ts\n1\t0\tapps/cli/src/index.ts'
 
 /** A body carrying a well-formed, honest evidence block — the shape `pr report --write` emits. */
-function bodyWith(inner: string[], { anchorStart = '<!-- AEG:EVIDENCE:START -->' } = {}): string {
+function bodyWith(inner: string[], { anchorStart = '<!-- VINAYA:EVIDENCE:START -->' } = {}): string {
   return [
     '## Summary',
     '',
@@ -45,7 +45,7 @@ function bodyWith(inner: string[], { anchorStart = '<!-- AEG:EVIDENCE:START -->'
     '',
     anchorStart,
     ...inner,
-    '<!-- AEG:EVIDENCE:END -->',
+    '<!-- VINAYA:EVIDENCE:END -->',
     '',
     '## Scope',
     '',
@@ -72,12 +72,12 @@ describe('scan-context — the two sides resolve the same region (Issue #189)', 
     // Before: `body-bare-digits` stripped it and exempted every digit in the
     // block; `check-evidence-fresh` read the raw body, saw no anchor, and
     // exited 0 having verified nothing. Both green.
-    const diverged = bodyWith(HONEST_INNER, { anchorStart: `<!-- AEG:EVIDENCE${ZWSP}:START -->` })
+    const diverged = bodyWith(HONEST_INNER, { anchorStart: `<!-- VINAYA:EVIDENCE${ZWSP}:START -->` })
     expect(regionText(diverged)).toBe(regionText(honest) as string)
   })
 
   it('the named-entity spelling of the same marker resolves identically too', () => {
-    const diverged = bodyWith(HONEST_INNER, { anchorStart: '&lt;!-- AEG:EVIDENCE:START --&gt;' })
+    const diverged = bodyWith(HONEST_INNER, { anchorStart: '&lt;!-- VINAYA:EVIDENCE:START --&gt;' })
     expect(regionText(diverged)).toBe(regionText(honest) as string)
   })
 
@@ -97,17 +97,17 @@ describe('scan-context — the two sides resolve the same region (Issue #189)', 
       '',
       '<details><summary>reference brief</summary>',
       '',
-      '<!-- AEG:EVIDENCE:START -->',
+      '<!-- VINAYA:EVIDENCE:START -->',
       'Head: 0000000000000000000000000000000000000000',
-      '<!-- AEG:EVIDENCE:END -->',
+      '<!-- VINAYA:EVIDENCE:END -->',
       '',
       '</details>',
       '',
       '## Evidence',
       '',
-      '<!-- AEG:EVIDENCE:START -->',
+      '<!-- VINAYA:EVIDENCE:START -->',
       ...HONEST_INNER,
-      '<!-- AEG:EVIDENCE:END -->'
+      '<!-- VINAYA:EVIDENCE:END -->'
     ].join('\n')
     expect(regionText(withDecoy)).toContain(HEAD)
     expect(regionText(withDecoy)).not.toContain('0000000000000000000000000000000000000000')
@@ -122,9 +122,9 @@ describe('scan-context — the two sides resolve the same region (Issue #189)', 
       '',
       '<details><summary>evidence</summary>',
       '',
-      '<!-- AEG:EVIDENCE:START -->',
+      '<!-- VINAYA:EVIDENCE:START -->',
       ...HONEST_INNER,
-      '<!-- AEG:EVIDENCE:END -->',
+      '<!-- VINAYA:EVIDENCE:END -->',
       '',
       '</details>'
     ].join('\n')
@@ -176,7 +176,7 @@ describe('scan-context — construction closure (compile-time)', () => {
     // Written the only way it can be written, it is correct by construction —
     // including on the diverged body that defeated the enumerated guard.
     const thirdConsumer = (raw: string) => resolveAnchoredRegion(ScanContext.from(raw, REGION_PREFIXES), 'EVIDENCE')
-    const diverged = bodyWith(HONEST_INNER, { anchorStart: `<!-- AEG:EVIDENCE${ZWSP}:START -->` })
+    const diverged = bodyWith(HONEST_INNER, { anchorStart: `<!-- VINAYA:EVIDENCE${ZWSP}:START -->` })
     const third = thirdConsumer(diverged)
     expect(third).not.toBeNull()
     expect(third).not.toBe('hidden')
@@ -268,7 +268,7 @@ describe('scan-context — the Summary line needs no exemption, and is verified'
 
 describe('scan-context — the emitter refuses a body whose anchor resolves two ways', () => {
   it('replaceEvidenceBlock throws rather than appending a second block beside a hidden one', () => {
-    const diverged = bodyWith(HONEST_INNER, { anchorStart: `<!-- AEG:EVIDENCE${ZWSP}:START -->` })
+    const diverged = bodyWith(HONEST_INNER, { anchorStart: `<!-- VINAYA:EVIDENCE${ZWSP}:START -->` })
     expect(() => replaceEvidenceBlock(diverged, 'Head: newsha')).toThrow(DivergentEvidenceAnchorError)
   })
 

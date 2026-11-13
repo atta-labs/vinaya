@@ -3,7 +3,7 @@
  * through, instead of reading `harness/processes/vinaya-strict/` paths directly. Doctrine is the raw
  * markdown that governs the methodology — `enforcement.md`, the role files,
  * the contract files. Implementations (file-backed today, package-bundled for
- * adopters tomorrow) perform I/O and therefore live outside `aeg-core`
+ * adopters tomorrow) perform I/O and therefore live outside the process package
  * (`apps/vinaya/sources`) — this package only defines the contract, so the
  * library can be packaged for repos that have no `harness/processes/vinaya-strict/` of their own
  *. Same discipline as `state-source.ts`: zero I/O here, async on the

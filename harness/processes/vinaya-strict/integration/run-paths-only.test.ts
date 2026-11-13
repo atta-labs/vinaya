@@ -71,7 +71,7 @@ const SOURCE_ROOTS = [
   join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/sources')
 ]
 
-/** The source that moved out of `apps/cli/src` and `packages/aeg-core/src` into the kernel, so these scans read it where it now lives. */
+/** The source that moved out of `apps/cli/src` and the process package's source into the kernel, so these scans read it where it now lives. */
 const MOVED_KERNEL_FILES = [
   'harness/kernel/adapters/agents/agent-line.ts',
   'harness/kernel/adapters/agents/claude-code/loop-narration-claude.ts',
@@ -208,7 +208,7 @@ function codeLines(text: string): string[] {
 }
 
 /**
- * A module specifier is not a filesystem path. `packages/aeg-core/src/index.ts`
+ * A module specifier is not a filesystem path. the process package's `src/index.ts`
  * legitimately re-exports `'./control-store'` — the control store's own
  * source directory, which keeps its name; what moved is where its RECORDS
  * are written, and that is decided by the root its caller passes.

@@ -8,6 +8,7 @@ import {
   publishedDoctrineBody,
   type PublishedProseEntry
 } from './published-prose'
+import { COMMENT_MARKER_PREFIX, REGION_PREFIX } from '../legacy-markers'
 
 const SURFACED = new Set(['roles/developer.md', 'contracts/planner-brief.md', 'enforcement.md'])
 
@@ -35,7 +36,7 @@ function roleShortVersion(options: { blocks?: string[]; extra?: string; padWords
     '',
     '## Reference',
     '',
-    'The long body nobody publishes, naming D-135 and packages/aeg-core/bin/foo.ts freely.'
+    'The long body nobody publishes, naming D-135 and packages/core/bin/foo.ts freely.'
   ].join('\n')
 }
 
@@ -216,7 +217,7 @@ describe('C7 readability', () => {
   })
 
   it('fails a section sign, a forge number and the retired public name', () => {
-    for (const token of ['See §4.', 'See #1234.', 'The AEG model.']) {
+    for (const token of ['See §4.', 'See #1234.', `The ${REGION_PREFIX.old} model.`]) {
       const { errors } = evaluatePublishedProse([entry('roles/developer.md', withToken(token))], SURFACED)
       expect(errors.length, token).toBeGreaterThan(0)
     }
@@ -247,7 +248,11 @@ describe('C7 readability', () => {
     // `vinaya/iteration:foo` — a label the forge was still carrying — and pass.
     // A retired namespace stays banned; the next substitution fails here
     // rather than in review.
-    for (const token of ['Apply vinaya/iteration:foo.', 'Label it iteration:<slug>.', 'See aeg:blocked.']) {
+    for (const token of [
+      'Apply vinaya/iteration:foo.',
+      'Label it iteration:<slug>.',
+      `See ${COMMENT_MARKER_PREFIX.old}:blocked.`
+    ]) {
       const { errors } = evaluatePublishedProse([entry('roles/developer.md', withToken(token))], SURFACED)
       expect(
         errors.some((e) => e.includes('forge label vocabulary')),
@@ -258,7 +263,7 @@ describe('C7 readability', () => {
 
   it('fails a repo-internal path', () => {
     const { errors } = evaluatePublishedProse(
-      [entry('roles/developer.md', withToken('Run packages/aeg-core/bin/foo.ts.'))],
+      [entry('roles/developer.md', withToken('Run packages/core/bin/foo.ts.'))],
       SURFACED
     )
     expect(errors.some((e) => e.includes('repo-internal'))).toBe(true)
@@ -287,13 +292,13 @@ describe('C7 over enforcement.md', () => {
     '',
     '| Action | Summary | Category | Description | Gate | What must be true | implementation | lock |',
     '| --- | --- | --- | --- | --- | --- | --- | --- |',
-    '| `git commit` | Ever pushed code that did not compile? | hook | Refuses a commit that does not build. | **Pre-commit** | Everything D-999 requires, per packages/aeg-core/bin/foo.ts | `.husky/pre-commit` |  |',
+    '| `git commit` | Ever pushed code that did not compile? | hook | Refuses a commit that does not build. | **Pre-commit** | Everything D-999 requires, per packages/core/bin/foo.ts | `.husky/pre-commit` |  |',
     '',
     '## Ring 1 — Branch Rules',
     '',
     '| CI check | Summary | Category | Description | Re-verifies | implementation | lock |',
     '| --- | --- | --- | --- | --- | --- | --- |',
-    '| Review gate | Ever merged with nobody approving? | ci | Holds the merge until the verdicts exist. | D-134 and §11 | `packages/aeg-core/bin/verify-review-gate.ts` |  |'
+    '| Review gate | Ever merged with nobody approving? | ci | Holds the merge until the verdicts exist. | D-134 and §11 | `packages/core/bin/verify-review-gate.ts` |  |'
   ].join('\n')
 
   it('reads the intro and the four rendered columns, resolved by header name', () => {

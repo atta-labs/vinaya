@@ -32,8 +32,8 @@ Vinaya runs on **the Repo + the Git forge (GitHub/GitLab) + plain git worktrees*
 1. **The Git forge** (Issue / branch / PR / review / merge state) = **all live execution status, DERIVED not stored.** A task *is* a forge Issue. There is no status field and no `status:*` label anywhere — status is *read* from the forge:
    - branch `task/<tranche>/<n>` exists → in-flight
    - PR open → in-review · review = CHANGES_REQUESTED → changes-requested
-   - PR merged → merged · `aeg:blocked` label → blocked
-   Labels are only `tier:*`, `aeg:blocked`, `needs:*-input` — never status.
+   - PR merged → merged · `vinaya/blocked` label → blocked
+   Labels are only `tier:*`, `vinaya/blocked`, `needs:*-input` — never status.
 2. **The Repo** = code, specs, and the doctrine tree (`vinaya-strict/`: role docs, contracts, the models, skills), plus the per-role entry points `vinaya init` installs (§11). The source of truth for **governance** — not for the plan, which is a Milestone plus labeled Issues on the forge (§5), and not for live status.
 3. **The task Issue's `vinaya:brief:v1` comment** = the **just-in-time brief** — a task's full execution context, rendered mechanically and posted once, frozen, never hand-written. The PR body carries only the Developer's report (optionally a reference copy of the brief in a collapsed `<details>` block).
 4. **Local filesystem** = orchestration-tool runtime, worktrees, dev servers. Ephemeral, never canonical.
@@ -56,7 +56,7 @@ A tranche is **a Milestone plus the Issues that carry its tranche label**: one I
 
 ## 6. Conflicts and the two dispatch gates
 
-Conflicts are **package-level, and mostly derived, not hand-declared** (collision domains live-derived from `package.json`'s `packages/*` workspace members, plus a built-in cross-cutting default set — `vinaya.config.json`'s `blastRadius.extraDomains` adds anything beyond that; the legacy static `.aeg/packages` file is retired) — there is **no dynamic path-overlap scanner**. When unsure two tasks collide, declare the conflict and serialize. Two gates, both forge-answerable with zero stored state:
+Conflicts are **package-level, and mostly derived, not hand-declared** (collision domains live-derived from `package.json`'s `packages/*` workspace members, plus a built-in cross-cutting default set — `vinaya.config.json`'s `blastRadius.extraDomains` adds anything beyond that; the legacy static packages file is retired) — there is **no dynamic path-overlap scanner**. When unsure two tasks collide, declare the conflict and serialize. Two gates, both forge-answerable with zero stored state:
 - never start a task whose `depends-on` isn't **merged**;
 - never start a task while a `conflicts-with` sibling's **PR is open**.
 

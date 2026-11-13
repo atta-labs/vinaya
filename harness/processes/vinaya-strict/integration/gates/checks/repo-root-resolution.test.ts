@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { programCommandLine } from '../../../tools/programs.js'
+import { COMMENT_MARKER_PREFIX } from '../../../tools/legacy-markers.js'
+import { LEGACY_DOCTRINE_ROOT } from '../../../tools/legacy-paths.js'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -137,7 +139,7 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
     )
   })
 
-  it('`vinaya check --all` in a plain fixture repo (no aeg-root/, no configured reader-facing surface) passes clean — both checks run, exit 0, plain-text never leaks onto stderr', () => {
+  it('`vinaya check --all` in a plain fixture repo (no retired doctrine root, no configured reader-facing surface) passes clean — both checks run, exit 0, plain-text never leaks onto stderr', () => {
     const root = initFixture('rc3')
     try {
       const indexTs = join(import.meta.dir, '../../../../../../apps/cli/src/index.ts')
@@ -168,20 +170,20 @@ describe('RC3 — reader-resolvable-prose/retired-vocabulary are part of the ado
       // Never a plain-text line on stderr — that channel is CheckError JSON
       // only; a stray human-readable line there would force `status: error`
       // regardless of exit code (the exact bug this rewrite fixed).
-      expect(result.stderr).not.toContain('aeg-root/glossary.md')
+      expect(result.stderr).not.toContain(`${LEGACY_DOCTRINE_ROOT}/glossary.md`)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   }, 60_000)
 
   it("unconfigured doctrineRoot resolves via resolveDoctrineRoot() (the package's own copy), not a cwd-relative literal — task vinaya-adopter-portability-v1 2, Issue #232", () => {
-    // The pre-232 default was the bare literal `'aeg-root'`, cwd-relative —
+    // The pre-232 default was the bare literal of the retired doctrine-root name, cwd-relative —
     // permanently empty for every `vinaya init` adopter, none of whom ever
-    // gets a repo-relative `aeg-root/` (settled by experiment, see this
+    // gets a repo-relative retired doctrine root (settled by experiment, see this
     // task's PR body). Spawning THIS repo's own dev source against an
     // unrelated fixture cwd proves the new default is package-identity
     // resolved, not cwd-resolved: it's expected, not a leak, that it lands
-    // on this monorepo's own real `aeg-root/` here — an installed adopter
+    // on this monorepo's own real doctrine folder here — an installed adopter
     // copy runs from inside its OWN `node_modules/@attalabs/vinaya`, where
     // the identical resolution lands on that adopter's own bundled copy
     // instead (proven separately by this task's real npm-install fixture,
@@ -310,8 +312,8 @@ describe('RC2 — coherence/dispatch-readiness evaluate the CALLER’s repo, nev
       // Negative proof — the actual leak: none of this monorepo's own real
       // bound files/docs (from this repo's OWN `.vinaya/doc-owners`) appear.
       expect(combined).not.toContain('daniboomerang/attalabs')
-      expect(combined).not.toContain('packages/aeg-core')
-      expect(combined).not.toContain('aeg-root/state-machine.md')
+      expect(combined).not.toContain(`packages/${COMMENT_MARKER_PREFIX.old}-core`)
+      expect(combined).not.toContain(`${LEGACY_DOCTRINE_ROOT}/state-machine.md`)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

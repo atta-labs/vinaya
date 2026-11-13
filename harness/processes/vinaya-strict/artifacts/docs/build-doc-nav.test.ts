@@ -6,7 +6,7 @@ const doc = (overrides: Partial<Doc> & Pick<Doc, 'slug' | 'title' | 'section'>):
   description: undefined,
   order: 0,
   href: `/docs/${overrides.slug}`,
-  filePath: `aeg-root/${overrides.slug}.md`,
+  filePath: `sample-root/${overrides.slug}.md`,
   ...overrides
 })
 

@@ -13,7 +13,7 @@
  *     process validated.
  *
  *  2. **The config-defined brief-schema validation runner**
- *     (`validateForgeWrite`) — pure over its inputs, built on `@attalabs/aeg-core`
+ *     (`validateForgeWrite`) — pure over its inputs, built on `@attalabs/process-vinaya`
  *     public exports, emitting the versioned `CheckError` contract instead of
  *     human text (the same move `src/checks/bin/check-brief-shape.ts` makes for
  *     the check runner). WHICH sections a body must carry comes from
@@ -566,7 +566,7 @@ function nameTheFix(message: string, fixInstruction: string): string {
 }
 
 /**
- * Maps each built-in section name to the `@attalabs/aeg-core` validator that backs
+ * Maps each built-in section name to the process validator that backs
  * it. The `Record<BriefBuiltin, …>` type makes this exhaustive — adding a name
  * to `BRIEF_BUILTINS` without wiring it here is a compile error.
  */
@@ -1058,14 +1058,14 @@ function readConfigExtraDomains(root: string): string[] {
  * The full collision-domain list `checkBlastRadiusScope` consumes: live
  * workspace derivation + built-in cross-cutting defaults +
  * `vinaya.config.json`'s `blastRadius.extraDomains`. No knowledge of the
- * legacy `.aeg/packages` file — retired here AND in `open-issue.ts`'s own
+ * retired static packages file — retired here AND in `open-issue.ts`'s own
  * `readSharedPackages`, in the same wave, zero backward compatibility on
  * either side (Principal decision: no real adopter depends on it, and it's
  * being removed from attalabs, the one real consumer, at the same time).
  * Mirrors `open-issue.ts`'s own `readSharedPackages` otherwise (`apps/cli`
  * cannot import that bin file — see this file's header — so this is the
  * adopter-runtime equivalent, built from the same public
- * `@attalabs/aeg-core` primitives that function itself uses). A fresh
+ * process primitives that function itself uses). A fresh
  * adopter with none of the optional inputs still gets the live-derived +
  * built-in-default set; outside a git repo this returns `[]` and the check
  * goes dormant, never crashes.
@@ -1822,7 +1822,7 @@ export type IssueContentInput = {
   /**
    * Reads one repository-relative path out of the checkout the Issue is being
    * cut from — `null` for a path that does not exist. Injected for the same
-   * reason `resolvesToFile` is: `@attalabs/aeg-core`'s grammar reads no `fs`,
+   * reason `resolvesToFile` is: the process grammar reads no `fs`,
    * and O1's premise check needs the checkout's real bytes.
    */
   readFile: (path: string) => string | null
@@ -2756,7 +2756,7 @@ const INFORMATIONAL_DISPATCH_BLOCKER_CLASSES: ReadonlySet<DispatchBlockerClass> 
  * escape hatch so each grades the bytes this write is ABOUT to send rather
  * than what is on the forge before it lands — then runs the SAME
  * `brief-shape` gate `pr create` applies (`checkBriefSections`,
- * `@attalabs/aeg-core`) over the rendered text — never a second validator. A
+ * `@attalabs/process-vinaya`) over the rendered text — never a second validator. A
  * body that would freeze into a brief `pr create` refuses is refused here
  * instead: `checkBriefSections`'s own error strings already name both the
  * section (`brief-validation <Section>: …`) and the rule that failed.
@@ -3457,7 +3457,7 @@ export function reconcileGhComment(
 // ---------------------------------------------------------------------------
 // Deferred-findings tracking Issue — the one backlog Issue per pull request
 // that carries the findings a round set aside rather than let block (the
-// deferral rules in `@attalabs/aeg-core`). Written through this file like
+// deferral rules in the process package). Written through this file like
 // every other loop forge write, FOUND by a body marker naming the pull
 // request (never by title, so a re-titled Issue is still the same one), and
 // labelled `vinaya/deferred` with NO tranche label so it never reads as a

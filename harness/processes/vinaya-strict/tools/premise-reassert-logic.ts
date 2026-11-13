@@ -9,7 +9,7 @@
  * this — mirrors `evidence-fresh-logic.ts`'s split between pure decision
  * logic and a bin's `fs`/`gh` I/O.
  *
- * Consumes, never re-implements, `@attalabs/aeg-core`'s
+ * Consumes, never re-implements, the process package's
  * `parsePremiseBlock`/`checkPremises` — the pin grammar and its three
  * assertion kinds are frozen (out of this task's surface). This module only
  * decides which `CheckError`s to emit for the three failure shapes

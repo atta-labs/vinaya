@@ -19,9 +19,9 @@ const ONE_PARAGRAPH_SCOPE_WITH_TIER = `## Scope
 
 One paragraph of blast-radius prose.
 
-<!-- AEG:TIER:START -->
+<!-- VINAYA:TIER:START -->
 **Tier:** 1
-<!-- AEG:TIER:END -->
+<!-- VINAYA:TIER:END -->
 
 ## Token report`
 
@@ -31,9 +31,9 @@ First paragraph of blast-radius prose.
 
 Second paragraph that should not be here.
 
-<!-- AEG:TIER:START -->
+<!-- VINAYA:TIER:START -->
 **Tier:** 1
-<!-- AEG:TIER:END -->
+<!-- VINAYA:TIER:END -->
 
 ## Token report`
 
@@ -76,28 +76,28 @@ describe('checkDecisionsDensity', () => {
 })
 
 describe('checkScopeDensity', () => {
-  it('passes a single-paragraph Scope even with the trailing AEG:TIER anchor block', () => {
+  it('passes a single-paragraph Scope even with the trailing VINAYA:TIER anchor block', () => {
     expect(checkScopeDensity(ONE_PARAGRAPH_SCOPE_WITH_TIER)).toEqual({ status: 'pass', errors: [] })
   })
 
-  it('passes a single-paragraph Scope carrying the driver-written AEG:BEYOND-SURFACE block before AEG:TIER', () => {
+  it('passes a single-paragraph Scope carrying the driver-written VINAYA:BEYOND-SURFACE block before VINAYA:TIER', () => {
     const body = `## Scope
 
 One paragraph of blast-radius prose.
 
-<!-- AEG:BEYOND-SURFACE:START -->
+<!-- VINAYA:BEYOND-SURFACE:START -->
 **Beyond the Surface** — recorded by the review-loop driver on every body write; never edit it:
 - \`docs/x.md\` matches no \`in:\` glob
-<!-- AEG:BEYOND-SURFACE:END -->
+<!-- VINAYA:BEYOND-SURFACE:END -->
 
-<!-- AEG:TIER:START -->
+<!-- VINAYA:TIER:START -->
 **Tier:** 1
-<!-- AEG:TIER:END -->
+<!-- VINAYA:TIER:END -->
 `
     expect(checkScopeDensity(body)).toEqual({ status: 'pass', errors: [] })
   })
 
-  it('fails a two-paragraph Scope, the AEG:TIER anchor block never counting as the second paragraph', () => {
+  it('fails a two-paragraph Scope, the VINAYA:TIER anchor block never counting as the second paragraph', () => {
     const result = checkScopeDensity(TWO_PARAGRAPH_SCOPE_WITH_TIER)
     expect(result.status).toBe('fail')
     expect(result.errors[0]).toContain('Scope')
@@ -115,9 +115,9 @@ some.ts
 another.ts
 \`\`\`
 
-<!-- AEG:TIER:START -->
+<!-- VINAYA:TIER:START -->
 **Tier:** 0
-<!-- AEG:TIER:END -->
+<!-- VINAYA:TIER:END -->
 
 ## Token report`
     expect(checkScopeDensity(withFence)).toEqual({ status: 'pass', errors: [] })

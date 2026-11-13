@@ -32,14 +32,14 @@ export const FIELD_LABEL = /^(Depends-on|Conflicts-with)\s*:\s*(.*)$/i
  * unlabeled span is not read at all any more, whatever its shape. */
 export const ID_TOKEN = /^(?:[\w.-]+\s+)?#?\d+$/i
 
-/** Splits a qualified id (`aeg-governance-hardening #NNN`) into its slug and
+/** Splits a qualified id (`sample-hardening #NNN`) into its slug and
  * the bare remainder (`#NNN`); `null` slug for an already-bare id (`#NNN`,
  * `3`). Like `ID_TOKEN`, the number is whole — a trailing letter never
  * qualifies. */
 const SLUG_QUALIFIED_ID = /^([\w.-]+)\s+(#?\d+)$/i
 
 /** A comma-list token shaped like a task id but carrying a trailing letter
- * (`7a`, `2b`, `aeg-foo 3c`, and their `#`-prefixed forms) — what a planner
+ * (`7a`, `2b`, `sample-foo 3c`, and their `#`-prefixed forms) — what a planner
  * reaches for on splitting one task in two, and precisely what
  * `ID_TOKEN`/`SLUG_QUALIFIED_ID` above no longer accept. Used only by
  * `findLetteredEdgeIds` to NAME the offending token in a refusal; the tolerant
@@ -95,9 +95,9 @@ function splitIds(raw: string): string[] {
  * then that inheritance resets — a plain bare id (same-tranche reference) must
  * not silently pick up a stale cross-tranche slug from several ids back.
  * Confirmed real shape: a real Issue body qualified its first id
- * (`aeg-governance-hardening #NNN`) and left the next one bare (`#MMM`) while
+ * (`sample-hardening #NNN`) and left the next one bare (`#MMM`) while
  * meaning the same slug — dropping the qualifier could misresolve `#MMM` as
- * this tranche's own issue instead of `aeg-governance-hardening`'s.
+ * this tranche's own issue instead of `sample-hardening`'s.
  *
  * Inheritance is scoped to a single span. It used to be carried
  * across spans by the caller, because bare continuation spans were parsed as
@@ -105,7 +105,7 @@ function splitIds(raw: string): string[] {
  * no cross-span state left to carry. That same real body expressed the
  * sequence as separate spans and now declares only its labeled span's ids —
  * the qualified-then-bare shape survives here in its comma-joined form
- * (`` `Depends-on: aeg-governance-hardening #NNN, #MMM` ``), which is what
+ * (`` `Depends-on: sample-hardening #NNN, #MMM` ``), which is what
  * `amendRationaleDeps` writes.
  */
 function resolveIds(raw: string): string[] {
@@ -129,7 +129,7 @@ function resolveIds(raw: string): string[] {
 
 /** Slices the "Dependency rationale" paragraph out of a full Issue body — up
  * to (not including) the next `**Bold Header**` marker, or end of body. Every
- * AEG Issue template section is a bold header at the start of its own
+ * Vinaya Issue template section is a bold header at the start of its own
  * paragraph, never inline mid-sentence emphasis, so this boundary is safe. */
 function extractSection(body: string): string {
   const start = body.match(SECTION_HEADER)
@@ -146,7 +146,7 @@ function extractSection(body: string): string {
  * single comma-joined backtick span carrying the field name, the topology
  * file's own cell convention and the form `amendRationaleDeps` writes:
  *
- *     `Depends-on: 1, 2`   `Conflicts-with: aeg-governance-hardening 25`
+ *     `Depends-on: 1, 2`   `Conflicts-with: sample-hardening 25`
  *
  * Every other backtick span in the section is prose and contributes nothing.
  *
@@ -209,7 +209,7 @@ export function parseRationaleDeps(body: string): ParsedRationaleDeps {
  *
  * This is the refusal's eyes: `parseRationaleDeps` stays tolerant and simply
  * omits a lettered id, so a plan-authoring gate (`checkEdgeIdsWholeNumbers`,
- * `@attalabs/aeg-core`) calls this to NAME the offending token instead of
+ * the process package) calls this to NAME the offending token instead of
  * letting the edge vanish unremarked. Order-preserving and de-duplicated within
  * a body, so a repeated `7a` is reported once.
  */

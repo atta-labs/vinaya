@@ -1,6 +1,7 @@
 import { execFileSync, execSync } from 'node:child_process'
 import * as realForgeState from '../../tools/task-contract/forge/fetch-milestone'
 import { describe, expect, it, mock } from 'bun:test'
+import { LEGACY_TRANCHES_DIR } from '../../tools/legacy-paths'
 
 /**
  * What the sweep reports when its enumeration authority is gone (round-3
@@ -37,7 +38,7 @@ const { runCoherenceChecks } = await import('./verify-coherence')
 const { resolveGithubToken } = await import('../../../../kernel/adapters/code-host/github/github-token')
 
 const SLUG = 'zzz-index-outage-fixture'
-const ACTIVE_PATH = `aeg-root/tranches/${SLUG}.md`
+const ACTIVE_PATH = `${LEGACY_TRANCHES_DIR}/${SLUG}.md`
 
 /** A commit on top of `origin/main` carrying one synthetic topology file. Same plumbing technique as the pr-head test. */
 function commitWithTrancheFile(): string {
@@ -54,7 +55,7 @@ function commitWithTrancheFile(): string {
     '',
     '| # | Task | Issue | Project(s) | Depends-on | Conflicts-with |',
     '|---|------|-------|-----------|------------|----------------|',
-    '| 1 | Synthetic task | #999999 | aeg | — | — |',
+    '| 1 | Synthetic task | #999999 | sample | — | — |',
     ''
   ].join('\n')
 
@@ -69,10 +70,10 @@ function commitWithTrancheFile(): string {
     env: {
       ...process.env,
       GIT_INDEX_FILE: indexFile,
-      GIT_AUTHOR_NAME: 'AEG test fixture',
-      GIT_AUTHOR_EMAIL: 'aeg-test-fixture@localhost',
-      GIT_COMMITTER_NAME: 'AEG test fixture',
-      GIT_COMMITTER_EMAIL: 'aeg-test-fixture@localhost'
+      GIT_AUTHOR_NAME: 'Vinaya test fixture',
+      GIT_AUTHOR_EMAIL: 'vinaya-test-fixture@localhost',
+      GIT_COMMITTER_NAME: 'Vinaya test fixture',
+      GIT_COMMITTER_EMAIL: 'vinaya-test-fixture@localhost'
     }
   }).trim()
   execFileSync('rm', ['-f', indexFile])

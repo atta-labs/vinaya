@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: no-disk-state. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: no-disk-state. Thin adapter over `@attalabs/process-vinaya`'s
  * `isNewDiskStateFile` — mirrors `harness/processes/vinaya-strict/checks/standalone/check-no-disk-state.ts`'s
  * `git diff --name-status` parsing exactly, emitting the check contract
  * instead of human text.

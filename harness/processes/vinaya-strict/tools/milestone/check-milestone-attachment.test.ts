@@ -38,10 +38,10 @@ describe('checkMilestoneAttachment', () => {
 
 describe('legacy vs intent-declared Milestone resolution (the target `milestone close` checks attachment against)', () => {
   it("resolves the legacy exact-title Milestone for a slug's close target", () => {
-    const milestones = [{ number: 9, title: 'aeg-review-gate-v1', description: '', state: 'open' as const }]
-    expect(resolveMilestoneAttachTarget(milestones, 'aeg-review-gate-v1')).toEqual({
+    const milestones = [{ number: 9, title: 'sample-tranche-v1', description: '', state: 'open' as const }]
+    expect(resolveMilestoneAttachTarget(milestones, 'sample-tranche-v1')).toEqual({
       number: 9,
-      title: 'aeg-review-gate-v1'
+      title: 'sample-tranche-v1'
     })
   })
 

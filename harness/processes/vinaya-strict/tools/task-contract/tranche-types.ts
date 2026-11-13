@@ -1,9 +1,9 @@
 /**
- * Shared AEG tranche/task shapes, extracted from `@attalabs/aeg-core` (task
- * aeg-forge-state-v1 3a) so `@attalabs/aeg-forge-state` can depend on these
- * types without creating a package cycle: `aeg-forge-state` needs them to
- * type its forge-derived output, and `aeg-core`'s bin scripts need to
- * consume `aeg-forge-state`'s derivation function — a genuine bidirectional
+ * Shared Vinaya tranche/task shapes, extracted from `types.ts` so the
+ * forge-state modules can depend on these
+ * types without creating an import cycle: the forge-state modules need them to
+ * type their forge-derived output, and the task-contract bin scripts need to
+ * consume the forge-state derivation function — a genuine bidirectional
  * runtime need that can't be satisfied by either package depending on the
  * other. Zero dependencies, zero I/O.
  */
@@ -14,7 +14,7 @@
  * guard's third state, distinct from `'complete'` (which requires at least
  * one Issue, all closed). Unreachable via a Milestone alone (a Milestone
  * always has a real open/closed state); only the label-derived path in
- * `@attalabs/aeg-forge-state`'s `fetch-milestone.ts` produces it.
+ * The forge-state `fetch-milestone.ts` produces it.
  */
 export type Lifecycle = 'active' | 'complete' | 'planned'
 
@@ -63,18 +63,17 @@ export type Tranche = {
 
 // ---------- Forge facts + local read-adapter shapes ----------
 //
-// Moved here from `@attalabs/aeg-core/src` (aeg-core-purity fix, #521):
-// `@attalabs/aeg-core/src` must stay zero-I/O (#372, #382, #506), but the
+// Moved here from `types.ts`: that module must stay zero-I/O, but the
 // I/O-performing fetchers that produce/consume these shapes
 // (`fetchForgeFacts`, `fetchOpenIssuesByLabel`) live in
-// `@attalabs/aeg-forge-state`, which cannot depend on `@attalabs/aeg-core` without
-// recreating the cycle `aeg-forge-state-v1` 3a already broke once. Putting
-// the shapes at the bottom of the chain lets `aeg-forge-state` type its own
-// I/O without importing `aeg-core`, while `aeg-core` re-exports them for
-// every existing call site that imports from `@attalabs/aeg-core`.
+// the forge-state modules, which cannot depend on `types.ts` without
+// recreating an import cycle that was already broken once. Putting
+// the shapes at the bottom of the chain lets the forge-state modules type their own
+// I/O without importing `types.ts`, while `types.ts` re-exports them for
+// every existing call site that imports from it.
 
 /**
- * Per-task forge snapshot. `deriveTranche` (`@attalabs/aeg-core`) consumes this.
+ * Per-task forge snapshot. `deriveTranche` (`derive-tranche.ts`) consumes this.
  *
  * Conventions for missing entries: a task absent from the `Map<TaskId,
  * ForgeFacts>` passed to `deriveTranche` is treated as `todo` — tranche
@@ -88,7 +87,7 @@ export type ForgeFacts = {
   branchExists: boolean
   prState: 'none' | 'open' | 'merged'
   /**
-   * GitHub's `reviewDecision` projected to AEG's three relevant values.
+   * GitHub's `reviewDecision` projected to Vinaya's three relevant values.
    * `'none'` covers both "no review yet" and the (rare) approved-but-not-
    * merged state — `'changes_requested'` is the only one that flips status.
    */
@@ -96,7 +95,7 @@ export type ForgeFacts = {
   /** `vinaya/blocked` label present. Wins over every other status (§3). */
   blockedLabel: boolean
   /**
-   * GitHub's native close reason (`stateReason`), projected to AEG's terms:
+   * GitHub's native close reason (`stateReason`), projected to Vinaya's terms:
    *   - `'completed'`    ← closed COMPLETED
    *   - `'not_planned'`  ← closed NOT_PLANNED (legitimately dropped)
    *   - `null`           ← issue open, or no close reason recorded
@@ -127,7 +126,7 @@ export type ForgeFacts = {
 /** An open Issue's forge-fetched body + labels, as returned by the batched label query. */
 export type ForgeIssue = { number: number; body: string; labels: string[] }
 
-/** A `Closes #N` Issue's resolved AEG task identity — the tranche slug and
+/** A `Closes #N` Issue's resolved Vinaya task identity — the tranche slug and
  * task id derived from its title (`[<slug>] <id> — ...`) and `vinaya/tranche:<slug>`
  * label. Used by `checkClosesN`'s reverse-direction check (Layer 1
  * reverse): a branch closing an Issue that resolves to one of these must be
@@ -220,7 +219,7 @@ export type RawTaskFacts = {
     /**
      * `null` covers "no review yet". `'REVIEW_REQUIRED'` is GitHub's value for
      * a PR that requires review but has none — the mapper projects it to
-     * `'none'` (same effective meaning for AEG).
+     * `'none'` (same effective meaning for Vinaya).
      */
     reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null
     /** ISO 8601 datetime when the PR was merged, or null. */

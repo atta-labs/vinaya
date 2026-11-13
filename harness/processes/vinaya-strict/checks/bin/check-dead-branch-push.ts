@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: dead-branch-push. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: dead-branch-push. Thin adapter over `@attalabs/process-vinaya`'s
  * `checkDeadBranchPush` — mirrors `harness/processes/vinaya-strict/checks/standalone/check-push-target.ts`'s
  * one batched `gh pr list --head <branch>` call exactly, emitting the check
  * contract instead of human text.

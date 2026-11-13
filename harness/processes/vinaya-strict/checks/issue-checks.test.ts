@@ -172,7 +172,7 @@ describe('Planner validation tool — the Issue write path invokes runIssueCheck
         '',
         '**Dependency rationale** — none.',
         '',
-        '**Traps** — aeg-root/roles/developer.md — no real doc surface touched.',
+        '**Traps** — executing/developer/doctrine.md — no real doc surface touched.',
         '',
         '**Suggested agent-class** — n/a.',
         '',

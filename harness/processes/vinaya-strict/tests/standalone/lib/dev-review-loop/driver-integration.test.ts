@@ -1031,7 +1031,7 @@ describe('devReviewLoop — deferred findings tracked in one Issue per pull requ
   // rules set aside (a below-threshold finding is non-blocking but NEVER
   // deferred, so it would not exercise this path).
   const OUT_OF_SURFACE_FINDING =
-    'BLOCKER|packages/aeg-core/src/foo.ts:10|F1 correctness: a latent bug the loop cannot act on this round\n'
+    'BLOCKER|packages/core/src/foo.ts:10|F1 correctness: a latent bug the loop cannot act on this round\n'
 
   it('opens/updates one tracking Issue for a publish with deferred findings and links it from the summary (O1)', async () => {
     const world = makeWorld({
@@ -1055,7 +1055,7 @@ describe('devReviewLoop — deferred findings tracked in one Issue per pull requ
         round: 1,
         reviewer: 'reviewer',
         severity: 'BLOCKER',
-        location: 'packages/aeg-core/src/foo.ts:10',
+        location: 'packages/core/src/foo.ts:10',
         reason: 'outside-surface',
         description: 'F1 correctness: a latent bug the loop cannot act on this round'
       }
@@ -1068,7 +1068,7 @@ describe('devReviewLoop — deferred findings tracked in one Issue per pull requ
     const secret = 'ghp_ABCDEFGHIJKLMNOP'
     const long = 'x'.repeat(REVIEW_FINDING_DESCRIPTION_MAX_LENGTH + 200)
     const blocking = 'BLOCKER|apps/cli/src/a.ts:5|an in-Surface defect the Developer must fix\n'
-    const outside = `BLOCKER|packages/aeg-core/src/foo.ts:10|outside leak ${secret} ${long}\n`
+    const outside = `BLOCKER|packages/core/src/foo.ts:10|outside leak ${secret} ${long}\n`
     const unchanged = `BLOCKER|apps/cli/src/a.ts:99|unchanged-line leak ${secret} ${long}\n`
     const world = makeWorld({
       surface: { in: ['apps/cli/**'], out: [] },
@@ -1132,7 +1132,7 @@ describe('devReviewLoop — deferred findings tracked in one Issue per pull requ
     const findings = [
       `BLOCKER|${relative(scratch, stagedBody)}:1|the body claims an objective is met that the diff does not meet`,
       `MAJOR|${stagedBody}:1|the body names a file the diff never touches`,
-      'BLOCKER|packages/aeg-core/src/foo.ts:10|a latent bug the loop cannot act on this round'
+      'BLOCKER|packages/core/src/foo.ts:10|a latent bug the loop cannot act on this round'
     ].join('\n')
     const world = makeWorld({
       surface: { in: ['apps/cli/**'], out: [] },
@@ -1164,7 +1164,7 @@ describe('devReviewLoop — deferred findings tracked in one Issue per pull requ
         round: 1,
         reviewer: 'reviewer',
         severity: 'BLOCKER',
-        location: 'packages/aeg-core/src/foo.ts:10',
+        location: 'packages/core/src/foo.ts:10',
         reason: 'outside-surface',
         description: 'a latent bug the loop cannot act on this round'
       }
@@ -1627,7 +1627,7 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
       // log entirely — zero `dev_review_loop` events for the round.
       // `driverDecidedPauseEvents` now logs the same four events every other
       // pause reason gets (this task's own declared Surface excludes
-      // `packages/aeg-core`, so this is driver-built, reusing the schema's
+      // the process package's schema, so this is driver-built, reusing the schema's
       // existing `'principal_stop'`/`'principal_item'` values, never a new
       // schema value — see that function's own doc comment).
       const loopEvents = ipOutboxLines(world)
@@ -2007,7 +2007,7 @@ describe('devReviewLoop — O4 (Issue #662): a resumed loop that hits a stale-dr
 
       writeFileSync(
         join(home, '.fake-gh-posted-comments', 'comment-2.md'),
-        `<!-- aeg:principal:ruling:${TASK}-1 -->\nGo ahead and fix it.\n`
+        `<!-- vinaya:principal:ruling:${TASK}-1 -->\nGo ahead and fix it.\n`
       )
 
       const resumed = runDevReviewLoopArgs(home, cwd, path, ['--resume', '123', '--agent', 'claude'], FAST_POLL_ENV)

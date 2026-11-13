@@ -10,7 +10,7 @@
  * FILE handed to a dispatch, at Step 0 only, off any non-task branch. This
  * check re-asserts the BODY that reaches the forge, on every branch, in CI —
  * `reassertPremiseFile` and the pin grammar it delegates to
- * (`parsePremiseBlock`/`checkPremises`, `@attalabs/aeg-core`) are consumed
+ * (`parsePremiseBlock`/`checkPremises`, `@attalabs/process-vinaya`) are consumed
  * unchanged; this file is wiring, not a second implementation.
  *
  * Trigger is the block's presence and nothing else: a body with no

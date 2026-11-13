@@ -3,9 +3,9 @@
  * project this task names still have an active prior tranche whose task Issues
  * are all closed?" that the dispatch verifier and both dispatch checks read.
  *
- * Lives in this package, not in `@attalabs/aeg-core`: the resolution performs
- * forge reads and `@attalabs/aeg-core/src` is no-I/O. The dependency runs
- * aeg-core → forge-state, so the fact type lives here and aeg-core aliases it.
+ * Lives in this package, not in the process package's pure core: the resolution performs
+ * forge reads and the pure core is no-I/O. The dependency runs
+ * the pure core → forge-state, so the fact type lives here and the pure core aliases it.
  *
  * Every default read is asynchronous and captures its standard error, so a
  * check that calls this never writes a raw `gh` line of its own, and each read

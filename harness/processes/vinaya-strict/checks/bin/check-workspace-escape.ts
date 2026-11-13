@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Core check: workspace-escape. Thin adapter over `@attalabs/aeg-core`'s
+ * Core check: workspace-escape. Thin adapter over `@attalabs/process-vinaya`'s
  * `findWorkspaceEscapes` — the class neither the
  * workspace dependency graph nor a literal-path grep can see: a constructed
  * filesystem reference (`readFileSync`, `readFile`, `new URL('…',

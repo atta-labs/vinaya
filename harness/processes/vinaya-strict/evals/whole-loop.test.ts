@@ -191,20 +191,20 @@ function fakeTaskRun(forge: FakeForge, shape: RunShape, flow: string, seen: Task
 
     const evidence =
       flow === 'v2'
-        ? '<!-- AEG:EVIDENCE:START -->\nNo local tests ran.\n<!-- AEG:EVIDENCE:END -->'
-        : '<!-- AEG:EVIDENCE:START -->\nbun test passed\n<!-- AEG:EVIDENCE:END -->'
+        ? '<!-- VINAYA:EVIDENCE:START -->\nNo local tests ran.\n<!-- VINAYA:EVIDENCE:END -->'
+        : '<!-- VINAYA:EVIDENCE:START -->\nbun test passed\n<!-- VINAYA:EVIDENCE:END -->'
     const pr = forge.openPullRequest(
       repo,
       branch,
       head,
-      `Closes #${issue}\n\n<!-- AEG:BEYOND-SURFACE:START -->\n<!-- AEG:BEYOND-SURFACE:END -->\n\n${evidence}\n`
+      `Closes #${issue}\n\n<!-- VINAYA:BEYOND-SURFACE:START -->\n<!-- VINAYA:BEYOND-SURFACE:END -->\n\n${evidence}\n`
     )
-    forge.comment(repo, pr, '<!-- aeg:developer:round-1 -->')
+    forge.comment(repo, pr, '<!-- vinaya:developer:round-1 -->')
     const binding = `Judged head: ${head}\nJudged base: ${base}\nBrief hash: ${briefHash}`
     if (shape === 'passing') {
       forge.comment(repo, pr, `VERDICT: APPROVE\n${binding}`)
       forge.comment(repo, pr, `VERDICT: PASS\n${binding}`)
-      forge.comment(repo, pr, `<!-- aeg:loop:published head=${head} confidence=1:90 -->`)
+      forge.comment(repo, pr, `<!-- vinaya:loop:published head=${head} confidence=1:90 -->`)
     } else {
       forge.comment(
         repo,
@@ -212,7 +212,7 @@ function fakeTaskRun(forge: FakeForge, shape: RunShape, flow: string, seen: Task
         `VERDICT: REQUEST CHANGES\n${binding}\n\nFINDINGS\n- BLOCKER|apps/cli/src/lib/existing.ts:1|wrong`
       )
       forge.comment(repo, pr, `VERDICT: PASS\n${binding}`)
-      forge.comment(repo, pr, '<!-- aeg:loop:paused:max_rounds -->')
+      forge.comment(repo, pr, '<!-- vinaya:loop:paused:max_rounds -->')
     }
 
     const logs = join(request.env.VINAYA_RUNTIME_DIR as string, 'logs', 'sandbox')

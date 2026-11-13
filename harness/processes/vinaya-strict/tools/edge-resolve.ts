@@ -11,7 +11,7 @@
  * claimed parity with the third.
  *
  * This module is the one implementation the two CLI checks now share. It does
- * not remove the third: `verify-dispatch.ts` lives in `@attalabs/aeg-core`'s
+ * not remove the third: `verify-dispatch.ts` lives in `@attalabs/process-vinaya`'s
  * `bin/` and cannot import from `apps/cli`. `checks/edge-parity.test.ts` holds
  * them to the same answers instead, so a future divergence fails a test rather
  * than being found in production months later.
@@ -68,8 +68,8 @@ export type EdgeRepo = { owner: string; repo: string }
  * uses `/#(\d+)/` and its docstring says it matches "a prose cell containing
  * `#NNN`". An anchored `^#(\d+)$` looks equivalent and is not — it misses the
  * slug-qualified form `<slug> #NNN`, which the edge grammar sanctions
- * (`SLUG_QUALIFIED_ID` in `@attalabs/aeg-forge-state`, whose own example is
- * `aeg-governance-hardening #NNN`) and which a labeled `Depends-on:`/
+ * (`SLUG_QUALIFIED_ID` in the forge-state modules, whose own example is
+ * `<slug> #NNN`) and which a labeled `Depends-on:`/
  * `Conflicts-with:` field's own comma list carries as a single literal
  * token — `parseRationaleDeps` never synthesizes it from a separate span
  * (a real fix removed that mechanism; only a labeled field's own
@@ -245,7 +245,7 @@ export function edgeFromIssueJson(num: number, json: IssueStateJson | null, read
  * Resolve one edge: a same-tranche task id from already-fetched facts, a
  * `#NNN` reference by looking the Issue up, or a slug-qualified bare task id
  * (`<slug> <n>`) by looking the sibling tranche up — the same
- * `SLUG_QUALIFIED_ID` form `@attalabs/aeg-forge-state`'s grammar sanctions
+ * `SLUG_QUALIFIED_ID` form the forge-state modules' grammar sanctions
  * and `harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts`'s resolver already handles.
  */
 export async function resolveEdge(

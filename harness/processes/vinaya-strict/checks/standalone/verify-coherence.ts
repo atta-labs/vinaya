@@ -74,6 +74,7 @@ import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point'
 import type { ForgeFacts } from '../../tools/task-contract/tranche-types'
 import type { CheckResult, TrancheFile, TaskEntry } from '../coherence-checks'
 import { readConfigPrincipals } from '../../tools/task-contract/principals-config'
+import { LEGACY_TRANCHES_DIR } from '../../tools/legacy-paths'
 
 const COHERENCE_INVOCATION_CWD = process.cwd()
 const REPO_ROOT = (() => {
@@ -174,16 +175,15 @@ export { fetchProvenance }
 
 // ---------- tranche file loader --------------------------------------------
 
-const TRANCHES_RELDIR = 'aeg-root/tranches'
-const COMPLETED_RELDIR = 'aeg-root/tranches/completed'
+const TRANCHES_RELDIR = LEGACY_TRANCHES_DIR
+const COMPLETED_RELDIR = `${LEGACY_TRANCHES_DIR}/completed`
 
 function isTrancheFile(name: string): boolean {
   return name.endsWith('.md') && name !== 'README.md' && !name.endsWith('.tokens.md')
 }
 
 /**
- * PR context for item 5 (aeg-governance-hardening task 24, #364, Part 2;
- *): when set, tranche files THIS PR's own diff touches are read
+ * PR context for item 5: when set, tranche files THIS PR's own diff touches are read
  * from the PR's head ref (its own proposed content, e.g. a plan PR adding a
  * topology row); every other tranche file — the "repo state" side of
  * every coherence comparison — is read from a freshly-fetched
@@ -224,7 +224,7 @@ function gitFetchMainQuiet(): void {
  */
 /**
  * An ABSENT path is the expected answer from both probes below, not an error
- * (#173): the forge-native cutover deleted every `aeg-root/tranches/*.md` and
+ * (#173): the forge-native cutover deleted every file in the retired tranche-file directory and
  * `no-disk-state.ts` now actively forbids re-adding one, so they miss on every
  * healthy run and `git` says so on stderr. Both callers already degrade
  * correctly via their `catch`; what the noise cost was a caller downstream,
@@ -238,8 +238,8 @@ function gitFetchMainQuiet(): void {
  * is the load-bearing detail.** `git` emits the SAME text for an expected miss
  * and an unreachable ref:
  *
- *     $ git ls-tree --name-only origin/main:aeg-root/tranches   # expected miss
- *     fatal: Not a valid object name origin/main:aeg-root/tranches
+ *     $ git ls-tree --name-only origin/main:<tranche-dir>   # expected miss
+ *     fatal: Not a valid object name origin/main:<tranche-dir>
  *     $ git ls-tree --name-only deadbeef…:harness/processes/vinaya-strict               # unreachable ref
  *     fatal: Not a valid object name deadbeef…:harness/processes/vinaya-strict
  *
@@ -503,7 +503,7 @@ export async function loadTrancheSweep(
 
   // ---------- enumerate ----------
   // Candidates are keyed by PATH, never by slug. An archival PR (`git mv
-  // aeg-root/tranches/x.md aeg-root/tranches/completed/x.md`) legitimately
+  // <tranche-dir>/x.md <tranche-dir>/completed/x.md`) legitimately
   // produces TWO candidates for slug `x` — the old path, gone at the head, and
   // the new one carrying the PR's own `Lifecycle: complete` edit. Suppressing
   // the second because the first was already seen dropped the archived entry
@@ -541,7 +541,7 @@ export async function loadTrancheSweep(
   addFromDir(COMPLETED_RELDIR, true)
 
   // Forge-native tranches with no topology file at all (at the forge-native
-  // cutover, a tranche's aeg-root/tranches/*.md was deleted once its
+  // cutover, a tranche's topology file was deleted once its
   // Milestone-derived replacement was proven safe) are structurally invisible
   // to the directory listing above — there is no filename for a slug with zero
   // file to ever appear. The fill-in below covers them, and it is keyed on
@@ -894,8 +894,7 @@ export async function runCoherenceChecks(
   results.push(checkL1(files, entriesBySlug))
   results.push(checkL2(files, entriesBySlug))
 
-  // L4 — Issue-level Milestone-attachment drift (aeg-review-gate-v1 task 1
-  // follow-up). Active = forge Milestone open, the same authority
+  // L4 — Issue-level Milestone-attachment drift. Active = forge Milestone open, the same authority
   // `verify-dispatch.ts`'s Milestone-aware discovery uses — not `!f.archived`
   // (file location), so this never flags a tranche whose file predates
   // the Milestone birth rule but has no live Milestone yet.
@@ -921,7 +920,7 @@ export async function runCoherenceChecks(
   // leaves nothing at all to check — but that guard is gated on `files` being
   // empty, so the moment one topology file survives to populate `files` the
   // same outage passes silently here instead. Reachable in any repo that still
-  // carries `aeg-root/tranches/completed/*.md`, and on any plan PR that reads
+  // carries the retired archive's `completed/*.md` files, and on any plan PR that reads
   // its own topology file from the head. It does not even take an outage:
   // `indexTrancheMilestonesAsync` reads through `gh` while A1/A2/A3's snapshots
   // read through octokit, so a `gh auth token` keyring failure alone produces
@@ -1099,7 +1098,7 @@ if (isEntryPoint(import.meta.url, 'verify-coherence')) {
     const files = await loadTrancheFiles(null, branchTrancheSlug)
 
     // Reverse-direction data: resolve every `Closes #N` the body references
-    // to its AEG task identity, one batched forge query (not a per-issue
+    // to its task identity, one batched forge query (not a per-issue
     // loop — see `fetchTaskIssueRefs`'s own doc comment). A non-task branch
     // (no `repo` resolvable, or the forge unreachable) still runs the
     // forward direction below; the reverse check simply has nothing to flag.

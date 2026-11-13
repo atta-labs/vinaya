@@ -30,7 +30,7 @@
  *   branch writes these. Every one of them leaves through
  *   `sanitizeForgeText`/`sanitizeForgeLogTail`, which redact secrets through
  *   `redact()` — this codebase's single redaction chokepoint — neutralize the
- *   two grammars that carry authority here (an AEG control comment, a
+ *   two grammars that carry authority here (a Vinaya control comment, a
  *   `VERDICT:` line), and cap what remains.
  *
  * Read-only, structurally: there is no forge-write function imported here,
