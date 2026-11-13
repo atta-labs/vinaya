@@ -25,6 +25,8 @@ import {
   bunReportedFiles,
   checkSchedule,
   ciScheduleInput,
+  FILES_PER_RUNNER,
+  GROUP_TIME_LIMIT_MS,
   type GroupOutcome,
   groupOutcomeOf,
   readShardLists,
@@ -102,9 +104,32 @@ describe('the full schedule of this repository', () => {
         t.runner === 'bun' && ['@attalabs/vinaya', '@attalabs/harness', '@attalabs/process-vinaya'].includes(t.owner)
       expect(`${entry.test} ${entry.placement.startsWith('shard-')}`).toBe(`${entry.test} ${sharded}`)
     }
-    // A full run starts each Vitest suite whole, with its reason stated, under its own configuration.
+    // A full run asks for each Vitest suite whole, with its reason stated, and starts it one file per runner.
     for (const group of schedule.placements.shared ?? [])
-      if (group.runner === 'vitest') expect([group.scope, typeof group.reason]).toEqual(['suite', 'string'])
+      if (group.runner === 'vitest') expect([group.tests.length, typeof group.reason]).toEqual([1, 'string'])
+  })
+
+  test('every runner start serves one file, under its suite’s runner, folder, configuration, environment and preload', () => {
+    const groups = Object.values(schedule.placements).flatMap((g) => g ?? [])
+    expect(FILES_PER_RUNNER).toBe(1)
+    expect(groups.length).toBe(schedule.accounting.length)
+    expect(groups.filter((g) => g.tests.length !== 1).map((g) => g.id)).toEqual([])
+    // Each placement is one CI job, whose runs are checked together: within it every group id is unique.
+    for (const placed of Object.values(schedule.placements))
+      expect(new Set((placed ?? []).map((g) => g.id)).size).toBe((placed ?? []).length)
+    for (const group of groups) {
+      const test = view.tests.find((t) => t.id === group.tests[0]) as TestIdentity
+      expect([group.tests[0], group.suite, group.runner, group.cwd, group.preload, group.environment]).toEqual([
+        test.id,
+        test.suite,
+        test.runner,
+        test.cwd,
+        test.preload,
+        test.environment
+      ])
+      // A suite of several files gives each its own `#<k>of<n>` id under the suite and configuration.
+      expect(group.id.startsWith(`${group.suite}@${group.configuration}`)).toBe(true)
+    }
   })
 
   test('each CLI test keeps the shard its list names', () => {
@@ -270,7 +295,7 @@ describe('what a CI run schedules', () => {
     expect(input.wholeSuites).toEqual([])
   })
 
-  test('a suite the selection runs whole is one whole-suite run in its place', () => {
+  test('a suite the selection runs whole runs every file of it, one runner start per file, in its place', () => {
     const portal = view.tests.filter((t) => t.owner === '@vinaya/portal').map((t) => t.id)
     expect(portal.length).toBeGreaterThan(0)
     const reason = 'the change touches a path under its folder, and the selection does not model the portal inputs'
@@ -287,7 +312,11 @@ describe('what a CI run schedules', () => {
     expect(whole?.identities.map((t) => t.id).sort()).toEqual([...portal].sort())
     const schedule = buildTestSchedule({ view, shardLists, ...input })
     expect(checkSchedule(schedule, expectedOf(input))).toEqual([])
-    expect(schedule.placements.shared?.find((g) => g.suite === 'portal')).toMatchObject({ scope: 'suite', args: [] })
+    const runs = (schedule.placements.shared ?? []).filter((g) => g.suite === 'portal')
+    expect(runs.flatMap((g) => g.tests).sort()).toEqual([...portal].sort())
+    for (const [k, g] of runs.entries())
+      expect(g).toMatchObject({ id: `portal@default#${k + 1}of${portal.length}`, reason, cwd: 'apps/vinaya-portal' })
+    expect(runs.every((g) => g.tests.length === 1 && g.args.length === 1)).toBe(true)
     expect(schedule.accounting.filter((e) => portal.includes(e.test)).map((e) => e.placement)).toEqual(
       portal.map(() => 'shared')
     )
@@ -545,6 +574,35 @@ describe('real runners execute exactly their group', () => {
     expect(lines.filter((line) => line.includes('running it once more'))).toHaveLength(1)
     expect(result.failedRunners).toEqual(['bun@default'])
     expect(result.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['interrupted bun@default'])
+  }, 60_000)
+
+  test('with one file per runner, a file stopped twice at the limit fails alone; the files around it stay confirmed', () => {
+    expect(GROUP_TIME_LIMIT_MS).toBe(15 * 60_000)
+    const plan = groupNativeTests({
+      tests: ['pkg/bun/tests/a.test.ts', 'pkg/bun/tests/chdir.test.ts', 'pkg/bun/tests/freeze.test.ts'].map(byId),
+      universe,
+      maxFilesPerGroup: FILES_PER_RUNNER
+    }).groups
+    expect(plan.map((g) => [g.id, g.tests])).toEqual([
+      ['bun@default#1of3', ['pkg/bun/tests/a.test.ts']],
+      ['bun@default#2of3', ['pkg/bun/tests/chdir.test.ts']],
+      ['bun@default#3of3', ['pkg/bun/tests/freeze.test.ts']]
+    ])
+    // The frozen file runs between the two others, so a later file proves the run goes on after it.
+    const ordered = [plan[0], plan[2], plan[1]] as NativeGroup[]
+    const lines: string[] = []
+    const result = runGroups(root, ordered, { log: (line) => lines.push(line), groupTimeLimitMs: 4_000 })
+    const retried = lines.filter((line) => line.includes('running it once more'))
+    expect(retried).toHaveLength(1)
+    expect(retried[0]).toContain('bun@default#3of3')
+    expect(result.failedRunners).toEqual(['bun@default#3of3'])
+    expect(result.failedTests).toEqual({ 'bun@default#3of3': 'all' })
+    expect(result.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['interrupted bun@default#3of3'])
+    expect(result.outcomes.map((o) => [o.group, o.confirmed, o.obligations])).toEqual([
+      ['bun@default#1of3', ['pkg/bun/tests/a.test.ts'], []],
+      ['bun@default#3of3', [], ['pkg/bun/tests/freeze.test.ts']],
+      ['bun@default#2of3', ['pkg/bun/tests/chdir.test.ts'], []]
+    ])
   }, 60_000)
 
   test('an isolated group keeps the passes it reported when one file errors outside its tests', () => {

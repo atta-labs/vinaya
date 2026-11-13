@@ -20,10 +20,10 @@ import {
   recordLocalRun,
   runFrozenPlan
 } from './local-run'
-import { type GroupOutcome, type RunResult, runGroups } from './schedule'
+import { FILES_PER_RUNNER, GROUP_TIME_LIMIT_MS, type GroupOutcome, type RunResult, runGroups } from './schedule'
 import { branchSideBase } from './repository-selection'
 import { runEnvironment } from '../../harness/kernel/gates/ring0-hooks/pre-push/junit-store'
-import { leftOutByBranchSide } from '@attalabs/test-selection'
+import { groupNativeTests, leftOutByBranchSide } from '@attalabs/test-selection'
 import {
   computeVerificationContext,
   FAILED_TESTS_RECORD,
@@ -123,7 +123,7 @@ const failedRerun = (test: string) => ({
 const required = (test: string) => ({ test, suite: 'cli', runner: 'bun' as const, reasons: [] })
 
 describe('the plan a push freezes', () => {
-  it('runs each planned test and each unresolved failed test once, grouped by its own runner', () => {
+  it('runs each planned test and each unresolved failed test once, each file in a runner start of its own', () => {
     const local = localNativePlan({
       plan: plan({
         required: [required('apps/cli/tests/a.test.ts')],
@@ -132,9 +132,19 @@ describe('the plan a push freezes', () => {
       view: VIEW
     })
     expect(local.problems).toEqual([])
-    expect(local.groups.map((g) => [g.id, g.scope, g.tests])).toEqual([
-      ['cli@default', 'files', ['apps/cli/tests/a.test.ts', 'apps/cli/tests/failed.test.ts']]
+    expect(local.groups.map((g) => [g.id, g.scope, g.tests, g.args])).toEqual([
+      ['cli@default#1of2', 'files', ['apps/cli/tests/a.test.ts'], ['./tests/a.test.ts']],
+      ['cli@default#2of2', 'files', ['apps/cli/tests/failed.test.ts'], ['./tests/failed.test.ts']]
     ])
+    // Each one-file group keeps its suite's runner, folder, configuration, environment and preload.
+    for (const g of local.groups)
+      expect([g.runner, g.cwd, g.configuration, g.environment, g.preload]).toEqual([
+        'bun',
+        'apps/cli',
+        'default',
+        { timeoutMs: 30000 },
+        null
+      ])
     expect(local.identities).toEqual(['apps/cli/tests/a.test.ts@default', 'apps/cli/tests/failed.test.ts@default'])
   })
 
@@ -329,23 +339,26 @@ describe('the plan a push freezes from a branch-side set', () => {
   })
 })
 
-describe('a plan over the local file cap', () => {
+describe('a plan of many files, one file per runner start', () => {
   const files = Array.from({ length: 300 }, (_, i) => `apps/cli/tests/t${String(i).padStart(3, '0')}.test.ts`)
   const view = { ...VIEW, tests: files.map((f) => identity(f, 'cli')) } as unknown as InventoryView
   const local = () => localNativePlan({ plan: plan({ required: files.map((f) => required(f)) }), view })
 
-  it('holds 300 files in 8 chunks of at most the cap, every file once, under the unchanged execution version', () => {
+  it('holds 300 files in 300 one-file groups with unique ids, every file once, under the unchanged execution version', () => {
     const { groups, identities, problems } = local()
     expect(problems).toEqual([])
-    expect(LOCAL_GROUP_FILE_CAP).toBe(40)
+    expect(LOCAL_GROUP_FILE_CAP).toBe(FILES_PER_RUNNER)
+    expect(LOCAL_GROUP_FILE_CAP).toBe(1)
     expect(LOCAL_RUN_EXECUTION).toBe('native-local-run@1')
-    expect(groups).toHaveLength(8)
-    expect(groups.every((g) => g.tests.length <= LOCAL_GROUP_FILE_CAP)).toBe(true)
+    expect(groups).toHaveLength(300)
+    expect(groups.every((g) => g.tests.length === 1)).toBe(true)
+    expect(new Set(groups.map((g) => g.id)).size).toBe(300)
+    expect(groups[0]?.id).toBe('cli@default#1of300')
     expect(groups.flatMap((g) => g.tests)).toEqual(files)
     expect(identities).toEqual(files.map((f) => `${f}@default`))
   })
 
-  it('writes one checkpoint record per finished chunk and counts every chunk executed', () => {
+  it('writes one checkpoint record per finished file and counts every file executed', () => {
     const { groups, identities } = local()
     const native = nativeOf(groups)
     const written: unknown[] = []
@@ -370,7 +383,7 @@ describe('a plan over the local file cap', () => {
         write: (r: unknown) => void written.push(r)
       } as never
     })
-    expect(written).toHaveLength(8)
+    expect(written).toHaveLength(300)
     expect(outcome.completion.executed).toEqual(identities)
     expect(outcome.passed).toBe(true)
   })
@@ -728,6 +741,69 @@ describe('real native runner starts', () => {
     expect(completion.executed).toEqual([])
   })
 
+  it('a file that crashes or exits early costs only itself: each finished file rewrites the record, the rest stay confirmed', () => {
+    const dir = suiteDir({
+      'a.test.ts': pass,
+      'b.test.ts': `import { test } from 'bun:test'\ntest('crash', () => { process.kill(process.pid, 'SIGKILL') })\n`,
+      'c.test.ts': `import { test } from 'bun:test'\ntest('leaves', () => { process.exit(0) })\n`,
+      'd.test.ts': pass
+    })
+    const tests = ['a.test.ts', 'b.test.ts', 'c.test.ts', 'd.test.ts'].map((id) => ({
+      id,
+      suite: 'cli',
+      owner: '@attalabs/vinaya',
+      kind: 'workspace' as const,
+      runner: 'bun' as const,
+      cwd: '.',
+      preload: null,
+      environment: {},
+      configuration: 'default'
+    }))
+    // The plan is formed the way a push forms it: one file per group.
+    const { groups, problems } = groupNativeTests({ tests, universe: tests, maxFilesPerGroup: LOCAL_GROUP_FILE_CAP })
+    expect(problems).toEqual([])
+    expect(groups.map((g) => g.tests)).toEqual([['a.test.ts'], ['b.test.ts'], ['c.test.ts'], ['d.test.ts']])
+    const native = nativeOf(groups)
+    const runPlan = (allGroups: boolean) => {
+      const records: FailedTestsRecord[] = []
+      const outcome = runFrozenPlan(dir, native, {
+        allGroups,
+        state: () => 'same',
+        context: () => 'ctx',
+        roots: [dir],
+        groupRecord: {
+          head: 'h'.repeat(40),
+          branch: 'task/x/1',
+          runStartedAt: '2026-11-01T00:00:00.000Z',
+          treeClean: true,
+          write: (record) => records.push(record)
+        },
+        runGroups: (root, gs, options) => runGroups(root, gs, { ...options, log: () => {}, announce: false })
+      })
+      return { outcome, records }
+    }
+    const abs = (...ids: string[]) => ids.map((id) => join(dir, id))
+
+    // A review round runs every file: the record is rewritten as each one ends, and every one keeps `a` confirmed.
+    const round = runPlan(true)
+    expect(round.records).toHaveLength(4)
+    expect(round.records.map((r) => r.confirmed)).toEqual([
+      ['a.test.ts'],
+      ['a.test.ts'],
+      ['a.test.ts'],
+      ['a.test.ts', 'd.test.ts']
+    ])
+    expect(round.records.at(-1)?.failed).toEqual(abs('b.test.ts', 'c.test.ts'))
+    expect(round.outcome).toMatchObject({ passed: false, unconfirmed: ['b.test.ts', 'c.test.ts'] })
+
+    // A push stops after its first failing runner, now one file: the crash leaves `a` confirmed and the rest owed.
+    const push = runPlan(false)
+    expect(push.records).toHaveLength(2)
+    expect(push.records.at(-1)?.confirmed).toEqual(['a.test.ts'])
+    expect(push.records.at(-1)?.failed).toEqual(abs('b.test.ts', 'c.test.ts', 'd.test.ts'))
+    expect(push.outcome).toMatchObject({ passed: false, stopped: { tests: 2, groups: 2 } })
+  }, 120_000)
+
   it('a runner never sees the git variables of the hook that started it', () => {
     const probe = join(fixtureDir('local-run-env-'), 'env.json')
     const dir = suiteDir({
@@ -856,9 +932,16 @@ describe('what a native run records', () => {
     expect(await lookupGreenRun(note.native?.command as string, dir, cache)).toBeNull()
   })
 
-  it('a push stops after the first failing group; a review round runs every group', () => {
-    expect(frozenPlanRunOptions({ allGroups: false })).toEqual({ stopAfterFailedGroup: true })
-    expect(frozenPlanRunOptions({ allGroups: true })).toEqual({ stopAfterFailedGroup: false })
+  it('a push stops after the first failing group; a review round runs every group; both under the per-file limit', () => {
+    expect(frozenPlanRunOptions({ allGroups: false })).toEqual({
+      stopAfterFailedGroup: true,
+      groupTimeLimitMs: GROUP_TIME_LIMIT_MS
+    })
+    expect(frozenPlanRunOptions({ allGroups: true })).toEqual({
+      stopAfterFailedGroup: false,
+      groupTimeLimitMs: GROUP_TIME_LIMIT_MS
+    })
+    expect(GROUP_TIME_LIMIT_MS).toBe(15 * 60_000)
   })
 
   it('`run --all-groups` reaches the scheduler as no stop after a failing group; plain `run` stops', () => {
@@ -869,11 +952,13 @@ describe('what a native run records', () => {
     const group: NativeGroup = { ...GROUP, cwd: '.', tests: ['a.test.ts'], args: ['./a.test.ts'] }
     const native = { ...nativeOf([group], note.context), identities: ['a.test.ts@default'] }
     const seen: (boolean | undefined)[] = []
+    const limits: (number | undefined)[] = []
     for (const allGroups of [false, true]) {
       runFrozenPlan(dir, native, {
         allGroups: parseRunArgs(allGroups ? ['run', '--all-groups'] : ['run']).allGroups,
         runGroups: (_root, groups, options) => {
           seen.push(options?.stopAfterFailedGroup)
+          limits.push(options?.groupTimeLimitMs)
           return {
             failedRunners: [],
             problems: [],
@@ -888,6 +973,8 @@ describe('what a native run records', () => {
       })
     }
     expect(seen).toEqual([true, false])
+    // The push and the review round both reach the scheduler with the per-file limit.
+    expect(limits).toEqual([GROUP_TIME_LIMIT_MS, GROUP_TIME_LIMIT_MS])
   })
 
   it('a run stopped after its first failing group credits no unrun test and names only the failing one', async () => {

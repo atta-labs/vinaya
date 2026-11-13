@@ -93,10 +93,13 @@ import {
 } from './repository-selection.js'
 
 export { LOCAL_RUN_EXECUTION, nativeContext }
-import { type GroupOutcome, type RunResult, runGroups } from './schedule.js'
+import { FILES_PER_RUNNER, GROUP_TIME_LIMIT_MS, type GroupOutcome, type RunResult, runGroups } from './schedule.js'
 
-/** The most files one local runner start holds, so a push's runner memory is released between chunks. */
-export const LOCAL_GROUP_FILE_CAP = 40
+/**
+ * The most files one local runner start holds: the scheduler's one file per runner, so a push and a review round
+ * start every file in a runner process of its own, as CI does.
+ */
+export const LOCAL_GROUP_FILE_CAP = FILES_PER_RUNNER
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 
@@ -439,8 +442,15 @@ export function parseRunArgs(argv: readonly string[]): { log: string | undefined
   return { log: argValue(argv, '--log'), allGroups: argv.includes('--all-groups') }
 }
 
-export function frozenPlanRunOptions(input: { allGroups: boolean }): { stopAfterFailedGroup: boolean } {
-  return { stopAfterFailedGroup: !input.allGroups }
+/**
+ * The scheduler options a frozen plan runs under: a push stops after its first failing runner (one file), a review
+ * round (`--all-groups`) runs every one; both stop a file's runner at the per-file limit and run it once more alone.
+ */
+export function frozenPlanRunOptions(input: { allGroups: boolean }): {
+  stopAfterFailedGroup: boolean
+  groupTimeLimitMs: number
+} {
+  return { stopAfterFailedGroup: !input.allGroups, groupTimeLimitMs: GROUP_TIME_LIMIT_MS }
 }
 
 /**
@@ -844,7 +854,7 @@ function exactCommand(repoRoot: string, argv: readonly string[]): number {
     process.stderr.write(`vinaya local-run: refused — ${problems.join('; ')}\n`)
     return 1
   }
-  const result = runGroups(repoRoot, grouping.groups, { env: cleanGitEnv() })
+  const result = runGroups(repoRoot, grouping.groups, { env: cleanGitEnv(), groupTimeLimitMs: GROUP_TIME_LIMIT_MS })
   for (const p of result.problems)
     process.stderr.write(`vinaya local-run: ${p.code} ${p.path}${p.group ? ` (${p.group})` : ''}: ${p.detail}\n`)
   return result.failedRunners.length > 0 || result.problems.length > 0 ? 1 : 0
