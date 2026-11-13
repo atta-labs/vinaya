@@ -14,13 +14,17 @@
  * (`dev-tools-bridge.ts`) as the agent's MCP `command`. The bridge — the only
  * part that runs inside the sandbox — relays bytes and holds nothing.
  *
- * Six of the seven tools are the Developer's ENTIRE forge surface in the
+ * The publication tools are the Developer's forge surface in the
  * review loop: `publish_changes` (commit the worktree under a header and push the task
  * branch), `open_pull_request`, `update_pull_request_body`, `refresh_evidence`
  * (regenerate the PR body's Evidence block for the current head),
  * `read_pull_request` (state, checks, reviews, body, and each failed check's
  * sanitized job-log tail) and `run_checks` (run
- * `vinaya check --all` for the current head). The seventh,
+ * `vinaya check --all` for the current head). `repair_plan` requests the
+ * dispatch-time deterministic repairs from the driver without granting a
+ * free-form plan edit. A host that does not implement it refuses explicitly.
+ *
+ * The documentation tool,
  * `fetch_documentation`, reads one public https documentation page from the
  * driver, outside the sandbox, and records the read (`fetch-documentation.ts`,
  * which owns its contract, handler and receipt). Each is backed by a driver-side
@@ -67,6 +71,7 @@ export const UPDATE_PULL_REQUEST_BODY_TOOL = 'update_pull_request_body'
 export const REFRESH_EVIDENCE_TOOL = 'refresh_evidence'
 export const READ_PULL_REQUEST_TOOL = 'read_pull_request'
 export const RUN_CHECKS_TOOL = 'run_checks'
+export const REPAIR_PLAN_TOOL = 'repair_plan'
 export { FETCH_DOCUMENTATION_TOOL, READ_SOURCE_TOOL }
 
 export { DEV_TOOL_CATALOG, DEV_TOOL_NAMES }
@@ -173,6 +178,8 @@ export type DevPullRequestView = {
  * its objective names.
  */
 export type DevToolContext = {
+  /** Deterministic, scope-preserving repair; older hosts explicitly refuse it as unavailable. */
+  repairPlan?: () => Promise<DevToolResult<{ brief: string; briefHash: string; reasons: string[] }>>
   /** Commit the worktree's changes under `header` and push the task branch — behind the commit-header, publication-precondition, protected-path and pre-push gates. `beyondSurface` names each changed path the task's Surface does not cover, which the driver records in the pull request body rather than refusing. */
   publishChanges: (header: string) => Promise<DevToolResult<{ pushedHead: string; beyondSurface?: string[] }>>
   /** Open the pull request with `title`/`body` — behind PR-body validation. */
@@ -318,6 +325,21 @@ export async function dispatchDevTool(
         break
       case RUN_CHECKS_TOOL:
         outcome = await context.runChecks()
+        break
+      case REPAIR_PLAN_TOOL:
+        outcome = context.repairPlan
+          ? await context.repairPlan()
+          : {
+              ok: false,
+              error: devToolError(
+                'dependency_unavailable',
+                'never',
+                'not_started',
+                'repair-plan-unavailable',
+                'This driver does not implement mid-run plan repair.',
+                'Report the unavailable tool; do not repair or widen the brief yourself.'
+              )
+            }
         break
       case FETCH_DOCUMENTATION_TOOL: {
         const parsed = parseFetchDocumentationInput(args)

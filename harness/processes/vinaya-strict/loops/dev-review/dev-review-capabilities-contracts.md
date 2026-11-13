@@ -54,13 +54,13 @@ The normative graph and transitions are in `dev-review-engine-state-machine.md`.
 
 | Role | Callable tools | Reads | Never |
 | -- | -- | -- | -- |
-| Developer | The seven tools in §4.1 | Its own task worktree; required sources through `fetch_documentation` | Forge credentials, a direct push (publication goes only through the brokered `publish_changes`), any `gh` call, review publication, rulings, merge |
+| Developer | The eight tools in §4.1 | Its own task worktree; required sources through `fetch_documentation` | Forge credentials, a direct push (publication goes only through the brokered `publish_changes`), any `gh` call, review publication, rulings, merge |
 | Code reviewer | `read_source` (§4.2) | The staged read-only checkout, diff and manifest | Version-control metadata, any git or `gh` command, forge credentials, arbitrary network fetches |
 | Security reviewer | `read_source` (§4.2) | Same as the code reviewer | Same as the code reviewer |
 | Operator | The five Operator tools | Task status and escalations | Acting inside a round |
 | Controller | — | Everything it needs | Delegating a gate to an agent |
 
-Parity is at the capability-contract level. Claude Code and Codex Developers receive the same seven tools and must satisfy the same result contracts. Their native file, shell, hook, permission and sandbox mechanisms differ and are never assumed equivalent.
+Parity is at the capability-contract level. Claude Code and Codex Developers receive the same eight tools and must satisfy the same result contracts. Their native file, shell, hook, permission and sandbox mechanisms differ and are never assumed equivalent.
 
 MCP annotations (read-only, destructive, idempotent, open-world) are discovery hints for clients. They never grant or deny anything; authorization stays with the controller.
 
@@ -79,6 +79,7 @@ The callable-tools column is one table in code, `ROLE_TOOL_GRANTS` in `harness/k
 
 | Tool | Purpose | Read or write | Selection boundary |
 | -- | -- | -- | -- |
+| `repair_plan` | Apply dispatch's deterministic repairs and return the repaired frozen brief and hash, or a finding requiring a ruling | Write; idempotent for unchanged valid inputs | When the plan no longer fits the default branch. No caller-supplied plan, objectives edits, or Surface widening. The Engine records exact repair hashes separately from the review manifest. |
 | `fetch_documentation` | Read one public documentation page and record its delivery against the run's required-source manifest | Read | Use for each required source. Do not use for arbitrary browsing or private sources. |
 | `run_checks` | Run the repository's complete gate set on the current head | Executes repository code (not read-only); its read-only hint is false | Use before publishing. Not a substitute for focused tests; it neither publishes nor refreshes evidence. A failed check returns data, never permission to bypass. |
 | `publish_changes` | Commit the worktree under a one-line header and push the task branch through every publication gate | Write | The only way work reaches the forge. |

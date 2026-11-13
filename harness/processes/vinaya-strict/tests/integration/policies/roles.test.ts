@@ -32,8 +32,8 @@ import { vinayaToolGrantPolicy } from '../../../integration/policies/vinaya-poli
  */
 
 describe('ROLE_TOOL_GRANTS — the one grant table', () => {
-  it('grants the Developer exactly the seven Developer tools', () => {
-    expect(ROLE_TOOL_GRANTS.developer).toHaveLength(7)
+  it('grants the Developer exactly the catalogued Developer tools', () => {
+    expect(ROLE_TOOL_GRANTS.developer).toHaveLength(8)
     expect([...ROLE_TOOL_GRANTS.developer].sort()).toEqual([...DEV_TOOL_NAMES].sort())
   })
   it('grants the code and security reviewers read_source only', () => {

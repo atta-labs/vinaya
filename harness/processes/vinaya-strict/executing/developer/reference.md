@@ -217,6 +217,8 @@ The brief's stop conditions tell you when to STOP and ask. Honor them. If the st
 
 ## Stop conditions
 
+**A plan that no longer fits the default branch.** Under the Engine review loop, call the driver tool `repair_plan` with no arguments before escalating a potentially deterministic plan defect. It calls the same repair function and Issue write gate as dispatch: unchanged-content renames and uncovered-importer disclaimers only. It never edits objectives or widens `## Surface` `in:`. Success returns the repaired frozen brief, its hash and reasons; continue from that brief in the same round. An unrepairable finding returns `human_decision`: report it for a Principal ruling. A tool refusal does not itself pause the round. A driver without this tool returns an explicit unavailable refusal; never repair the brief yourself.
+
 Every brief includes stop conditions. Honor them unconditionally. Common reasons to STOP:
 
 - Pre-flight checks fail (dirty tree, wrong branch, worktree could not be created cleanly, missing tools, missing reference files)

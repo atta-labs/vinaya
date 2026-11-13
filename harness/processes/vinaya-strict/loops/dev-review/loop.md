@@ -253,6 +253,12 @@ When a loop process remains running at an escalation pause, it notices a posted 
 
 `task run` itself takes the identical `--agent`/config-fallback treatment: a repository that declares `dispatch.agent` in `vinaya.config.json` once needs no `--agent` flag on `task run`, `dev-review-loop`, or `dispatch` — the whole run and every resume is `vinaya task run <tranche> <n>` with nothing else to remember. A `--agent` flag given with no value is still a usage error, never silently rescued by the config default.
 
+## Mid-run deterministic plan repair
+
+The Engine Developer's `repair_plan` driver tool takes no caller-supplied plan. It applies dispatch's deterministic repair function and the same Issue write gate, renders the repaired Issue, and refuses a change to objectives or `Surface in:`. A successful repair updates the Issue and appends a frozen brief version naming its predecessor and the tool's reasons; it returns that brief and its hash to the Developer. Findings outside those rules require a Principal ruling and return through the tool's refusal channel.
+
+The driver records each confirmed tool write separately in the task control directory's `plan-repairs.json`: the tool name, before/after brief hashes, and objectives version. The review manifest's shape and recorded snapshot do not change. At the brief-change check, only an unbroken chain of these exact tool transitions with unchanged objectives is exempt from `brief_superseded`. A different brief hash, an objectives edit, a ruling, or a policy change retains its existing pause behavior. A raced or unconfirmed publication receives no exemption. This lets the Developer continue a repaired plan in the same round without trusting a caller's assertion that an edit was a repair.
+
 ## Preparing a brief fast-forwards a clean checkout that is only behind
 
 Every merged pull request moves the remote default branch, so the next start from a checkout that has not pulled sits behind the remote tip. Preparation (`vinaya task run`, `task_start`, `brief_render`) freezes a brief only from a known tree, and before the fast-forward below, any HEAD that differed from the remote tip was refused ("checkout HEAD … is behind the remote default branch … — fetch and update before preparing a brief"). The Operator has no shell, so every merge left the next start blocked until a person ran `git pull` by hand — four times across 2026-09-27/28, this repository and an adopter.

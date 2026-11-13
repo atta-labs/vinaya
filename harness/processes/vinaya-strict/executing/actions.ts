@@ -219,6 +219,8 @@ export interface TaskInput {
   seedRound?: (round: number) => void
   /** The review-input manifest of the task head as it stands now, or null when it cannot be built. */
   currentManifest?: () => ReviewInputManifest | null
+  /** Exact driver-recorded repair transitions, independent of the immutable review manifest. */
+  isToolBriefRepair?: (before: ReviewInputManifest, current: ReviewInputManifest) => boolean
   /** The command of the objectives edit that moved the objectives, or null when no edit can be found. */
   objectivesEdit?: () => string | null
   /**
@@ -1130,13 +1132,20 @@ const MANIFEST_PAUSES: ReadonlyArray<[keyof ReturnType<typeof buildManifestRecor
 /** The manifest fields that differ between the dispatched snapshot and the inputs as they read now, via `buildManifestRecord`. */
 export function changedReviewInputs(
   dispatched: ReviewInputManifest,
-  current: ReviewInputManifest
+  current: ReviewInputManifest,
+  isToolBriefRepair?: (before: ReviewInputManifest, current: ReviewInputManifest) => boolean
 ): (keyof ReturnType<typeof buildManifestRecord>)[] {
   const identity = { repository: '', pr: 0, branch: '', round: 0, recordedAt: '' }
   const before = buildManifestRecord(dispatched, identity)
   const now = buildManifestRecord(current, identity)
   return (Object.keys(before) as (keyof typeof before)[]).filter(
-    (key) => JSON.stringify(before[key]) !== JSON.stringify(now[key])
+    (key) =>
+      JSON.stringify(before[key]) !== JSON.stringify(now[key]) &&
+      !(
+        key === 'briefHash' &&
+        dispatched.objectivesVersion === current.objectivesVersion &&
+        isToolBriefRepair?.(dispatched, current) === true
+      )
   )
 }
 
@@ -1828,7 +1837,7 @@ function validateReviewerOutputs(task: TaskInput, context: ActionContext): { exi
   // Both reviews stand only for inputs that did not move while the reviewers ran.
   if (inputs !== null && task.currentManifest !== undefined) {
     const current = safeRead(task.currentManifest)
-    const changed = current === null ? null : changedReviewInputs(inputs.manifest, current)
+    const changed = current === null ? null : changedReviewInputs(inputs.manifest, current, task.isToolBriefRepair)
     if (changed === null || changed.length > 0) {
       ;(task.bound?.discardHeldVerdicts ?? discardHeldVerdicts)(task.runtimeDir, task.issueNumber, round)
       for (const role of Object.keys(accepted) as HeldVerdictRole[]) delete accepted[role]

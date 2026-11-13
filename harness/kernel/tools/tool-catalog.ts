@@ -202,6 +202,33 @@ const common = {
 
 export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
   entry({
+    name: 'repair_plan',
+    purpose:
+      'Request the dispatch-time deterministic plan repair and return the repaired brief, or a finding needing a ruling.',
+    realisticUsageExamples: [
+      {
+        input: {},
+        outcome: 'Returns the repaired brief and its hash without editing objectives or widening Surface in:.'
+      }
+    ],
+    ...common,
+    selectionBoundary: {
+      whenToUse: 'Use when the dispatched plan no longer fits the default branch.',
+      whenNotToUse: 'Do not use to change objectives, widen scope, or request a reasoning agent.',
+      neighboringTools: ['run_checks']
+    },
+    inputSchema: empty,
+    successOutputSchema: objectSchema({ brief: str, briefHash: str, reasons: { type: 'array', items: str } }),
+    requiredAuthority: 'Controller-held authority for deterministic repairs to this task only.',
+    idempotencyAndReplay: 'Rechecks live inputs; an unchanged valid plan returns the current brief without a write.',
+    preconditions: ['A frozen brief exists for the dispatched task.'],
+    verifiedPostconditions: [
+      'Only dispatch-time repairs were applied; objectives and Surface in: are unchanged.',
+      'The driver records the exact repaired brief hash.'
+    ],
+    annotations: annotations(false, false, true, true)
+  }),
+  entry({
     name: 'publish_changes',
     purpose: 'Commit the worktree under a one-line header and push the task branch through every publication gate.',
     realisticUsageExamples: [
@@ -482,7 +509,7 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
   })
 ] as const
 
-/** The seven Developer tools (§4.1) — every catalog entry but the reviewers' `read_source`. */
+/** The Developer tools (§4.1) — every catalog entry but the reviewers' `read_source`. */
 export const DEV_TOOL_CATALOG = AGENT_TOOL_CATALOG.filter((tool) => tool.name !== READ_SOURCE_TOOL)
 export const DEV_TOOL_NAMES = DEV_TOOL_CATALOG.map((tool) => tool.name) as readonly string[]
 export const describeTool = (tool: AgentToolCatalogEntry): string =>

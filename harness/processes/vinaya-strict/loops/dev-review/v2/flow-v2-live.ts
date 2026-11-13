@@ -16,6 +16,131 @@ import type { Readable, Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 
 import { type DevToolContext, devToolError } from '../../../../../kernel/tools/dev-tools-server'
+import type { ReviewInputManifest } from '../../../tools/task-contract/review-input-manifest'
+import { briefHash } from '../../../tools/task-contract/review-input-manifest'
+import { repairPlan, repairPreservesScope } from '../../../tools/task-contract/plan-repair'
+
+export type ToolPlanRepair = {
+  tool: 'repair_plan'
+  beforeHash: string
+  afterHash: string
+  objectivesVersion: string
+}
+
+/** Provenance is separate from the manifest: only an unbroken chain of tool writes qualifies. */
+export function toolPlanRepairCovers(
+  repairs: readonly ToolPlanRepair[],
+  before: ReviewInputManifest,
+  current: ReviewInputManifest
+): boolean {
+  if (before.objectivesVersion !== current.objectivesVersion || before.briefHash === null) return false
+  let hash = before.briefHash
+  for (const repair of repairs) {
+    if (
+      repair.tool === 'repair_plan' &&
+      repair.beforeHash === hash &&
+      repair.objectivesVersion === before.objectivesVersion
+    )
+      hash = repair.afterHash
+    if (hash === current.briefHash) return true
+  }
+  return false
+}
+
+export type MidRunPlanState = {
+  body: string
+  title: string
+  labels: string[]
+  brief: string
+  version: number
+  url: string
+  objectivesVersion: string
+}
+
+export type MidRunPlanRepairDeps = {
+  read: () => MidRunPlanState
+  collect: (body: string, state: MidRunPlanState) => Promise<Parameters<typeof repairPlan>[0]['findings']>
+  importers: Parameters<typeof repairPlan>[0]['importers']
+  renames: (body: string) => Parameters<typeof repairPlan>[0]['renames']
+  render: (body: string, state: MidRunPlanState) => Promise<string>
+  publish: (body: string, brief: string, state: MidRunPlanState, reasons: string[]) => void
+  record: (repair: ToolPlanRepair) => void
+}
+
+/** Calls the dispatch-time rules, then guards the rendered brief and the live write boundary. */
+export async function repairDeveloperPlan(
+  deps: MidRunPlanRepairDeps
+): ReturnType<NonNullable<DevToolContext['repairPlan']>> {
+  const state = deps.read()
+  const needsRuling = (output: string) => ({
+    ok: false as const,
+    error: devToolError(
+      'policy_refusal',
+      'human_decision',
+      'not_started',
+      'plan-repair',
+      output,
+      'Report the finding for a Principal ruling; do not edit objectives or widen Surface in:.'
+    )
+  })
+  const findings = await deps.collect(state.body, state)
+  if (!findings.some((f) => f.severity !== 'warning'))
+    return { ok: true, result: { brief: state.brief, briefHash: briefHash(state.brief), reasons: [] } }
+  const repaired = await repairPlan({
+    body: state.body,
+    findings,
+    importers: deps.importers,
+    renames: deps.renames(state.body),
+    validate: (body) => deps.collect(body, state)
+  })
+  if (!repaired || !repairPreservesScope(state.body, repaired.body))
+    return needsRuling(findings.map((f) => `[${f.check}] ${f.message}`).join('\n'))
+  let brief: string
+  try {
+    brief = await deps.render(repaired.body, state)
+  } catch (error) {
+    return needsRuling(error instanceof Error ? error.message : String(error))
+  }
+  const objectives = (text: string) => text.match(/^## Objectives\s*\n[\s\S]*?(?=^## |$(?![\s\S]))/m)?.[0]
+  const surface = (text: string) => text.match(/^\*\*Surface in:\*\*[^\n]+/m)?.[0]
+  if (
+    !objectives(state.brief) ||
+    !surface(state.brief) ||
+    objectives(state.brief) !== objectives(brief) ||
+    surface(state.brief) !== surface(brief)
+  )
+    return needsRuling('Rendering the repair would change objectives or Surface in:.')
+  const now = deps.read()
+  if (
+    now.body !== state.body ||
+    now.brief !== state.brief ||
+    now.version !== state.version ||
+    now.objectivesVersion !== state.objectivesVersion
+  )
+    return needsRuling('The plan or objectives changed during repair; no repair was published.')
+  deps.publish(repaired.body, brief, state, repaired.reasons)
+  const written = deps.read()
+  if (written.brief !== brief || written.objectivesVersion !== state.objectivesVersion)
+    return {
+      ok: false,
+      error: devToolError(
+        'conflict',
+        'human_decision',
+        'uncertain',
+        'plan-repair',
+        'The published repair could not be confirmed against the live brief and objectives.',
+        'Report the conflicting write; no brief-change exemption was recorded.'
+      )
+    }
+  const hash = briefHash(brief)
+  deps.record({
+    tool: 'repair_plan',
+    beforeHash: briefHash(state.brief),
+    afterHash: hash,
+    objectivesVersion: state.objectivesVersion
+  })
+  return { ok: true, result: { brief, briefHash: hash, reasons: repaired.reasons } }
+}
 import { storagePushEvent } from '../flow-v2-events'
 import {
   FAILED_TESTS_RECORD,

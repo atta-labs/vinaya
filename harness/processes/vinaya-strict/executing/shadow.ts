@@ -76,8 +76,9 @@ export const HANDOFF_DEP_CLASSES = {
   sleepSync: 'run-local'
 } as const satisfies { readonly [K in keyof HandoffDeps]-?: ShadowClass }
 
-/** Every Developer tool the driver serves, classified: the four publication tools are the Developer's forge writes. */
+/** Every Developer tool the driver serves, including the deterministic plan repair's forge writes. */
 export const DEV_TOOL_CLASSES = {
+  repairPlan: 'effect',
   publishChanges: 'effect',
   openPullRequest: 'effect',
   updatePullRequestBody: 'effect',
@@ -244,6 +245,7 @@ export function shadowDevToolContext(context: DevToolContext, recorder: ShadowRe
     }
   return {
     ...context,
+    repairPlan: refused('repairPlan'),
     publishChanges: refused('publishChanges'),
     openPullRequest: refused('openPullRequest'),
     updatePullRequestBody: refused('updatePullRequestBody'),

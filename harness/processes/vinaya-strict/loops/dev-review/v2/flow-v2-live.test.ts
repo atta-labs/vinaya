@@ -39,6 +39,200 @@ import {
   withV2DevTools
 } from './flow-v2-live'
 import { acquireRoundTestLock } from './round-test-lock'
+import {
+  repairDeveloperPlan,
+  toolPlanRepairCovers,
+  type MidRunPlanRepairDeps,
+  type MidRunPlanState,
+  type ToolPlanRepair
+} from './flow-v2-live'
+import { changedReviewInputs } from '../../../executing/actions'
+import { briefHash, type ReviewInputManifest } from '../../../tools/task-contract/review-input-manifest'
+import { checkPinnedFileImportersCovered } from '../../../tools/task-contract/issue-validation'
+import { CHECK_SCHEMA_VERSION } from '../../../../../kernel/gates/checks/contract'
+import { liveTaskInput, liveForge, type EngineForge } from '../../../bin/run-engine'
+
+describe('mid-run deterministic plan repair', () => {
+  const body =
+    '## Objectives\nO1. Preserve behavior.\n\n## Surface\nin: src\nout: —\n\n**Boundary** — Pinned files: `src/module.ts`. Out: other work.\n\n**Traps to avoid** — Keep it bounded.\n'
+  const render = (body: string) =>
+    '## Objectives\nO1. Preserve behavior.\n\n## 4. Technical surface map\n**Surface in:** `src`\n\n' +
+    body.slice(body.indexOf('**Boundary**'))
+  function fixture() {
+    let state: MidRunPlanState = {
+      body,
+      brief: render(body),
+      title: 'task',
+      labels: [],
+      version: 1,
+      url: 'fixture://brief',
+      objectivesVersion: 'objectives'
+    }
+    const records: ToolPlanRepair[] = []
+    let writes = 0
+    const importers = [{ file: 'src/module.ts', importers: ['consumer/use.ts'] }]
+    const deps: MidRunPlanRepairDeps = {
+      read: () => ({ ...state }),
+      collect: async (body) =>
+        checkPinnedFileImportersCovered(body, importers).errors.map((message) => ({
+          schema: CHECK_SCHEMA_VERSION,
+          check: 'issue-content',
+          severity: 'error',
+          message,
+          agent_recovery_prompt: 'Request repair.'
+        })),
+      importers: () => importers,
+      renames: () => [],
+      render: async (body) => render(body),
+      publish: (body, brief) => {
+        writes++
+        state = { ...state, body, brief, version: state.version + 1 }
+      },
+      record: (record) => records.push(record)
+    }
+    return { deps, records, state: () => state, writes: () => writes }
+  }
+  const manifest = (hash: string): ReviewInputManifest => ({
+    headSha: 'head',
+    baseSha: 'base',
+    briefHash: hash,
+    objectivesVersion: 'objectives',
+    rulingOrdinal: 0,
+    policyDigest: 'policy'
+  })
+
+  test('returns dispatch-time repair, records its hash, and exempts only that transition without editing the manifest', async () => {
+    const f = fixture()
+    const before = manifest(briefHash(f.state().brief))
+    const frozen = JSON.stringify(before)
+    const result = await repairDeveloperPlan(f.deps)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.error.output)
+    expect(result.result.brief).toContain('`consumer/use.ts`')
+    expect(result.result.reasons).toHaveLength(1)
+    expect(f.writes()).toBe(1)
+    expect(f.records).toEqual([
+      {
+        tool: 'repair_plan',
+        beforeHash: before.briefHash!,
+        afterHash: result.result.briefHash,
+        objectivesVersion: 'objectives'
+      }
+    ])
+    const repaired = manifest(result.result.briefHash)
+    const trusted = (a: ReviewInputManifest, b: ReviewInputManifest) => toolPlanRepairCovers(f.records, a, b)
+    expect(changedReviewInputs(before, repaired, trusted)).toEqual([])
+    expect(changedReviewInputs(before, repaired)).toEqual(['briefHash'])
+    expect(changedReviewInputs(before, manifest('external-change'), trusted)).toEqual(['briefHash'])
+    expect(changedReviewInputs(before, { ...repaired, objectivesVersion: 'changed' }, trusted)).toContain(
+      'objectivesVersion'
+    )
+    expect(changedReviewInputs(before, { ...repaired, objectivesVersion: 'changed' }, trusted)).toContain('briefHash')
+    expect(changedReviewInputs(before, { ...repaired, rulingOrdinal: 1 }, trusted)).toContain('rulingOrdinal')
+    expect(JSON.stringify(before)).toBe(frozen)
+    expect((await repairDeveloperPlan(f.deps)).ok).toBe(true)
+    expect(f.writes()).toBe(1)
+  })
+
+  test('an unrepairable finding needs a ruling and publishes nothing', async () => {
+    const f = fixture()
+    f.deps.renames = () => []
+    f.deps.importers = () => []
+    const result = await repairDeveloperPlan(f.deps)
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected refusal')
+    expect(result.error.retryDisposition).toBe('human_decision')
+    expect(result.error.output).toContain('[issue-content]')
+    expect(f.writes()).toBe(0)
+    expect(f.records).toEqual([])
+  })
+
+  test('the Engine tool persists attribution and a reconstructed input reads it without a forge call', async () => {
+    const f = fixture()
+    const root = fixtureDir('plan-repair-engine-')
+    const before = manifest(briefHash(f.state().brief))
+    const forge = Object.fromEntries(
+      Object.keys(liveForge).map((name) => [
+        name,
+        () => {
+          throw new Error(`Unexpected forge call: ${name}`)
+        }
+      ])
+    ) as unknown as EngineForge
+    const input = () =>
+      liveTaskInput({ task: 1, agent: 'codex', dryRun: false, flow: 'v2' }, root, root, 'repair-test', {
+        fetchTitle: () => 'Task',
+        fetchLabels: () => [],
+        forge,
+        planRepair: f.deps
+      })
+    const task = await input()
+    const result = await task.repairPlan()
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.error.output)
+    const current = manifest(result.result.briefHash)
+    expect(task.isToolBriefRepair!(before, current)).toBe(true)
+    const reconstructed = await input()
+    expect(reconstructed.isToolBriefRepair!(before, current)).toBe(true)
+    expect(changedReviewInputs(before, manifest('external-edit'), reconstructed.isToolBriefRepair)).toEqual([
+      'briefHash'
+    ])
+  })
+
+  test('render refusal and an unconfirmed publication return findings and gain no exemption', async () => {
+    const f = fixture()
+    f.deps.render = async () => {
+      throw new Error('Premise cannot be repaired')
+    }
+    const refused = await repairDeveloperPlan(f.deps)
+    expect(refused.ok).toBe(false)
+    if (refused.ok) throw new Error('expected refusal')
+    expect(refused.error.output).toContain('Premise cannot be repaired')
+    expect(refused.error.retryDisposition).toBe('human_decision')
+    expect(f.writes()).toBe(0)
+    f.deps.render = async (body) => render(body)
+    f.deps.publish = () => {}
+    const uncertain = await repairDeveloperPlan(f.deps)
+    expect(uncertain.ok).toBe(false)
+    if (uncertain.ok) throw new Error('expected refusal')
+    expect(uncertain.error.effectState).toBe('uncertain')
+    expect(f.records).toEqual([])
+  })
+
+  test.each(['objectives', 'surface'])('refuses a rendered repair that changes %s', async (change) => {
+    const f = fixture()
+    f.deps.render = async (body) =>
+      change === 'objectives'
+        ? render(body).replace('Preserve behavior.', 'Change behavior.')
+        : render(body).replace('`src`', '`src`, `consumer`')
+    const result = await repairDeveloperPlan(f.deps)
+    expect(result.ok).toBe(false)
+    expect(f.writes()).toBe(0)
+    expect(f.records).toEqual([])
+  })
+
+  test('a concurrent brief edit is refused before publication', async () => {
+    const f = fixture()
+    let reads = 0
+    const read = f.deps.read
+    f.deps.read = () => ({ ...read(), brief: ++reads === 1 ? read().brief : 'external edit' })
+    expect((await repairDeveloperPlan(f.deps)).ok).toBe(false)
+    expect(f.writes()).toBe(0)
+    expect(f.records).toEqual([])
+  })
+
+  test('an unconfirmed write gains no exemption; chained repairs require matching objectives', () => {
+    const repairs: ToolPlanRepair[] = [
+      { tool: 'repair_plan', beforeHash: 'a', afterHash: 'b', objectivesVersion: 'objectives' },
+      { tool: 'repair_plan', beforeHash: 'b', afterHash: 'c', objectivesVersion: 'objectives' }
+    ]
+    expect(toolPlanRepairCovers(repairs, manifest('a'), manifest('c'))).toBe(true)
+    expect(toolPlanRepairCovers(repairs.slice(1), manifest('a'), manifest('c'))).toBe(false)
+    expect(toolPlanRepairCovers(repairs, manifest('a'), { ...manifest('c'), objectivesVersion: 'different' })).toBe(
+      false
+    )
+  })
+})
 
 // The live wiring of version 2: the staged pull request, the storage-push marker and the ready push run through
 // the worktree's real pre-push hook, against throwaway repositories.
