@@ -18,7 +18,7 @@ const core = {
   seq: 4,
   repo: 'atta-labs/vinaya',
   vinaya: '0.35.0',
-  doctrine: 'aeg-root@deadbeef',
+  doctrine: 'vinaya-strict@deadbeef',
   host: 'loop',
   machine: 'cafebabe'
 }
@@ -99,7 +99,7 @@ describe('a schema 3 line (O1)', () => {
 
   it('carries every header and subject column', () => {
     expect(row.cliVersion).toBe('0.35.0')
-    expect(row.doctrine).toBe('aeg-root@deadbeef')
+    expect(row.doctrine).toBe('vinaya-strict@deadbeef')
     expect(row.flowId).toBe('vinaya')
     expect(row.flowVersion).toBe('1')
     expect(row.host).toBe('loop')

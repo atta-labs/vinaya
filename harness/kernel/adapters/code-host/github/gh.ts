@@ -1,6 +1,6 @@
 /**
  * Thin `gh` CLI shell-out, matching the pattern already used throughout this
- * repo's own `packages/aeg-core/bin/*.ts` scripts (e.g. `open-pr.ts`,
+ * repo's own Vinaya process scripts (e.g. `open-pr.ts`,
  * `open-issue.ts`) rather than introducing a second forge-access library.
  */
 

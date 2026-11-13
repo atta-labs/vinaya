@@ -6,7 +6,7 @@
  * non-empty "## The short version" section), never whether its prose is
  * good doctrine. That judgment stays a review concern.
  *
- * Pure — no `fs`, no `@attalabs/aeg-core` import — mirrors
+ * Pure — no `fs`, no process import — mirrors
  * `../checks/contract.ts`'s own "pure contract" discipline and
  * `../checks/resolver.ts`'s doc comment. The caller reads the file; this
  * module only parses the string it hands over.

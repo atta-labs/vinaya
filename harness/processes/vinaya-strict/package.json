@@ -4,7 +4,8 @@
   "private": true,
   "exports": {
     "./commands": "./integration/commands.ts",
-    "./config-reference": "./integration/config-reference.ts"
+    "./config-reference": "./integration/config-reference.ts",
+    "./legacy-paths": "./tools/legacy-paths.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

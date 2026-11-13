@@ -1,5 +1,5 @@
 /**
- * The roles-side resolver — a pure function, no I/O, no `@attalabs/aeg-core`
+ * The roles-side resolver — a pure function, no I/O, no process
  * import (mirrors `../checks/resolver.ts`, which itself mirrors
  * `contract.ts`'s "pure contract" discipline). The caller (`plan.ts`) reads
  * doctrine and any config-declared contract files, validates their shape

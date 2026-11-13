@@ -15,10 +15,9 @@ import { existsSync, mkdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { type RepoRef, resolveRepo } from '../../adapters/code-host/github/resolve-repo'
 import type { LogCache, LogSource } from '../sync/contracts'
-// `syncSource`/`SyncSummary` are not re-exported from the package root
-// (`packages/aeg-core/src/index.ts`, out of this task's surface) — only from
-// its `./log` subpath export, which the package's own `exports` map already
-// publishes.
+// `syncSource`/`SyncSummary` are not re-exported from the harness's public API
+// (`harness/kernel/public-api.ts`), so they are imported from the sync
+// engine's own module.
 import { type SyncSummary, syncSource } from '../sync/engine'
 import { configProvider, type ProvidedConfig } from '../../config/loader/config-provider.js'
 import { resolveLogsHeaderValues } from '../../config/schema/config-schema.js'

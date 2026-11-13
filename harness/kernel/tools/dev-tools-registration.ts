@@ -37,7 +37,7 @@ import { DEV_TOOLS_MCP_SERVER_NAME } from './dev-tools-names.js'
  * hook's affected test suite and push. Codex's default is 60 seconds, which
  * would abandon a publication mid-push; Claude Code's default is longer, and
  * its entry states the same limit so both agents declare one bound. The value
- * lives in `@attalabs/aeg-types/dev-tools`, which the Engine adapters under
+ * lives in `harness/kernel/tools/host/dev-tools.ts`, which the Engine adapters under
  * `harness/` read too, so the standalone loop and the Engine runner declare
  * one limit.
  */

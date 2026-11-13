@@ -1,5 +1,6 @@
 import 'server-only'
 import { gunzipSync } from 'node:zlib'
+import { LEGACY_DOCTRINE_ROOT } from '@attalabs/process-vinaya/legacy-paths'
 import { unstable_cache } from 'next/cache'
 import { cache } from 'react'
 
@@ -115,8 +116,8 @@ function isExecutableSource(path: string): boolean {
 }
 
 function isPortableDoctrine(path: string): boolean {
-  if (!path.startsWith('aeg-root/') || !path.endsWith('.md')) return false
-  const relativePath = path.slice('aeg-root/'.length)
+  if (!path.startsWith(`${LEGACY_DOCTRINE_ROOT}/`) || !path.endsWith('.md')) return false
+  const relativePath = path.slice(`${LEGACY_DOCTRINE_ROOT}/`.length)
   return (
     PORTABLE_DOCTRINE_FILES.has(relativePath) ||
     PORTABLE_DOCTRINE_DIRECTORIES.some((directory) => relativePath.startsWith(directory))

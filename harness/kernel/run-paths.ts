@@ -432,7 +432,7 @@ export function repoRootSync(start: string = process.cwd()): string | null {
 /**
  * The repository this process is running against, resolved synchronously.
  *
- * `@attalabs/aeg-forge-state`'s own `resolveRepo` is `async`, and the
+ * the GitHub code-host adapter's own `resolveRepo` is `async`, and the
  * production seams that resolve a run path are synchronous all the way down
  * to a `writeFileSync` — making them `async` would ripple into the command
  * files this task's Surface excludes. Same resolution order and the same
@@ -504,7 +504,7 @@ export function runtimeDirForThisRepo(): string {
  * ancestors' mode — the explicit `chmodSync` is what makes the result
  * independent of writer order.
  *
- * `mkdirNoSymlinks` (`@attalabs/aeg-core`, shared with that package's own
+ * `mkdirNoSymlinks` (the checkpoint connector's, shared with its own
  * control-store writers) is what actually creates the tree — the SAME
  * co-tenant able to plant a low-mode child under a shared `runtimeDir` can
  * instead pre-plant a symlink at any missing ancestor, which a bare

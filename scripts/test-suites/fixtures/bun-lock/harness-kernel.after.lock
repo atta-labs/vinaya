@@ -32,9 +32,9 @@
         "@atta/executor-agent-spawn": "file:tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
         "@atta/models": "file:tests/fixtures/atta-engine/atta-models-0.1.0.tgz",
         "@atta/typescript-config": "workspace:*",
-        "@attalabs/aeg-core": "workspace:*",
-        "@attalabs/aeg-forge-state": "workspace:*",
-        "@attalabs/aeg-types": "workspace:*",
+        "@attalabs/engine-core": "workspace:*",
+        "@attalabs/engine-forge-state": "workspace:*",
+        "@attalabs/engine-types": "workspace:*",
         "@attalabs/vinaya-sources": "workspace:*",
         "@types/bun": "latest",
         "@types/react": "^19.0.0",
@@ -45,7 +45,7 @@
       "name": "@attalabs/log-server",
       "version": "0.0.0",
       "dependencies": {
-        "@attalabs/aeg-core": "workspace:*",
+        "@attalabs/engine-core": "workspace:*",
       },
       "devDependencies": {
         "@atta/typescript-config": "workspace:*",
@@ -104,7 +104,7 @@
       "dependencies": {
         "@atta/engine": "file:../../apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
         "@atta/executor-agent-spawn": "file:../../apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
-        "@attalabs/aeg-types": "workspace:*",
+        "@attalabs/engine-types": "workspace:*",
         "yaml": "2.9.0",
         "zod": "3.25.76",
       },
@@ -115,12 +115,12 @@
         "typescript": "^5.7.0",
       },
     },
-    "packages/aeg-core": {
-      "name": "@attalabs/aeg-core",
+    "packages/engine-core": {
+      "name": "@attalabs/engine-core",
       "version": "0.40.0",
       "dependencies": {
-        "@attalabs/aeg-forge-state": "0.40.0",
-        "@attalabs/aeg-types": "0.40.0",
+        "@attalabs/engine-forge-state": "0.40.0",
+        "@attalabs/engine-types": "0.40.0",
         "gray-matter": "^4.0.3",
         "zod": "3.25.76",
       },
@@ -130,11 +130,11 @@
         "vitest": "^2.1.0",
       },
     },
-    "packages/aeg-forge-state": {
-      "name": "@attalabs/aeg-forge-state",
+    "packages/engine-forge-state": {
+      "name": "@attalabs/engine-forge-state",
       "version": "0.40.0",
       "dependencies": {
-        "@attalabs/aeg-types": "0.40.0",
+        "@attalabs/engine-types": "0.40.0",
         "@octokit/graphql": "^8.1.1",
       },
       "devDependencies": {
@@ -143,8 +143,8 @@
         "vitest": "^2.1.0",
       },
     },
-    "packages/aeg-types": {
-      "name": "@attalabs/aeg-types",
+    "packages/engine-types": {
+      "name": "@attalabs/engine-types",
       "version": "0.40.0",
       "devDependencies": {
         "@atta/typescript-config": "workspace:*",
@@ -155,9 +155,9 @@
       "name": "@attalabs/vinaya-sources",
       "version": "0.40.0",
       "dependencies": {
-        "@attalabs/aeg-core": "0.40.0",
-        "@attalabs/aeg-forge-state": "0.40.0",
-        "@attalabs/aeg-types": "0.40.0",
+        "@attalabs/engine-core": "0.40.0",
+        "@attalabs/engine-forge-state": "0.40.0",
+        "@attalabs/engine-types": "0.40.0",
         "zod": "3.25.76",
       },
       "devDependencies": {
@@ -177,7 +177,7 @@
         "@atta/engine": "file:../../apps/cli/tests/fixtures/atta-engine/atta-engine-0.0.1.tgz",
         "@atta/executor-agent-spawn": "file:../../apps/cli/tests/fixtures/atta-engine/atta-executor-agent-spawn-0.1.1.tgz",
         "@atta/typescript-config": "workspace:*",
-        "@attalabs/aeg-core": "workspace:*",
+        "@attalabs/engine-core": "workspace:*",
         "@langchain/langgraph": "0.2.74",
         "@types/bun": "latest",
         "typescript": "^5.7.0",
@@ -245,11 +245,11 @@
 
     "@atta/typescript-config": ["@atta/typescript-config@workspace:packages/typescript-config"],
 
-    "@attalabs/aeg-core": ["@attalabs/aeg-core@workspace:packages/aeg-core"],
+    "@attalabs/engine-core": ["@attalabs/engine-core@workspace:packages/engine-core"],
 
-    "@attalabs/aeg-forge-state": ["@attalabs/aeg-forge-state@workspace:packages/aeg-forge-state"],
+    "@attalabs/engine-forge-state": ["@attalabs/engine-forge-state@workspace:packages/engine-forge-state"],
 
-    "@attalabs/aeg-types": ["@attalabs/aeg-types@workspace:packages/aeg-types"],
+    "@attalabs/engine-types": ["@attalabs/engine-types@workspace:packages/engine-types"],
 
     "@attalabs/harness": ["@attalabs/harness@workspace:harness/kernel"],
 
@@ -327,7 +327,7 @@
 
     "@cloudflare/workerd-darwin-64": ["@cloudflare/workerd-darwin-64@1.20260310.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-hF2VpoWaMb1fiGCQJqCY6M8I+2QQqjkyY4LiDYdTL5D/w6C1l5v1zhc0/jrjdD1DXfpJtpcSMSmEPjHse4p9Ig=="],
 
-    "@cloudflare/workerd-darwin-arm64": ["@cloudflare/workerd-darwin-arm64@1.20260310.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-h/Vl3XrYYPI6yFDE27XO1QPq/1G1lKIM8tzZGIWYpntK3IN5XtH3Ee/sLaegpJ49aIJoqhF2mVAZ6Yw+Vk2gJw=="],
+    "@cloudflare/workerd-darwin-arm64": ["@cloudflare/workerd-darwin-arm64@1.20260310.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-h/Vl3XrYYPI6yFDE27XO1QPq/1G1lKIM8tzZGIWYpntK3IN5XtH3Ee/sLaefpJ49aIJoqhF2mVAZ6Yw+Vk2gJw=="],
 
     "@cloudflare/workerd-linux-64": ["@cloudflare/workerd-linux-64@1.20260310.1", "", { "os": "linux", "cpu": "x64" }, "sha512-XzQ0GZ8G5P4d74bQYOIP2Su4CLdNPpYidrInaSOuSxMw+HamsHaFrjVsrV2mPy/yk2hi6SY2yMbgKFK9YjA7vw=="],
 
@@ -397,7 +397,7 @@
 
     "@esbuild/openbsd-x64": ["@esbuild/openbsd-x64@0.27.3", "", { "os": "openbsd", "cpu": "x64" }, "sha512-DnW2sRrBzA+YnE70LKqnM3P+z8vehfJWHXECbwBmH/CU51z6FiqTQTHFenPlHmo3a8UgpLyH3PT+87OViOh1AQ=="],
 
-    "@esbuild/openharmony-arm64": ["@esbuild/openharmony-arm64@0.27.3", "", { "os": "none", "cpu": "arm64" }, "sha512-NinAEgr/etERPTsZJ7aEZQvvg/A6IsZG/LgZy+81wON2huV7SrK3e63dU0XhyZP4RKGyTm7aOgmQk0bGp0fy2g=="],
+    "@esbuild/openharmony-arm64": ["@esbuild/openharmony-arm64@0.27.3", "", { "os": "none", "cpu": "arm64" }, "sha512-NinAEfr/etERPTsZJ7aEZQvvg/A6IsZG/LgZy+81wON2huV7SrK3e63dU0XhyZP4RKGyTm7aOgmQk0bGp0fy2g=="],
 
     "@esbuild/sunos-x64": ["@esbuild/sunos-x64@0.27.3", "", { "os": "sunos", "cpu": "x64" }, "sha512-PanZ+nEz+eWoBJ8/f8HKxTTD172SKwdXebZ0ndd953gt1HRBbhMsaNqjTyYLGLPdoWHy4zLU7bDVJztF5f3BHA=="],
 
@@ -1113,7 +1113,7 @@
 
     "micromark-util-symbol": ["micromark-util-symbol@2.0.1", "", {}, "sha512-vs5t8Apaud9N28kgCrRUdEed4UJ+wWNvicHLPxCa9ENlYuAY31M0ETy5y1vA33YoNPDFTghEbnh6efaE8h4x0Q=="],
 
-    "micromark-util-types": ["micromark-util-types@2.0.3", "", {}, "sha512-oxB2Ik03hI0gv+VNn9tnh1t1YEe9MDPptViAEgfdf3YQHsn0pzGTgCdlSCJXcwhqm8phaEuM7zeEu3QQzVBrPg=="],
+    "micromark-util-types": ["micromark-util-types@2.0.3", "", {}, "sha512-oxB2Ik03hI0gv+VNn9tnh1t1YEe9MDPptViAEffdf3YQHsn0pzGTgCdlSCJXcwhqm8phaEuM7zeEu3QQzVBrPg=="],
 
     "mime-db": ["mime-db@1.52.0", "", {}, "sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg=="],
 

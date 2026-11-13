@@ -154,8 +154,8 @@ describe('the base guard', () => {
       'apps/cli/tests/ci-shards/shard-3.txt',
       '.github/workflows/ci.yml',
       '.github/workflows/sandbox-conformance-macos.yml',
-      'packages/aeg-core/package.json',
-      'packages/aeg-core/vitest.config.ts',
+      'packages/ui/package.json',
+      'packages/ui/vitest.config.ts',
       'harness/processes/vinaya-strict/bunfig.toml',
       'apps/cli/tsconfig.json',
       'bun.lock',
@@ -167,7 +167,7 @@ describe('the base guard', () => {
     for (const path of [
       'harness/processes/vinaya-strict/integration/push-progress-observer.ts',
       'README.md',
-      'aeg-root/roles/developer.md'
+      'harness/processes/vinaya-strict/doctrine/roles/developer.md'
     ])
       expect(guardVerdict([path], read).verdict).toBe('plan')
   })

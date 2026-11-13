@@ -87,7 +87,7 @@ export type Host = z.infer<typeof HostSchema>
 /**
  * Letters, digits, dot, underscore, hyphen — deliberately excludes `<`, `>`,
  * `/`, whitespace and newlines. `run_id` is spliced raw into a flush's
- * `<!-- aeg:log:<run_id>:<seq_from>-<seq_to> -->` marker (`harness/kernel/log/log.md`
+ * `<!-- vinaya:log:<run_id>:<seq_from>-<seq_to> -->` marker (`harness/kernel/log/log.md`
  * § The flush) and is attacker-reachable via `VINAYA_RUN_ID` (a security
  * review finding) — a value carrying `-->` or a newline would close the
  * HTML comment early or break the fenced block once posted publicly.

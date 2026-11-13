@@ -42,7 +42,7 @@ export const KNOWN_SCHEMA_VERSIONS = [1, 2, 3, 4] as const
  * acknowledgement (O2). A `schema: 2` or `3` line carries a per-event `event_id`,
  * generated once per `log()` call — that is the identity. A `schema: 1` line
  * predates `event_id`; its identity is `${run_id}:${seq}`, the same
- * `run_id`/`seq` pair the flush's `<!-- aeg:log:<run_id>:<seq> -->` marker is
+ * `run_id`/`seq` pair the flush's `<!-- vinaya:log:<run_id>:<seq> -->` marker is
  * already keyed on, so the two agree. `null` when neither can be read (a
  * torn or non-conforming line) — a caller treats a null-identity line as one
  * it can never deduplicate or acknowledge, never as identity `""`.

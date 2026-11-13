@@ -9,7 +9,7 @@
  *
  * `TranscriptSummary` **is the seam.** A host adapter's whole job is to
  * produce one — from a session transcript, an API usage response, a meter the
- * harness exposes, or figures a person supplies by hand. AEG ships exactly
+ * harness exposes, or figures a person supplies by hand. Vinaya ships exactly
  * one such adapter, for Claude Code, in the transcript reader beside this file; a repo
  * on another harness writes its own and reuses everything here unchanged.
  * Adding host knowledge to this file would silently re-couple the portable

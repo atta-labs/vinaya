@@ -69,6 +69,7 @@ import { TASK_TOOL_NAMES } from '../../../harness/kernel/tools/catalog/task-tool
 import { trancheLabel } from '../../../harness/processes/vinaya-strict/tools/task-contract/forge/labels'
 import { COMMANDS } from '../../../harness/processes/vinaya-strict/integration/commands.js'
 import { PROGRAMS } from '../../../harness/processes/vinaya-strict/tools/programs.js'
+import { LEGACY_PUBLISHED_DOCTRINE_LAYOUT } from '../../../harness/processes/vinaya-strict/tools/legacy-paths'
 // Current source's registry, read to derive the expectation the published
 // artifact is measured against — the same "derive, never hand-maintain"
 // discipline this script already applies to the command coverage set.
@@ -838,10 +839,11 @@ export const EXERCISES: Record<string, (ctx: Ctx) => Outcome | Promise<Outcome>>
     // own bundled doctrine folder (in the `files` array) is what must resolve —
     // exactly the path the committed AGENTS.md pointer hands every reader.
     // The probe runs against the version already published, so it accepts
-    // either layout: the published `aeg-root/skills/aeg/SKILL.md`, or the
+    // either layout: the previously published one (spelled in the process's
+    // legacy-paths module), or the
     // `vinaya-strict/doctrine/skills/vinaya/SKILL.md` the process folder ships.
     const layouts = [
-      { root: 'aeg-root', entry: ['skills', 'aeg', 'SKILL.md'] },
+      LEGACY_PUBLISHED_DOCTRINE_LAYOUT,
       { root: 'vinaya-strict', entry: ['doctrine', 'skills', 'vinaya', 'SKILL.md'] }
     ] as const
     const plain = run(bin, ['doctrine'], fixtureDir)

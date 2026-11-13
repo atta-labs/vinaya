@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * atta-labs/no-aeg-token — a custom vinaya check that ratchets the retired
+ * atta-labs/no-aeg-token — a custom vinaya check that keeps the retired
  * three-letter prefix out of this repository.
  *
  * Contract: emit one JSON line on stderr per finding via `emitCheckError`,
@@ -17,12 +17,12 @@
  * are removed before counting, so registering the guard costs no budget.
  *
  * What it compares: the data file beside this script holds an `allowlist` of
- * globs, each with its reason, whose files are never counted, and a
- * `baseline` of per-file counts for everything else. A file counting more
- * than its baseline — or a file with no baseline row counting any — fails.
- * A file counting less passes, and the check prints the lower number to
- * record; a higher stale baseline is never an error, so a task that cleans a
- * file never has to edit the data file.
+ * globs, each with its reason, whose files are never counted. Every other
+ * tracked file must count zero: one occurrence anywhere outside the allowlist
+ * fails. The data file's `baseline` object, which once recorded per-file
+ * counts while the token was being removed, must stay empty — a row in it is
+ * refused as an undecidable state, so the rule can only be met by removing
+ * the token or by allowlisting a genuinely frozen class with its reason.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -40,13 +40,11 @@ type CheckError = {
 }
 
 export type AllowlistEntry = { glob: string; reason: string }
-export type GuardData = { allowlist: AllowlistEntry[]; baseline: Record<string, number> }
+export type GuardData = { allowlist: AllowlistEntry[] }
 
-/** A file above its allowed count; `allowed` is 0 for a file with no baseline row. */
-export type Excess = { file: string; count: number; allowed: number }
-/** A file below its baseline row; `count` is the number to record (0 means drop the row). */
-export type Lowered = { file: string; count: number; allowed: number }
-export type Outcome = { excess: Excess[]; lowered: Lowered[]; counted: number }
+/** A tracked file outside the allowlist that holds the token, and how many times. */
+export type Excess = { file: string; count: number }
+export type Outcome = { excess: Excess[]; counted: number }
 
 const CHECK_NAME = 'atta-labs/no-aeg-token'
 export const DATA_FILE = 'scripts/vinaya-checks/no-aeg-token.baseline.json'
@@ -107,19 +105,23 @@ export function parseGuardData(text: string, file = DATA_FILE): GuardData {
         typeof (e as AllowlistEntry).reason === 'string' &&
         (e as AllowlistEntry).reason.trim() !== ''
     )
-  const baselineOk =
-    !!baseline &&
-    typeof baseline === 'object' &&
-    !Array.isArray(baseline) &&
-    Object.values(baseline).every((n) => Number.isInteger(n) && (n as number) >= 0)
+  const baselineOk = !!baseline && typeof baseline === 'object' && !Array.isArray(baseline)
   if (!allowlistOk || !baselineOk) {
     throw new Undecidable(
-      `${file} must hold an \`allowlist\` of { glob, reason } entries, each non-empty, and a \`baseline\` object of non-negative whole counts.`,
+      `${file} must hold an \`allowlist\` of { glob, reason } entries, each non-empty, and an empty \`baseline\` object.`,
       `Restore the shape of ${file}, then re-run this check.`,
       file
     )
   }
-  return { allowlist: allowlist as AllowlistEntry[], baseline: baseline as Record<string, number> }
+  const rows = Object.keys(baseline as Record<string, unknown>)
+  if (rows.length > 0) {
+    throw new Undecidable(
+      `${file}'s \`baseline\` must stay empty: the token is allowed only in allowlisted files, never by a per-file count (rows: ${rows.join(', ')}).`,
+      `Empty the \`baseline\` object in ${file}. Remove the token from each file instead, or — only for a genuinely frozen class of files — add an \`allowlist\` glob with its reason.`,
+      file
+    )
+  }
+  return { allowlist: allowlist as AllowlistEntry[] }
 }
 
 export function allowlisted(file: string, allowlist: AllowlistEntry[]): boolean {
@@ -150,27 +152,17 @@ export function countFile(root: string, file: string): number {
   return count
 }
 
-/** Compare each tracked, non-allowlisted file's count with its baseline row. */
+/** Every tracked, non-allowlisted file that holds the token at all. */
 export function evaluate(files: string[], data: GuardData, count: (file: string) => number): Outcome {
   const excess: Excess[] = []
-  const lowered: Lowered[] = []
-  const seen = new Set<string>()
   let counted = 0
   for (const file of files) {
     if (allowlisted(file, data.allowlist)) continue
-    seen.add(file)
     const n = count(file)
     counted += n
-    const allowed = data.baseline[file] ?? 0
-    if (n > allowed) excess.push({ file, count: n, allowed })
-    else if (n < allowed) lowered.push({ file, count: n, allowed })
+    if (n > 0) excess.push({ file, count: n })
   }
-  // A baseline row whose file is gone (or now allowlisted) records a count that fell to nothing.
-  for (const [file, allowed] of Object.entries(data.baseline)) {
-    if (!seen.has(file) && allowed > 0) lowered.push({ file, count: 0, allowed })
-  }
-  lowered.sort((a, b) => a.file.localeCompare(b.file))
-  return { excess, lowered, counted }
+  return { excess, counted }
 }
 
 export function trackedFiles(root: string): string[] {
@@ -238,18 +230,8 @@ function main(): void {
     process.exit(1)
   }
 
-  for (const row of outcome.lowered) {
-    process.stdout.write(
-      row.count === 0
-        ? `${CHECK_NAME}: ${row.file} fell from ${row.allowed} to 0 — drop its row from ${DATA_FILE}.\n`
-        : `${CHECK_NAME}: ${row.file} fell from ${row.allowed} to ${row.count} — record "${row.file}": ${row.count} in ${DATA_FILE}.\n`
-    )
-  }
-
   if (outcome.excess.length === 0) {
-    process.stdout.write(
-      `${CHECK_NAME}: no file holds the token more times than its baseline allows (${outcome.counted} counted outside the allowlist).\n`
-    )
+    process.stdout.write(`${CHECK_NAME}: no tracked file outside the allowlist holds the token.\n`)
     process.exit(0)
   }
 
@@ -258,8 +240,8 @@ function main(): void {
       schema: 1,
       check: CHECK_NAME,
       severity: 'error',
-      message: `${row.file} holds the retired token ${row.count} time(s) in its path and content; its allowed count is ${row.allowed}.`,
-      agent_recovery_prompt: `Remove the added occurrences (any letter case, also inside identifiers) from ${row.file} so it holds at most ${row.allowed}. Never raise its row in ${DATA_FILE}; the count may only fall.`,
+      message: `${row.file} holds the retired token ${row.count} time(s) in its path and content; outside the allowlist it may hold none.`,
+      agent_recovery_prompt: `Remove every occurrence (any letter case, also inside identifiers) from ${row.file}, naming the thing by its current name. Never add a \`baseline\` row to ${DATA_FILE}; allowlist the file's class there, with its reason, only when it is a genuinely frozen record.`,
       file: row.file
     })
   }

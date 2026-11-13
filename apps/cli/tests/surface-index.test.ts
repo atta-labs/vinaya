@@ -13,7 +13,7 @@ import type { SurfaceExemption } from '../../../harness/processes/vinaya-strict/
  * Predicate (Principal ruling, Issue #418): for a command's entry function,
  * collect every call expression — transitively through same-file helpers —
  * whose callee resolves to an export of apps/cli/src/lib/** or of another
- * apps/cli/src/commands/*.ts file. Calls into @attalabs/aeg-core (policy)
+ * apps/cli/src/commands/*.ts file. Calls into harness/ (policy)
  * are unrestricted. The resulting set must be exactly the command's one
  * lib call, or the command's own file must export a `SURFACE_EXEMPTIONS` entry
  * (`harness/processes/vinaya-strict/tools/pr-report/surface-exemption.ts`) naming the chokepoint that retires
@@ -202,7 +202,7 @@ interface BoundaryCall {
  * Boundary calls reachable from `entryName` in `file`: every call expression
  * whose callee resolves to an export of apps/cli/src/lib/** or another
  * apps/cli/src/commands/*.ts file, following same-file helper calls
- * transitively. Calls into @attalabs/aeg-core, node builtins, and npm
+ * transitively. Calls into harness/, node builtins, and npm
  * packages are out of scope entirely (policy is unrestricted).
  */
 function boundaryCallsFor(entryName: string, file: string): BoundaryCall[] {

@@ -8,7 +8,7 @@
 
 **Dependency rationale** — Depends-on: 3 (the check runner + CheckError contract).
 
-**Traps** — Adapt the aeg-core bins' semantics, never import them; do not hardcode the brief template.
+**Traps** — Adapt the process bins' semantics, never import them; do not hardcode the brief template.
 
 **Suggested agent-class** — Opus, high judgment (contract/schema design).
 

@@ -40,10 +40,13 @@ function write(root: string, file: string, body: string | Uint8Array): void {
   writeFileSync(join(root, file), body)
 }
 
-const data = (baseline: Record<string, number>, globs: string[] = []): GuardData => ({
-  allowlist: globs.map((glob) => ({ glob, reason: 'test' })),
-  baseline
+const data = (globs: string[] = []): GuardData => ({
+  allowlist: globs.map((glob) => ({ glob, reason: 'test' }))
 })
+
+/** The data file's text, with an empty baseline unless one is given. */
+const dataFile = (globs: string[], baseline: Record<string, number> = {}): string =>
+  JSON.stringify({ allowlist: globs.map((glob) => ({ glob, reason: 'test' })), baseline })
 
 describe('countToken', () => {
   test('counts every case-insensitive occurrence, inside identifiers too', () => {
@@ -69,7 +72,7 @@ describe('isBinary', () => {
 
 describe('allowlist', () => {
   test('matches globs against repository-relative paths', () => {
-    const list = data({}, ['docs/adr/**', '**/CHANGELOG.md', 'bun.lock']).allowlist
+    const list = data(['docs/adr/**', '**/CHANGELOG.md', 'bun.lock']).allowlist
     expect(allowlisted('docs/adr/0001-x.md', list)).toBe(true)
     expect(allowlisted('apps/cli/CHANGELOG.md', list)).toBe(true)
     expect(allowlisted('bun.lock', list)).toBe(true)
@@ -78,8 +81,10 @@ describe('allowlist', () => {
 })
 
 describe('parseGuardData', () => {
-  test('accepts the committed data file', () => {
-    const parsed = parseGuardData(readFileSync(join(import.meta.dir, '..', '..', DATA_FILE), 'utf8'))
+  test('accepts the committed data file, whose baseline is empty and whose allowlist entries each carry a reason', () => {
+    const text = readFileSync(join(import.meta.dir, '..', '..', DATA_FILE), 'utf8')
+    expect((JSON.parse(text) as { baseline: unknown }).baseline).toEqual({})
+    const parsed = parseGuardData(text)
     expect(parsed.allowlist.length).toBeGreaterThan(0)
     for (const entry of parsed.allowlist) expect(entry.reason.trim()).not.toBe('')
   })
@@ -87,109 +92,127 @@ describe('parseGuardData', () => {
   test('refuses a malformed data file', () => {
     expect(() => parseGuardData('{')).toThrow()
     expect(() => parseGuardData('{"allowlist": [{"glob": "x"}], "baseline": {}}')).toThrow()
-    expect(() => parseGuardData('{"allowlist": [], "baseline": {"a": -1}}')).toThrow()
+    expect(() => parseGuardData('{"allowlist": []}')).toThrow()
+  })
+
+  test('refuses a baseline row, so a per-file count can never let the token back in', () => {
+    expect(() => parseGuardData(dataFile([], { 'src/a.ts': 2 }))).toThrow('must stay empty')
+    expect(() => parseGuardData(dataFile([], { 'src/a.ts': 0 }))).toThrow('must stay empty')
+    expect(parseGuardData(dataFile(['docs/adr/**'])).allowlist).toEqual([{ glob: 'docs/adr/**', reason: 'test' }])
   })
 })
 
 describe('checkRepository over a fixture repository', () => {
-  const files = {
-    'src/a.ts': 'const AEG_REPO = loadAegDocs()\n',
+  const clean = {
     'src/clean.ts': 'export {}\n',
-    'aeg-named.md': 'no token inside\n'
+    'docs/readme.md': 'the current names only\n'
   }
-  const baseline = { 'src/a.ts': 2, 'aeg-named.md': 1 }
 
-  test('passes at its baseline, counting paths and content', () => {
-    const outcome = checkRepository(fixtureRepo(files), data(baseline))
+  test('passes a tree with no token outside the allowlist', () => {
+    const outcome = checkRepository(fixtureRepo(clean), data())
     expect(outcome.excess).toEqual([])
-    expect(outcome.lowered).toEqual([])
+    expect(outcome.counted).toBe(0)
+  })
+
+  test('fails any tracked file holding the token, naming its count of path and content occurrences', () => {
+    const root = fixtureRepo({
+      ...clean,
+      'src/a.ts': 'const AEG_REPO = loadAegDocs()\n',
+      'aeg-named.md': 'none inside\n'
+    })
+    const outcome = checkRepository(root, data())
+    expect(outcome.excess).toEqual([
+      { file: 'aeg-named.md', count: 1 },
+      { file: 'src/a.ts', count: 2 }
+    ])
     expect(outcome.counted).toBe(3)
   })
 
-  test('fails when a file gains a token, naming its count and its allowed count', () => {
-    const root = fixtureRepo(files)
-    write(root, 'src/a.ts', 'const AEG_REPO = loadAegDocs(aeg)\n')
-    expect(checkRepository(root, data(baseline)).excess).toEqual([{ file: 'src/a.ts', count: 3, allowed: 2 }])
-  })
-
-  test('fails on a new tracked file carrying the token', () => {
-    const root = fixtureRepo({ ...files, 'src/new.ts': 'aegThing\n' })
-    expect(checkRepository(root, data(baseline)).excess).toEqual([{ file: 'src/new.ts', count: 1, allowed: 0 }])
-  })
-
-  test('passes and reports the lower number when a file loses a token', () => {
-    const root = fixtureRepo(files)
-    write(root, 'src/a.ts', 'const REPO = loadAegDocs()\n')
-    const outcome = checkRepository(root, data(baseline))
-    expect(outcome.excess).toEqual([])
-    expect(outcome.lowered).toEqual([{ file: 'src/a.ts', count: 1, allowed: 2 }])
-  })
-
-  test('reports a baseline row whose file is gone as fallen to zero', () => {
-    const root = fixtureRepo(files)
-    git(root, ['rm', '-q', 'src/a.ts'])
-    expect(checkRepository(root, data(baseline)).lowered).toEqual([{ file: 'src/a.ts', count: 0, allowed: 2 }])
+  test('a single occurrence anywhere outside the allowlist fails — there is no per-file allowance', () => {
+    const root = fixtureRepo({ ...clean, 'docs/notes/old.md': 'once called Aeg\n' })
+    expect(checkRepository(root, data()).excess).toEqual([{ file: 'docs/notes/old.md', count: 1 }])
   })
 
   test('never counts a file under an allowlist glob', () => {
-    const root = fixtureRepo({ ...files, 'docs/adr/0001.md': 'aeg aeg aeg\n', 'bun.lock': 'sha512-xAEgy\n' })
-    const outcome = checkRepository(root, data(baseline, ['docs/adr/**', 'bun.lock']))
+    const root = fixtureRepo({ ...clean, 'docs/adr/0001.md': 'aeg aeg aeg\n', 'bun.lock': 'sha512-xAEgy\n' })
+    const outcome = checkRepository(root, data(['docs/adr/**', 'bun.lock']))
     expect(outcome.excess).toEqual([])
-    expect(outcome.counted).toBe(3)
+    expect(outcome.counted).toBe(0)
   })
 
   test("never counts the guard's own name in a registration", () => {
-    const root = fixtureRepo({ ...files, 'config.json': '{ "atta-labs/no-aeg-token": {} }\n' })
-    expect(checkRepository(root, data(baseline)).excess).toEqual([])
+    const root = fixtureRepo({ ...clean, 'config.json': '{ "atta-labs/no-aeg-token": {} }\n' })
+    expect(checkRepository(root, data()).excess).toEqual([])
   })
 
   test('skips binary content but still counts a binary file path', () => {
     const blob = new Uint8Array([0, 97, 101, 103, 0])
-    const root = fixtureRepo({ ...files, 'img/plain.bin': blob, 'img/aeg.bin': blob })
-    expect(checkRepository(root, data({ ...baseline, 'img/aeg.bin': 1 })).excess).toEqual([])
+    const root = fixtureRepo({ ...clean, 'img/plain.bin': blob, 'img/aeg.bin': blob })
+    expect(checkRepository(root, data()).excess).toEqual([{ file: 'img/aeg.bin', count: 1 }])
   })
 
   test('never reads an untracked file', () => {
-    const root = fixtureRepo(files)
+    const root = fixtureRepo(clean)
     write(root, 'scratch/aeg-notes.md', 'aeg aeg\n')
-    expect(checkRepository(root, data(baseline)).excess).toEqual([])
+    expect(checkRepository(root, data()).excess).toEqual([])
   })
 })
 
 describe('the script', () => {
+  const GUARD_FILES = 'scripts/vinaya-checks/no-aeg-token*'
+
   function run(root: string) {
     return spawnSync('bun', [SCRIPT], { cwd: root, encoding: 'utf8' })
   }
 
-  test('exits 0 at the baseline and prints the line to record when a count falls', () => {
-    const root = fixtureRepo({
-      'src/a.ts': 'loadAegDocs()\n',
-      [DATA_FILE]: JSON.stringify(data({ 'src/a.ts': 2 }, ['scripts/vinaya-checks/no-aeg-token*']))
-    })
-    const result = run(root)
-    expect(result.status).toBe(0)
-    expect(result.stdout).toContain('src/a.ts fell from 2 to 1')
-  })
-
-  test('exits 1 with one JSON finding per file over its allowed count', () => {
-    const root = fixtureRepo({
-      'src/a.ts': 'aeg aeg\n',
-      [DATA_FILE]: JSON.stringify(data({ 'src/a.ts': 1 }, ['scripts/vinaya-checks/no-aeg-token*']))
-    })
-    const result = run(root)
-    expect(result.status).toBe(1)
-    const findings = result.stderr
+  function findings(stderr: string): Record<string, unknown>[] {
+    return stderr
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line))
-    expect(findings).toHaveLength(1)
-    expect(findings[0]).toMatchObject({
+  }
+
+  test('exits 0 when no tracked file outside the allowlist holds the token', () => {
+    const root = fixtureRepo({
+      'src/a.ts': 'export {}\n',
+      'docs/adr/0001.md': 'aeg\n',
+      [DATA_FILE]: dataFile([GUARD_FILES, 'docs/adr/**'])
+    })
+    const result = run(root)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('no tracked file outside the allowlist holds the token')
+  })
+
+  test('exits 1 with one JSON finding per file holding the token outside the allowlist', () => {
+    const root = fixtureRepo({
+      'src/a.ts': 'aeg aeg\n',
+      'src/b.ts': 'export {}\n',
+      [DATA_FILE]: dataFile([GUARD_FILES])
+    })
+    const result = run(root)
+    expect(result.status).toBe(1)
+    const found = findings(result.stderr)
+    expect(found).toHaveLength(1)
+    expect(found[0]).toMatchObject({
       schema: 1,
       check: 'atta-labs/no-aeg-token',
       severity: 'error',
       file: 'src/a.ts'
     })
-    expect(findings[0].message).toContain('2 time(s)')
-    expect(findings[0].message).toContain('allowed count is 1')
+    expect(found[0]?.message).toContain('2 time(s)')
+    expect(found[0]?.message).toContain('outside the allowlist it may hold none')
+  })
+
+  test('exits 1, naming the data file, when its baseline holds a row — even one that would cover the file', () => {
+    const root = fixtureRepo({
+      'src/a.ts': 'loadAegDocs()\n',
+      [DATA_FILE]: dataFile([GUARD_FILES], { 'src/a.ts': 1 })
+    })
+    const result = run(root)
+    expect(result.status).toBe(1)
+    const found = findings(result.stderr)
+    expect(found).toHaveLength(1)
+    expect(found[0]).toMatchObject({ check: 'atta-labs/no-aeg-token', severity: 'error', file: DATA_FILE })
+    expect(found[0]?.message).toContain('must stay empty')
   })
 })

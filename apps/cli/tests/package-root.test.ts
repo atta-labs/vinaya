@@ -53,7 +53,7 @@ describe('packageRoot', () => {
  * Issue #505: inside the author repository the tree is the CLI. A fixture
  * repo (a real git toplevel, so `resolveDoctrineRootInfo`'s own `git
  * rev-parse --show-toplevel` probe resolves it) carrying its own
- * `aeg-root/roles/` and `apps/cli/src/index.ts` is the author repo; an
+ * process doctrine tree and `apps/cli/src/index.ts` is the author repo; an
  * installed `vinaya` invoked with its cwd inside it must re-exec that file.
  */
 describe('resolveAuthorRepoSourceEntry', () => {
@@ -94,7 +94,7 @@ describe('resolveAuthorRepoSourceEntry', () => {
     expect(resolveAuthorRepoSourceEntry(sourceLookingPkg, repoRoot)).toBeNull()
   })
 
-  it('returns null when the repo carries aeg-root/roles/ but no apps/cli/src/index.ts of its own', () => {
+  it('returns null when the repo carries the process doctrine tree but no apps/cli/src/index.ts of its own', () => {
     const roleFile = join(repoRoot, 'harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md')
     mkdirSync(dirname(roleFile), { recursive: true })
     writeFileSync(roleFile, '# x\n')
@@ -103,7 +103,7 @@ describe('resolveAuthorRepoSourceEntry', () => {
     expect(resolveAuthorRepoSourceEntry(installedPkg, repoRoot)).toBeNull()
   })
 
-  it('returns null when cwd is an ordinary repo with no aeg-root/roles/ of its own', () => {
+  it('returns null when cwd is an ordinary repo with no process doctrine tree of its own', () => {
     const installedPkg = join(tmpdir(), 'fake-install', 'node_modules', '@attalabs', 'vinaya')
 
     expect(resolveAuthorRepoSourceEntry(installedPkg, repoRoot)).toBeNull()

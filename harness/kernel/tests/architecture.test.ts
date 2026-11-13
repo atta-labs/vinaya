@@ -211,7 +211,6 @@ describe('the counted ratchet', () => {
   })
 
   test('process tokens match as substrings, and overlapping ones in one path count once', () => {
-    expect(countSource("const doctrine = 'aeg-root/roles'")).toBe(1)
     expect(countSource("const launcher = '../../processes/vinaya/bin/run-engine.ts'")).toBe(1)
     expect(countSource("const launcher = '../../harness/processes/vinaya-strict/bin/run-engine.ts'")).toBe(1)
     expect(countSource("const scope = '@attalabs/process-vinaya-strict'")).toBe(1)
@@ -219,9 +218,7 @@ describe('the counted ratchet', () => {
 
   test('an import counts once per specifier, the names inside it included', () => {
     expect(countSource("import { x } from '../../processes/vinaya/loops/developer.ts'")).toBe(1)
-    expect(countSource("import { x } from '@attalabs/aeg-core/reviewer'")).toBe(1)
-    expect(countSource("import { x } from '@attalabs/aeg-forge-state'")).toBe(1)
-    expect(countSource("import { x } from '@attalabs/aeg-types'\nimport y from './local'")).toBe(0)
+    expect(countSource("import { x } from '@attalabs/harness'\nimport y from './local'")).toBe(0)
   })
 
   test('a role token added to a scanned file is above its baseline entry, naming the file, both counts and both commands', () => {
@@ -233,9 +230,9 @@ describe('the counted ratchet', () => {
   })
 
   test('a new scanned file with a token fails with no baseline entry', () => {
-    const failures = compareWithBaseline({ 'packages/aeg-core/src/new.ts': 1 }, {})
+    const failures = compareWithBaseline({ 'harness/core/src/new.ts': 1 }, {})
     expect(failures).toHaveLength(1)
-    expect(failures[0]).toContain('packages/aeg-core/src/new.ts: counts 1, baseline 0 — and has no baseline entry')
+    expect(failures[0]).toContain('harness/core/src/new.ts: counts 1, baseline 0 — and has no baseline entry')
   })
 
   test('a lowered count fails until the baseline is lowered in the same change', () => {
@@ -251,9 +248,9 @@ describe('the counted ratchet', () => {
         'apps/cli/src/lib/a.ts': 'the developer',
         'apps/cli/src/lib/a.test.ts': 'the developer',
         'apps/cli/tests/b.ts': 'the developer',
-        'packages/aeg-core/src/fixtures/c.ts': 'the developer',
-        'packages/aeg-core/README.md': 'the developer',
-        'packages/aeg-core/src/d.json': '{"role":"developer"}',
+        'harness/core/src/fixtures/c.ts': 'the developer',
+        'harness/core/README.md': 'the developer',
+        'harness/core/src/d.json': '{"role":"developer"}',
         'harness/processes/vinaya-strict/e.ts': 'the developer',
         'harness/kernel/tests/f.ts': 'the developer',
         'harness/kernel/gates/g.ts': 'the reviewer and the developer',
@@ -295,9 +292,9 @@ describe('the base comparison', () => {
 
   test('a new scanned file with a token fails against a base with no entry for it', () => {
     const { root, base } = plantedRepository({ 'apps/cli/src/a.ts': 'the developer' })
-    commitBaseline(root, { 'packages/aeg-core/src/b.ts': 'the planner' })
+    commitBaseline(root, { 'harness/core/src/b.ts': 'the planner' })
     expect(compareBase(root, base).failures[0]).toContain(
-      'packages/aeg-core/src/b.ts: counts 1, base 0 — a file with no base entry counts above zero'
+      'harness/core/src/b.ts: counts 1, base 0 — a file with no base entry counts above zero'
     )
   })
 
@@ -414,7 +411,7 @@ describe('a relocated dependency is unchanged, never growth', () => {
     const claim = (path: string): string => `// VINAYA:CLAIM: ${path} contains:export function dispatchRole(\n`
     const { root, base } = plantedRepository({
       'apps/cli/src/lib/dispatch.ts': `export function dispatchRole() {}\n${BODY}\n`,
-      'packages/aeg-core/src/commands.ts': `${claim('apps/cli/src/lib/dispatch.ts')}${BODY}\n`
+      'harness/core/src/commands.ts': `${claim('apps/cli/src/lib/dispatch.ts')}${BODY}\n`
     })
     expect(countTree(root)).toEqual({})
     commitBaseline(root, {
@@ -423,17 +420,17 @@ describe('a relocated dependency is unchanged, never growth', () => {
         'apps/cli/src/lib/dispatch.ts',
         'harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts'
       ),
-      'packages/aeg-core/src/commands.ts': `${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts')}${BODY}\n`
+      'harness/core/src/commands.ts': `${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts')}${BODY}\n`
     })
-    expect(countTree(root)).toEqual({ 'packages/aeg-core/src/commands.ts': 1 })
+    expect(countTree(root)).toEqual({ 'harness/core/src/commands.ts': 1 })
     expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 0, headTotal: 0 })
 
     commitBaseline(root, {
       'harness/processes/vinaya-strict/loops/dev-review/dispatch/seats.ts': `export function dispatchRole() {}\n${BODY}\n`,
-      'packages/aeg-core/src/commands.ts': `${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts')}${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/seats.ts')}${BODY}\n`
+      'harness/core/src/commands.ts': `${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts')}${claim('harness/processes/vinaya-strict/loops/dev-review/dispatch/seats.ts')}${BODY}\n`
     })
     expect(compareBase(root, base).failures[0]).toContain(
-      'packages/aeg-core/src/commands.ts: counts 1, base 0 — above its base entry'
+      'harness/core/src/commands.ts: counts 1, base 0 — above its base entry'
     )
   })
 })
@@ -515,9 +512,9 @@ describe('a moved file is moving, never adding', () => {
   })
 
   test('(b) a relative barrel keeps its zero count when its re-exported module moves, but no unrelated import is excused', () => {
-    const caller = 'packages/aeg-core/bin/tool.ts'
-    const member = 'packages/aeg-core/src/member.ts'
-    const barrel = 'packages/aeg-core/src/index.ts'
+    const caller = 'harness/core/bin/tool.ts'
+    const member = 'harness/core/src/member.ts'
+    const barrel = 'harness/core/src/index.ts'
     const { root, base } = plantedRepository({
       [member]: `export const x = 1\n${BODY}\n`,
       [barrel]: "export { x } from './member'\n",
@@ -539,18 +536,18 @@ describe('a moved file is moving, never adding', () => {
 
   test('(b) a package barrel split across its own module and a re-exported package still counts once', () => {
     const caller = 'apps/cli/src/caller.ts'
-    const coreMember = 'packages/aeg-core/src/core-member.ts'
+    const coreMember = 'packages/process-fixture/src/core-member.ts'
     const forgeMember = 'packages/shared-fixture/src/forge-member.ts'
-    const coreBarrel = 'packages/aeg-core/src/index.ts'
+    const coreBarrel = 'packages/process-fixture/src/index.ts'
     const forgeBarrel = 'packages/shared-fixture/src/index.ts'
     const { root, base } = plantedRepository({
-      'packages/aeg-core/package.json': '{"main":"./src/index.ts"}',
+      'packages/process-fixture/package.json': '{"main":"./src/index.ts"}',
       'packages/shared-fixture/package.json': '{"main":"./src/index.ts"}',
       [coreMember]: `export const x = 1\n${BODY}\n`,
       [forgeMember]: `export const y = 2\n${REWRITTEN}\n`,
       [coreBarrel]: "export { x } from './core-member'\nexport { y } from '@attalabs/shared-fixture'\n",
       [forgeBarrel]: "export { y } from './forge-member'\n",
-      [caller]: "import { x, y } from '@attalabs/aeg-core'\n"
+      [caller]: "import { x, y } from '@attalabs/process-fixture'\n"
     })
     commitBaseline(root, {
       ...move(root, coreMember, PROCESS_FILE('core-member')),
@@ -609,22 +606,22 @@ describe('a moved file is moving, never adding', () => {
     const comment = (path: string): string => `// The entry point lives in ${path}.\n${BODY}\n`
     const { root, base } = plantedRepository({
       'apps/cli/src/lib/dispatch.ts': `export function dispatchRole() {}\n${BODY}\n`,
-      'packages/aeg-core/src/notes.ts': comment('apps/cli/src/lib/dispatch.ts')
+      'harness/core/src/notes.ts': comment('apps/cli/src/lib/dispatch.ts')
     })
     expect(countTree(root)).toEqual({})
     commitBaseline(root, {
       ...move(root, 'apps/cli/src/lib/dispatch.ts', 'harness/processes/vinaya-strict/loops/dispatch.ts'),
-      'packages/aeg-core/src/notes.ts': comment('harness/processes/vinaya-strict/loops/dispatch.ts')
+      'harness/core/src/notes.ts': comment('harness/processes/vinaya-strict/loops/dispatch.ts')
     })
-    expect(countTree(root)).toEqual({ 'packages/aeg-core/src/notes.ts': 1 })
+    expect(countTree(root)).toEqual({ 'harness/core/src/notes.ts': 1 })
     expect(compareBase(root, base)).toMatchObject({ failures: [], baseTotal: 0, headTotal: 0 })
 
     commitBaseline(root, {
       'harness/processes/vinaya-strict/loops/seats.ts': `export function seats() {}\n${BODY}\n`,
-      'packages/aeg-core/src/notes.ts': `${comment('harness/processes/vinaya-strict/loops/dispatch.ts')}${comment('harness/processes/vinaya-strict/loops/seats.ts')}`
+      'harness/core/src/notes.ts': `${comment('harness/processes/vinaya-strict/loops/dispatch.ts')}${comment('harness/processes/vinaya-strict/loops/seats.ts')}`
     })
     expect(compareBase(root, base).failures[0]).toContain(
-      'packages/aeg-core/src/notes.ts: counts 1, base 0 — above its base entry'
+      'harness/core/src/notes.ts: counts 1, base 0 — above its base entry'
     )
   })
 
@@ -660,7 +657,7 @@ describe('a moved file is moving, never adding', () => {
 // ── Ownership transfer with a forwarding entry ──────────────────────────────
 
 describe('an ownership transfer that keeps a forwarding entry is a relocation', () => {
-  const OLD = 'packages/aeg-core/src/baseline-capture.ts'
+  const OLD = 'harness/core/src/baseline-capture.ts'
   const OWNER = 'harness/processes/vinaya-strict/tools/baseline-capture.ts'
   const FORWARD = "export * from '../../../harness/processes/vinaya-strict/tools/baseline-capture.ts'\n"
   const CAPTURED_FROM = 'harness/processes/vinaya-strict/checks/baseline-capture.ts'
@@ -703,7 +700,7 @@ describe('an ownership transfer that keeps a forwarding entry is a relocation', 
   })
 
   test("a scanned owner inherits the old file's base entry", () => {
-    const old = 'packages/aeg-core/src/seats.ts'
+    const old = 'harness/core/src/seats.ts'
     const owner = 'harness/kernel/gates/seats.ts'
     const { root, base } = plantedRepository({ [old]: `// the developer and the reviewer\n${BODY}\n` })
     commitBaseline(root, {
@@ -718,10 +715,10 @@ describe('an ownership transfer that keeps a forwarding entry is a relocation', 
     const { root } = transferred(FORWARD)
     commit(root, {
       'harness/kernel/gates/kernel.ts':
-        "import { captureBaseline } from '../../../packages/aeg-core/src/baseline-capture.ts'\n"
+        "import { captureBaseline } from '../../../harness/core/src/baseline-capture.ts'\n"
     })
     expect(importsThroughForwarding(root)).toEqual([
-      `harness/kernel/gates/kernel.ts imports ../../../packages/aeg-core/src/baseline-capture.ts, which forwards to ${OWNER}`
+      `harness/kernel/gates/kernel.ts imports ../../../harness/core/src/baseline-capture.ts, which forwards to ${OWNER}`
     ])
   })
 })

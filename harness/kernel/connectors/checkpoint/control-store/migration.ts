@@ -6,7 +6,7 @@
  *
  * This module reads the legacy layout directly rather than importing
  * `apps/cli` — the dependency runs the other way (the CLI depends on
- * `@attalabs/aeg-core`, never the reverse) — so the three legacy shapes
+ * the harness, never the reverse) — so the three legacy shapes
  * below are a deliberate, narrow re-statement of what those two files
  * already write, not a shared implementation.
  *

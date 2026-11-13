@@ -5,8 +5,10 @@ import { join, posix, relative, sep } from 'node:path'
 // The counted ratchet. The kernel side of the repository — every scope root
 // below, outside any process — is meant to name no process and no role. Today
 // it still does; this module counts each such name, and each import of a
-// process or of a package the target tree retires, file by file, so a
-// committed baseline can hold the count to what it is and let it only shrink.
+// process, file by file, so a committed baseline can hold the count to what
+// it is and let it only shrink. The retired package and folder names are
+// refused across the whole tree by the repository's retired-token guard, so
+// this module no longer counts them.
 //
 // Run as a command:
 //   bun harness/kernel/tests/architecture-ratchet.ts --write              rewrites the baseline from the current tree
@@ -41,7 +43,7 @@ export function* sourceFiles(folder: string): Generator<string> {
 }
 
 /** The roots the ratchet scans. A root that no longer exists is skipped. */
-export const SCOPE_ROOTS = ['harness', 'packages/aeg-core', 'apps/cli/src']
+export const SCOPE_ROOTS = ['harness', 'apps/cli/src']
 const EXCLUDED_ROOTS = ['harness/processes']
 
 /** Whether a repository-relative source file is counted: inside a scope root, outside a process, and not a test or fixture. */
@@ -70,7 +72,7 @@ export function scannedFiles(root: string): string[] {
 // ── The token list and the matching rule ───────────────────────────────────
 
 /** Process names: each matches as a plain substring; overlapping matches count once. */
-export const PROCESS_TOKENS = ['processes/vinaya', 'process-vinaya', 'vinaya-strict', 'aeg-root']
+export const PROCESS_TOKENS = ['processes/vinaya', 'process-vinaya', 'vinaya-strict']
 
 /** Role names: each matches case-insensitively, as a whole word, optionally plural. */
 export const ROLE_TOKENS = [
@@ -87,9 +89,6 @@ export const ROLE_TOKENS = [
   'controller',
   'execution-planner'
 ]
-
-/** Package scopes the target tree retires: an import of one counts in every scanned file. */
-export const RETIRED_PACKAGES = ['@attalabs/aeg-core', '@attalabs/aeg-forge-state']
 
 const caseless = (token: string): string =>
   [...token]
@@ -123,8 +122,7 @@ export function importsOfAProcess(source: string): string[] {
   return offending
 }
 
-const isCountedImport = (specifier: string): boolean =>
-  namesAProcess(specifier) || RETIRED_PACKAGES.some((scope) => specifier === scope || specifier.startsWith(`${scope}/`))
+const isCountedImport = (specifier: string): boolean => namesAProcess(specifier)
 
 type Span = { start: number; end: number }
 type Unit = Span & { kind: 'import' | 'process' | 'role' }
@@ -545,7 +543,7 @@ function renames(root: string, base: string): Renames {
   return { from, to, added, touched }
 }
 
-/** The workspace folder a retired package scope names, so an import of the package reads as an import of that folder. */
+/** The workspace folder a package scope names, so an import of the package reads as an import of that folder. */
 function packageFolder(target: string, folders: ReadonlyMap<string, string> = new Map()): string | null {
   const match = /^(@attalabs\/[^/]+)/.exec(target)
   if (!match) return null

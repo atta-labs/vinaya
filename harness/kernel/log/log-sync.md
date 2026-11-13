@@ -62,7 +62,7 @@ A row written by a CLI older than `0.33.0` (`LOW_TRUST_BELOW_VERSION`, `row.ts`)
 
 ## The three contracts
 
-All three are types in `contracts.ts`, exported from the log module.
+All three are types in `harness/kernel/log/sync/contracts.ts`, which the log client's folder and server sources (`harness/kernel/log/client/`) import directly; the contracts are pure policy, and each source is the one place that does its own I/O.
 
 **Source** (`LogSource`) — where stored lines come from, a log folder or a log server. `id` is stable across runs for the same place and keys everything stored about it. `readPage(cursor, limit)` returns at most `limit` lines, each with its opaque position, the cursor to resume from (`null` when nothing followed), and every **gap** the source knows it cannot fill: a stretch rotated away, expired from a server's retention, or rejected on receipt, with its bounds and — as a `Measured` count — how many lines it lost. A gap is reported, never skipped silently. Reading never writes to the source.
 

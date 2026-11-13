@@ -31,15 +31,15 @@ describe('workspace-escape detection', () => {
         content: "const INDEX_TS = fileURLToPath(new URL('../src/index.ts', import.meta.url))"
       },
       {
-        path: 'packages/aeg-core/src/gate-audience.test.ts',
+        path: 'packages/core/src/gate-audience.test.ts',
         content: "const BIN_DIR = fileURLToPath(new URL('../bin', import.meta.url))"
       }
     ]
     const knownPaths = new Set([
       'harness/processes/vinaya-strict/integration/commands.test.ts',
       'apps/cli/src/index.ts',
-      'packages/aeg-core/src/gate-audience.test.ts',
-      'packages/aeg-core/bin'
+      'packages/core/src/gate-audience.test.ts',
+      'packages/core/bin'
     ])
     expect(findWorkspaceEscapes(files, knownPaths, WORKSPACE_DIRS)).toEqual([])
   })
@@ -98,7 +98,7 @@ describe('workspace-escape detection', () => {
   it('skips a file that sits outside every workspace dir — there is no "own package" for it to escape', () => {
     const files = [
       {
-        path: 'aeg-root/scripts/foo.ts',
+        path: 'tools-root/scripts/foo.ts',
         content: "readFileSync(new URL('../../apps/cli/src/index.ts', import.meta.url))"
       }
     ]

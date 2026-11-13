@@ -323,7 +323,7 @@ describe('no rule outside the static fallback names a path, folder, owner or ext
       expect(outside.includes('WHOLE_ON_CHANGE_OWNERS'), 'WHOLE_ON_CHANGE_OWNERS').toBe(false)
       expect(outside.includes('@vinaya/portal'), 'a named owner').toBe(false)
       expect(/\.(?:md|ya?ml)['"`]/.test(outside), 'a file extension').toBe(false)
-      expect(/['"`](?:apps|packages|harness|scripts|aeg-root|docs)\//.test(outside), 'a literal folder').toBe(false)
+      expect(/['"`](?:apps|packages|harness|scripts|docs)\//.test(outside), 'a literal folder').toBe(false)
     })
   }
 })

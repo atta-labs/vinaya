@@ -23,7 +23,7 @@ The TSX pages are thin, so you may also take facts (never invent) from:
 - `/Users/daniboomerang/Work/Repositories/Me/atta-labs/vinaya/docs/drafts/development-process-product-definition-v2.md` (generic contract, harness features);
 - `/Users/daniboomerang/Work/Repositories/Me/atta-labs/vinaya/docs/drafts/vinaya-process-definition-v3.md` (the Vinaya process: parts, roles, keys §19, commands);
 - `/Users/daniboomerang/Work/Repositories/Me/atta-labs/vinaya/docs/drafts/vinaya-log-and-config-draft.md`;
-- for Roles: the role and hand-off docs the TSX loads via `loadAegDocs` (`src/lib/docs/load-aeg-docs.ts`; find the aeg docs root it reads, the sections whose labels contain "role" and "contract").
+- for Roles: the role and hand-off docs in the process doctrine (`harness/processes/vinaya-strict/doctrine/roles/` and `harness/processes/vinaya-strict/doctrine/contracts/`).
 Read only; never edit those files. Where sources disagree, the v3/v2 drafts win over the TSX.
 
 ## Decided product facts (do not contradict)

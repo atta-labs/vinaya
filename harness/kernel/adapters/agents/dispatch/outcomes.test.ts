@@ -3,7 +3,7 @@ import { normalizeOutcome } from '../../../connectors/checkpoint/control-store/i
 
 /**
  * The parent-validated outcome vocabulary (O2), reached from the CLI's own
- * consumer side (`@attalabs/aeg-core`) — the comprehensive unit suite lives
+ * consumer side (`@attalabs/harness`) — the comprehensive unit suite lives
  * co-located at `harness/kernel/connectors/checkpoint/control-store/outcomes.test.ts`; this
  * pins the two properties this task's own §9 test plan names, from the package
  * boundary a launcher/recovery caller actually imports through.

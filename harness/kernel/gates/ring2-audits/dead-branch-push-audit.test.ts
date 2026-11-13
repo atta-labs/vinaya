@@ -5,7 +5,7 @@ describe('findDeadBranchPushes', () => {
   it('flags a branch whose tip commit lands strictly after its PR merged', () => {
     const facts = [
       {
-        branch: 'task/aeg-governance-hardening/99',
+        branch: 'task/governance-hardening/99',
         prNumber: 325,
         prState: 'MERGED' as const,
         resolvedAt: '2026-07-03T10:00:00Z',
@@ -15,7 +15,7 @@ describe('findDeadBranchPushes', () => {
     const result = findDeadBranchPushes(facts)
     expect(result).toEqual([
       {
-        branch: 'task/aeg-governance-hardening/99',
+        branch: 'task/governance-hardening/99',
         prNumber: 325,
         prState: 'MERGED',
         resolvedAt: '2026-07-03T10:00:00Z',
@@ -27,7 +27,7 @@ describe('findDeadBranchPushes', () => {
   it('flags a branch whose tip commit lands after its PR was closed (never merged)', () => {
     const facts = [
       {
-        branch: 'task/aeg-governance-hardening/50',
+        branch: 'task/governance-hardening/50',
         prNumber: 210,
         prState: 'CLOSED' as const,
         resolvedAt: '2026-06-01T00:00:00Z',
@@ -40,7 +40,7 @@ describe('findDeadBranchPushes', () => {
   it('does not flag a branch whose tip commit predates its PR resolution (normal, undeleted branch)', () => {
     const facts = [
       {
-        branch: 'task/aeg-governance-hardening/1',
+        branch: 'task/governance-hardening/1',
         prNumber: 100,
         prState: 'MERGED' as const,
         resolvedAt: '2026-06-21T17:00:00Z',
@@ -53,7 +53,7 @@ describe('findDeadBranchPushes', () => {
   it('does not flag a branch whose tip commit exactly matches its PR resolution time', () => {
     const facts = [
       {
-        branch: 'task/aeg-governance-hardening/1',
+        branch: 'task/governance-hardening/1',
         prNumber: 100,
         prState: 'MERGED' as const,
         resolvedAt: '2026-06-21T17:00:00Z',

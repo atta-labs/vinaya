@@ -2,14 +2,15 @@
  * CommonMark code recognition for forge bodies — "the body, minus its
  * examples". Pure — no `fs`, no `gh`/`git`.
  *
- * **Why it lives here and not in `@attalabs/aeg-core`.** It was written there
- * (`anchored-region.ts`, in an earlier consolidation pass), and `aeg-core` is still where `anchoredRegion`
- * and every anchored-field consumer live — `anchored-region.ts` re-exports
- * `stripCode` so those call sites are unchanged. But the grammar itself had to
- * come down one layer: `list-tasks.ts`'s `projectFieldFromBody` reads the same
- * body and must ignore fenced examples the same way, and `aeg-core` already
- * depends on this package (`issue-validation.ts` imports `projectsFromBody`),
- * so importing upward would close a cycle. Duplicating the scanners here would
+ * **Why it lives here and not beside `anchoredRegion`.** It was written there
+ * (`anchored-region.ts`, in an earlier consolidation pass), and the gates'
+ * checks are still where `anchoredRegion` and every anchored-field consumer
+ * live — `anchored-region.ts` re-exports `stripCode` so those call sites are
+ * unchanged. But the grammar itself had to come down one layer:
+ * `list-tasks.ts`'s `projectFieldFromBody` reads the same body and must ignore
+ * fenced examples the same way, and the checks layer already depends on this
+ * adapter (`issue-validation.ts` imports `projectsFromBody`), so importing
+ * upward would close a cycle. Duplicating the scanners here would
  * be worse still — two code-recognition grammars for one body is the exact
  * defect class that consolidation removed. Moving them down is the only shape that leaves
  * **one** implementation with the dependency arrow pointing the way it already

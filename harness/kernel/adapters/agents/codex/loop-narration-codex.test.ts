@@ -244,7 +244,7 @@ describe('a recorded developer stream (O4)', () => {
   test('nothing in the translated list carries output, content or a home path', () => {
     const state = createNarrationState()
     const out = lines.flatMap((line, i) => translateCodexEvent(JSON.parse(line), state, ctx(i * 1000)))
-    expect(JSON.stringify(out)).not.toMatch(/aggregated_output|\/Users\/|AEG:CLOSES|ACK: /)
+    expect(JSON.stringify(out)).not.toMatch(/aggregated_output|\/Users\/|:CLOSES:|ACK: /)
   })
 })
 

@@ -73,7 +73,7 @@ export async function resolveRepo(exec: ResolveRepoExec = defaultExec): Promise<
     } catch (err) {
       // Transient failure (timeout, spawn error). Do NOT cache — retry next call.
       const message = err instanceof Error ? err.message : String(err)
-      console.warn(`[aeg-forge-state] resolveRepo: git remote lookup failed (will retry): ${message}`)
+      console.warn(`[resolve-repo] resolveRepo: git remote lookup failed (will retry): ${message}`)
       return null
     } finally {
       inflight = undefined

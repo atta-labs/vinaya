@@ -39,7 +39,7 @@
  *     literal shaped like it does not satisfy the type, and `new ScanContext`
  *     is a compile error outside this module. `ScanContext.from` is the only
  *     way to obtain one. (No brand pattern existed anywhere in this repo to
- *     reuse — `packages/aeg-core/src` has none — so this is the narrowest
+ *     reuse — the checks' own sources had none — so this is the narrowest
  *     technique that needed no new dependency and no build-config change:
  *     `declaration: true` is on repo-wide, which rules out the non-exported
  *     `unique symbol` spelling.)
@@ -64,7 +64,7 @@
  *     the bypass has to be written as an explicit, greppable cast instead of
  *     an innocent-looking object literal.
  *  2. **A consumer that never asks for a `ScanContext`.** `anchoredRegion` /
- *     `anchoredRegionBounds` remain public exports of `@attalabs/aeg-core`,
+ *     `anchoredRegionBounds` remain public exports of `anchored-region.ts`,
  *     and a new check could call one directly on `PR_BODY` and diverge again.
  *     Closing that would mean the check runner handing checks a context
  *     instead of a raw `PR_BODY` string — a change to check dispatch, out of
