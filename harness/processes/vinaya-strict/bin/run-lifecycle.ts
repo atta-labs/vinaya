@@ -107,6 +107,9 @@ import { crossRunnerRefusal } from '../loops/dev-review/run-control/task-run-eng
 import type { HeldCleanVerdict } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import type { ParsedLaunch } from '../loops/dev-review/dispatch/dispatch'
 import type { LegExit } from '../executing/log-events'
+import { gitToplevel } from '../tools/doctrine/resolve-doctrine'
+import { briefCliInvocation } from '../tools/own-version'
+import { detectVendoredVinaya } from '../tools/self-host'
 
 // What the Engine runner does around a run, apart from the run itself: the one
 // driver lock per task, the choice between resuming a checkpoint and starting
@@ -763,9 +766,14 @@ export function claimResume(root: string, request: ResumeRequest, deps: ResumeDe
   }
 }
 
-/** The command that sets a task's checkpoint aside so the next run starts on `agent`. */
-export const taskSwitchCommand = (task: number, agent: string): string =>
-  `bun apps/cli/src/index.ts task switch --issue ${task} --agent ${agent}`
+/**
+ * The command that sets a task's checkpoint aside so the next run starts on `agent`, in the command-line form the
+ * repository can run: its root is the working directory's git top level, else the working directory itself.
+ */
+export const taskSwitchCommand = (task: number, agent: string): string => {
+  const root = gitToplevel(process.cwd()) ?? process.cwd()
+  return `${briefCliInvocation(detectVendoredVinaya(root), root)} task switch --issue ${task} --agent ${agent}`
+}
 
 /** The model a resume runs with: the one `--model` names, else the one the run's checkpoint recorded, else the vendor's default. */
 export function resumeModel(explicit: string | undefined, recorded: string | undefined): string | undefined {

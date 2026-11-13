@@ -1,6 +1,7 @@
 import { initialLoopState } from '../../tools/dev-review-policy/types'
 import { afterAll, describe, expect, test } from 'bun:test'
 import net from 'node:net'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -43,6 +44,7 @@ import {
 import { recordedHandoff } from '../handoff-fakes'
 import { vinayaToolGrantPolicy } from '../../integration/policies/vinaya-policies'
 import { ENGINE_RUNNERS } from './runners'
+import { ownVersion } from '../../tools/own-version'
 
 // Owner: agent B. An unpushed head never reaches a CI read; dev-tools hosts are replaced only at a dispatch boundary;
 // a checkpoint resumes only on the agent it started with.
@@ -286,6 +288,22 @@ describe('engine resume', () => {
     expect(legacy).toContain('start the task fresh')
     expect(crossAgentResumeRefusal(null, 7, 'codex', '/run/checkpoints.sqlite')).toContain('start the task fresh')
     expect(crossAgentResumeRefusal(provenanceFor('codex'), 7, 'codex', '/run/checkpoints.sqlite')).toBeNull()
+  })
+
+  test('in a repository that does not vendor the command line, the refusal names the published task switch form', () => {
+    const repo = scratchDir('recovery-adopter-')
+    execFileSync('git', ['init', '--quiet', repo], { stdio: 'ignore' })
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'adopter', private: true }))
+    mkdirSync(join(repo, 'src'), { recursive: true })
+    const previous = process.cwd()
+    process.chdir(join(repo, 'src'))
+    try {
+      const crossed = crossAgentResumeRefusal(provenanceFor('codex'), 7, 'claude', '/run/checkpoints.sqlite')
+      expect(crossed).toContain(`npx --yes @attalabs/vinaya@${ownVersion()} task switch --issue 7 --agent claude`)
+      expect(crossed).not.toContain('bun apps/cli/src/index.ts')
+    } finally {
+      process.chdir(previous)
+    }
   })
 
   for (const [name, recorded] of [
