@@ -2090,13 +2090,13 @@ describe('checkRationaleSurfaceCoverage (task-run-v1 11, O4)', () => {
     const namedImporter = /its importer `([^`]+)`/.exec(refused.errors[0] ?? '')?.[1]
     expect(namedImporter).toBe('apps/consumer/call.ts')
     for (const exclusion of [namedImporter, namedImporter?.slice(0, namedImporter.lastIndexOf('/'))]) {
-      const fixed = body.trimEnd() + ` Out: \`${exclusion}\`.\n`
+      const fixed = `${body.trimEnd()} Out: \`${exclusion}\`.\n`
       expect(checkPinnedFileImportersCovered(fixed, importers).status).toBe('pass')
       expect(checkRationaleSurfaceCoverage(fixed, null).status).toBe('pass')
     }
     // A path earlier in Boundary is still a touch claim, even when Out names it too.
     expect(
-      checkRationaleSurfaceCoverage(body.trimEnd() + ' Also `other/touch.ts`. Out: `other/touch.ts`.', null).status
+      checkRationaleSurfaceCoverage(`${body.trimEnd()} Also \`other/touch.ts\`. Out: \`other/touch.ts\`.`, null).status
     ).toBe('fail')
   })
   const surface = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n'
@@ -2183,7 +2183,8 @@ describe('generated artifact coverage', () => {
     }
   ]
   it('refuses a transitive source and accepts the exact printed Surface fix', () => {
-    const body = '## Surface\n\nin: integration\nout: —\n\n**Boundary** — Pinned files: `integration/seats.ts`.\n'
+    const body =
+      'Generated-files: `integration/adapters.ts` — regenerates\n\n## Surface\n\nin: integration\nout: —\n\n**Boundary** — Pinned files: `integration/seats.ts`.\n'
     const result = checkGeneratedArtifactsCovered(body, artifacts)
     expect(result.status).toBe('fail')
     expect(result.errors[0]).toContain('`.mcp.json`')
@@ -2195,7 +2196,8 @@ describe('generated artifact coverage', () => {
     expect(checkRationaleSurfaceCoverage(fixed, null).status).toBe('pass')
   })
   it('does not treat Boundary Out as a pin or Surface out as generated coverage', () => {
-    const body = '## Surface\n\nin: integration\nout: *\n\n**Boundary** — Pinned files: `integration/seats.ts`.\n'
+    const body =
+      'Generated-files: `integration/adapters.ts` — regenerates\n\n## Surface\n\nin: integration\nout: *\n\n**Boundary** — Pinned files: `integration/seats.ts`.\n'
     expect(checkGeneratedArtifactsCovered(body, artifacts).status).toBe('fail')
     expect(checkGeneratedArtifactsCovered(body.replace('Pinned files:', 'Out:'), artifacts).status).toBe('pass')
     const excluded = body.replace('in: integration', 'in: integration, *')
@@ -2203,6 +2205,26 @@ describe('generated artifact coverage', () => {
     expect(refusal.status).toBe('fail')
     expect(refusal.errors[0]).toContain('Remove `*` from `out:`')
     expect(checkGeneratedArtifactsCovered(excluded.replace('out: *', 'out: —'), artifacts).status).toBe('pass')
+  })
+  it('requires one declaration per writer even when its output is in the Surface', () => {
+    const body = '## Surface\nin: integration, *\nout: —\n\n**Boundary** — Pinned files: `integration/adapters.ts`.\n'
+    expect(checkGeneratedArtifactsCovered(body, artifacts).errors).toHaveLength(1)
+    expect(checkGeneratedArtifactsCovered(body, artifacts).errors[0]).toContain('Declare exactly one line')
+    const several = [...artifacts, { ...artifacts[0]!, path: 'AGENTS.md' }]
+    expect(
+      checkGeneratedArtifactsCovered(`Generated-files: \`integration/adapters.ts\` — regenerates\n${body}`, several)
+        .status
+    ).toBe('pass')
+  })
+  it('unchanged output requires no output edit; duplicate, contradictory, and fenced declarations fail', () => {
+    const body = '## Surface\nin: integration\nout: *\n\n**Boundary** — Pinned files: `integration/seats.ts`.\n'
+    const line = 'Generated-files: `integration/adapters.ts` — output unchanged\n'
+    expect(checkGeneratedArtifactsCovered(line + body, artifacts).status).toBe('pass')
+    expect(checkGeneratedArtifactsCovered(line + line + body, artifacts).status).toBe('fail')
+    expect(
+      checkGeneratedArtifactsCovered(line + line.replace('output unchanged', 'regenerates') + body, artifacts).status
+    ).toBe('fail')
+    expect(checkGeneratedArtifactsCovered(`\`\`\`\n${line}\`\`\`\n${body}`, artifacts).status).toBe('fail')
   })
 })
 

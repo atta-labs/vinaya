@@ -20,10 +20,9 @@
  * `resolveNewestFrozenBrief`) — `dispatchTask` (below) and the review loop
  * (`dev-review-loop.ts`'s `fetchFrozenBrief`) share the same resolver.
  *
- * Order matters: the brief is rendered FIRST, before the existing-comment
- * check even runs — a render that refuses posts nothing and never touches
- * the forge to look for a prior dispatch. Cheaper checks are not run first;
- * the render is the one check every other step depends on being real.
+ * Order matters: the Issue write gate and deterministic repairs run after
+ * checkout freshness but before rendering. The existing-comment check then
+ * precedes the frozen post; a refused candidate is never written.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -33,7 +32,7 @@ import { join } from 'node:path'
 import { FROZEN_BRIEF_V1_MARKER, briefMarkerFor, resolveNewestFrozenBrief } from './brief-validation'
 import { briefHash } from './review-input-manifest'
 import { isPrincipal } from './waiver-label'
-import { parseIssueSurface } from './issue-validation'
+import { boundaryPinnedFiles, parseIssueSurface } from './issue-validation'
 import { parseRationaleFields } from './brief-render'
 import { decideIssueAssignment } from '../../../../kernel/adapters/tracker/github-issues/issue-assignment'
 import {
@@ -44,7 +43,20 @@ import {
 } from '../../loops/dev-review/dispatch/dispatch.js'
 import { assembleAndRenderBrief, assembleAndRenderBriefForIssue } from './brief-assembly.js'
 import { resolveTrustedPrincipals } from '../../integration/config/compose.js'
-import { collectTaskIssueErrors, currentGhLogin, postMarkedComment } from './forge/forge-write.js'
+import {
+  collectTaskIssueErrors,
+  currentGhLogin,
+  postMarkedComment,
+  readPinnedFileImporters
+} from './forge/forge-write.js'
+import {
+  readUnchangedRenames,
+  repairPlan,
+  repairPreservesScope,
+  waitForDependencies,
+  type DependencyWaitClock
+} from './plan-repair'
+import type { CheckError } from '../../../../kernel/gates/checks/contract'
 import { isForgeReadOversize, readIssueComments } from '../../../../kernel/adapters/code-host/github/forge-read.js'
 import { emitCheckError } from '../../../../kernel/gates/checks/contract'
 
@@ -186,7 +198,7 @@ export async function validateIssueWriteGate(
     return
   }
   throw new DispatchTaskError(
-    `Issue #${issue}'s write gate refused — the same findings \`task_issue_edit\` would report:\n${errors
+    `Issue #${issue}'s write gate refused — needs a ruling on the following findings, the same findings \`task_issue_edit\` would report:\n${errors
       .map((e) => `  - [${e.severity}] [${e.check}] ${e.message}`)
       .join('\n')}`
   )
@@ -197,6 +209,80 @@ export async function runIssueWriteGate(issue: number, retryCommand: string): Pr
   const body = fetchIssueBody(issue)
   const labels = fetchIssueLabels(issue)
   await validateIssueWriteGate(body, labels, issue, retryCommand)
+}
+
+export type DispatchRepairDeps = {
+  collect: (body: string, labels: string[], issue: number, retryCommand: string) => Promise<CheckError[]>
+  importers: typeof readPinnedFileImporters
+  renames: (body: string) => ReturnType<typeof readUnchangedRenames>
+  writeBody: (issue: number, body: string) => void
+  postRepair: (issue: number, reasons: string[]) => void
+}
+
+const defaultRepairDeps: DispatchRepairDeps = {
+  collect: async (body, labels, issue, retry) =>
+    (
+      await collectTaskIssueErrors(
+        body,
+        null,
+        labels,
+        retry,
+        issue,
+        { kind: 'edit', issueRef: String(issue) },
+        undefined,
+        'pull-requests'
+      )
+    ).errors,
+  importers: readPinnedFileImporters,
+  renames: (body) => readUnchangedRenames(process.cwd(), boundaryPinnedFiles(body)),
+  writeBody: (issue, body) => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-plan-repair-'))
+    try {
+      const path = join(dir, 'body.md')
+      writeFileSync(path, body, 'utf8')
+      sh('gh', ['issue', 'edit', String(issue), '--body-file', path])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  },
+  postRepair: (issue, reasons) => {
+    postMarkedComment(
+      'issue',
+      String(issue),
+      '<!-- vinaya:plan-repair:v1 -->',
+      `Dispatch repaired the Issue before creating a worktree:\n${reasons.map((r) => `- ${r}`).join('\n')}`
+    )
+  }
+}
+
+/** The dispatch edit is validated through the same gate, atomically kept only on a passing candidate. */
+export async function repairIssueAtDispatch(
+  issue: number,
+  body: string,
+  labels: string[],
+  retryCommand: string,
+  deps: DispatchRepairDeps = defaultRepairDeps
+): Promise<string> {
+  const findings = await deps.collect(body, labels, issue, retryCommand)
+  if (!findings.some((e) => e.severity !== 'warning')) {
+    for (const finding of findings) emitCheckError(finding)
+    return body
+  }
+  const repaired = await repairPlan({
+    body,
+    findings,
+    importers: deps.importers,
+    renames: deps.renames(body),
+    validate: (candidate) => deps.collect(candidate, labels, issue, retryCommand)
+  })
+  if (!repaired || !repairPreservesScope(body, repaired.body)) {
+    throw new DispatchTaskError(
+      `Issue #${issue}'s write gate refused — needs a ruling on:\n${findings.map((e) => `  - [${e.check}] ${e.message}`).join('\n')}`
+    )
+  }
+  deps.writeBody(issue, repaired.body)
+  deps.postRepair(issue, repaired.reasons)
+  return repaired.body
 }
 
 /**
@@ -595,6 +681,8 @@ export type PrepareTaskResult = { issue: number; brief: string; commentUrl: stri
  * byte-identical would mean the seam belonged somewhere else entirely.
  */
 export type PrepareTaskDeps = {
+  repairIssue?: typeof repairIssueAtDispatch
+  dependencyClock?: DependencyWaitClock
   assembleAndRenderBrief: typeof assembleAndRenderBrief
   findExistingFrozenBrief: (n: number) => (IssueComment & { version: number }) | null
   postMarkedComment: typeof postMarkedComment
@@ -607,6 +695,7 @@ export type PrepareTaskDeps = {
 }
 
 const defaultPrepareTaskDeps: PrepareTaskDeps = {
+  repairIssue: repairIssueAtDispatch,
   assembleAndRenderBrief,
   findExistingFrozenBrief,
   postMarkedComment,
@@ -652,10 +741,23 @@ export async function prepareTask(
 
   validateSupersede(supersede)
 
-  const result = await deps.assembleAndRenderBrief(tranche, String(n))
+  const retryCommand = `vinaya-task-brief ${tranche} ${n}`
+  const beforeIssueRender =
+    deps.repairIssue && !supersede?.surfaceIn?.length
+      ? (issue: number, body: string, labels: string[]) => deps.repairIssue!(issue, body, labels, retryCommand)
+      : undefined
+  const result = await waitForDependencies(
+    () => deps.assembleAndRenderBrief(tranche, String(n), undefined, undefined, { beforeIssueRender }),
+    (r) =>
+      !r.ok &&
+      !!r.dispatchBlockerDetails?.length &&
+      r.dispatchBlockerDetails.every((b) => b.class === 'depends-on-not-merged') &&
+      r.missing.every((m) => r.dispatchBlockerDetails!.some((b) => b.message === m)),
+    deps.dependencyClock
+  )
   if (!result.ok) {
     throw new DispatchTaskError(
-      `cannot dispatch — brief_render refused:\n${result.missing.map((m) => `  - ${m}`).join('\n')}`
+      `cannot dispatch — brief_render refused; needs a ruling on:\n${result.missing.map((m) => `  - ${m}`).join('\n')}`
     )
   }
 
@@ -665,7 +767,6 @@ export async function prepareTask(
   // the live bug: dispatching task 3 posted its brief on Issue #3, an
   // unrelated merged Issue, because this code used to read `n` here.
   const issue = result.issue
-  const retryCommand = `vinaya-task-brief ${tranche} ${n}`
 
   // O2 — the SAME Issue write gate `task_issue_create`/`task_issue_edit` already
   // enforce, run over this Issue's live body before any brief freezes from
@@ -676,7 +777,7 @@ export async function prepareTask(
   // exists for a live body the gate refuses only for a Surface too narrow, and
   // `widenSurface` grades the widened body through the same gate before it
   // writes, so the widened body is what gets graded.
-  if (!(supersede?.surfaceIn && supersede.surfaceIn.length > 0)) {
+  if (!beforeIssueRender && !(supersede?.surfaceIn && supersede.surfaceIn.length > 0)) {
     await deps.runIssueWriteGate(issue, retryCommand)
   }
 
@@ -740,6 +841,8 @@ export type PrepareIssueTaskInput = {
 
 /** Same shape as `PrepareTaskDeps`, over `assembleAndRenderBriefForIssue` instead of the tranche-keyed renderer. */
 export type PrepareIssueTaskDeps = {
+  repairIssue?: typeof repairIssueAtDispatch
+  dependencyClock?: DependencyWaitClock
   assembleAndRenderBriefForIssue: typeof assembleAndRenderBriefForIssue
   findExistingFrozenBrief: (n: number) => (IssueComment & { version: number }) | null
   postMarkedComment: typeof postMarkedComment
@@ -750,6 +853,7 @@ export type PrepareIssueTaskDeps = {
 }
 
 const defaultPrepareIssueTaskDeps: PrepareIssueTaskDeps = {
+  repairIssue: repairIssueAtDispatch,
   assembleAndRenderBriefForIssue,
   findExistingFrozenBrief,
   postMarkedComment,
@@ -784,20 +888,32 @@ export async function prepareIssueTask(
 
   validateSupersede(supersede)
 
-  const result = await deps.assembleAndRenderBriefForIssue(n)
+  const retryCommand = `vinaya-task-brief --issue ${n}`
+  const beforeIssueRender =
+    deps.repairIssue && !supersede?.surfaceIn?.length
+      ? (issue: number, body: string, labels: string[]) => deps.repairIssue!(issue, body, labels, retryCommand)
+      : undefined
+  const result = await waitForDependencies(
+    () => deps.assembleAndRenderBriefForIssue(n, undefined, { beforeIssueRender }),
+    (r) =>
+      !r.ok &&
+      !!r.dispatchBlockerDetails?.length &&
+      r.dispatchBlockerDetails.every((b) => b.class === 'depends-on-not-merged') &&
+      r.missing.every((m) => r.dispatchBlockerDetails!.some((b) => b.message === m)),
+    deps.dependencyClock
+  )
   if (!result.ok) {
     throw new DispatchTaskError(
-      `cannot dispatch — brief_render refused:\n${result.missing.map((m) => `  - ${m}`).join('\n')}`
+      `cannot dispatch — brief_render refused; needs a ruling on:\n${result.missing.map((m) => `  - ${m}`).join('\n')}`
     )
   }
   const issue = result.issue
-  const retryCommand = `vinaya-task-brief --issue ${n}`
 
   // A supersede that widens `## Surface` skips this pre-widen run: the widen
   // exists for a live body the gate refuses only for a Surface too narrow, and
   // `widenSurface` grades the widened body through the same gate before it
   // writes, so the widened body is what gets graded.
-  if (!(supersede?.surfaceIn && supersede.surfaceIn.length > 0)) {
+  if (!beforeIssueRender && !(supersede?.surfaceIn && supersede.surfaceIn.length > 0)) {
     await deps.runIssueWriteGate(issue, retryCommand)
   }
 
@@ -871,6 +987,8 @@ export async function prepareTaskOrIssue(input: PrepareTaskOrIssueInput): Promis
  * hitting a real forge or mocking a module.
  */
 export type DispatchTaskDeps = {
+  repairIssue?: typeof repairIssueAtDispatch
+  dependencyClock?: DependencyWaitClock
   assembleAndRenderBrief: typeof assembleAndRenderBrief
   findExistingFrozenBrief: (n: number) => (IssueComment & { version: number }) | null
   postMarkedComment: typeof postMarkedComment
@@ -886,6 +1004,7 @@ export type DispatchTaskDeps = {
 }
 
 const defaultDeps: DispatchTaskDeps = {
+  repairIssue: repairIssueAtDispatch,
   assembleAndRenderBrief,
   findExistingFrozenBrief,
   postMarkedComment,
@@ -928,6 +1047,8 @@ export async function dispatchTask(
   const prep = await prepareTask(
     { tranche, n },
     {
+      repairIssue: deps.repairIssue,
+      dependencyClock: deps.dependencyClock,
       assembleAndRenderBrief: deps.assembleAndRenderBrief,
       findExistingFrozenBrief: deps.findExistingFrozenBrief,
       postMarkedComment: deps.postMarkedComment,

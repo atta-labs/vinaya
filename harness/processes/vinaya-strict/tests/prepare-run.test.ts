@@ -26,6 +26,7 @@ import {
   createActions,
   createRoleLaunchers,
   readinessFailedOnForgeRead,
+  readinessWaitsForDependency,
   sandboxProbePlanFor,
   type TaskInput
 } from '../executing/actions'
@@ -33,6 +34,7 @@ import { createHandoff } from '../executing/handoff'
 import { handoffHaltReason } from '../executing/log-events'
 import { developerSourceStoreDir, engineLiveDevToolsContext, liveTaskInput } from '../bin/run-engine'
 import { recordedHandoff } from './handoff-fakes'
+import { DEPENDENCY_WAIT_BOUND_MS, DEPENDENCY_WAIT_INTERVAL_MS } from '../tools/task-contract/plan-repair'
 
 const TASK = 10
 const URL_SOURCE = 'https://docs.example.com/hooks'
@@ -104,6 +106,7 @@ function setup(overrides: Partial<TaskInput> = {}) {
         calls.push('worktree')
       },
       fetchSourceRevision: () => 'revision-1',
+      installWorktreeDependencies: () => {},
       localGateControl: () => activeGate,
       probeAgentSandbox: async () => {
         calls.push('probe')
@@ -595,6 +598,77 @@ const FORGE_OUTAGE_OUTPUT = [
   'enforcement controls',
   'all required controls are active'
 ].join('\n')
+
+const DEPENDENCY_FINDING =
+  'dispatch-gate depends-on: task 10 depends on 9 (#9), whose PR is not merged yet — not dispatchable, it serializes behind it.'
+const DEPENDENCY_OUTPUT = [
+  '$ bun check-dispatch-readiness.ts --issue 10',
+  JSON.stringify({ schema: 1, check: 'dispatch-readiness', severity: 'error', message: DEPENDENCY_FINDING }),
+  '$ bun verify-dispatch.ts --issue 10 --existing-work',
+  'dispatch-readiness: NOT READY',
+  `  ✗ ${DEPENDENCY_FINDING}`,
+  'leftover-detection: clean',
+  'verify-dispatch: NOT READY',
+  'all required controls are active'
+].join('\n')
+
+describe('setup waits within a fixed bound for unmerged dependencies', () => {
+  test('waits only when both readiness reports fail solely on dependencies', () => {
+    expect(readinessWaitsForDependency(DEPENDENCY_OUTPUT)).toBe(true)
+    expect(readinessWaitsForDependency(`${DEPENDENCY_OUTPUT}\n  ✗ conflicting task is open`)).toBe(false)
+    expect(
+      readinessWaitsForDependency(DEPENDENCY_OUTPUT.replace('leftover-detection: clean', 'leftover-detection: stop'))
+    ).toBe(false)
+    expect(readinessWaitsForDependency(FORGE_OUTAGE_OUTPUT)).toBe(false)
+    expect(readinessWaitsForDependency(DEPENDENCY_OUTPUT.replace('verify-dispatch: NOT READY', 'script crashed'))).toBe(
+      false
+    )
+  })
+
+  for (const merges of [true, false]) {
+    test(
+      merges
+        ? 'creates the worktree only after the dependency merges'
+        : 'pauses only when the total dependency wait bound is spent',
+      async () => {
+        let now = 0
+        let checks = 0
+        const sleeps: number[] = []
+        const { task, run, calls, recorded, runtimeDir } = setup()
+        task.bound = {
+          ...task.bound,
+          dependencyClock: {
+            now: () => now,
+            sleep: async (ms) => {
+              expect(calls).not.toContain('worktree')
+              sleeps.push(ms)
+              now += ms
+            }
+          },
+          checkTaskDispatchReadiness: () => {
+            checks++
+            return merges && checks > 2 ? { ready: true, output: 'ready' } : { ready: false, output: DEPENDENCY_OUTPUT }
+          }
+        }
+        const result = await run('vinaya.prepare-run')
+        expect(sleeps.every((ms) => ms === DEPENDENCY_WAIT_INTERVAL_MS)).toBe(true)
+        if (merges) {
+          expect(result.exitCode).toBe(0)
+          expect(now).toBe(2 * DEPENDENCY_WAIT_INTERVAL_MS)
+          expect(calls).toContain('worktree')
+          expect(recorded.calls).toEqual([])
+        } else {
+          expect(result.exitCode).toBe(1)
+          expect(now).toBe(DEPENDENCY_WAIT_BOUND_MS)
+          expect(calls).not.toContain('worktree')
+          expect(paused(runtimeDir)).toMatchObject({ reason: 'escalation' })
+          expect(paused(runtimeDir)?.detail).toContain(DEPENDENCY_FINDING)
+          expect(paused(runtimeDir)?.detail).toContain('needs a ruling')
+        }
+      }
+    )
+  }
+})
 
 describe('setup re-checks readiness across a forge outage', () => {
   test('a readiness result that failed only on forge reads is told apart from a real not-ready', () => {

@@ -24,6 +24,30 @@ import {
 
 const FIXTURE_REVISION = 'a'.repeat(40)
 
+describe('generated-file declarations in a rendered brief', () => {
+  for (const mode of ['regenerates', 'output unchanged']) {
+    it(`renders the authoritative ${mode} instruction over contradictory Boundary prose`, () => {
+      const facts = baseFacts({
+        rationale: parseRationaleFields(
+          `Generated-files: \`integration/writer.ts\` — ${mode}\n${ISSUE_BODY.replace('Keep it small.', 'Never change the generated files.')}`
+        )
+      })
+      const result = renderBrief(facts, TEMPLATE)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('Generated files (overrides other Issue prose)')
+      if (mode === 'regenerates')
+        expect(result.brief).toContain(
+          'Run `bun apps/cli/src/index.ts upgrade` and commit the generated files written by `integration/writer.ts`'
+        )
+      else
+        expect(result.brief).toContain(
+          'Keep the generated files written by `integration/writer.ts` untouched and confirm the drift check stays green'
+        )
+    })
+  }
+})
+
 const TEMPLATE = readFileSync(join(import.meta.dirname, '../../artifacts/templates/brief-template.md'), 'utf8')
 
 const ISSUE_BODY = `

@@ -18,9 +18,13 @@ import {
   prepareIssueTask,
   prepareTask,
   resolveModelFromRationale,
+  repairIssueAtDispatch,
   validateIssueWriteGate,
   widenSurfaceInLine
 } from '../../tools/task-contract/dispatch-task.js'
+import { checkPinnedFileImportersCovered, boundaryPinnedFiles } from '../../tools/task-contract/issue-validation'
+import { DEPENDENCY_WAIT_BOUND_MS } from '../../tools/task-contract/plan-repair'
+import type { CheckError } from '../../../../kernel/gates/checks/contract'
 
 /** The default branch's `vinaya.config.json` the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`) is served, base64-encoded as the contents API returns it. */
 const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')
@@ -32,6 +36,13 @@ const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboo
  */
 function servePrincipalsConfig(): () => void {
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-principals-gh-'))
+  const gitPath = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+  writeFileSync(
+    join(dir, 'git'),
+    `#!/bin/sh\nif [ "$1" = "ls-remote" ]; then printf '%s\\tHEAD\\n' '${head}'; exit 0; fi\nexec '${gitPath.replaceAll("'", "'\\''")}' "$@"\n`
+  )
+  execFileSync('chmod', ['+x', join(dir, 'git')])
   writeFileSync(
     join(dir, 'gh'),
     `#!/bin/sh\nif [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then echo '${PRINCIPALS_CONFIG_B64}'; exit 0; fi\nexit 1\n`
@@ -448,20 +459,19 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
     expect(existingCheckCalled).toBe(false)
   })
 
-  // O2 (Issue #588) — the Issue write gate now folds a dependency/conflict
-  // dispatch blocker into `severity: 'warning'`, so an EDIT is no longer
-  // refused for it; `task run`/`prepareTask` never reads that classification
-  // field at all — it still refuses on a plain `ok: false`, exactly as
-  // before. `dispatchBlockerDetails` here is the SAME shape
-  // `assembleAndRenderBrief` now carries on a real dependency-not-merged
-  // gap (`brief-assembly.test.ts`), present to prove its mere presence
-  // changes nothing about dispatch's own refusal.
-  it('O2 (#588): still refuses, naming the dependency, when the render fails on an unmerged Depends-on — the new classification field changes nothing here', async () => {
+  it('refuses, naming the dependency, only after the dependency wait bound is spent', async () => {
     let existingCheckCalled = false
+    let now = 0
     await expect(
       prepareTask(
         { tranche: 'task-run-v1', n: 1 },
         preparePostingDeps({
+          dependencyClock: {
+            now: () => now,
+            sleep: async (ms) => {
+              now += ms
+            }
+          },
           assembleAndRenderBrief: async () => ({
             ok: false,
             missing: ['dispatch-gate depends-on: task 1 depends on #999, whose PR is not merged yet.'],
@@ -479,6 +489,7 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
         })
       )
     ).rejects.toThrow(/depends on #999/)
+    expect(now).toBe(DEPENDENCY_WAIT_BOUND_MS)
     expect(existingCheckCalled).toBe(false)
   })
 
@@ -1153,6 +1164,153 @@ describe('validateIssueWriteGate (O2) — the real Issue write gate, exercised a
     await expect(
       validateIssueWriteGate(bodyWithWholeSuiteTestPlan, [], 427, 'vinaya task brief backlog --issue 427')
     ).rejects.toThrow(/runs a test runner with no test-file argument/)
+  })
+})
+
+describe('dispatch repairs before rendering or freezing', () => {
+  const original =
+    '## Objectives\nO1. Keep the objective.\n\n## Surface\nin: src\nout: —\n\n**Boundary** — Pinned files: `src/module.ts`. Out: other work.\n'
+  const finding = (message: string): CheckError => ({
+    schema: 1,
+    check: 'issue-content',
+    severity: 'error',
+    message,
+    agent_recovery_prompt: 'Fix.'
+  })
+
+  for (const kind of ['tranche', 'backlog'] as const) {
+    for (const repair of ['importer', 'rename'] as const) {
+      it(`${kind} repairs an uncovered ${repair} before rendering, records the reason, and freezes the edited body`, async () => {
+        let liveBody = original
+        const calls: string[] = []
+        const importerFacts = repair === 'importer' ? [{ file: 'src/module.ts', importers: ['consumer/use.ts'] }] : []
+        const repairIssue: typeof repairIssueAtDispatch = (issue, body, labels, retry) =>
+          repairIssueAtDispatch(issue, body, labels, retry, {
+            collect: async (candidate) =>
+              repair === 'importer'
+                ? checkPinnedFileImportersCovered(candidate, importerFacts).errors.map(finding)
+                : boundaryPinnedFiles(candidate).includes('src/module.ts')
+                  ? [finding('missing pin')]
+                  : [],
+            importers: () => importerFacts,
+            renames: () => (repair === 'rename' ? [{ from: 'src/module.ts', to: 'src/renamed.ts' }] : []),
+            writeBody: (issue, candidate) => {
+              expect(issue).toBe(427)
+              calls.push('write')
+              liveBody = candidate
+            },
+            postRepair: (_, reasons) => {
+              expect(reasons.length).toBeGreaterThan(0)
+              calls.push('reason')
+            }
+          })
+        const render = async (opts?: {
+          beforeIssueRender?: (issue: number, body: string, labels: string[]) => Promise<string>
+        }) => {
+          expect(opts?.beforeIssueRender).toBeDefined()
+          const body = await opts!.beforeIssueRender!(427, liveBody, [])
+          calls.push('render')
+          expect(body).toBe(liveBody)
+          return { ok: true as const, brief: body, issue: 427 }
+        }
+        const shared = {
+          repairIssue,
+          findExistingFrozenBrief: () => null,
+          postMarkedComment: (_target: 'pr' | 'issue', _ref: string, _marker: string, text: string) => {
+            calls.push('freeze')
+            expect(text).toContain(liveBody)
+            return 'https://example.com/brief'
+          },
+          resolveDispatchAuthorization: () => ({ authorized: true, login: 'principal' }),
+          runIssueWriteGate: async () => {
+            throw new Error('already graded before render')
+          },
+          widenSurface: async () => {
+            throw new Error('must not widen')
+          }
+        }
+        if (kind === 'tranche')
+          await prepareTask(
+            { tranche: 'fixture', n: 1 },
+            {
+              ...shared,
+              assembleAndRenderBrief: async (_slug, _id, _surface, _body, opts) => render(opts)
+            }
+          )
+        else
+          await prepareIssueTask(
+            { issue: 427 },
+            {
+              ...shared,
+              assembleAndRenderBriefForIssue: async (_issue, _override, opts) => render(opts)
+            }
+          )
+        expect(calls).toEqual(['write', 'reason', 'render', 'freeze'])
+      })
+    }
+  }
+
+  it('unrepairable findings need a ruling and write or post nothing', async () => {
+    await expect(
+      repairIssueAtDispatch(427, original, [], 'retry', {
+        collect: async () => [finding('objectives conflict')],
+        importers: () => [],
+        renames: () => [],
+        writeBody: () => {
+          throw new Error('must not write')
+        },
+        postRepair: () => {
+          throw new Error('must not post')
+        }
+      })
+    ).rejects.toThrow(/needs a ruling on:[\s\S]*objectives conflict/)
+  })
+
+  it('a dependency that merges within the bound is re-rendered and dispatched', async () => {
+    let checks = 0
+    let now = 0
+    const blocker = { class: 'depends-on-not-merged' as const, message: 'dependency not merged' }
+    const result = await prepareTask(
+      { tranche: 'fixture', n: 1 },
+      preparePostingDeps({
+        dependencyClock: {
+          now: () => now,
+          sleep: async (ms) => {
+            now += ms
+          }
+        },
+        assembleAndRenderBrief: async () =>
+          ++checks === 1
+            ? { ok: false, missing: [blocker.message], dispatchBlockerDetails: [blocker] }
+            : { ok: true, brief: BRIEF_TEXT, issue: 427 },
+        postMarkedComment: () => 'https://example.com/brief'
+      })
+    )
+    expect(result.issue).toBe(427)
+    expect(checks).toBe(2)
+    expect(now).toBe(30_000)
+  })
+
+  it('a dependency plus a missing section refuses immediately', async () => {
+    const blocker = { class: 'depends-on-not-merged' as const, message: 'dependency not merged' }
+    await expect(
+      prepareTask(
+        { tranche: 'fixture', n: 1 },
+        preparePostingDeps({
+          dependencyClock: {
+            now: () => 0,
+            sleep: async () => {
+              throw new Error('must not wait')
+            }
+          },
+          assembleAndRenderBrief: async () => ({
+            ok: false,
+            missing: [blocker.message, 'missing Test plan'],
+            dispatchBlockerDetails: [blocker]
+          })
+        })
+      )
+    ).rejects.toThrow(/needs a ruling[\s\S]*missing Test plan/)
   })
 })
 

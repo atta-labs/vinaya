@@ -59,7 +59,8 @@ export const BOUND_FUNCTION_CLASSES = {
   refreshPrEvidence: 'effect',
   readComparisonBase: 'read',
   evidenceRetrySleep: 'run-local',
-  setupRetrySleep: 'run-local'
+  setupRetrySleep: 'run-local',
+  dependencyClock: 'run-local'
 } as const satisfies { readonly [K in keyof BoundFunctions]-?: ShadowClass }
 
 /** Every writer and poster a pause hands off to, classified. The control-store records go under the run's own runtime directory. */
