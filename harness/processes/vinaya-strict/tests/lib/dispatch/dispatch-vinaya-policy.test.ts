@@ -488,7 +488,7 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     // a developer dispatch always carries one, since a directory scope is
     // never null for this role. This block only cares about the first.
     expect(preToolUse.length).toBeGreaterThanOrEqual(1)
-    expect(preToolUse[0]?.matcher).toBe('Bash|Agent|Task')
+    expect(preToolUse[0]?.matcher).toBe('Bash|Agent|Task|Workflow')
     expect(preToolUse[0]?.hooks[0]?.type).toBe('command')
     const hookCommand = preToolUse[0]?.hooks[0]?.command as string
     expect(hookCommand).toMatch(/^bun "/)
@@ -685,7 +685,7 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     expect(decision(run('echo build ok\ngit commit -am fix --no-verify'))?.permissionDecision).toBe('deny')
   })
 
-  it('denies the subagent tool (Agent/Task) when its background flag is set, allows it in the foreground', () => {
+  it('denies every subagent and workflow launch (Agent/Task/Workflow), whatever its background flag says', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
@@ -715,32 +715,22 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     const hookCommand = settings.hooks.PreToolUse[0]?.hooks[0]?.command as string
     const scriptPath = hookCommand.slice('bun "'.length, -1)
 
-    for (const toolName of ['Agent', 'Task']) {
-      const denied = spawnBudgeted(
-        [scriptPath],
-        {
-          input: JSON.stringify({ tool_name: toolName, tool_input: { run_in_background: true } }),
-          encoding: 'utf8'
-        },
-        'PreToolUse hook'
-      )
-      expect(denied.status).toBe(0)
-      const deniedOut = JSON.parse(denied.stdout) as {
-        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string }
+    // Claude Code launches a subagent asynchronously with no flag sent, so an
+    // absent or false flag is no proof the work stays in the foreground.
+    for (const toolName of ['Agent', 'Task', 'Workflow']) {
+      for (const toolInput of [{ run_in_background: true }, { run_in_background: false }, { prompt: 'edit files' }]) {
+        const denied = spawnBudgeted(
+          [scriptPath],
+          { input: JSON.stringify({ tool_name: toolName, tool_input: toolInput }), encoding: 'utf8' },
+          'PreToolUse hook'
+        )
+        expect(denied.status).toBe(0)
+        const deniedOut = JSON.parse(denied.stdout) as {
+          hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string }
+        }
+        expect(deniedOut.hookSpecificOutput.permissionDecision).toBe('deny')
+        expect(deniedOut.hookSpecificOutput.permissionDecisionReason).toMatch(/foreground/)
       }
-      expect(deniedOut.hookSpecificOutput.permissionDecision).toBe('deny')
-      expect(deniedOut.hookSpecificOutput.permissionDecisionReason).toMatch(/foreground/)
-
-      const allowed = spawnBudgeted(
-        [scriptPath],
-        {
-          input: JSON.stringify({ tool_name: toolName, tool_input: { run_in_background: false } }),
-          encoding: 'utf8'
-        },
-        'PreToolUse hook'
-      )
-      expect(allowed.status).toBe(0)
-      expect(allowed.stdout.trim()).toBe('')
     }
   })
 

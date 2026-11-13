@@ -249,8 +249,16 @@ describe('the developer before and after the capability contract', () => {
     const deny = now.permissions.deny.filter((rule: string) => !readRules.includes(rule))
     expect([...deny].sort()).toEqual([...then.permissions.deny, ...NEWLY_DENIED].sort())
     const { denyRead: _denyRead, ...filesystem } = now.sandbox.filesystem
+    // Intended: the pre-tool hook also sees Workflow, which the background guard now denies.
+    const thenHooks = JSON.parse(
+      JSON.stringify(then.hooks).replace(
+        '"Bash|Write|Edit|NotebookEdit|Agent|Task"',
+        '"Bash|Write|Edit|NotebookEdit|Agent|Task|Workflow"'
+      )
+    )
     expect({ ...now, permissions: null, sandbox: { ...now.sandbox, filesystem } }).toEqual({
       ...then,
+      hooks: thenHooks,
       permissions: null
     })
     expect(claude.files['role-mcp.json']).toBe(before.claude.files['role-mcp.json'] as string)

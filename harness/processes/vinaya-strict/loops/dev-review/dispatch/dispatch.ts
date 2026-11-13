@@ -972,15 +972,16 @@ export const COMMIT_PUSH_ON_DEFAULT_BRANCH_DENY_REASON =
   "Dispatched sessions cannot commit or push while the shell's working directory is a checkout on this repo's default branch — do this from a worktree instead. This is defense in depth beside the pre-push hook, not the only guard."
 
 /**
- * The subagent tool (`Agent`/`Task` — both names are checked, as a
- * dispatched session may see either) defaults `run_in_background` to true,
- * so an unattended developer session that never sets it explicitly would
- * otherwise background every subagent it spawns — the same failure mode
- * `BACKGROUND_DENY_REASON` closes for Bash, applied to the other tool that
- * can start background work.
+ * The subagent tools (`Agent`/`Task` — both names are checked, as a
+ * dispatched session may see either — and `Workflow`) start work that can
+ * outlive the session's turn: Claude Code launches a subagent asynchronously
+ * with no `run_in_background` flag sent at all, and a workflow always runs in
+ * the background. The turn then ends with that work unfinished — the same
+ * failure mode `BACKGROUND_DENY_REASON` closes for Bash — so every subagent
+ * launch is denied, whatever its arguments say.
  */
 export const SUBAGENT_BACKGROUND_DENY_REASON =
-  'Dispatched sessions cannot run a subagent in the background — pass run_in_background: false (or omit it) and run it in the foreground instead.'
+  'Dispatched sessions cannot launch a subagent or workflow — it runs in the background and is cut off when the turn ends. Do the work yourself in the foreground instead.'
 
 function denyOutput(reason: string): string {
   return (
@@ -1021,7 +1022,7 @@ function backgroundDenyHookScript(): string {
     denyOutput(GIT_FORCE_OR_SKIP_VERIFY_DENY_REASON),
     "    } else if (e.tool_name === 'Bash' && commandCommitsOrPushesOnDefaultBranch(input.command)) {",
     denyOutput(COMMIT_PUSH_ON_DEFAULT_BRANCH_DENY_REASON),
-    "    } else if ((e.tool_name === 'Agent' || e.tool_name === 'Task') && input.run_in_background === true) {",
+    "    } else if (e.tool_name === 'Agent' || e.tool_name === 'Task' || e.tool_name === 'Workflow') {",
     denyOutput(SUBAGENT_BACKGROUND_DENY_REASON),
     '    }',
     '  } catch {',
@@ -2174,7 +2175,7 @@ export function writeDispatchSettingsAt(
     const writeAccessScriptPath = join(dir, 'write-access.mjs')
     const preToolUseHooks = [
       {
-        matcher: 'Bash|Agent|Task',
+        matcher: 'Bash|Agent|Task|Workflow',
         hooks: [{ type: 'command', command: `bun "${scriptPath}"` }]
       }
     ]
