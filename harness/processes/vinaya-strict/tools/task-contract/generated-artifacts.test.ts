@@ -66,8 +66,9 @@ describe('generated artifact sources', () => {
   })
 
   it('does not ask a task that pins the installer to reach a generated file the repository lacks', () => {
+    const writer = `${P}integration/artifacts.ts`
     const result = checkGeneratedArtifactsCovered(
-      body([`${P}integration/artifacts.ts`], [`${P}integration`, '*', '.github/workflows', '.gemini', '.vinaya/hooks']),
+      `Generated-files: \`${writer}\` — regenerates\n\n${body([writer], [`${P}integration`, '*', '.github/workflows', '.gemini', '.vinaya/hooks'])}`,
       readGeneratedArtifactSources(ROOT)
     )
     expect(result).toEqual({ status: 'pass', errors: [] })
@@ -116,7 +117,7 @@ describe('generated artifact sources', () => {
       `${P}tests/integration/policies/roles.test.ts`
     ]
     const result = checkGeneratedArtifactsCovered(
-      body(pins, [`${P}tools/milestone`, `${P}thinking/architect`, `${P}integration`, `${P}tests`]),
+      `Generated-files: \`${P}integration/adapters.ts\` — regenerates\n\n${body(pins, [`${P}tools/milestone`, `${P}thinking/architect`, `${P}integration`, `${P}tests`])}`,
       readGeneratedArtifactSources(ROOT)
     )
     expect(result.status).toBe('fail')
