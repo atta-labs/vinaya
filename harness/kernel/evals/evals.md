@@ -117,6 +117,8 @@ Validation returns the value or `{ ok: false, refusal }` with a typed `code`, th
 
 ### Backend evidence
 
+The contract-kinds shard registers the Developer's `repair_plan` both as a tool under the tool-catalog module and as a write effect under governed effects. The tool row covers deterministic repair results and refusals; the effect row covers confirmed brief-hash attribution, races, and shadow-write refusal. Its regression coverage includes the production tranche renderer resolving a merged bare sibling dependency. Adding a catalog tool that writes requires both rows: the contract universe derives tools from the catalog and effects from the capability-contract write table, and the global exit check refuses either missing row. Declaring these cases in the registry does not claim a live evaluation passed.
+
 A fault-and-attack or cutover-gate row also carries `backendEvidence`: one entry for each backend its `backends` field lists, and no other. An entry is one of two shapes:
 
 - **`{ "test": "<path>" }`** — the test file that proves the row on that backend, as a path from the repository root. It is accepted only when the file exists in the repository and contains the row's full registry id, `fault-attack:<order>-<slug>` or `cutover-gate:gate-<n>`, as a whole id: the short name alone does not count, and neither does a longer id the full id begins, as `cutover-gate:gate-16` begins with `cutover-gate:gate-1`. A test file is bound to a row only when it asserts the row's behaviour on that backend; a task case marked `present` declares the case and proves nothing.

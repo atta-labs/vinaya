@@ -51,6 +51,7 @@ import { briefHash, type ReviewInputManifest } from '../../../tools/task-contrac
 import { checkPinnedFileImportersCovered } from '../../../tools/task-contract/issue-validation'
 import { CHECK_SCHEMA_VERSION } from '../../../../../kernel/gates/checks/contract'
 import { liveTaskInput, liveForge, type EngineForge } from '../../../bin/run-engine'
+import { stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
 
 describe('mid-run deterministic plan repair', () => {
   const body =
@@ -178,6 +179,117 @@ describe('mid-run deterministic plan repair', () => {
       'briefHash'
     ])
   })
+
+  test('the live tranche renderer repairs a task whose bare sibling dependency merged', () => {
+    const dir = repo()
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim()
+    mkdirSync(join(dir, 'src'))
+    writeFileSync(join(dir, 'src/module.ts'), 'export const value = true\n')
+    git('add', 'src/module.ts')
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'fixture')
+    const sha = git('rev-parse', 'HEAD')
+    const bin = join(dir, 'bin')
+    mkdirSync(bin)
+    const realGit = Bun.which('git')!.replaceAll("'", "'\\''")
+    // No command may reach a real forge or remote discovery. Only local git is delegated.
+    writeFileSync(
+      join(bin, 'git'),
+      `#!/bin/sh\ncase "$1" in\nls-remote) printf 'ref: refs/heads/main\\tHEAD\\n%s\\tHEAD\\n' '${sha}' ;;\nfetch|push|pull) exit 92 ;;\n*) exec '${realGit}' "$@" ;;\nesac\n`,
+      { mode: 0o755 }
+    )
+    writeFileSync(join(bin, 'gh'), '#!/bin/sh\nexit 93\n', { mode: 0o755 })
+    const script = join(dir, 'tranche-render.test.ts')
+    const strict = join(import.meta.dir, '../../..')
+    // REAL PROCESS: mock only forge/config inputs in an isolated module graph; the assembler,
+    // sibling-edge resolver, dispatch gate, renderer and deterministic repair function stay real.
+    writeFileSync(
+      script,
+      `
+import { expect, mock, test } from 'bun:test'
+const strict = ${JSON.stringify(strict)}
+globalThis.fetch = async () => { throw new Error('Unexpected network call') }
+const sourcePath = strict + '/tools/sources/forge-adapter.ts'
+const source = await import(sourcePath)
+const issuesPath = strict + '/tools/task-contract/forge/fetch-open-issues.ts'
+const issues = await import(issuesPath)
+const factsPath = strict + '/tools/task-contract/forge/fetch-forge-facts.ts'
+const facts = await import(factsPath)
+const composePath = strict + '/integration/config/compose.ts'
+const compose = await import(composePath)
+const body = [
+  '**Project:** cli',
+  '## Objectives', 'O1. Preserve behavior.',
+  '## Documentation', 'None.',
+  '## Surface', 'in: src', 'out: —',
+  '## Parts', 'Part 1 (O1) — Preserve behavior.',
+  '## Test plan', 'Test Plan: unit-tests-only',
+  '## Stop conditions', '- Stop on scope changes.',
+  "**Boundary** — Pinned files: \u0060src/module.ts\u0060. Out: other work.",
+  '**Sizing** — Small fixture.',
+  '**Project(s) + blast radius** — Project: cli. No shared-primitive fan-out.',
+  '**Dependency rationale** — Depends-on: 1; Conflicts-with: —.',
+  '**Traps to avoid** — Keep scope.',
+  '**Suggested agent-class** — fast — fixture.',
+  '**Stop-and-escalate** — Stop on scope changes.',
+  '**Docs to keep coherent** — no-doc-surface.'
+].join('\\n\\n')
+let merged = true
+const tasks = [
+  { id: '1', issue: 101, title: 'Dependency', projects: ['cli'], dependsOn: [], conflictsWith: [] },
+  { id: '2', issue: 102, title: 'Repair', projects: ['cli'], dependsOn: ['1'], conflictsWith: [] }
+]
+mock.module(sourcePath, () => ({ ...source, createForgeSource: () => ({ getTranche: async () => ({ tasks }) }) }))
+mock.module(issuesPath, () => ({ ...issues, fetchOpenIssuesByLabel: async () => new Map([
+  ['repair-fixture', [{ number: 102, body, labels: ['vinaya/tranche:repair-fixture'] }]]
+]) }))
+mock.module(factsPath, () => ({ ...facts, fetchForgeFacts: async () => ({
+  facts: new Map([['1', { prState: merged ? 'merged' : 'open' }]]), unavailable: false
+}) }))
+mock.module(composePath, () => ({ ...compose, loadConfig: () => null, resolveTrustedPrincipals: () => ['fixture'] }))
+const { livePlanRepairDeps } = await import(strict + '/bin/run-engine.ts')
+const { repairDeveloperPlan } = await import(strict + '/loops/dev-review/v2/flow-v2-live.ts')
+const { checkPinnedFileImportersCovered } = await import(strict + '/tools/task-contract/issue-validation.ts')
+test('merged bare dependency renders through the production repair path', async () => {
+  const forbiddenForge = new Proxy({}, { get: (_, name) => () => { throw new Error('Unexpected forge call: ' + String(name)) } })
+  const live = livePlanRepairDeps(102, 'task/repair-fixture/2', process.cwd(), forbiddenForge)
+  let state = { body, title: 'Repair', labels: ['vinaya/tranche:repair-fixture'], version: 1,
+    url: 'fixture://brief', objectivesVersion: 'objectives', brief: '' }
+  state.brief = await live.render(body, state)
+  const importers = [{ file: 'src/module.ts', importers: ['consumer/use.ts'] }]
+  const records = []
+  const repaired = await repairDeveloperPlan({
+    read: () => ({ ...state }),
+    collect: async (candidate) => checkPinnedFileImportersCovered(candidate, importers).errors.map(message => ({
+      schema: 1, check: 'issue-content', severity: 'error', message, agent_recovery_prompt: 'Repair the importer.'
+    })),
+    importers: () => importers, renames: () => [], render: live.render,
+    publish: (body, brief) => { state = { ...state, body, brief, version: state.version + 1 } },
+    record: (record) => records.push(record)
+  })
+  expect(repaired.ok, JSON.stringify(repaired)).toBe(true)
+  expect(repaired.result.brief).toContain('consumer/use.ts')
+  expect(repaired.result.brief).toContain('Depends-on: 1')
+  expect(records).toHaveLength(1)
+  merged = false
+  await expect(live.render(state.body, state)).rejects.toThrow(/depend|merged/i)
+})
+`
+    )
+    const output = execFileSync(process.execPath, ['test', script], {
+      cwd: dir,
+      env: {
+        ...stripVinayaEnv(process.env),
+        PATH: `${bin}:${process.env.PATH}`,
+        GH_TOKEN: 'fixture',
+        GITHUB_TOKEN: 'fixture',
+        VINAYA_REPO: 'fixture/repo'
+      },
+      encoding: 'utf8',
+      timeout: 15_000,
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    expect(output).not.toContain('Unexpected network call')
+  }, 20_000)
 
   test('render refusal and an unconfirmed publication return findings and gain no exemption', async () => {
     const f = fixture()

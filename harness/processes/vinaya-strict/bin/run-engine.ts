@@ -24,7 +24,11 @@ import {
 } from '../../../kernel/connectors/checkpoint/control-store/index'
 
 import { buildReviewInputManifest, type ReviewInputManifest } from '../tools/task-contract/review-input-manifest'
-import { assembleAndRenderBriefForIssue, fastForwardToRemoteIfSafe } from '../tools/task-contract/brief-assembly'
+import {
+  assembleAndRenderBrief,
+  assembleAndRenderBriefForIssue,
+  fastForwardToRemoteIfSafe
+} from '../tools/task-contract/brief-assembly'
 import { briefMarkerFor, resolveNewestFrozenBrief } from '../tools/task-contract/brief-validation'
 import { boundaryPinnedFiles } from '../tools/task-contract/issue-validation'
 import { readUnchangedRenames } from '../tools/task-contract/plan-repair'
@@ -2726,7 +2730,7 @@ export function withLoadedFlow<T extends { flow?: string }>(
 }
 
 /** Mid-run repair reuses dispatch's rules and Issue gate, then appends a frozen brief version. */
-function livePlanRepairDeps(
+export function livePlanRepairDeps(
   task: number,
   branch: string,
   root: string,
@@ -2773,12 +2777,10 @@ function livePlanRepairDeps(
     renames: (body) => readUnchangedRenames(root, boundaryPinnedFiles(body)),
     render: async (body, state) => {
       const pieces = branch.split('/')
-      const trancheDraft = pieces.length === 3 ? { slug: pieces[1]!, taskId: pieces[2]! } : undefined
-      const result = await assembleAndRenderBriefForIssue(
-        task,
-        { title: state.title, labels: state.labels, body },
-        trancheDraft ? { trancheDraft } : {}
-      )
+      const result =
+        pieces.length === 3
+          ? await assembleAndRenderBrief(pieces[1]!, pieces[2]!, undefined, body)
+          : await assembleAndRenderBriefForIssue(task, { title: state.title, labels: state.labels, body })
       if (!result.ok) throw new Error(`Repair needs a ruling: ${result.missing.join('\n')}`)
       return result.brief
     },

@@ -12,7 +12,7 @@
         "revision": 17,
         "section": "3. Capability grants"
       },
-      "contract": "The Developer holds exactly its §3 grant — the seven §4.1 tools, its own task worktree, and required sources only through `fetch_documentation` — never forge credentials, a direct push, a `gh` call, review publication, rulings or merge; its first invocation receives the controller-built full context packet, and every continuation receives a durable delta packet retaining authority, version-pinned evidence and prior-session identity.",
+      "contract": "The Developer holds exactly its §3 grant — the eight §4.1 tools, its own task worktree, and required sources only through `fetch_documentation` — never forge credentials, a direct push, a `gh` call, review publication, rulings or merge; its first invocation receives the controller-built full context packet, and every continuation receives a durable delta packet retaining authority, version-pinned evidence and prior-session identity.",
       "owner": "vinaya-policy",
       "officialBasis": "Jimenez et al. — SWE-bench §2.1–2.2 (fail-to-pass and pass-to-pass resolution); Anthropic — Writing tools for agents (diagnostic metrics, held-out sets).",
       "suite": ["developer-capability.l5@1"],
@@ -314,6 +314,80 @@
       "decisionRule": "§10 absolute-floor live suite: ≥ 0.95 per tool on the held-out split, both adapters, no margin; the deterministic L4 regression subset passes 100%.",
       "cadence": ["every-affected-change", "scheduled-live"],
       "migrationGate": "§14: both backends execute its suites (tool-catalog.l4@1, tool-catalog.l5@1); on its deterministic suites the Engine backend passes every mandatory case and every standalone failure is named by a registered expected defect, comparison evidence only; its live suites run the same tasks on both backends and meet their §10 rules on the Engine backend; its suites run in the regression floor or the live schedule on both backends until cutover and on the Engine backend afterwards; each of its §13 rows satisfies its declared cutover outcome. Recommended order: step 5, adapters."
+    },
+    {
+      "id": "tool:repair_plan",
+      "kind": "tool",
+      "module": "6.6",
+      "source": {
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
+        "revision": 17,
+        "section": "4.1 Live tools (Developer)"
+      },
+      "contract": "The no-argument Developer tool applies dispatch's deterministic repairs and returns the repaired frozen brief and hash, or an unrepairable finding needing a ruling; objectives and Surface in remain unchanged.",
+      "owner": "vinaya-policy",
+      "officialBasis": "Vinaya product decision; principle 2 (grade the outcome).",
+      "suite": ["tool-catalog.l4@1", "tool-catalog.l5@1"],
+      "tasks": {
+        "positive": {
+          "present": "A renamed pin or uncovered importer is repaired through the existing rules, including a tranche task with a merged bare dependency."
+        },
+        "negative": { "present": "An already valid plan returns the current brief without a write." },
+        "refusal": {
+          "present": "An unrepairable finding returns human_decision; caller-supplied edits and objectives or Surface changes are refused."
+        },
+        "recovery": { "present": "The Developer continues from the confirmed repaired brief in the same round." },
+        "adversarial": { "present": "An external brief edit or objectives change is never accepted as a tool repair." }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: strict tool dispatch in integration/tools/dev-tools-server.test.ts and real repair, rendering and attribution assertions in loops/dev-review/v2/flow-v2-live.test.ts."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Deterministic repair and refusal cases pass; the live tool-selection suite meets the module's absolute floor on both adapters.",
+      "cadence": ["every-affected-change", "scheduled-live"],
+      "migrationGate": "Engine repair and refusal scenarios pass before cutover; older hosts explicitly refuse the unavailable tool rather than claiming a repair."
+    },
+    {
+      "id": "effect:repair_plan",
+      "kind": "effect",
+      "module": "6.13",
+      "source": {
+        "document": "harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md",
+        "revision": 17,
+        "section": "4.1 Live tools (Developer)"
+      },
+      "contract": "A confirmed deterministic plan repair writes the repaired Issue and a new frozen brief version, recording exact before/after hashes and unchanged objectives separately from the review manifest; no unconfirmed write receives a pause exemption.",
+      "owner": "governed-effect",
+      "officialBasis": "Vinaya product decision; principle 2 (grade the outcome).",
+      "suite": [
+        "governed-effects.l1@1",
+        "governed-effects.l2@1",
+        "governed-effects.l3@1",
+        "governed-effects.l7@1",
+        "governed-effects.l8@1"
+      ],
+      "tasks": {
+        "positive": {
+          "present": "A confirmed repair records its exact hash transition and survives reconstruction of the task input."
+        },
+        "negative": { "present": "A shadow-mode repair produces no forge write and records a refusal." },
+        "refusal": { "present": "A plan or objectives edit during repair is refused before publication." },
+        "recovery": {
+          "present": "An unchanged valid plan is a no-op; a confirmed sequence of repairs retains its matching hash chain."
+        },
+        "adversarial": {
+          "present": "An unconfirmed publication or later external brief edit gains no exemption, and the review manifest remains unchanged."
+        }
+      },
+      "grader": {
+        "kinds": ["code"],
+        "detail": "Code: repair publication and persisted attribution assertions in loops/dev-review/v2/flow-v2-live.test.ts; shadow-write refusal in tests/shadow.test.ts."
+      },
+      "backends": ["standalone", "engine"],
+      "decisionRule": "Every deterministic repair, race, attribution and shadow-refusal assertion passes with zero unintended writes.",
+      "cadence": ["every-affected-change", "scheduled-live", "pre-release", "canary"],
+      "migrationGate": "Confirmed Engine repairs retain attribution without changing review manifests; unconfirmed and shadow writes never receive a pause exemption."
     },
     {
       "id": "tool:run_checks",
