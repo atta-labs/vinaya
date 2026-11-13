@@ -1,6 +1,6 @@
 {
   "name": "@attalabs/test-selection",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Which tests a change between two committed revisions requires: the TypeScript module graph, a validated test inventory and recorded test reads.",
   "type": "module",
   "license": "FSL-1.1-ALv2",

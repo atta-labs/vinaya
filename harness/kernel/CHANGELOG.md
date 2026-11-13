@@ -1,5 +1,12 @@
 # @attalabs/harness
 
+## 0.0.2
+
+### Patch Changes
+
+- Updated dependencies [069011f]
+  - @attalabs/test-selection@0.2.0
+
 ## 0.0.1
 
 ### Patch Changes
