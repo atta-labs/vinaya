@@ -305,6 +305,32 @@ describe('the mapping tables', () => {
     for (const tool of Object.values(ROLE_TOOL_GRANTS).flat()) expect(TOOL_CAPABILITIES[tool]).toBeDefined()
   })
 
+  it('scores plan repair as updating the task plan and retains it only for that grant', () => {
+    const contract = loadRoleContract(join(ENGINE_ROLE_GRANTS_ROOT, 'developer', 'grants.yaml'))
+    expect(contract.mcp_tools.vinaya_dev_tools).toContain('repair_plan')
+    expect(TOOL_CAPABILITIES.repair_plan).toBe('update_task_plan')
+    const permitted = capabilitiesForCase(contract, ['update_task_plan'])
+    expect(permitted.mcp_tools).toEqual({ vinaya_dev_tools: ['repair_plan'] })
+    expect(permitted.capabilities.write_files).toBe('deny')
+    expect(permitted.capabilities.run_commands).toBe('deny')
+    const unrelated = capabilitiesForCase(contract, ['read_file', 'write_file', 'publish_change'])
+    expect(unrelated.mcp_tools.vinaya_dev_tools).not.toContain('repair_plan')
+    const reviewer = loadRoleContract(join(ENGINE_ROLE_GRANTS_ROOT, 'code-reviewer', 'grants.yaml'))
+    expect(capabilitiesForCase(reviewer, ['update_task_plan']).mcp_tools).toEqual({})
+    const grantedCase = withCase(changeEntry, {
+      grantedCapabilities: [...changeEntry.case.grantedCapabilities, 'update_task_plan']
+    })
+    const rendered = renderCase(grantedCase)
+    expect(rendered.ok).toBe(true)
+    if (!rendered.ok) throw new Error(JSON.stringify(rendered.refusal))
+    expect(rendered.input.roleToolGrants.developer).toContain('repair_plan')
+    expect(renderOrThrow(changeEntry.case).roleToolGrants.developer).not.toContain('repair_plan')
+    expect(outcomesOf({ ...reference(changeEntry), trace: [{ tool: 'repair_plan' }] })['O-capability']).toEqual({
+      status: 'known',
+      value: { used: ['update_task_plan'] }
+    })
+  })
+
   it('scores every built-in the Claude Code capability table can allow, or leaves it out of the trace', () => {
     const leftOut = [...CLAUDE_HARNESS_INTERNAL_TOOLS, ...CLAUDE_COORDINATION_TOOLS]
     const allowable = Object.values(CLAUDE_CAPABILITY_TOOLS).flat() as string[]

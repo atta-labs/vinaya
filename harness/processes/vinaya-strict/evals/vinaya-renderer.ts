@@ -103,6 +103,7 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, string>> = {
   fetch_documentation: 'read_document',
   read_source: 'read_document',
   run_checks: 'run_checks',
+  repair_plan: 'update_task_plan',
   publish_changes: 'publish_change',
   open_pull_request: 'open_change_request',
   update_pull_request_body: 'update_change_request',
