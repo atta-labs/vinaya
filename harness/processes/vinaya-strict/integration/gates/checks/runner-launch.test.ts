@@ -7,7 +7,11 @@ import { coreCheckRegistry } from '../../../checks/registry'
 import type { CheckSpec } from '../../../../../kernel/gates/checks/contract'
 import { buildCheckEnv, runChecks } from '../../../../../kernel/gates/checks/runner'
 import { createLogSink } from '../../../../../kernel/log/log-sink'
-import { isSameProcessAlive, type ProcessIdentity } from '../../../../../kernel/conformance/unit/process-registry'
+import {
+  identityOf,
+  isSameProcessAlive,
+  type ProcessIdentity
+} from '../../../../../kernel/conformance/unit/process-registry'
 
 const FIXTURES = join(import.meta.dir, '../../../../../kernel/gates/checks/fixtures')
 /** The check fixtures that read Vinaya's own configuration, beside this test. */
@@ -27,16 +31,48 @@ function fullScope(overrides: Partial<CheckSpec> & Pick<CheckSpec, 'name' | 'run
   return { scope: 'full', ...overrides }
 }
 
-const BASE_OPTS = { parallel: 1, diffOnly: false, changedFiles: null, defaultTimeoutMs: 5000 }
+/**
+ * A check that should finish is given this long before the runner reports it
+ * as `timeout`. The window only catches a hung fixture, so it is sized for a
+ * loaded machine where several copies of this file run at once. A short
+ * window turned a slow passing check into a load-dependent `timeout`.
+ */
+const BASE_OPTS = { parallel: 1, diffOnly: false, changedFiles: null, defaultTimeoutMs: 20_000 }
 
 /** A process a fixture started, as the fixture recorded it in the pid file this test named. */
 type RecordedProcess = ProcessIdentity & { label: string }
 
 /** How long a recorded process may take to disappear: the runner's own SIGKILL grace window plus generous slack. */
 const GONE_BUDGET_MS = 15_000
-/** How long a fixture may take to start and record its processes on a loaded machine. */
+/**
+ * How long a fixture may take to start and record its processes on a loaded
+ * machine. The cases that end a check by its timeout use this as that
+ * timeout. The runner gives the test no way to poll for readiness before it
+ * kills the check, so the window the fixture gets to record itself is the
+ * same budget the polling case waits.
+ */
 const READY_BUDGET_MS = 15_000
+/** The bun:test bound for a case that waits out a timeout, the SIGKILL grace window and the gone poll. */
+const TIMEOUT_CASE_BOUND_MS = 60_000
 const POLL_MS = 50
+
+/**
+ * Whether `p` may still be running. `ESRCH` from a zero signal is the only
+ * proof that the pid is free. Once the pid exists, a start time that differs
+ * from the recorded one means the pid was reused, so the recorded process is
+ * gone. A start time that cannot be read (for example, `ps` failing under
+ * load) proves nothing, so it counts as still running and the poll keeps
+ * waiting, never reporting a survivor as gone.
+ */
+function mayStillRun(p: RecordedProcess): boolean {
+  try {
+    process.kill(p.pid, 0)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ESRCH') return false
+  }
+  const now = identityOf(p.pid)
+  return now === null || now.startTime === p.startTime
+}
 
 /** A fresh, empty pid file for one test, in a directory of its own. */
 function freshPidFile(): { pidFile: string; cleanup: () => void } {
@@ -70,7 +106,7 @@ async function waitForRecorded(pidFile: string, labels: string[], budgetMs: numb
 async function waitUntilGone(processes: RecordedProcess[], budgetMs: number): Promise<RecordedProcess[]> {
   const deadline = Date.now() + budgetMs
   for (;;) {
-    const alive = processes.filter((p) => isSameProcessAlive(p))
+    const alive = processes.filter((p) => mayStillRun(p))
     if (alive.length === 0 || Date.now() > deadline) return alive
     await new Promise((resolve) => setTimeout(resolve, POLL_MS))
   }
@@ -143,30 +179,36 @@ describe('runChecks', () => {
     expect(outcome?.exitCode).toBeNull()
   })
 
-  it('escalates to SIGKILL when a timed-out check traps/ignores SIGTERM', async () => {
-    // stubborn-sleeper.ts ignores SIGTERM entirely — if the runner only ever
-    // sent SIGTERM, `proc.exited` would never resolve and this test would
-    // hang past bun:test's own timeout. Its completion IS the proof the
-    // SIGKILL escalation actually terminates the process. The fixture records
-    // itself only once its trap is installed, so a recorded identity proves
-    // the trap was in place before the runner's first signal; the timeout
-    // leaves a loaded machine room to start it.
-    const { pidFile, cleanup } = freshPidFile()
-    try {
-      const [outcome] = await runChecks(
-        [fullScope({ name: 'stubborn', run: STUBBORN_SLEEPER, args: ['10000', pidFile], timeoutMs: 3000 })],
-        BASE_OPTS
-      )
-      expect(outcome?.status).toBe('timeout')
-      expect(outcome?.exitCode).toBeNull()
-      const recorded = readRecorded(pidFile)
-      expect(recorded.map((r) => r.label)).toEqual(['stubborn-sleeper'])
-      await expectAllGone(recorded)
-    } finally {
-      killSurvivors(readRecorded(pidFile))
-      cleanup()
-    }
-  }, 30_000)
+  it(
+    'escalates to SIGKILL when a timed-out check traps/ignores SIGTERM',
+    async () => {
+      // stubborn-sleeper.ts ignores SIGTERM entirely — if the runner only ever
+      // sent SIGTERM, `proc.exited` would never resolve and this test would
+      // hang past bun:test's own timeout. Its completion IS the proof the
+      // SIGKILL escalation actually terminates the process. The fixture records
+      // itself only once its trap is installed, so a recorded identity proves
+      // the trap was in place before the runner's first signal; the timeout
+      // leaves a loaded machine room to start it.
+      const { pidFile, cleanup } = freshPidFile()
+      try {
+        const [outcome] = await runChecks(
+          [
+            fullScope({ name: 'stubborn', run: STUBBORN_SLEEPER, args: ['60000', pidFile], timeoutMs: READY_BUDGET_MS })
+          ],
+          BASE_OPTS
+        )
+        expect(outcome?.status).toBe('timeout')
+        expect(outcome?.exitCode).toBeNull()
+        const recorded = readRecorded(pidFile)
+        expect(recorded.map((r) => r.label)).toEqual(['stubborn-sleeper'])
+        await expectAllGone(recorded)
+      } finally {
+        killSurvivors(readRecorded(pidFile))
+        cleanup()
+      }
+    },
+    TIMEOUT_CASE_BOUND_MS
+  )
 
   it('caps concurrency — 6 checks at 300ms each with parallel=2 take at least ~900ms', async () => {
     // Only a lower bound: three waves of 300ms cannot finish sooner when at
@@ -298,87 +340,106 @@ describe('runChecks', () => {
   // test named — never the machine's process list, which another run of this
   // same file, or anything else on the machine, also writes to.
 
-  it("kills a timed-out check's whole process group — a grandchild it spawned does not survive", async () => {
-    // The timeout leaves a loaded machine room to start the fixture and let it
-    // record both processes before the runner signals the group.
-    const { pidFile, cleanup } = freshPidFile()
-    try {
-      const [outcome] = await runChecks(
-        [fullScope({ name: 'spawns-grandchild', run: SPAWNS_GRANDCHILD, args: [pidFile], timeoutMs: 3000 })],
-        BASE_OPTS
-      )
-      expect(outcome?.status).toBe('timeout')
-      const recorded = readRecorded(pidFile)
-      expect(recorded.map((r) => r.label).sort()).toEqual(['fixture', 'grandchild'])
+  it(
+    "kills a timed-out check's whole process group — a grandchild it spawned does not survive",
+    async () => {
+      // The timeout leaves a loaded machine room to start the fixture and let it
+      // record both processes before the runner signals the group.
+      const { pidFile, cleanup } = freshPidFile()
+      try {
+        const [outcome] = await runChecks(
+          [
+            fullScope({
+              name: 'spawns-grandchild',
+              run: SPAWNS_GRANDCHILD,
+              args: [pidFile],
+              timeoutMs: READY_BUDGET_MS
+            })
+          ],
+          BASE_OPTS
+        )
+        expect(outcome?.status).toBe('timeout')
+        const recorded = readRecorded(pidFile)
+        expect(recorded.map((r) => r.label).sort()).toEqual(['fixture', 'grandchild'])
 
-      // The SIGKILL escalation is async relative to runChecks() resolving on
-      // the direct child's own exit, so poll for the grandchild being gone.
-      await expectAllGone(recorded)
-    } finally {
-      killSurvivors(readRecorded(pidFile))
-      cleanup()
-    }
-  }, 30_000)
+        // The SIGKILL escalation is async relative to runChecks() resolving on
+        // the direct child's own exit, so poll for the grandchild being gone.
+        await expectAllGone(recorded)
+      } finally {
+        killSurvivors(readRecorded(pidFile))
+        cleanup()
+      }
+    },
+    TIMEOUT_CASE_BOUND_MS
+  )
 
-  it("kills a SIGTERM-trapping grandchild even though the DIRECT child's own close fires almost immediately", async () => {
-    // The direct child (spawns-stubborn-grandchild.ts) does not trap
-    // SIGTERM, so it dies on the group's initial signal well inside
-    // KILL_GRACE_MS — its own 'close' event resolving early is exactly the
-    // condition that used to cancel the pending SIGKILL escalation. The
-    // grandchild it spawned (stubborn-sleeper.ts) DOES trap SIGTERM — it
-    // records itself only once the trap is installed — and can only be
-    // reaped by that escalation actually running to completion.
-    const { pidFile, cleanup } = freshPidFile()
-    try {
-      const [outcome] = await runChecks(
-        [
-          fullScope({
-            name: 'stubborn-grandchild',
-            run: SPAWNS_STUBBORN_GRANDCHILD,
-            args: [pidFile],
-            timeoutMs: 3000
-          })
-        ],
-        BASE_OPTS
-      )
-      expect(outcome?.status).toBe('timeout')
-      const recorded = readRecorded(pidFile)
-      expect(recorded.map((r) => r.label).sort()).toEqual(['fixture', 'stubborn-sleeper'])
+  it(
+    "kills a SIGTERM-trapping grandchild even though the DIRECT child's own close fires almost immediately",
+    async () => {
+      // The direct child (spawns-stubborn-grandchild.ts) does not trap
+      // SIGTERM, so it dies on the group's initial signal well inside
+      // KILL_GRACE_MS — its own 'close' event resolving early is exactly the
+      // condition that used to cancel the pending SIGKILL escalation. The
+      // grandchild it spawned (stubborn-sleeper.ts) DOES trap SIGTERM — it
+      // records itself only once the trap is installed — and can only be
+      // reaped by that escalation actually running to completion.
+      const { pidFile, cleanup } = freshPidFile()
+      try {
+        const [outcome] = await runChecks(
+          [
+            fullScope({
+              name: 'stubborn-grandchild',
+              run: SPAWNS_STUBBORN_GRANDCHILD,
+              args: [pidFile],
+              timeoutMs: READY_BUDGET_MS
+            })
+          ],
+          BASE_OPTS
+        )
+        expect(outcome?.status).toBe('timeout')
+        const recorded = readRecorded(pidFile)
+        expect(recorded.map((r) => r.label).sort()).toEqual(['fixture', 'stubborn-sleeper'])
 
-      // `runOne` awaits the escalation decision before returning, so the
-      // grandchild is normally gone already; polling only absorbs the time
-      // the OS takes to reap it.
-      await expectAllGone(recorded)
-    } finally {
-      killSurvivors(readRecorded(pidFile))
-      cleanup()
-    }
-  }, 30_000)
+        // `runOne` awaits the escalation decision before returning, so the
+        // grandchild is normally gone already; polling only absorbs the time
+        // the OS takes to reap it.
+        await expectAllGone(recorded)
+      } finally {
+        killSurvivors(readRecorded(pidFile))
+        cleanup()
+      }
+    },
+    TIMEOUT_CASE_BOUND_MS
+  )
 
-  it('forwards SIGINT to every in-flight check so Ctrl+C does not orphan them', async () => {
-    // Runs in a SEPARATE process (not this test process) — sending SIGINT
-    // to the test runner itself would kill the whole suite, not exercise
-    // the runner's own forwarding path. The check the wrapper starts is the
-    // sleeper fixture, in a detached group of its own; only it can record
-    // its own pid, which it does once it is running.
-    const { pidFile, cleanup } = freshPidFile()
-    const wrapper = Bun.spawn(['bun', RUN_AND_HANG, pidFile], { stdio: ['ignore', 'ignore', 'ignore'] })
-    try {
-      const recorded = await waitForRecorded(pidFile, ['sleeper'], READY_BUDGET_MS)
-      expect(recorded.map((r) => r.label)).toEqual(['sleeper'])
+  it(
+    'forwards SIGINT to every in-flight check so Ctrl+C does not orphan them',
+    async () => {
+      // Runs in a SEPARATE process (not this test process) — sending SIGINT
+      // to the test runner itself would kill the whole suite, not exercise
+      // the runner's own forwarding path. The check the wrapper starts is the
+      // sleeper fixture, in a detached group of its own; only it can record
+      // its own pid, which it does once it is running.
+      const { pidFile, cleanup } = freshPidFile()
+      const wrapper = Bun.spawn(['bun', RUN_AND_HANG, pidFile], { stdio: ['ignore', 'ignore', 'ignore'] })
+      try {
+        const recorded = await waitForRecorded(pidFile, ['sleeper'], READY_BUDGET_MS)
+        expect(recorded.map((r) => r.label)).toEqual(['sleeper'])
 
-      wrapper.kill('SIGINT')
-      await wrapper.exited
+        wrapper.kill('SIGINT')
+        await wrapper.exited
 
-      // The forwarded SIGTERM/SIGKILL escalation reaps the detached check
-      // group; poll for its recorded member being gone.
-      await expectAllGone(recorded)
-    } finally {
-      if (wrapper.exitCode === null && wrapper.signalCode === null) wrapper.kill('SIGKILL')
-      killSurvivors(readRecorded(pidFile))
-      cleanup()
-    }
-  }, 30_000)
+        // The forwarded SIGTERM/SIGKILL escalation reaps the detached check
+        // group; poll for its recorded member being gone.
+        await expectAllGone(recorded)
+      } finally {
+        if (wrapper.exitCode === null && wrapper.signalCode === null) wrapper.kill('SIGKILL')
+        killSurvivors(readRecorded(pidFile))
+        cleanup()
+      }
+    },
+    TIMEOUT_CASE_BOUND_MS
+  )
 })
 
 describe('runChecks — env allowlist flip (task 3, #776)', () => {

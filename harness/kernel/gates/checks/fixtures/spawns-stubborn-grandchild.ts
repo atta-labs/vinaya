@@ -15,10 +15,13 @@ import { identityOf } from '../../../conformance/unit/process-registry'
 
 const pidFile = process.argv[2]
 const stubborn = join(import.meta.dir, 'stubborn-sleeper.ts')
-spawn('bun', [stubborn, '10000', ...(pidFile === undefined ? [] : [pidFile])], { stdio: 'ignore' })
+// Recorded before the grandchild starts, so a failed read never leaves a
+// started grandchild behind. The grandchild sleeps far longer than any
+// timeout a test gives this fixture, so only the runner's kill can end it.
 if (pidFile !== undefined) {
   const identity = identityOf(process.pid)
   if (identity === null) throw new Error(`spawns-stubborn-grandchild: cannot read the start time of pid ${process.pid}`)
   appendFileSync(pidFile, `${JSON.stringify({ ...identity, label: 'fixture' })}\n`)
 }
+spawn('bun', [stubborn, '60000', ...(pidFile === undefined ? [] : [pidFile])], { stdio: 'ignore' })
 await new Promise(() => {})
