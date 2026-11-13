@@ -122,12 +122,18 @@ export function repositoryImportTree(root: string): ImportTree {
   }
 }
 
-/** Dormant in adopters without the generator source tree; reads only the repository being planned. */
+/**
+ * Dormant in adopters without the generator source tree; reads only the repository being planned. Lists only the
+ * generated files the repository has: one it lacks, like `.husky/` hooks in a repository installed under
+ * `.vinaya/hooks`, cannot drift.
+ */
 export function readGeneratedArtifactSources(root: string): GeneratedArtifactSources[] {
   const tree = repositoryImportTree(root)
   const direct = new Map<string, string[]>()
   return Object.entries(GENERATED_ARTIFACT_WRITERS).flatMap(([path, writer]) => {
     if (!existsSync(resolve(root, writer))) return []
+    // A generated file this repository does not have cannot drift, and no Surface can name it.
+    if (!existsSync(resolve(root, path))) return []
     let sources = direct.get(writer)
     if (!sources) {
       // A writer that calls another writer for that writer's own file takes none of its content.
