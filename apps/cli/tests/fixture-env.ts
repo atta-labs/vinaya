@@ -47,6 +47,18 @@ const FIXTURE_HOSTILE_ENV_NAMES = ['PR_BODY', 'PR_NUMBER', 'BRANCH'] as const
  */
 export const HOOK_TEST_BOUND_MS = 180_000
 
+/**
+ * The `vinaya-check` parallelism flag the same two files' fixture hooks run
+ * with. Left at its default, a hook starts one check process per CPU, and
+ * every concurrent copy of these files does the same. That multiplies into
+ * more check processes than the machine has CPUs, so even a check that takes
+ * a fraction of a second on its own ran into its own fifteen-second timeout
+ * in the registry and refused the fixture's commit. Two at a time keeps each
+ * hook's fan-out fixed whatever the core count. The fixture still runs every
+ * check, so every outcome is the same.
+ */
+export const FIXTURE_HOOK_PARALLEL = '--parallel=2'
+
 export function stripAmbientFixtureEnv(): () => void {
   const saved: Record<string, string | undefined> = {}
   const drop = (key: string): void => {

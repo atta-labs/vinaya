@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runDemoBreak } from '../src/commands/demo.js'
-import { HOOK_TEST_BOUND_MS, stripAmbientFixtureEnv } from './fixture-env.js'
+import { FIXTURE_HOOK_PARALLEL, HOOK_TEST_BOUND_MS, stripAmbientFixtureEnv } from './fixture-env.js'
 import { programFile } from '../../../harness/processes/vinaya-strict/tools/programs.js'
 
 // The real CLI source, invoked directly by `bun` rather than through a
@@ -26,7 +26,7 @@ function git(cwd: string, args: string[]): string {
  * never fire.
  */
 function installRealHook(root: string): void {
-  const body = `#!/usr/bin/env sh\nbun ${programFile('check')} --all --diff-only || exit 1\n`
+  const body = `#!/usr/bin/env sh\nbun ${programFile('check')} --all --diff-only ${FIXTURE_HOOK_PARALLEL} || exit 1\n`
   writeFileSync(join(root, '.git/hooks/pre-commit'), body, { mode: 0o755 })
 }
 

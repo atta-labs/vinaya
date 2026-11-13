@@ -14,7 +14,7 @@ import { runQuickstart } from '../src/commands/quickstart.js'
 import { PROJECTS_REGISTRY_PATH } from '../../../harness/processes/vinaya-strict/artifacts/registry-write.js'
 import type { LabelGateway } from '../../../harness/kernel/gates/ops.js'
 import { programFile } from '../../../harness/processes/vinaya-strict/tools/programs.js'
-import { HOOK_TEST_BOUND_MS, stripAmbientFixtureEnv } from './fixture-env.js'
+import { FIXTURE_HOOK_PARALLEL, HOOK_TEST_BOUND_MS, stripAmbientFixtureEnv } from './fixture-env.js'
 
 // The real CLI source, invoked directly by `bun` — same technique
 // `demo.test.ts` uses, needed here because `demo break` (reached when the
@@ -41,9 +41,9 @@ function git(cwd: string, args: string[]): string {
 // of the three real was never safe, it just never got exercised on a
 // version-bumped-but-unpublished checkout until that PR's CI run.
 function makeHookLocal(root: string): void {
-  const preCommit = `#!/usr/bin/env sh\nbun ${programFile('check')} --all --diff-only || exit 1\n`
+  const preCommit = `#!/usr/bin/env sh\nbun ${programFile('check')} --all --diff-only ${FIXTURE_HOOK_PARALLEL} || exit 1\n`
   writeFileSync(join(root, '.git/hooks/pre-commit'), preCommit, { mode: 0o755 })
-  const prePush = `#!/usr/bin/env sh\nbun ${programFile('check')} --all --local || exit 1\n`
+  const prePush = `#!/usr/bin/env sh\nbun ${programFile('check')} --all --local ${FIXTURE_HOOK_PARALLEL} || exit 1\n`
   writeFileSync(join(root, '.git/hooks/pre-push'), prePush, { mode: 0o755 })
   const commitMsg = `#!/usr/bin/env sh\nbun ${programFile('commit-msg')} "$1" "$2" || exit 1\n`
   writeFileSync(join(root, '.git/hooks/commit-msg'), commitMsg, { mode: 0o755 })
