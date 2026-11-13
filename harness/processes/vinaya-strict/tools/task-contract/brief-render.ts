@@ -446,7 +446,7 @@ function renderSection2(facts: BriefFacts): string {
     '## 2. Context — read before doing anything',
     '',
     identityLine,
-    `- **Read Issue #${facts.issue} in full** for the complete rationale — do not re-derive it.`,
+    `- **This brief carries Issue #${facts.issue}'s rationale** — work from it; do not re-derive it, and do not try to read the Issue: your tools cannot reach the forge.`,
     `- **Revision:** rendered at \`${facts.sourceRevision}\` — the checkout's HEAD equaled the remote default branch, and no pinned file below carried an uncommitted change, when these facts were read.`,
     `- ${facts.rationale.boundary}`,
     `- ${facts.rationale.trapsToAvoid}`
