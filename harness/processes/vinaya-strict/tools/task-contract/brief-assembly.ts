@@ -563,13 +563,9 @@ export function buildWorkspaceConsumersOf(): (pkg: string) => string[] {
  * `blockerDetails`) at the moment `renderBrief` ran — `undefined` when the
  * render never reached that point (an earlier refusal: unresolved repo,
  * stale checkout, task not found, …), `[]` when it ran and found nothing to
- * block on. Additive: `dispatchTask`/`prepareTask` (`dispatch-task.ts`)
- * never read it and keep refusing on a plain `ok: false` exactly as before
- * (dispatch's own posture is unchanged). It exists so a caller that DOES
- * need to tell a dependency/conflict finding apart from every other render
- * gap (the Issue write gate, `forge-write.ts`'s
- * `validateRenderedBriefForIssue`) can, without re-deriving the dispatch
- * gate's own classification a second time.
+ * block on. Dispatch waits only when every classified blocker is an unmerged
+ * dependency and no other render gap remains; the Issue write gate uses the
+ * same classification to distinguish informational planning findings.
  */
 /**
  * One repository-relative path as a given revision holds it — `null` when that
@@ -638,12 +634,15 @@ export function dispatchPremiseRefusals(
   issueBody: string,
   rev: string,
   scope: PremiseScope = 'all',
-  readAt: (rev: string, path: string) => string | null = readFileAtRevision
+  readAt: (rev: string, path: string) => string | null = readFileAtRevision,
+  pendingDependencyIssues: readonly number[] = []
 ): string[] {
   if (scope === 'none') return []
   const parsed = parseIssuePremises(issueBody)
   if (!parsed.ok) return parsed.errors.map((e) => `Premises: ${e}`)
-  const asserted = parsed.value.map((premise, index) => ({ premise, index }))
+  const asserted = parsed.value
+    .map((premise, index) => ({ premise, index }))
+    .filter(({ premise }) => premise.afterIssue === null || !pendingDependencyIssues.includes(premise.afterIssue))
   return checkPremisesHold(asserted, (path) => readAt(rev, path))
 }
 
@@ -663,6 +662,8 @@ export type AssembleAndRenderBriefResult =
  */
 export type BriefRenderOptions = {
   skipFreshness?: boolean
+  /** Dispatch-only write gate/repair, after freshness and Issue resolution, before premises or rendering. */
+  beforeIssueRender?: (issue: number, body: string, labels: string[]) => Promise<string>
   /**
    * Which premises this render asserts — see `PremiseScope`. Omitted (a
    * dispatch) is `'all'`; the plan-time write gate passes `'none'`. It rides
@@ -808,16 +809,16 @@ export async function assembleAndRenderBrief(
       ]
     }
   }
-  const issueBody = bodyOverride ?? openIssueMatch.body
+  const originalBody = bodyOverride ?? openIssueMatch.body
+  const issueBody = opts?.beforeIssueRender
+    ? await opts.beforeIssueRender(task.issue, originalBody, openIssueMatch.labels)
+    : originalBody
   const issueRationalePass = checkIssueRationale(issueBody).status !== 'fail'
 
   // O3 — the Issue's own premises, re-asserted against the default branch
   // before anything is rendered from them. `opts.premiseScope` is what keeps a
   // plan-time render out of O2's way: omitted (a dispatch) asserts every
   // premise, and the pre-write validation path passes `'none'`.
-  const premiseRefusals = dispatchPremiseRefusals(issueBody, headSha, opts?.premiseScope ?? 'all')
-  if (premiseRefusals.length > 0) return { ok: false, missing: premiseRefusals }
-
   const taskRefs = tranche.tasks.map((t) => ({ id: t.id, issue: t.issue }))
   const snapshot = await fetchForgeFacts({ owner: repo.owner, repo: repo.repo, tranche: trancheSlug, tasks: taskRefs })
   const taskById = new Map(tranche.tasks.map((t) => [t.id, t]))
@@ -848,6 +849,21 @@ export async function assembleAndRenderBrief(
     principalAllowlist: resolveTrustedPrincipals()
   }
   const gate = checkDispatchReadiness(gateInput)
+
+  // A deferred premise is not due while its dependency is the only readiness blocker.
+  // Every other premise still refuses now; once ready, all premises are asserted again.
+  const pending =
+    gate.blockerDetails.length > 0 && gate.blockerDetails.every((b) => b.class === 'depends-on-not-merged')
+      ? dependsOn.filter((d) => !d.merged && d.issue !== null).map((d) => d.issue as number)
+      : []
+  const premiseRefusals = dispatchPremiseRefusals(
+    issueBody,
+    headSha,
+    opts?.premiseScope ?? 'all',
+    readFileAtRevision,
+    pending
+  )
+  if (premiseRefusals.length > 0) return { ok: false, missing: premiseRefusals }
 
   const surfaceResult = parseIssueSurface(issueBody)
   const surface: IssueSurface = surfaceResult.ok ? surfaceResult.value : { in: [], out: [] }
@@ -1100,7 +1116,9 @@ export async function assembleAndRenderBriefForIssue(
   if (!override && found.state !== 'OPEN') {
     return { ok: false, missing: [`Issue #${issueNumber} is not open (state: ${found.state}) — not renderable.`] }
   }
-  const issueBody = found.body
+  const issueBody = opts?.beforeIssueRender
+    ? await opts.beforeIssueRender(issueNumber, found.body, found.labels)
+    : found.body
   // A tranche-less Issue is a single fix and owes the single-fix rationale; a
   // `trancheDraft` render carries its tranche label and owes all eight fields.
   const issueRationalePass =
@@ -1110,9 +1128,6 @@ export async function assembleAndRenderBriefForIssue(
   // shared function and under the same scope rule; a backlog Issue's premises
   // are premises too, and a backlog Issue's plan-time render is exactly where
   // round 2's review found the deferred-premise double-check.
-  const premiseRefusals = dispatchPremiseRefusals(issueBody, headSha, opts?.premiseScope ?? 'all')
-  if (premiseRefusals.length > 0) return { ok: false, missing: premiseRefusals }
-
   // O2 — a tranche draft carries its real tranche identity (slug from the
   // label, id from the title); a backlog Issue's task id is the Issue number
   // itself, as before.
@@ -1159,6 +1174,19 @@ export async function assembleAndRenderBriefForIssue(
     principalAllowlist: resolveTrustedPrincipals()
   }
   const gate = checkDispatchReadiness(gateInput)
+
+  const pending =
+    gate.blockerDetails.length > 0 && gate.blockerDetails.every((b) => b.class === 'depends-on-not-merged')
+      ? dependsOn.filter((d) => !d.merged && d.issue !== null).map((d) => d.issue as number)
+      : []
+  const premiseRefusals = dispatchPremiseRefusals(
+    issueBody,
+    headSha,
+    opts?.premiseScope ?? 'all',
+    readFileAtRevision,
+    pending
+  )
+  if (premiseRefusals.length > 0) return { ok: false, missing: premiseRefusals }
 
   const surfaceResult = parseIssueSurface(issueBody)
   const surface: IssueSurface = surfaceResult.ok ? surfaceResult.value : { in: [], out: [] }

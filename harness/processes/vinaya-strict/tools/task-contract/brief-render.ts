@@ -25,6 +25,8 @@ import { deriveSection7 } from './derive-section7'
 import type { GateCutovers } from './gate-cutovers'
 import {
   globCoversPath,
+  parseGeneratedFilesDeclarations,
+  type GeneratedFilesDeclaration,
   boundaryPinnedFiles,
   type IssuePart,
   type IssuePremise,
@@ -152,6 +154,7 @@ function sliceRationaleField(text: string, labelPattern: string): string {
  * `renderBrief` without a second, caller-side wire to keep in sync.
  */
 export type ParsedRationale = Partial<Record<RationaleFieldKey, string>> & {
+  generatedFiles?: GeneratedFilesDeclaration[]
   /** `readTierFromPrBody(body)` — `null` when the Issue declares no `Tier:` field, or an invalid one. */
   declaredTier?: 0 | 1 | 3 | null
 }
@@ -170,7 +173,7 @@ export function parseRationaleFields(body: string): ParsedRationale {
     const text = sliceRationaleField(body, RATIONALE_FIELD_PATTERNS[key])
     if (text) out[key] = text
   }
-  return { ...out, declaredTier: readTierFromPrBody(body) }
+  return { ...out, declaredTier: readTierFromPrBody(body), generatedFiles: parseGeneratedFilesDeclarations(body) }
 }
 
 /**
@@ -449,7 +452,12 @@ function renderSection2(facts: BriefFacts): string {
     `- **This brief carries Issue #${facts.issue}'s rationale** — work from it; do not re-derive it, and do not try to read the Issue: your tools cannot reach the forge.`,
     `- **Revision:** rendered at \`${facts.sourceRevision}\` — the checkout's HEAD equaled the remote default branch, and no pinned file below carried an uncommitted change, when these facts were read.`,
     `- ${facts.rationale.boundary}`,
-    `- ${facts.rationale.trapsToAvoid}`
+    `- ${facts.rationale.trapsToAvoid}`,
+    ...(facts.rationale.generatedFiles ?? []).map(({ writer, mode }) =>
+      mode === 'regenerates'
+        ? `- **Generated files (overrides other Issue prose):** Run \`vinaya upgrade\` and commit the generated files written by \`${writer}\`.`
+        : `- **Generated files (overrides other Issue prose):** Keep the generated files written by \`${writer}\` untouched and confirm the drift check stays green.`
+    )
   ]
   return lines.join('\n')
 }

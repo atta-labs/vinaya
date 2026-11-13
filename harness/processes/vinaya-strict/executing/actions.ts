@@ -50,6 +50,7 @@ import {
   findOpenPrForBranchStrict,
   type reviewPolicyForLoop
 } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
+import { waitForDependencies, type DependencyWaitClock } from '../tools/task-contract/plan-repair'
 import {
   developerRoundMarker,
   DispatchSandboxRefused,
@@ -339,6 +340,8 @@ export interface BoundFunctions {
   probeAgentSandbox: typeof probeAgentSandbox
   /** Waits between readiness re-checks after a forge read failure; tests pass one that returns at once. */
   setupRetrySleep: (ms: number) => Promise<void>
+  /** The bounded dependency wait's clock and sleep; tests advance virtual time. */
+  dependencyClock?: DependencyWaitClock
   fetchCiConclusion: typeof fetchCiConclusion
   /** A head's CI conclusion under the every-run-completed rule alone, with no early red. */
   fetchSettledCiConclusion: typeof fetchSettledCiConclusion
@@ -598,6 +601,50 @@ export function readinessFailedOnForgeRead(output: string): boolean {
   if (/NOT READY|gate step '[^']+' is missing/.test(output)) return false
   if (!output.includes('all required controls are active')) return false
   return blocking.every((message) => INFRA_MARK.test(message) || namesForgeConnectionFailure(message))
+}
+
+/**
+ * The composed readiness command's two wire formats: JSON errors from the portable gate,
+ * and cross-marked findings from verify-dispatch. Require both reports and active controls;
+ * an incomplete or mixed report never authorizes waiting on a dependency.
+ */
+export function readinessWaitsForDependency(output: string): boolean {
+  if (
+    !output.includes('all required controls are active') ||
+    !/^dispatch-readiness: NOT READY$/m.test(output) ||
+    !/^verify-dispatch: NOT READY$/m.test(output) ||
+    !/^leftover-detection: (?:clean|resume|stop \(expected: --existing-work, the caller resumes this work\))$/m.test(
+      output
+    )
+  )
+    return false
+  const findings: string[] = []
+  let jsonErrors = 0
+  let markedErrors = 0
+  for (const line of output.split('\n')) {
+    const text = line.trim()
+    if (text.startsWith('{')) {
+      try {
+        const finding = JSON.parse(text) as { severity?: string; message?: string }
+        if (finding.severity === 'error') {
+          findings.push(finding.message ?? '')
+          jsonErrors++
+        }
+      } catch {
+        return false
+      }
+    } else if (text.startsWith('✗')) {
+      findings.push(text.slice(1).trim())
+      markedErrors++
+    }
+  }
+  return (
+    jsonErrors > 0 &&
+    markedErrors > 0 &&
+    findings.every((f) =>
+      /^dispatch-gate depends-on: .+, whose PR is not merged yet — not dispatchable, it serializes behind it\.$/.test(f)
+    )
+  )
 }
 
 /**
@@ -2403,11 +2450,15 @@ export const ACTION_BINDINGS: Readonly<Record<string, Binding>> = {
         const detail = describeInactiveControls(controls)
         return refuse({ reason: 'infrastructure', detail, error: new Error(detail) })
       }
-      const readiness = await checkReadinessAcrossForgeOutage(task)
+      const readiness = await waitForDependencies(
+        () => checkReadinessAcrossForgeOutage(task),
+        (r) => !r.ready && readinessWaitsForDependency(r.output),
+        task.bound?.dependencyClock
+      )
       if (!readiness.ready)
         return refuse({
           reason: 'escalation',
-          detail: `the task is not ready to dispatch, so no worktree is created: ${readiness.output}`
+          detail: `the task is not ready to dispatch, so no worktree is created; needs a ruling on the finding: ${readiness.output}`
         })
       ;(task.bound?.createTaskWorktree ?? createTaskWorktree)(task.branch)
       // The worktree's own dependencies, installed on every start, before any agent step; a failure stops the run here.

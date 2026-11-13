@@ -3220,7 +3220,27 @@ export function boundaryPinnedFiles(body: string): string[] {
   return namedPathsIn(boundary).filter((p) => looksLikeFilePath(p) && !excluded.has(p))
 }
 
-/** A pinned generator source forces its generated output into the Surface as well. */
+/** One declaration per writer, irrespective of how many files it emits. */
+export type GeneratedFilesDeclaration = { writer: string; mode: 'regenerates' | 'output unchanged' }
+
+function generatedFilesLines(body: string): string[] {
+  const normalized = body.replaceAll('\r\n', '\n')
+  const visible = maskCode(normalized).split('\n')
+  return normalized.split('\n').filter((_, i) => visible[i]?.startsWith('Generated-files: '))
+}
+
+export function parseGeneratedFilesDeclarations(body: string): GeneratedFilesDeclaration[] {
+  return [
+    ...generatedFilesLines(body)
+      .join('\n')
+      .matchAll(/^Generated-files: `([^`\n]+)` — (regenerates|output unchanged)[ \t]*$/gm)
+  ].map((m) => ({
+    writer: m[1] as string,
+    mode: m[2] as GeneratedFilesDeclaration['mode']
+  }))
+}
+
+/** Pinned writers and direct sources require an explicit, authoritative output decision. */
 export function checkGeneratedArtifactsCovered(
   body: string,
   artifacts: GeneratedArtifactSources[]
@@ -3228,8 +3248,21 @@ export function checkGeneratedArtifactsCovered(
   const surface = parseIssueSurface(body)
   if (!surface.ok) return { status: 'pass', errors: [] }
   const pins = new Set(boundaryPinnedFiles(body))
+  const declarations = parseGeneratedFilesDeclarations(body)
+  const writers = new Set(artifacts.filter((a) => a.sources.some((s) => pins.has(s))).map((a) => a.writer))
   const errors: string[] = []
+  const unchanged = new Set<string>()
+  for (const writer of writers) {
+    const declared = declarations.filter((d) => d.writer === writer)
+    const lines = generatedFilesLines(body).filter((line) => line.startsWith(`Generated-files: \`${writer}\``))
+    if (declared.length !== 1 || lines.length !== 1) {
+      errors.push(
+        `issue-validation generated files: the Boundary pins writer \`${writer}\` or a direct source. Declare exactly one line: Generated-files: \`${writer}\` — regenerates (run \`vinaya upgrade\` and commit its files), or Generated-files: \`${writer}\` — output unchanged (keep its files untouched and confirm the drift check stays green).`
+      )
+    } else if (declared[0]?.mode === 'output unchanged') unchanged.add(writer)
+  }
   for (const artifact of artifacts) {
+    if (unchanged.has(artifact.writer)) continue
     const pinnedSources = artifact.sources.filter((source) => pins.has(source))
     const excluded = surface.value.out.filter((glob) => globCoversPath(glob, artifact.path))
     const admitted = surface.value.in.some((glob) => globCoversPath(glob, artifact.path))
