@@ -164,6 +164,16 @@ describe('renderBrief', () => {
     expect(/\*\*Create:\*\*\n([\s\S]*?)\n\n/.exec(result.brief)?.[1]).toBe('- packages/widgets/src/new.ts')
     expect(/\*\*Modify:\*\*\n([\s\S]*?)\n\n/.exec(result.brief)?.[1]).toBe('- packages/widgets/src/old.ts')
   })
+  // The Developer holds no forge credential and no Issue-reading tool, so a brief that orders it to read the
+  // Issue asks for something it cannot do; a Developer that takes the order literally stops on it.
+  it('tells the Developer the brief carries the Issue, and never orders it to read the Issue', () => {
+    const result = renderBrief(baseFacts(), TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).not.toMatch(/Read Issue #\d+ in full/)
+    expect(result.brief).toMatch(/This brief carries Issue #\d+'s rationale/)
+    expect(TEMPLATE).not.toContain('Read Issue #[N] in full')
+  })
   it("carries the template's own Developer intro line, not the hard-coded fallback", () => {
     const templateLine = TEMPLATE.match(/^You are the Vinaya Developer\.[^\n]*$/m)?.[0] ?? ''
     expect(templateLine).not.toBe('')
