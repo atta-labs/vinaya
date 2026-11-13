@@ -33,6 +33,9 @@
  * unioned on top (see `open-issue.ts`'s `readSharedPackages`).
  */
 
+/** The retired static packages file's path, for a diagnostic that names one an adopter still carries. */
+export { LEGACY_PACKAGES_FILE } from '../legacy-paths'
+
 /**
  * Resolves one workspace-glob entry (from either `package.json`'s
  * `workspaces` array or `pnpm-workspace.yaml`'s `packages:` list — same

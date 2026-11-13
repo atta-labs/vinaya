@@ -21,6 +21,7 @@ import {
 import {
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
+  LEGACY_PACKAGES_FILE,
   parsePnpmWorkspaceYaml
 } from '../../../../harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains'
 import { parseRegistry } from '../../../../harness/processes/vinaya-strict/tools/task-contract/parse-registry'
@@ -61,7 +62,6 @@ import {
   resolveDoctrineRootInfo
 } from '../../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
 import { detectVendoredVinaya } from '../../../../harness/processes/vinaya-strict/tools/self-host.js'
-import { LEGACY_PACKAGES_FILE } from '../../../../harness/processes/vinaya-strict/tools/legacy-paths'
 import {
   type BriefSection,
   GLOBAL_CONFIG_PATH,
