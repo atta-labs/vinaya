@@ -115,6 +115,7 @@ describe('the contract-kinds shard', () => {
     // Every effect but the controller's own publications is a §4.1 write tool.
     const writeEffects = UNIVERSES.effect.filter((name) => sources.devTools.includes(name))
     expect(writeEffects).toEqual([
+      'repair_plan',
       'publish_changes',
       'open_pull_request',
       'update_pull_request_body',

@@ -21,6 +21,7 @@ import {
   codexTrace,
   developmentDigest,
   EVALUATED_TOOLS,
+  PENDING_TOOL_SELECTION,
   formatRun,
   gradeState,
   gradeTrace,
@@ -69,9 +70,16 @@ async function grade(c: ToolSelectionCase, trace: TraceCall[]) {
 }
 
 describe('the case set (O1)', () => {
-  it('evaluates exactly the Developer’s seven tools and the reviewers’ read_source', () => {
-    expect([...EVALUATED_TOOLS].sort()).toEqual([...DEV_TOOL_NAMES, READ_SOURCE_TOOL].sort())
-    expect(DEV_TOOL_NAMES).toHaveLength(7)
+  it('accounts for all eight Developer tools and read_source without changing frozen splits', () => {
+    expect([...EVALUATED_TOOLS, ...Object.keys(PENDING_TOOL_SELECTION)].sort()).toEqual(
+      [...DEV_TOOL_NAMES, READ_SOURCE_TOOL].sort()
+    )
+    expect(DEV_TOOL_NAMES).toHaveLength(8)
+    expect(Object.keys(PENDING_TOOL_SELECTION)).toEqual(['repair_plan'])
+    expect(PENDING_TOOL_SELECTION.repair_plan.reason).toContain('new suite version')
+    expect(readFileSync(join(REPO_ROOT, PENDING_TOOL_SELECTION.repair_plan.regression), 'utf8')).toContain(
+      'repairDeveloperPlan'
+    )
     expect(ROLE_TOOL_GRANTS['code-reviewer']).toEqual([READ_SOURCE_TOOL])
   })
 
@@ -399,6 +407,7 @@ describe('the run command (O4)', () => {
     expect(run.trialsPerTask).toBe(3)
     expect(run.failures).toEqual([])
     expect(run.floorHolds).toBe(true)
+    expect(run.pendingTools).toEqual(PENDING_TOOL_SELECTION)
     expect(run.adapters.map((a) => a.adapter)).toEqual([...ADAPTERS])
     for (const a of run.adapters) {
       expect(a.tools.map((t) => t.tool)).toEqual([...EVALUATED_TOOLS])
@@ -410,6 +419,7 @@ describe('the run command (O4)', () => {
       ['codex', 1, [{ k: 3, value: 1 }]]
     ])
     const text = formatRun(run)
+    expect(text).toContain('NOT EVALUATED repair_plan:')
     expect(text).toContain('48 tasks × 3 trials per adapter; floor 0.95 per tool')
     expect(text).toContain('PASS read_source: 1.000 (18/18 trials, 6 tasks)')
     expect(text).toContain('cost: reported spend $0.0000')

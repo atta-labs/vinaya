@@ -32,6 +32,7 @@ const noLog = (): void => {}
 
 const GRANTS_BEFORE: Record<string, string[]> = {
   developer: [
+    'repair_plan',
     'fetch_documentation',
     'run_checks',
     'publish_changes',
@@ -58,7 +59,7 @@ const unreachable = new Proxy({} as DevToolContext, {
   }
 })
 
-describe('tool grants — each role’s grant is the same as before', () => {
+describe('tool grants — the Developer also holds deterministic plan repair', () => {
   for (const [role, tools] of Object.entries(GRANTS_BEFORE)) {
     it(`${role} is granted exactly ${tools.length === 0 ? 'nothing' : tools.join(', ')}`, () => {
       expect([...grantedTools(vinayaToolGrantPolicy(), role)]).toEqual(tools)

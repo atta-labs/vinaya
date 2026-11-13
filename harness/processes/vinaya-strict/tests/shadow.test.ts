@@ -128,6 +128,7 @@ describe('the shadow classification', () => {
       'openPullRequest',
       'publishChanges',
       'refreshEvidence',
+      'repairPlan',
       'updatePullRequestBody'
     ])
   })
@@ -192,6 +193,7 @@ describe('the refusing recorders', () => {
     ) as unknown as DevToolContext
     const shadow = shadowDevToolContext(live, recorder)
     const calls: Record<string, () => Promise<unknown>> = {
+      repairPlan: () => shadow.repairPlan!(),
       publishChanges: () => shadow.publishChanges('Feat(cli): Ship it'),
       openPullRequest: () => shadow.openPullRequest('title', 'body'),
       updatePullRequestBody: () => shadow.updatePullRequestBody('body'),

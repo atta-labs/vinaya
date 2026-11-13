@@ -52,11 +52,21 @@ function assertStrict(schema: unknown): void {
 }
 
 describe('canonical agent tool catalog', () => {
-  it('carries every contract field for all seven Developer tools and the reviewers’ read_source', () => {
-    expect(AGENT_TOOL_CATALOG).toHaveLength(8)
-    expect(DEV_TOOL_CATALOG).toHaveLength(7)
+  it('carries every contract field for all eight Developer tools and the reviewers’ read_source', () => {
+    expect(AGENT_TOOL_CATALOG).toHaveLength(9)
+    expect(DEV_TOOL_CATALOG).toHaveLength(8)
     expect(AGENT_TOOL_CATALOG.at(-1)?.name).toBe('read_source')
     for (const tool of AGENT_TOOL_CATALOG) for (const field of required) expect(tool[field]).toBeDefined()
+  })
+
+  it('gives repair_plan no caller-controlled scope and a strict repaired-brief result', () => {
+    const tool = AGENT_TOOL_CATALOG.find((entry) => entry.name === 'repair_plan')!
+    expect(validatesJsonSchema(tool.inputSchema, {})).toBe(true)
+    expect(validatesJsonSchema(tool.inputSchema, { body: 'wider task' })).toBe(false)
+    expect(
+      validatesJsonSchema(tool.successOutputSchema, { brief: 'repaired', briefHash: 'hash', reasons: ['rename'] })
+    ).toBe(true)
+    expect(validatesJsonSchema(tool.successOutputSchema, { brief: 'repaired' })).toBe(false)
   })
 
   it('uses strict input, success, refusal, and infrastructure-error schemas', () => {

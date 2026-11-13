@@ -173,7 +173,7 @@ describe('the developer before and after the capability contract', () => {
         .replace(connectorOff, '')
         .replace('required = true\n', '')
         .replace(tmpClosed, '')
-    ).toBe(before.codex.files['config.toml'] as string)
+    ).toBe((before.codex.files['config.toml'] as string).replace('"run_checks",', '"run_checks","repair_plan",'))
     expect(codex.files['rules/role.rules']).toBe(before.codex.files['rules/role.rules'] as string)
     // The hook's code learned flag-anywhere rules; the policy it embeds is unchanged.
     expect(embeddedPolicy(codex)).toBe(embeddedPolicy(before.codex))
@@ -234,7 +234,13 @@ describe('the developer before and after the capability contract', () => {
     ])
     const now = JSON.parse(claude.files['role-settings.json'] as string)
     const then = JSON.parse(before.claude.files['role-settings.json'] as string)
-    expect(now.permissions.allow).toEqual(then.permissions.allow.filter((t: string) => !NEWLY_DENIED.includes(t)))
+    expect(now.permissions.allow).toEqual(
+      then.permissions.allow
+        .filter((t: string) => !NEWLY_DENIED.includes(t))
+        .flatMap((t: string) =>
+          t === 'mcp__vinaya_dev_tools__run_checks' ? [t, 'mcp__vinaya_dev_tools__repair_plan'] : [t]
+        )
+    )
     // Intended: every credential route is denied to the sandboxed shell and to the Read tool.
     const denyRead = credentialDenyRead()
     expect(now.sandbox.filesystem.denyRead).toEqual(denyRead)

@@ -39,6 +39,312 @@ import {
   withV2DevTools
 } from './flow-v2-live'
 import { acquireRoundTestLock } from './round-test-lock'
+import {
+  repairDeveloperPlan,
+  toolPlanRepairCovers,
+  type MidRunPlanRepairDeps,
+  type MidRunPlanState,
+  type ToolPlanRepair
+} from './flow-v2-live'
+import { changedReviewInputs } from '../../../executing/actions'
+import { briefHash, type ReviewInputManifest } from '../../../tools/task-contract/review-input-manifest'
+import { checkPinnedFileImportersCovered } from '../../../tools/task-contract/issue-validation'
+import { CHECK_SCHEMA_VERSION } from '../../../../../kernel/gates/checks/contract'
+import { liveTaskInput, liveForge, type EngineForge } from '../../../bin/run-engine'
+import { stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
+
+describe('mid-run deterministic plan repair', () => {
+  const body =
+    '## Objectives\nO1. Preserve behavior.\n\n## Surface\nin: src\nout: —\n\n**Boundary** — Pinned files: `src/module.ts`. Out: other work.\n\n**Traps to avoid** — Keep it bounded.\n'
+  const render = (body: string) =>
+    '## Objectives\nO1. Preserve behavior.\n\n## 4. Technical surface map\n**Surface in:** `src`\n\n' +
+    body.slice(body.indexOf('**Boundary**'))
+  function fixture() {
+    let state: MidRunPlanState = {
+      body,
+      brief: render(body),
+      title: 'task',
+      labels: [],
+      version: 1,
+      url: 'fixture://brief',
+      objectivesVersion: 'objectives'
+    }
+    const records: ToolPlanRepair[] = []
+    let writes = 0
+    const importers = [{ file: 'src/module.ts', importers: ['consumer/use.ts'] }]
+    const deps: MidRunPlanRepairDeps = {
+      read: () => ({ ...state }),
+      collect: async (body) =>
+        checkPinnedFileImportersCovered(body, importers).errors.map((message) => ({
+          schema: CHECK_SCHEMA_VERSION,
+          check: 'issue-content',
+          severity: 'error',
+          message,
+          agent_recovery_prompt: 'Request repair.'
+        })),
+      importers: () => importers,
+      renames: () => [],
+      render: async (body) => render(body),
+      publish: (body, brief) => {
+        writes++
+        state = { ...state, body, brief, version: state.version + 1 }
+      },
+      record: (record) => records.push(record)
+    }
+    return { deps, records, state: () => state, writes: () => writes }
+  }
+  const manifest = (hash: string): ReviewInputManifest => ({
+    headSha: 'head',
+    baseSha: 'base',
+    briefHash: hash,
+    objectivesVersion: 'objectives',
+    rulingOrdinal: 0,
+    policyDigest: 'policy'
+  })
+
+  test('returns dispatch-time repair, records its hash, and exempts only that transition without editing the manifest', async () => {
+    const f = fixture()
+    const before = manifest(briefHash(f.state().brief))
+    const frozen = JSON.stringify(before)
+    const result = await repairDeveloperPlan(f.deps)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.error.output)
+    expect(result.result.brief).toContain('`consumer/use.ts`')
+    expect(result.result.reasons).toHaveLength(1)
+    expect(f.writes()).toBe(1)
+    expect(f.records).toEqual([
+      {
+        tool: 'repair_plan',
+        beforeHash: before.briefHash!,
+        afterHash: result.result.briefHash,
+        objectivesVersion: 'objectives'
+      }
+    ])
+    const repaired = manifest(result.result.briefHash)
+    const trusted = (a: ReviewInputManifest, b: ReviewInputManifest) => toolPlanRepairCovers(f.records, a, b)
+    expect(changedReviewInputs(before, repaired, trusted)).toEqual([])
+    expect(changedReviewInputs(before, repaired)).toEqual(['briefHash'])
+    expect(changedReviewInputs(before, manifest('external-change'), trusted)).toEqual(['briefHash'])
+    expect(changedReviewInputs(before, { ...repaired, objectivesVersion: 'changed' }, trusted)).toContain(
+      'objectivesVersion'
+    )
+    expect(changedReviewInputs(before, { ...repaired, objectivesVersion: 'changed' }, trusted)).toContain('briefHash')
+    expect(changedReviewInputs(before, { ...repaired, rulingOrdinal: 1 }, trusted)).toContain('rulingOrdinal')
+    expect(JSON.stringify(before)).toBe(frozen)
+    expect((await repairDeveloperPlan(f.deps)).ok).toBe(true)
+    expect(f.writes()).toBe(1)
+  })
+
+  test('an unrepairable finding needs a ruling and publishes nothing', async () => {
+    const f = fixture()
+    f.deps.renames = () => []
+    f.deps.importers = () => []
+    const result = await repairDeveloperPlan(f.deps)
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('expected refusal')
+    expect(result.error.retryDisposition).toBe('human_decision')
+    expect(result.error.output).toContain('[issue-content]')
+    expect(f.writes()).toBe(0)
+    expect(f.records).toEqual([])
+  })
+
+  test('the Engine tool persists attribution and a reconstructed input reads it without a forge call', async () => {
+    const f = fixture()
+    const root = fixtureDir('plan-repair-engine-')
+    const before = manifest(briefHash(f.state().brief))
+    const forge = Object.fromEntries(
+      Object.keys(liveForge).map((name) => [
+        name,
+        () => {
+          throw new Error(`Unexpected forge call: ${name}`)
+        }
+      ])
+    ) as unknown as EngineForge
+    const input = () =>
+      liveTaskInput({ task: 1, agent: 'codex', dryRun: false, flow: 'v2' }, root, root, 'repair-test', {
+        fetchTitle: () => 'Task',
+        fetchLabels: () => [],
+        forge,
+        planRepair: f.deps
+      })
+    const task = await input()
+    const result = await task.repairPlan()
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.error.output)
+    const current = manifest(result.result.briefHash)
+    expect(task.isToolBriefRepair!(before, current)).toBe(true)
+    const reconstructed = await input()
+    expect(reconstructed.isToolBriefRepair!(before, current)).toBe(true)
+    expect(changedReviewInputs(before, manifest('external-edit'), reconstructed.isToolBriefRepair)).toEqual([
+      'briefHash'
+    ])
+  })
+
+  test('the live tranche renderer repairs a task whose bare sibling dependency merged', () => {
+    const dir = repo()
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim()
+    mkdirSync(join(dir, 'src'))
+    writeFileSync(join(dir, 'src/module.ts'), 'export const value = true\n')
+    git('add', 'src/module.ts')
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'fixture')
+    const sha = git('rev-parse', 'HEAD')
+    const bin = join(dir, 'bin')
+    mkdirSync(bin)
+    const realGit = Bun.which('git')!.replaceAll("'", "'\\''")
+    // No command may reach a real forge or remote discovery. Only local git is delegated.
+    writeFileSync(
+      join(bin, 'git'),
+      `#!/bin/sh\ncase "$1" in\nls-remote) printf 'ref: refs/heads/main\\tHEAD\\n%s\\tHEAD\\n' '${sha}' ;;\nfetch|push|pull) exit 92 ;;\n*) exec '${realGit}' "$@" ;;\nesac\n`,
+      { mode: 0o755 }
+    )
+    writeFileSync(join(bin, 'gh'), '#!/bin/sh\nexit 93\n', { mode: 0o755 })
+    const script = join(dir, 'tranche-render.test.ts')
+    const strict = join(import.meta.dir, '../../..')
+    // REAL PROCESS: mock only forge/config inputs in an isolated module graph; the assembler,
+    // sibling-edge resolver, dispatch gate, renderer and deterministic repair function stay real.
+    writeFileSync(
+      script,
+      `
+import { expect, mock, test } from 'bun:test'
+const strict = ${JSON.stringify(strict)}
+globalThis.fetch = async () => { throw new Error('Unexpected network call') }
+const sourcePath = strict + '/tools/sources/forge-adapter.ts'
+const source = await import(sourcePath)
+const issuesPath = strict + '/tools/task-contract/forge/fetch-open-issues.ts'
+const issues = await import(issuesPath)
+const factsPath = strict + '/tools/task-contract/forge/fetch-forge-facts.ts'
+const facts = await import(factsPath)
+const composePath = strict + '/integration/config/compose.ts'
+const compose = await import(composePath)
+const body = [
+  '**Project:** cli',
+  '## Objectives', 'O1. Preserve behavior.',
+  '## Documentation', 'None.',
+  '## Surface', 'in: src', 'out: —',
+  '## Parts', 'Part 1 (O1) — Preserve behavior.',
+  '## Test plan', 'Test Plan: unit-tests-only',
+  '## Stop conditions', '- Stop on scope changes.',
+  "**Boundary** — Pinned files: \u0060src/module.ts\u0060. Out: other work.",
+  '**Sizing** — Small fixture.',
+  '**Project(s) + blast radius** — Project: cli. No shared-primitive fan-out.',
+  '**Dependency rationale** — Depends-on: 1; Conflicts-with: —.',
+  '**Traps to avoid** — Keep scope.',
+  '**Suggested agent-class** — fast — fixture.',
+  '**Stop-and-escalate** — Stop on scope changes.',
+  '**Docs to keep coherent** — no-doc-surface.'
+].join('\\n\\n')
+let merged = true
+const tasks = [
+  { id: '1', issue: 101, title: 'Dependency', projects: ['cli'], dependsOn: [], conflictsWith: [] },
+  { id: '2', issue: 102, title: 'Repair', projects: ['cli'], dependsOn: ['1'], conflictsWith: [] }
+]
+mock.module(sourcePath, () => ({ ...source, createForgeSource: () => ({ getTranche: async () => ({ tasks }) }) }))
+mock.module(issuesPath, () => ({ ...issues, fetchOpenIssuesByLabel: async () => new Map([
+  ['repair-fixture', [{ number: 102, body, labels: ['vinaya/tranche:repair-fixture'] }]]
+]) }))
+mock.module(factsPath, () => ({ ...facts, fetchForgeFacts: async () => ({
+  facts: new Map([['1', { prState: merged ? 'merged' : 'open' }]]), unavailable: false
+}) }))
+mock.module(composePath, () => ({ ...compose, loadConfig: () => null, resolveTrustedPrincipals: () => ['fixture'] }))
+const { livePlanRepairDeps } = await import(strict + '/bin/run-engine.ts')
+const { repairDeveloperPlan } = await import(strict + '/loops/dev-review/v2/flow-v2-live.ts')
+const { checkPinnedFileImportersCovered } = await import(strict + '/tools/task-contract/issue-validation.ts')
+test('merged bare dependency renders through the production repair path', async () => {
+  const forbiddenForge = new Proxy({}, { get: (_, name) => () => { throw new Error('Unexpected forge call: ' + String(name)) } })
+  const live = livePlanRepairDeps(102, 'task/repair-fixture/2', process.cwd(), forbiddenForge)
+  let state = { body, title: 'Repair', labels: ['vinaya/tranche:repair-fixture'], version: 1,
+    url: 'fixture://brief', objectivesVersion: 'objectives', brief: '' }
+  state.brief = await live.render(body, state)
+  const importers = [{ file: 'src/module.ts', importers: ['consumer/use.ts'] }]
+  const records = []
+  const repaired = await repairDeveloperPlan({
+    read: () => ({ ...state }),
+    collect: async (candidate) => checkPinnedFileImportersCovered(candidate, importers).errors.map(message => ({
+      schema: 1, check: 'issue-content', severity: 'error', message, agent_recovery_prompt: 'Repair the importer.'
+    })),
+    importers: () => importers, renames: () => [], render: live.render,
+    publish: (body, brief) => { state = { ...state, body, brief, version: state.version + 1 } },
+    record: (record) => records.push(record)
+  })
+  expect(repaired.ok, JSON.stringify(repaired)).toBe(true)
+  expect(repaired.result.brief).toContain('consumer/use.ts')
+  expect(repaired.result.brief).toContain('Depends-on: 1')
+  expect(records).toHaveLength(1)
+  merged = false
+  await expect(live.render(state.body, state)).rejects.toThrow(/depend|merged/i)
+})
+`
+    )
+    const output = execFileSync(process.execPath, ['test', script], {
+      cwd: dir,
+      env: {
+        ...stripVinayaEnv(process.env),
+        PATH: `${bin}:${process.env.PATH}`,
+        GH_TOKEN: 'fixture',
+        GITHUB_TOKEN: 'fixture',
+        VINAYA_REPO: 'fixture/repo'
+      },
+      encoding: 'utf8',
+      timeout: 15_000,
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    expect(output).not.toContain('Unexpected network call')
+  }, 20_000)
+
+  test('render refusal and an unconfirmed publication return findings and gain no exemption', async () => {
+    const f = fixture()
+    f.deps.render = async () => {
+      throw new Error('Premise cannot be repaired')
+    }
+    const refused = await repairDeveloperPlan(f.deps)
+    expect(refused.ok).toBe(false)
+    if (refused.ok) throw new Error('expected refusal')
+    expect(refused.error.output).toContain('Premise cannot be repaired')
+    expect(refused.error.retryDisposition).toBe('human_decision')
+    expect(f.writes()).toBe(0)
+    f.deps.render = async (body) => render(body)
+    f.deps.publish = () => {}
+    const uncertain = await repairDeveloperPlan(f.deps)
+    expect(uncertain.ok).toBe(false)
+    if (uncertain.ok) throw new Error('expected refusal')
+    expect(uncertain.error.effectState).toBe('uncertain')
+    expect(f.records).toEqual([])
+  })
+
+  test.each(['objectives', 'surface'])('refuses a rendered repair that changes %s', async (change) => {
+    const f = fixture()
+    f.deps.render = async (body) =>
+      change === 'objectives'
+        ? render(body).replace('Preserve behavior.', 'Change behavior.')
+        : render(body).replace('`src`', '`src`, `consumer`')
+    const result = await repairDeveloperPlan(f.deps)
+    expect(result.ok).toBe(false)
+    expect(f.writes()).toBe(0)
+    expect(f.records).toEqual([])
+  })
+
+  test('a concurrent brief edit is refused before publication', async () => {
+    const f = fixture()
+    let reads = 0
+    const read = f.deps.read
+    f.deps.read = () => ({ ...read(), brief: ++reads === 1 ? read().brief : 'external edit' })
+    expect((await repairDeveloperPlan(f.deps)).ok).toBe(false)
+    expect(f.writes()).toBe(0)
+    expect(f.records).toEqual([])
+  })
+
+  test('an unconfirmed write gains no exemption; chained repairs require matching objectives', () => {
+    const repairs: ToolPlanRepair[] = [
+      { tool: 'repair_plan', beforeHash: 'a', afterHash: 'b', objectivesVersion: 'objectives' },
+      { tool: 'repair_plan', beforeHash: 'b', afterHash: 'c', objectivesVersion: 'objectives' }
+    ]
+    expect(toolPlanRepairCovers(repairs, manifest('a'), manifest('c'))).toBe(true)
+    expect(toolPlanRepairCovers(repairs.slice(1), manifest('a'), manifest('c'))).toBe(false)
+    expect(toolPlanRepairCovers(repairs, manifest('a'), { ...manifest('c'), objectivesVersion: 'different' })).toBe(
+      false
+    )
+  })
+})
 
 // The live wiring of version 2: the staged pull request, the storage-push marker and the ready push run through
 // the worktree's real pre-push hook, against throwaway repositories.

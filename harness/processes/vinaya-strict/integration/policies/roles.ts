@@ -20,13 +20,14 @@ export const GRANTED_ROLES = ['developer', 'code-reviewer', 'security', 'control
 export type GrantedRole = (typeof GRANTED_ROLES)[number]
 
 /**
- * Per role, every tool it may call: the Developer its seven tools, each
+ * Per role, every tool it may call: the Developer its driver tools, each
  * reviewer only `read_source` — the pinned required sources, never a URL
  * fetch or a Developer tool. The Operator's tools are a separate server with
  * its own launch, and are not granted through this table.
  */
 export const ROLE_TOOL_GRANTS: Readonly<Record<GrantedRole, readonly string[]>> = {
   developer: [
+    'repair_plan',
     'fetch_documentation',
     'run_checks',
     'publish_changes',

@@ -20,6 +20,6 @@ capabilities:
   plan_tool: allow
   view_image: allow
 mcp_tools:
-  vinaya_dev_tools: [fetch_documentation, run_checks, publish_changes, open_pull_request, update_pull_request_body, refresh_evidence, read_pull_request]
+  vinaya_dev_tools: [fetch_documentation, run_checks, repair_plan, publish_changes, open_pull_request, update_pull_request_body, refresh_evidence, read_pull_request]
 hooks: { background_shell: true, force_push: true, no_verify: true, default_branch_commit: true, write_scope: true }
 sandbox: enabled

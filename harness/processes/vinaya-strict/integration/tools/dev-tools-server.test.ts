@@ -35,6 +35,7 @@ import { vinayaToolGrantPolicy } from '../policies/vinaya-policies.js'
 
 function okContext(overrides: Partial<DevToolContext> = {}): DevToolContext {
   return {
+    repairPlan: async () => ({ ok: true, result: { brief: 'brief', briefHash: 'hash', reasons: [] } }),
     publishChanges: async (header) => ({ ok: true, result: { pushedHead: `head-for-${header.slice(0, 4)}` } }),
     openPullRequest: async () => ({ ok: true, result: { prNumber: 42 } }),
     updatePullRequestBody: async () => ({ ok: true, result: { prNumber: 42 } }),
@@ -103,6 +104,55 @@ describe('dev-tools server — catalog and protocol', () => {
 })
 
 describe('dev-tools server — success and refusal both land on the agent', () => {
+  it('returns the repaired brief from the driver, and refuses caller-supplied edits', async () => {
+    let calls = 0
+    const srv = server(
+      okContext({
+        repairPlan: async () => {
+          calls++
+          return { ok: true, result: { brief: 'repaired brief', briefHash: 'hash', reasons: ['unchanged rename'] } }
+        }
+      })
+    )
+    const result = await call(srv, 'repair_plan')
+    expect(result.result.isError).toBe(false)
+    expect(result.result.structuredContent).toEqual({
+      brief: 'repaired brief',
+      briefHash: 'hash',
+      reasons: ['unchanged rename']
+    })
+    expect((await call(srv, 'repair_plan', { body: 'new objectives' })).result.isError).toBe(true)
+    expect(calls).toBe(1)
+  })
+
+  it('returns the unrepairable finding for a ruling without pausing the tool server', async () => {
+    const srv = server(
+      okContext({
+        repairPlan: async () => ({
+          ok: false,
+          error: devToolError(
+            'policy_refusal',
+            'human_decision',
+            'not_started',
+            'plan-repair',
+            '[issue-content] Unrepairable plan',
+            'Request a Principal ruling.'
+          )
+        })
+      })
+    )
+    const result = await call(srv, 'repair_plan')
+    expect(result.result.isError).toBe(true)
+    expect(result.result.structuredContent.error.retryDisposition).toBe('human_decision')
+    expect(result.result.structuredContent.error.output).toContain('Unrepairable plan')
+    expect((await call(srv, 'run_checks')).result.isError).toBe(false)
+  })
+
+  it('refuses repair on an older host instead of pretending the plan was repaired', async () => {
+    const result = await call(server(okContext({ repairPlan: undefined })), 'repair_plan')
+    expect(result.result.isError).toBe(true)
+    expect(result.result.structuredContent.error.check).toBe('repair-plan-unavailable')
+  })
   it('publish_changes success returns the pushed head with isError false', async () => {
     const parsed = await call(server(okContext()), 'publish_changes', { header: 'Fix: x' })
     expect(parsed.result.isError).toBe(false)

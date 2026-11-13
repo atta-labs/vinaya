@@ -12,7 +12,7 @@ import { Database } from 'bun:sqlite'
 import type { RoleName } from '../../../../harness/kernel/adapters/agents/manifest'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
@@ -24,6 +24,20 @@ import {
 } from '../../../kernel/connectors/checkpoint/control-store/index'
 
 import { buildReviewInputManifest, type ReviewInputManifest } from '../tools/task-contract/review-input-manifest'
+import {
+  assembleAndRenderBrief,
+  assembleAndRenderBriefForIssue,
+  fastForwardToRemoteIfSafe
+} from '../tools/task-contract/brief-assembly'
+import { briefMarkerFor, resolveNewestFrozenBrief } from '../tools/task-contract/brief-validation'
+import { boundaryPinnedFiles } from '../tools/task-contract/issue-validation'
+import { readUnchangedRenames } from '../tools/task-contract/plan-repair'
+import {
+  collectTaskIssueErrors,
+  readPinnedFileImporters,
+  postMarkedCommentOrThrow
+} from '../tools/task-contract/forge/forge-write'
+import { readIssueComments } from '../../../kernel/adapters/code-host/github/forge-read'
 import { DEFAULT_READY_PUSH_TIMEOUT_MINUTES, DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 import {
   createRunControl,
@@ -242,6 +256,7 @@ import {
   reviewPolicyForLoop,
   freshDispatchLogLine
 } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
+import { principalAllowlist } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import {
   ENGINE_FORGE_RETRY_MAX_ATTEMPTS,
   classifyDriverError,
@@ -318,6 +333,12 @@ import {
   sweepReadyGateRuns,
   storagePushLogEvent,
   withV2DevTools
+} from '../loops/dev-review/v2/flow-v2-live'
+import {
+  repairDeveloperPlan,
+  toolPlanRepairCovers,
+  type MidRunPlanRepairDeps,
+  type ToolPlanRepair
 } from '../loops/dev-review/v2/flow-v2-live'
 import { readUnpushedWorkDetail, type UnpushedWork } from '../loops/dev-review/standalone/dev-review-loop/unpushed-work'
 import { hookRoutingRepairLine, repairLocalGateControl } from '../../../kernel/gates/local-gate-control'
@@ -2479,6 +2500,7 @@ function refusal<T>(check: string, output: string): DevToolResult<T> {
  * Developer turn starts from and builds that turn's context, as the standalone loop does at each dispatch.
  */
 export function engineLiveDevToolsContext(input: {
+  repairPlan?: DevToolContext['repairPlan']
   branch: string
   worktreePath: string
   task: number
@@ -2569,6 +2591,7 @@ export function engineLiveDevToolsContext(input: {
     return merge
   }
   const context: DevToolContext = {
+    ...(input.repairPlan ? { repairPlan: () => attribution.driverToolCall(input.repairPlan!) } : {}),
     publishChanges: (header) => turn.publishChanges(header),
     openPullRequest: (title, body) => turn.openPullRequest(title, body),
     updatePullRequestBody: (body) => turn.updatePullRequestBody(body),
@@ -2706,6 +2729,80 @@ export function withLoadedFlow<T extends { flow?: string }>(
   return { args: { ...args, flow: loaded.flowKey }, loaded }
 }
 
+/** Mid-run repair reuses dispatch's rules and Issue gate, then appends a frozen brief version. */
+export function livePlanRepairDeps(
+  task: number,
+  branch: string,
+  root: string,
+  forge: EngineForge
+): Omit<MidRunPlanRepairDeps, 'record'> {
+  return {
+    read: () => {
+      const freshness = fastForwardToRemoteIfSafe(root)
+      if (freshness.kind === 'refused') throw new Error(freshness.reason)
+      const issue = JSON.parse(sh('gh', ['issue', 'view', String(task), '--json', 'body,title,labels'])) as {
+        body: string
+        title: string
+        labels: { name: string }[]
+      }
+      const comments = readIssueComments(task).map((c) => ({ ...c, author: c.author?.login ?? null }))
+      const frozen = resolveNewestFrozenBrief(comments, principalAllowlist())
+      if (!frozen) throw new Error(`Issue #${task} has no frozen brief`)
+      const objectivesVersion = forge.resolveIssueObjectives(task).version
+      if (objectivesVersion === null) throw new Error(`Issue #${task}'s objectives could not be resolved`)
+      return {
+        body: issue.body,
+        title: issue.title,
+        labels: issue.labels.map((l) => l.name),
+        brief: frozen.content,
+        version: frozen.version,
+        url: frozen.url,
+        objectivesVersion
+      }
+    },
+    collect: async (body, state) =>
+      (
+        await collectTaskIssueErrors(
+          body,
+          null,
+          state.labels,
+          'repair_plan',
+          task,
+          { kind: 'edit', issueRef: String(task) },
+          undefined,
+          'pull-requests'
+        )
+      ).errors,
+    importers: (body) => readPinnedFileImporters(body, root),
+    renames: (body) => readUnchangedRenames(root, boundaryPinnedFiles(body)),
+    render: async (body, state) => {
+      const pieces = branch.split('/')
+      const result =
+        pieces.length === 3
+          ? await assembleAndRenderBrief(pieces[1]!, pieces[2]!, undefined, body)
+          : await assembleAndRenderBriefForIssue(task, { title: state.title, labels: state.labels, body })
+      if (!result.ok) throw new Error(`Repair needs a ruling: ${result.missing.join('\n')}`)
+      return result.brief
+    },
+    publish: (body, brief, state, reasons) => {
+      const dir = mkdtempSync(join(tmpdir(), 'vinaya-mid-run-repair-'))
+      try {
+        const path = join(dir, 'body.md')
+        writeFileSync(path, body)
+        sh('gh', ['issue', 'edit', String(task), '--body-file', path])
+        postMarkedCommentOrThrow(
+          'issue',
+          String(task),
+          briefMarkerFor(state.version + 1),
+          `Brief hash: ${briefHashOf(brief)}\nSupersedes: ${state.url} — repair_plan: ${reasons.join(' ')}\n${brief}`
+        )
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  }
+}
+
 /** The per-task input the actions read: the branch, the Log events' loop and the verdict plumbing. */
 export async function liveTaskInput(
   args: EngineArgs,
@@ -2729,17 +2826,50 @@ export async function liveTaskInput(
     repository?: string
     /** Where the CLI the checks run from lives; defaults to `repoRoot`. The live runner passes the Vinaya install, which differs from the task's repository when Vinaya is adopted elsewhere. */
     cliRoot?: string
+    /** Complete repair seam: tests replacing it never fall through to a live forge operation. */
+    planRepair?: Omit<MidRunPlanRepairDeps, 'record'>
     reviewSources?: Partial<
       Pick<VinayaReviewInputDeps, 'judgedHead' | 'readHead' | 'baseOf' | 'brief' | 'prBody' | 'diff' | 'priorFindings'>
     >
   } = {}
-): Promise<TaskInput & { stageReviewInput: (round: number) => VinayaStagedReviewInput | null }> {
+): Promise<
+  TaskInput & {
+    stageReviewInput: (round: number) => VinayaStagedReviewInput | null
+    repairPlan: NonNullable<DevToolContext['repairPlan']>
+  }
+> {
   const forge: EngineForge = retryingForge({ ...liveForge, ...lookups.forge }, lookups.forgeRetrySleep)
   // Tranche tasks live on `task/<tranche>/<n>`, backlog tasks on `task/issue-<n>`.
   // The same Issue read hands back the task's title, which `loop_started` records; absent when no title was read.
   const { branch, title: taskTitle } = developerBranchAndTitleFor(args.task, lookups.fetchTitle, lookups.fetchLabels)
   const titled = taskTitle ? { title: taskTitle } : {}
   const worktreePath = join(repoRoot, '.worktrees', branch)
+  const repairPath = join(taskControlDir(runtimeDir, args.task), 'plan-repairs.json')
+  const readRepairs = (): ToolPlanRepair[] => {
+    try {
+      const value: unknown = JSON.parse(readFileSync(repairPath, 'utf8'))
+      return Array.isArray(value) &&
+        value.every(
+          (r) =>
+            r?.tool === 'repair_plan' &&
+            typeof r.beforeHash === 'string' &&
+            typeof r.afterHash === 'string' &&
+            typeof r.objectivesVersion === 'string'
+        )
+        ? value
+        : []
+    } catch {
+      return []
+    }
+  }
+  const repairDeps: MidRunPlanRepairDeps = {
+    ...(lookups.planRepair ?? livePlanRepairDeps(args.task, branch, repoRoot, forge)),
+    record: (repair) => {
+      mkdirSync(taskControlDir(runtimeDir, args.task), { recursive: true })
+      writeFileSync(`${repairPath}.tmp`, JSON.stringify([...readRepairs(), repair]))
+      renameSync(`${repairPath}.tmp`, repairPath)
+    }
+  }
   // The policy is read when first needed, never when this input is built: an unreadable policy pauses through the
   // handoff (the prepare-run step reports it) instead of throwing before the run starts.
   let readPolicy: ReturnType<typeof reviewPolicyForLoop> | null = null
@@ -2989,6 +3119,8 @@ export async function liveTaskInput(
       }
     },
     reviewRound: () => round,
+    repairPlan: () => repairDeveloperPlan(repairDeps),
+    isToolBriefRepair: (before, current) => toolPlanRepairCovers(readRepairs(), before, current),
     // A re-run numbers its first round after the rounds the forge already holds; never backwards.
     seedRound: (next) => {
       round = Math.max(round, next)
@@ -3220,6 +3352,7 @@ async function runLive(
     ...(repo ? { repository: `${repo.owner}/${repo.repo}` } : {})
   })
   const liveContext = engineLiveDevToolsContext({
+    repairPlan: taskInput.repairPlan,
     branch: taskInput.branch,
     worktreePath: taskInput.worktreePath,
     task: args.task,
