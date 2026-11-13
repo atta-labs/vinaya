@@ -44,7 +44,7 @@ function operationLine(opts: {
       seq: 0,
       repo: 'owner/repo',
       vinaya: '0.36.0',
-      doctrine: 'aeg-root@contract',
+      doctrine: 'vinaya-strict@contract',
       host: 'cli',
       machine: 'contract-machine',
       event_id: opts.eventId,

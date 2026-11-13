@@ -79,9 +79,9 @@ export type AnchorField = (typeof ANCHOR_FIELDS)[number]
 /**
  * The code-recognition grammar — `stripCode`, `maskCode` and their fence /
  * indented-block / inline-span scanners — moved down to
- * `@attalabs/aeg-forge-state` (`strip-code.ts`) so `projectFieldFromBody` can
+ * the GitHub code-host adapter (`strip-code.ts`) so `projectFieldFromBody` can
  * read a body "minus its examples" through the SAME implementation rather than
- * a second copy of it. `aeg-core` already depends on `aeg-forge-state`, so the
+ * a second copy of it. The checks already depend on that adapter, so the
  * grammar could only be shared by moving it down; importing upward would close
  * a cycle. It is re-exported here because `anchored-region` remains this
  * package's documented home for body-parsing primitives and every existing

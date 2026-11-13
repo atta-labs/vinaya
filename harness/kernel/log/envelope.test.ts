@@ -8,7 +8,7 @@ const baseInput: HeaderInput = {
   seq: 0,
   repo: 'atta-labs/vinaya',
   vinaya: '0.24.1',
-  doctrine: 'aeg-root@abc123',
+  doctrine: 'vinaya-strict@abc123',
   host: 'cli',
   hostname: 'my-laptop.local',
   env: {},
@@ -90,7 +90,7 @@ describe('buildHeader', () => {
       seq: 0,
       repo: 'atta-labs/vinaya',
       vinaya: '0.24.1',
-      doctrine: 'aeg-root@abc123',
+      doctrine: 'vinaya-strict@abc123',
       host: 'cli'
     })
   })

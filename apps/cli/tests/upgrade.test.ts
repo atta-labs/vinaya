@@ -129,7 +129,7 @@ describe('vinaya upgrade', () => {
   it('removes a stale generated agent skill for a retired role, dropping it from the manifest', async () => {
     await runInit(['--yes'], initDeps())
 
-    // No role file under aeg-root/roles/ is named this, so it is stale by
+    // No role file in the process doctrine tree is named this, so it is stale by
     // construction — the same shape a real role retirement leaves behind in
     // a repo that generated the skill before the role was removed.
     const stalePath = '.agents/skills/vinaya-retired-fixture-role/SKILL.md'
@@ -656,7 +656,7 @@ describe('vinaya upgrade — the persisted --agents selection, never re-flagged'
 })
 
 // Regression coverage for the ENOTDIR crash found live (task 9, #881): every
-// AEG Developer works in a linked git worktree (`roles/developer.md`), where
+// Vinaya Developer works in a linked git worktree (`roles/developer.md`), where
 // `<repoRoot>/.git` is a FILE (a gitdir pointer), not a directory. `upgrade`'s
 // managed-block (hook) classification and writes used a bare
 // `join(repoRoot, '.git/hooks/…')`, which — unlike a missing-file miss —

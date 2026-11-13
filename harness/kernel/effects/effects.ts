@@ -11,7 +11,7 @@
  *
  * `EffectExecutor` closes this by persisting an effect's identity —
  * `operation`, `target`, `inputVersion`, `payloadDigest` — through
- * `@attalabs/aeg-core`'s control store BEFORE ever calling the poster
+ * the checkpoint connector's control store BEFORE ever calling the poster
  * (O1), and, on finding a prior `'started'` record at the SAME identity,
  * reconciling against the remote before doing anything else (O2): a
  * caller-supplied `reconcile` either confirms the write already landed (no

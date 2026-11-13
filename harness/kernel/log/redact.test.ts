@@ -61,7 +61,7 @@ describe('redact', () => {
 
   it('does NOT redact a bare 40-hex string with no keyword — a git sha must survive', () => {
     expect(redact(FORTY_HEX, HOME)).toBe(FORTY_HEX)
-    expect(redact(`aeg-root@${FORTY_HEX}`, HOME)).toBe(`aeg-root@${FORTY_HEX}`)
+    expect(redact(`vinaya-strict@${FORTY_HEX}`, HOME)).toBe(`vinaya-strict@${FORTY_HEX}`)
   })
 
   it('rewrites an AWS access key ID', () => {

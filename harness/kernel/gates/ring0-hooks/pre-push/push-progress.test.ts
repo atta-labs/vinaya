@@ -204,10 +204,10 @@ describe('a run of native runner groups', () => {
     tests: ['apps/cli/tests/a.test.ts', 'apps/cli/tests/b.test.ts', 'apps/cli/tests/c.test.ts']
   })
   const vitestStart = testGroupStartLine({
-    group: 'aeg-core@default',
+    group: 'core@default',
     runner: 'vitest',
-    cwd: 'packages/aeg-core',
-    tests: ['packages/aeg-core/src/x.test.ts', 'packages/aeg-core/src/y.test.ts']
+    cwd: 'packages/core',
+    tests: ['packages/core/src/x.test.ts', 'packages/core/src/y.test.ts']
   })
   // A Bun group whose second file runs an inner fixture that prints its own `a.test.ts:` and `b.test.ts:` headers,
   // and whose third file crashed before its header; then a Vitest group whose reporter prints one line per file.
@@ -230,15 +230,15 @@ describe('a run of native runner groups', () => {
       executed: ['apps/cli/tests/a.test.ts', 'apps/cli/tests/b.test.ts'],
       failed: []
     }),
-    'vinaya schedule: aeg-core@default — @attalabs/aeg-core, vitest in packages/aeg-core, 2 file(s)',
+    'vinaya schedule: core@default — @attalabs/core, vitest in packages/core, 2 file(s)',
     vitestStart,
     ' ✓ src/x.test.ts (3 tests) 4ms',
     ' ❯ src/y.test.ts (2 tests | 1 failed) 7ms',
     '   × breaks 2ms',
     testGroupEndLine({
-      group: 'aeg-core@default',
-      executed: ['packages/aeg-core/src/x.test.ts', 'packages/aeg-core/src/y.test.ts'],
-      failed: ['packages/aeg-core/src/y.test.ts']
+      group: 'core@default',
+      executed: ['packages/core/src/x.test.ts', 'packages/core/src/y.test.ts'],
+      failed: ['packages/core/src/y.test.ts']
     }),
     ''
   ].join('\n')
@@ -249,8 +249,8 @@ describe('a run of native runner groups', () => {
     expect(files).toEqual([
       'apps/cli/tests/a.test.ts',
       'apps/cli/tests/b.test.ts',
-      'packages/aeg-core/src/x.test.ts',
-      'packages/aeg-core/src/y.test.ts'
+      'packages/core/src/x.test.ts',
+      'packages/core/src/y.test.ts'
     ])
   })
 
@@ -277,8 +277,8 @@ describe('a run of native runner groups', () => {
     expect(lines).toEqual([
       'test progress: 1/5 apps/cli/tests/a.test.ts ✓, 2 ms',
       'test progress: 2/5 apps/cli/tests/b.test.ts ✗, 5 ms — first failing test: inner fixture failure',
-      'test progress: 3/5 packages/aeg-core/src/x.test.ts ✓, 4 ms',
-      'test progress: 4/5 packages/aeg-core/src/y.test.ts ✗, 7 ms'
+      'test progress: 3/5 packages/core/src/x.test.ts ✓, 4 ms',
+      'test progress: 4/5 packages/core/src/y.test.ts ✗, 7 ms'
     ])
     const tally = new TestRunTally(5)
     for (const event of new TestOutputParser().feed(output)) {
@@ -294,8 +294,8 @@ describe('a run of native runner groups', () => {
     const silent = [
       vitestStart,
       testGroupEndLine({
-        group: 'aeg-core@default',
-        executed: ['packages/aeg-core/src/x.test.ts', 'packages/aeg-core/src/y.test.ts'],
+        group: 'core@default',
+        executed: ['packages/core/src/x.test.ts', 'packages/core/src/y.test.ts'],
         failed: []
       }),
       ''

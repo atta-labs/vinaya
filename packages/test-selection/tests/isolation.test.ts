@@ -194,7 +194,7 @@ describe('the package is closed', () => {
         `${fake}/src/escape.ts`,
         [
           "import type { VinayaConfig } from '../../../harness/config.js'",
-          "export { globToRegex } from '@attalabs/aeg-core'",
+          "export { globToRegex } from '@attalabs/harness'",
           "import helper = require('../../ops.js')",
           "export type Sink = import('../../log-sink.js').Sink",
           'export const late = (name: string) => import(name)',
@@ -225,7 +225,7 @@ describe('the package is closed', () => {
       'src/escape.ts: ../../../harness/config.js escapes the package folder',
       'src/escape.ts: ../../log-sink.js escapes the package folder',
       'src/escape.ts: ../../ops.js escapes the package folder',
-      'src/escape.ts: @attalabs/aeg-core is not declared in package.json',
+      'src/escape.ts: @attalabs/harness is not declared in package.json',
       'src/escape.ts: a computed specifier'
     ])
     expect(importerViolations(fakeRoot, fake, files, PACKAGE_NAME, read)).toEqual([

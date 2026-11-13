@@ -23,6 +23,24 @@ export const LEGACY_TRANCHES_DIR = `${LEGACY_DOCTRINE_ROOT}/tranches`
 /** The retired per-project notes directory name. */
 export const LEGACY_PROJECT_DIR = `${RETIRED_PREFIX}-project`
 
+/**
+ * The retired static collision-domain file, relative to the repository root.
+ * No gate reads it; `vinaya doctor` still names one an adopter's repository
+ * carries as deprecated.
+ */
+export const LEGACY_PACKAGES_FILE = `.${RETIRED_PREFIX}/packages`
+
+/**
+ * The bundled-doctrine layout releases published before the doctrine moved
+ * into the process folder: its root folder and the front-door skill's path
+ * inside it. A probe of an already-published package accepts it beside the
+ * current layout.
+ */
+export const LEGACY_PUBLISHED_DOCTRINE_LAYOUT = {
+  root: LEGACY_DOCTRINE_ROOT,
+  entry: ['skills', RETIRED_PREFIX, 'SKILL.md']
+} as const
+
 /** `text` with every regular-expression metacharacter escaped, for a literal path inside a pattern. */
 export function escapeForPattern(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

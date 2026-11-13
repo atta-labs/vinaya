@@ -10,7 +10,7 @@ const meta = {
   seq: 0,
   repo: 'atta-labs/vinaya',
   vinaya: '0.24.1',
-  doctrine: 'aeg-root@abc123',
+  doctrine: 'vinaya-strict@abc123',
   host: 'cli' as const,
   machine: 'deadbeef'
 }

@@ -133,8 +133,11 @@ function typecheckMisses(plan: CiPlan, expected: readonly string[]): string[] {
 
 describe('the job oracle', () => {
   it('reads a task graph that holds every workspace package with a typecheck task', () => {
-    expect(dependents.get('@attalabs/aeg-types')).toContain('@attalabs/aeg-core')
-    expect(dependents.get('@attalabs/aeg-types')).toContain('@vinaya/portal')
+    // A shared library at the replay revision: its typecheck dependents hold the portal and another library.
+    const shared = [...dependents].filter(
+      ([pkg, deps]) => deps.has('@vinaya/portal') && [...deps].some((dep) => dep !== pkg && dep !== '@vinaya/portal')
+    )
+    expect(shared.length).toBeGreaterThan(0)
     expect(packages.map((p) => p.name)).toContain('@attalabs/vinaya')
   })
 

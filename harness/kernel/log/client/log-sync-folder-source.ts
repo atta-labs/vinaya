@@ -3,7 +3,7 @@
  * adapter that reads a log folder's streams over the layout the sink itself
  * writes — `<folder>/<owner>-<repo>/<work>.ndjson`, rotated once at 8 MiB
  * into a single overwritten `<work>.1.ndjson` slot (`log-sink.ts`). The
- * `LogSource` contract itself (`@attalabs/aeg-core`) is pure policy and
+ * `LogSource` contract itself (`../sync/contracts.ts`) is pure policy and
  * stays untouched; this file is the one place that opens a file descriptor
  * for it. The repository folder's own name is derived from the sink's own
  * exported `outboxPathFor`, never re-derived, so this source can never drift

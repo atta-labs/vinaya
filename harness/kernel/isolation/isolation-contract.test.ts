@@ -5,7 +5,7 @@ import { findHeadingLine, findTable, rowToRecord } from '../gates/checks/markdow
 
 /**
  * Parses harness/kernel/isolation/isolation.md's boundary contract table the same way
- * every other doctrine table in this repo is parsed — `@attalabs/aeg-core`'s
+ * every other doctrine table in this repo is parsed — the kernel's
  * `findTable`, never a one-off regex — and asserts it names all six required
  * boundaries, each with a non-empty Permitted and Forbidden column.
  */

@@ -4,7 +4,7 @@
  * (`apps/log-server/specs/server.md` § 5) — paging the read route by
  * position, stating what the server retains from the stats route, and
  * reading a bounded look-back before a cursor with that same route. The
- * `LogSource` contract itself (`@attalabs/aeg-core`) is pure policy and
+ * `LogSource` contract itself (`../sync/contracts.ts`) is pure policy and
  * stays untouched; this file is the one place that calls `fetch` for it.
  * `fetch`, the destination's events URL and the raw `logs.readHeaders`
  * (with `${VAR}` references intact) all arrive as constructor arguments —

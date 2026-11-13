@@ -24,9 +24,9 @@ function makeDeps(overrides: Partial<ReleaseDeps> = {}): ReleaseDeps {
     },
     tagsAtHead: () => [
       '@attalabs/vinaya@0.24.0',
-      '@attalabs/aeg-core@0.15.0',
-      '@attalabs/aeg-types@0.15.0',
-      '@attalabs/aeg-forge-state@0.15.0',
+      '@example/core@0.15.0',
+      '@example/types@0.15.0',
+      '@example/forge-state@0.15.0',
       '@attalabs/vinaya-sources@0.15.0'
     ],
     npmViewVersion: (pkg) => (pkg === '@attalabs/vinaya' ? '0.23.0' : '0.15.0'),
@@ -133,7 +133,7 @@ describe('vinaya release — happy path', () => {
     expect(result.published).toHaveLength(5)
     const vinaya = result.published.find((p) => p.pkg === '@attalabs/vinaya')
     expect(vinaya).toMatchObject({ version: '0.24.0', registryVersion: '0.23.0', lagExpected: true })
-    const core = result.published.find((p) => p.pkg === '@attalabs/aeg-core')
+    const core = result.published.find((p) => p.pkg === '@example/core')
     expect(core).toMatchObject({ version: '0.15.0', registryVersion: '0.15.0', lagExpected: false })
   })
 

@@ -25,7 +25,7 @@ function rawLine(eventId: string, ts: string, result = 'ok'): string {
       seq: 0,
       repo: 'owner/repo',
       vinaya: '0.36.0',
-      doctrine: 'aeg-root@engine',
+      doctrine: 'vinaya-strict@engine',
       host: 'cli',
       machine: 'engine-machine',
       event_id: eventId,

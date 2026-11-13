@@ -6,7 +6,7 @@
  * missed) at each call site.
  *
  * `claude-code-transcript.ts` stays pure (no `fs`, no `process.env`) — this
- * sibling module is `aeg-core`'s one deliberate exception, exported
+ * sibling module is the adapter's one deliberate exception, exported
  * alongside it rather than living in `bin/`: `apps/cli` only ever sees this
  * package's `src/index.ts` surface, and `bin/` is not part of it (see that
  * file's own header on the `bin/` vs `src/` split).

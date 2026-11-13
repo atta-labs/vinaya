@@ -1,7 +1,7 @@
 /**
  * Pure, no-I/O extraction of GitHub-flavored-markdown tables from raw text.
- * The single, aeg-core-owned parser every doctrine consumer reads tables
- * through — the Vinaya `/aeg` renderer, `registry-parse.ts`, and the
+ * The single, kernel-owned parser every doctrine consumer reads tables
+ * through — the Vinaya doctrine renderer, `registry-parse.ts`, and the
  * DiagramModel derivation all sit on this one implementation, so no consumer
  * can silently drift from the real file the moment a row's wording changes
  * (one parser, N consumers).

@@ -201,7 +201,7 @@ describe('vinaya init', () => {
     // default since `init`'s own `--agents` flag defaults to `all`. Nothing
     // else is written.
     const doctrineRoot = resolveDoctrineRoot()
-    if (!doctrineRoot) throw new Error('no bundled doctrine found — this test requires the real aeg-root/')
+    if (!doctrineRoot) throw new Error('no bundled doctrine found — this test requires the real process doctrine tree')
     // Every role skill lands twice: `.agents/skills/` (the `skills` vendor)
     // and `.claude/skills/` (the `claude` vendor).
     const agentSkillPaths = discoverRoleNames(doctrineRoot).flatMap((role) => [
@@ -2635,7 +2635,7 @@ describe('vinaya eject removes all three agent-vendor emitters from a full insta
     expect(existsSync(join(root, CLAUDE_COMMAND_PATH))).toBe(true)
     expect(existsSync(join(root, GEMINI_COMMAND_PATH))).toBe(true)
     const doctrineRoot = resolveDoctrineRoot()
-    if (!doctrineRoot) throw new Error('no bundled doctrine found — this test requires the real aeg-root/')
+    if (!doctrineRoot) throw new Error('no bundled doctrine found — this test requires the real process doctrine tree')
     const skillPaths = discoverRoleNames(doctrineRoot).flatMap((role) => [
       agentSkillPath(role, 'agents'),
       agentSkillPath(role, 'claude')
@@ -2805,7 +2805,7 @@ describe('generated workflows — verified PR-body fetch, bounded backoff (O3)',
     }
   })
 
-  it("no longer waits for the AEG:EVIDENCE block's Head to catch up (O1, task-run-v1 20) — both workflows now trigger only on events where the body already carries the fresh head, so evidence-fresh at the merge gate is the sole guard left", () => {
+  it("no longer waits for the VINAYA:EVIDENCE block's Head to catch up (O1, task-run-v1 20) — both workflows now trigger only on events where the body already carries the fresh head, so evidence-fresh at the merge gate is the sole guard left", () => {
     const ops = buildInitOps({
       owner: 'acme',
       repo: 'widget',

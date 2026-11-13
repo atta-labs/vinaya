@@ -40,7 +40,7 @@ import {
 const readEffect: (...args: Parameters<typeof readEffectResult>) => unknown = readEffectResult
 const readResolution: (...args: Parameters<typeof readResolutionResult>) => unknown = readResolutionResult
 
-// This suite is entirely aeg-core / node:fs — nothing here ever reaches the
+// This suite is entirely the control store / node:fs — nothing here ever reaches the
 // Vinaya Log sink (`harness/kernel/log/log-sink.ts` lives in a different
 // package and is never imported from this directory), so every fault
 // fixture below runs with telemetry disabled by construction, not by an

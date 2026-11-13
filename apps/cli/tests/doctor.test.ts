@@ -28,6 +28,7 @@ import type { VinayaConfig } from '../../../harness/processes/vinaya-strict/inte
 import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
 import { DOC_OWNERS_PATH } from '../../../harness/processes/vinaya-strict/tools/doc-owners'
+import { LEGACY_PACKAGES_FILE } from '../../../harness/processes/vinaya-strict/tools/legacy-paths'
 import {
   CHECKS_WORKFLOW_PATH,
   CLAUDE_POINTER_PATH,
@@ -1044,7 +1045,7 @@ describe('vinaya doctor — token-metering capability', () => {
 })
 
 describe('vinaya doctor — blast-radius deprecation', () => {
-  it('no package.json, no .aeg/packages — check is active with zero derived/default domains, not dormant', async () => {
+  it('no package.json, no legacy packages file — check is active with zero derived/default domains, not dormant', async () => {
     const report = await runDoctorJson()
     const hit = report.findings.find((f) => f.check === 'blast-radius')
     expect(hit?.severity).toBe('info')
@@ -1053,7 +1054,7 @@ describe('vinaya doctor — blast-radius deprecation', () => {
     expect(hit?.message).toContain('not dormant')
   })
 
-  it('a real package.json + present defaults, no .aeg/packages — reports the live counts, not dormant', async () => {
+  it('a real package.json + present defaults, no legacy packages file — reports the live counts, not dormant', async () => {
     writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
     mkdirSync(join(root, 'packages/foo'), { recursive: true })
     mkdirSync(join(root, 'packages/bar'), { recursive: true })
@@ -1077,11 +1078,11 @@ describe('vinaya doctor — blast-radius deprecation', () => {
     expect(hit?.message).toContain('1 packages/* domain(s)')
   })
 
-  it('.aeg/packages present, fully covered by derivation + defaults — deprecated, safe to delete', async () => {
+  it('the legacy packages file present, fully covered by derivation + defaults — deprecated, safe to delete', async () => {
     writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
     mkdirSync(join(root, 'packages/foo'), { recursive: true })
-    mkdirSync(join(root, '.aeg'), { recursive: true })
-    writeFileSync(join(root, '.aeg/packages'), 'packages/foo\n', 'utf8')
+    mkdirSync(dirname(join(root, LEGACY_PACKAGES_FILE)), { recursive: true })
+    writeFileSync(join(root, LEGACY_PACKAGES_FILE), 'packages/foo\n', 'utf8')
 
     const report = await runDoctorJson()
     const hit = report.findings.find((f) => f.check === 'blast-radius')
@@ -1090,11 +1091,11 @@ describe('vinaya doctor — blast-radius deprecation', () => {
     expect(hit?.message).toContain('the file can be deleted')
   })
 
-  it('.aeg/packages present with an entry NOT covered — names exactly it as needing migration', async () => {
+  it('the legacy packages file present with an entry NOT covered — names exactly it as needing migration', async () => {
     writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
     mkdirSync(join(root, 'packages/foo'), { recursive: true })
-    mkdirSync(join(root, '.aeg'), { recursive: true })
-    writeFileSync(join(root, '.aeg/packages'), 'packages/foo\nmigrations/legacy\n', 'utf8')
+    mkdirSync(dirname(join(root, LEGACY_PACKAGES_FILE)), { recursive: true })
+    writeFileSync(join(root, LEGACY_PACKAGES_FILE), 'packages/foo\nmigrations/legacy\n', 'utf8')
 
     const report = await runDoctorJson()
     const hit = report.findings.find((f) => f.check === 'blast-radius')
@@ -1107,8 +1108,8 @@ describe('vinaya doctor — blast-radius deprecation', () => {
   it('an entry already declared in vinaya.config.json blastRadius.extraDomains does not need migrating', async () => {
     writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
     mkdirSync(join(root, 'packages/foo'), { recursive: true })
-    mkdirSync(join(root, '.aeg'), { recursive: true })
-    writeFileSync(join(root, '.aeg/packages'), 'packages/foo\nmigrations/legacy\n', 'utf8')
+    mkdirSync(dirname(join(root, LEGACY_PACKAGES_FILE)), { recursive: true })
+    writeFileSync(join(root, LEGACY_PACKAGES_FILE), 'packages/foo\nmigrations/legacy\n', 'utf8')
     writeFileSync(
       join(root, CONFIG_PATH),
       JSON.stringify({ blastRadius: { extraDomains: ['migrations/legacy'] } }),
@@ -1124,8 +1125,8 @@ describe('vinaya doctor — blast-radius deprecation', () => {
   it('never mutates: fixture tree is byte-identical before and after this diagnostic runs', async () => {
     writeFileSync(join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }), 'utf8')
     mkdirSync(join(root, 'packages/foo'), { recursive: true })
-    mkdirSync(join(root, '.aeg'), { recursive: true })
-    writeFileSync(join(root, '.aeg/packages'), 'packages/foo\nmigrations/legacy\n', 'utf8')
+    mkdirSync(dirname(join(root, LEGACY_PACKAGES_FILE)), { recursive: true })
+    writeFileSync(join(root, LEGACY_PACKAGES_FILE), 'packages/foo\nmigrations/legacy\n', 'utf8')
     const before = snapshot(root)
 
     await runDoctorJson()
@@ -1344,7 +1345,7 @@ describe('vinaya doctor — doctrine root/source line (PR #410 review)', () => {
     return JSON.parse(buf).data
   }
 
-  it('a repo carrying its own aeg-root/roles/ prints "(tree)", rooted at that repo\'s own aeg-root', async () => {
+  it('a repo carrying its own process doctrine tree prints "(tree)", rooted at that repo\'s own process folder', async () => {
     git(root, ['init', '-q'])
     mkdirSync(join(root, 'harness/processes/vinaya-strict/doctrine/skills/vinaya'), { recursive: true })
     writeFileSync(join(root, 'harness/processes/vinaya-strict/doctrine/skills/vinaya/SKILL.md'), '# Front door\n')
@@ -1360,7 +1361,7 @@ describe('vinaya doctor — doctrine root/source line (PR #410 review)', () => {
     expect(report.doctrineInfo).toEqual({ root: join(realRoot, 'harness/processes/vinaya-strict'), source: 'tree' })
   })
 
-  it('a repo with no aeg-root/roles/ of its own prints "(bundle)"', async () => {
+  it('a repo with no process doctrine tree of its own prints "(bundle)"', async () => {
     await runInit(['--yes'], initDeps())
 
     const out = await captureStdout(async () => {

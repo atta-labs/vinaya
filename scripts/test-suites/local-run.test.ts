@@ -52,10 +52,10 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const identity = (id: string, suite: string, over: Partial<TestIdentity> = {}): TestIdentity => ({
   id,
   suite,
-  owner: suite === 'cli' ? '@attalabs/vinaya' : suite === 'aeg-core' ? '@attalabs/aeg-core' : '@vinaya/portal',
+  owner: suite === 'cli' ? '@attalabs/vinaya' : suite === 'api-core' ? '@attalabs/api-core' : '@vinaya/portal',
   kind: 'workspace',
-  runner: suite === 'aeg-core' ? 'vitest' : 'bun',
-  cwd: suite === 'cli' ? 'apps/cli' : suite === 'aeg-core' ? 'packages/aeg-core' : 'apps/vinaya-portal',
+  runner: suite === 'api-core' ? 'vitest' : 'bun',
+  cwd: suite === 'cli' ? 'apps/cli' : suite === 'api-core' ? 'packages/api-core' : 'apps/vinaya-portal',
   preload: null,
   environment: suite === 'cli' ? { timeoutMs: 30000 } : {},
   ...over
@@ -65,8 +65,8 @@ const TESTS = [
   identity('apps/cli/tests/a.test.ts', 'cli'),
   identity('apps/cli/tests/b.test.ts', 'cli'),
   identity('apps/cli/tests/failed.test.ts', 'cli'),
-  identity('packages/aeg-core/src/x.test.ts', 'aeg-core'),
-  identity('packages/aeg-core/src/y.test.ts', 'aeg-core'),
+  identity('packages/api-core/src/x.test.ts', 'api-core'),
+  identity('packages/api-core/src/y.test.ts', 'api-core'),
   identity('apps/vinaya-portal/src/p.test.ts', 'portal')
 ]
 
@@ -89,7 +89,7 @@ const VIEW = {
   contextIdentity: 'inventory-context',
   suites: [
     suite('cli', '@attalabs/vinaya', 'apps/cli', 'bun'),
-    suite('aeg-core', '@attalabs/aeg-core', 'packages/aeg-core', 'vitest'),
+    suite('api-core', '@attalabs/api-core', 'packages/api-core', 'vitest'),
     suite('portal', '@vinaya/portal', 'apps/vinaya-portal', 'bun')
   ],
   tests: TESTS
@@ -140,11 +140,11 @@ describe('the plan a push freezes', () => {
 
   it('a selected Vitest suite without a whole-suite owner runs only its planned files', () => {
     const local = localNativePlan({
-      plan: plan({ required: [{ ...required('packages/aeg-core/src/x.test.ts'), suite: 'aeg-core' }] }),
+      plan: plan({ required: [{ ...required('packages/api-core/src/x.test.ts'), suite: 'api-core' }] }),
       view: VIEW
     })
     expect(local.groups.map((g) => [g.id, g.scope, g.tests])).toEqual([
-      ['aeg-core@default', 'files', ['packages/aeg-core/src/x.test.ts']]
+      ['api-core@default', 'files', ['packages/api-core/src/x.test.ts']]
     ])
     expect(local.expanded).toEqual([])
   })
@@ -519,12 +519,12 @@ describe('the verdict of a native run', () => {
 
 const VT_GROUP: NativeGroup = {
   ...GROUP,
-  id: 'aeg-core@default',
-  suite: 'aeg-core',
-  owner: '@attalabs/aeg-core',
+  id: 'api-core@default',
+  suite: 'api-core',
+  owner: '@attalabs/api-core',
   runner: 'vitest',
-  cwd: 'packages/aeg-core',
-  tests: ['packages/aeg-core/src/x.test.ts', 'packages/aeg-core/src/y.test.ts'],
+  cwd: 'packages/api-core',
+  tests: ['packages/api-core/src/x.test.ts', 'packages/api-core/src/y.test.ts'],
   args: ['src/x.test.ts', 'src/y.test.ts']
 }
 
@@ -618,8 +618,8 @@ describe('what a failed native run confirms', () => {
         branch: 'task/x/1',
         failed: [
           '/repo/apps/cli/tests/b.test.ts',
-          '/repo/packages/aeg-core/src/x.test.ts',
-          '/repo/packages/aeg-core/src/y.test.ts'
+          '/repo/packages/api-core/src/x.test.ts',
+          '/repo/packages/api-core/src/y.test.ts'
         ],
         recordedAt: '2026-11-01T00:00:00.000Z',
         selectionCompleted: true,
@@ -665,8 +665,8 @@ describe('what a failed native run confirms', () => {
           failed: [
             '/repo/apps/cli/tests/a.test.ts',
             '/repo/apps/cli/tests/b.test.ts',
-            '/repo/packages/aeg-core/src/x.test.ts',
-            '/repo/packages/aeg-core/src/y.test.ts'
+            '/repo/packages/api-core/src/x.test.ts',
+            '/repo/packages/api-core/src/y.test.ts'
           ]
         })
       ])

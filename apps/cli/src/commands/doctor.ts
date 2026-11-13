@@ -61,6 +61,7 @@ import {
   resolveDoctrineRootInfo
 } from '../../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
 import { detectVendoredVinaya } from '../../../../harness/processes/vinaya-strict/tools/self-host.js'
+import { LEGACY_PACKAGES_FILE } from '../../../../harness/processes/vinaya-strict/tools/legacy-paths'
 import {
   type BriefSection,
   GLOBAL_CONFIG_PATH,
@@ -745,24 +746,23 @@ function diagnoseDocOwnersHealth(repoRoot: string): Finding[] {
 
 // ---------------------------------------------------------------------------
 // blast-radius diagnostic — permanent, unconditioned on install state:
-// `checkBlastRadiusScope` (`@attalabs/aeg-core`'s `issue-validation.ts`, run
+// `checkBlastRadiusScope` (the Vinaya process's `issue-validation.ts`, run
 // from `harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts`) now derives its `packages/*`
 // collision domains live from `package.json` `workspaces` and ships a
 // built-in cross-cutting default set (lockfile/monorepo-config/CI/git-hooks
 // presence-checks) — see `blast-radius-domains.ts`. The legacy static
-// `.aeg/packages` file is additive, not required, and this diagnostic is what
+// packages file is additive, not required, and this diagnostic is what
 // tells an adopter that: an absent file gets an `info` confirming the check
 // is live and not dormant; a present file gets a `warn` naming it deprecated
 // and listing exactly which of its entries (if any) aren't already covered by
 // derivation + defaults + `vinaya.config.json`'s `blastRadius.extraDomains` —
 // the adopter's migration checklist before deleting it.
 // ---------------------------------------------------------------------------
-const LEGACY_AEG_PACKAGES_PATH = '.aeg/packages'
 
 /**
  * Same shape as `open-issue.ts`'s `readWorkspaces` — repeated here rather
  * than shared because doctor's repoRoot is a diagnosed target, not
- * `aeg-core`'s own checkout. Reads BOTH `package.json`'s `workspaces` array
+ * the Vinaya repository's own checkout. Reads BOTH `package.json`'s `workspaces` array
  * and `pnpm-workspace.yaml`'s `packages:` list: pnpm does not honor a
  * `workspaces` key in `package.json` at all, so a pnpm adopter's real
  * workspace glob lives only in the YAML file.
@@ -804,12 +804,12 @@ function diagnoseBlastRadiusDeprecation(repoRoot: string, config: VinayaConfig |
   const covered = new Set([...derived, ...defaults])
   const configExtra = new Set(config?.blastRadius?.extraDomains ?? [])
 
-  const legacyPath = join(repoRoot, LEGACY_AEG_PACKAGES_PATH)
+  const legacyPath = join(repoRoot, LEGACY_PACKAGES_FILE)
   if (!existsSync(legacyPath)) {
     return [
       info(
         'blast-radius',
-        `checkBlastRadiusScope is active via live derivation (${derived.length} packages/* domain(s)) + built-in defaults (${defaults.length} present) — no ${LEGACY_AEG_PACKAGES_PATH}, and the check is not dormant.`
+        `checkBlastRadiusScope is active via live derivation (${derived.length} packages/* domain(s)) + built-in defaults (${defaults.length} present) — no ${LEGACY_PACKAGES_FILE}, and the check is not dormant.`
       )
     ]
   }
@@ -828,7 +828,7 @@ function diagnoseBlastRadiusDeprecation(repoRoot: string, config: VinayaConfig |
   return [
     warn(
       'blast-radius',
-      `${LEGACY_AEG_PACKAGES_PATH} is deprecated — checkBlastRadiusScope now derives packages/* domains live and ships built-in cross-cutting defaults. Declare anything beyond those in vinaya.config.json's blastRadius.extraDomains instead. ${migrationNote}`
+      `${LEGACY_PACKAGES_FILE} is deprecated — checkBlastRadiusScope now derives packages/* domains live and ships built-in cross-cutting defaults. Declare anything beyond those in vinaya.config.json's blastRadius.extraDomains instead. ${migrationNote}`
     )
   ]
 }
@@ -988,7 +988,7 @@ function diagnoseGlobalConfigChecks(): Finding[] {
 // ---------------------------------------------------------------------------
 // Token-metering capability probe — surfaces only the incapable verdict, at
 // `info`: the expected default is `capable`, which is not a fact worth a
-// line. Reuses `resolveMeteringCapability` from `@attalabs/aeg-core` rather
+// line. Reuses `resolveMeteringCapability` from the Claude Code adapter rather
 // than re-deriving "can this host meter itself" from `process.env` directly
 // — declaring capability by host identity is the exact false positive the
 // probe exists to remove.

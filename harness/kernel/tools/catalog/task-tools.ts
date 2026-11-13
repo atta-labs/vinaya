@@ -82,7 +82,7 @@ export function capabilityUnavailable(tool: TaskToolName, becauseOf: string): Ta
  * a backlog task (`{ issue }`, matching `task/issue-<n>`) — the same two
  * shapes `apps/cli/src/lib/task-status.ts`'s own `TaskRef` already
  * distinguishes, mirrored here as the catalog's public vocabulary rather
- * than importing that CLI-internal type (`aeg-core` takes no dependency on
+ * than importing that CLI-internal type (the harness takes no dependency on
  * `apps/cli`).
  */
 export const TaskToolRefSchema = z.union([

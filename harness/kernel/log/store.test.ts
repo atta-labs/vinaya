@@ -24,7 +24,7 @@ function metaV2(runId: string, seq: number, eventId: string): Record<string, unk
     seq,
     repo: 'atta-labs/vinaya',
     vinaya: '0.24.0',
-    doctrine: 'aeg-root@deadbeef',
+    doctrine: 'vinaya-strict@deadbeef',
     host: 'cli',
     machine: 'cafebabe',
     event_id: eventId,

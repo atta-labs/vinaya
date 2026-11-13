@@ -1,5 +1,5 @@
 /**
- * The checks-side resolver — a pure function, no I/O, no `@attalabs/aeg-core`
+ * The checks-side resolver — a pure function, no I/O, no process
  * import (mirrors `contract.ts`'s own "pure contract" discipline).
  *
  * AUTHORITATIVE as of the execution flip: `vinaya check --plan` /

@@ -2,7 +2,7 @@
  * The per-file diff `evaluateC5` reads to verify a `Doc-neutral:` declaration
  * Shared by both doc-coverage check bins so the two
  * cannot drift; `verify-docs.ts` carries its own copy
- * because it lives in a different package and aeg-core's `src/` is zero-I/O
+ * because it lives in a different package whose pure sources are zero-I/O
  * by charter — that boundary, not an oversight, is why there are two.
  *
  * The caller passes the ref that actually produced the changed-file list, not

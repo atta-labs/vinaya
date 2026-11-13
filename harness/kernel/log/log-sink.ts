@@ -792,10 +792,10 @@ export function recordFolderFallback(
   }
 }
 
-// `owner`/`repo` reach here from `AEG_REPO` or a parsed git remote URL —
-// neither is re-validated upstream (`@attalabs/aeg-forge-state`'s parser
+// `owner`/`repo` reach here from `VINAYA_REPO` or a parsed git remote URL —
+// neither is re-validated upstream (the GitHub code-host adapter's parser
 // permits `/` and `..`) before landing in a path this sink joins straight
-// into `mkdirSync`/`openSync`. A crafted `AEG_REPO=owner/../../../../tmp/evil`
+// into `mkdirSync`/`openSync`. A crafted `VINAYA_REPO=owner/../../../../tmp/evil`
 // must not steer the outbox outside itself, so a segment failing this check
 // is treated exactly like a null `resolveRepo()` — the same "unresolved"
 // fallback, never a value spliced unchecked into a filesystem path.
@@ -1390,7 +1390,7 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
   const headShaIfSettled = (): string | null =>
     headShaReaderIsReal ? (headShaSettledByCwd.get(deps.cwd()) ?? null) : ownHeadShaSettled
 
-  // `deps.resolveRepo()` (the real default is `@attalabs/aeg-forge-state`'s
+  // `deps.resolveRepo()` (the real default is the GitHub code-host adapter's
   // `resolveRepo`) is called at most ONCE per sink, its result — including a
   // failed `null` — cached for every later `log()` call in this process.
   // `resolveRepo` itself deliberately does NOT cache a failure (a transient
@@ -1829,7 +1829,7 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
   // first event arrives. An optimisation only: every step of that
   // resolution is asynchronous, so starting it late never blocks anything.
   const warmup = (): void => {
-    // `resolveRepo` (`@attalabs/aeg-forge-state`) prints its own
+    // `resolveRepo` (the GitHub code-host adapter) prints its own
     // `console.warn` straight to this process's real stderr when the
     // lookup fails (no git repo, or a repo with no configured `origin`) —
     // reasonable for its own pre-existing callers, but this warmup call is

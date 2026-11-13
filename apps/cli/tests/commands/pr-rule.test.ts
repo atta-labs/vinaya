@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'bun:test'
+import { PRINCIPAL_RULING_MARKER } from '../../../../harness/processes/vinaya-strict/tools/legacy-markers'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -171,7 +172,12 @@ describe('vinaya pr rule', () => {
     const repo = tempDir('pr-rule-repo-')
     const filePath = writeFixture(repo, 'ruling.md', 'The scope changes to include the migration script.\n')
     const { path, commentsLogPath } = stubGh(
-      { comments: [{ body: '<!-- aeg:principal:ruling:1-1 -->\nEarlier ruling.\n' }, { body: 'unrelated comment' }] },
+      {
+        comments: [
+          { body: `<!-- ${PRINCIPAL_RULING_MARKER.old}:1-1 -->\nEarlier ruling.\n` },
+          { body: 'unrelated comment' }
+        ]
+      },
       'https://github.com/acme/widget/pull/1#issuecomment-9'
     )
 
