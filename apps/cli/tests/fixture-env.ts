@@ -35,6 +35,18 @@
  */
 const FIXTURE_HOSTILE_ENV_NAMES = ['PR_BODY', 'PR_NUMBER', 'BRANCH'] as const
 
+/**
+ * The bound for a test that commits or pushes through the fixture's real git
+ * hooks, in the same two files. Each such commit starts a full `vinaya-check`
+ * run, so these tests' running time follows the machine's load. On an idle
+ * machine they finish in a few seconds. With eight copies of the two files
+ * running at once beside other work on the same host, they were measured
+ * running several times slower than a fifteen- or thirty-second bound
+ * allows. The bound only stops a hung test; it asserts nothing about speed,
+ * so it is sized for a loaded shared machine, not an idle one.
+ */
+export const HOOK_TEST_BOUND_MS = 180_000
+
 export function stripAmbientFixtureEnv(): () => void {
   const saved: Record<string, string | undefined> = {}
   const drop = (key: string): void => {

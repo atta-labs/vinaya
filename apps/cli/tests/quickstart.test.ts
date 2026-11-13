@@ -14,7 +14,7 @@ import { runQuickstart } from '../src/commands/quickstart.js'
 import { PROJECTS_REGISTRY_PATH } from '../../../harness/processes/vinaya-strict/artifacts/registry-write.js'
 import type { LabelGateway } from '../../../harness/kernel/gates/ops.js'
 import { programFile } from '../../../harness/processes/vinaya-strict/tools/programs.js'
-import { stripAmbientFixtureEnv } from './fixture-env.js'
+import { HOOK_TEST_BOUND_MS, stripAmbientFixtureEnv } from './fixture-env.js'
 
 // The real CLI source, invoked directly by `bun` — same technique
 // `demo.test.ts` uses, needed here because `demo break` (reached when the
@@ -197,70 +197,74 @@ afterEach(() => {
 })
 
 describe('vinaya quickstart', () => {
-  it('accept-everything: installs, binds a doc-owner, registers a project, commits, proves the install, and gracefully reports a failed push (no remote)', async () => {
-    const { deps, closeStdinCalls } = makeDeps(root, [
-      '', // press-enter pause before the diff
-      'y', // vinaya init's own confirm
-      'y', // bind a doc-owner pair?
-      'apps/foo/src/**', // glob
-      'apps/foo/specs/foo.md', // pointer
-      'n', // bind another? — declined
-      'y', // register project?
-      'demo', // project name
-      '', // project path — empty, default '.'
-      'n', // register another? — declined
-      'y', // run demo break?
-      'y' // push?
-    ])
+  it(
+    'accept-everything: installs, binds a doc-owner, registers a project, commits, proves the install, and gracefully reports a failed push (no remote)',
+    async () => {
+      const { deps, closeStdinCalls } = makeDeps(root, [
+        '', // press-enter pause before the diff
+        'y', // vinaya init's own confirm
+        'y', // bind a doc-owner pair?
+        'apps/foo/src/**', // glob
+        'apps/foo/specs/foo.md', // pointer
+        'n', // bind another? — declined
+        'y', // register project?
+        'demo', // project name
+        '', // project path — empty, default '.'
+        'n', // register another? — declined
+        'y', // run demo break?
+        'y' // push?
+      ])
 
-    let rc = -1
-    const out = await captureStdout(async () => {
-      rc = await runQuickstart([], deps)
-    })
-    expect(rc, out).toBe(0)
+      let rc = -1
+      const out = await captureStdout(async () => {
+        rc = await runQuickstart([], deps)
+      })
+      expect(rc, out).toBe(0)
 
-    // init actually installed (hooks + config), not just diffed.
-    expect(existsSync(join(root, 'vinaya.config.json'))).toBe(true)
-    expect(existsSync(join(root, '.git/hooks/pre-commit'))).toBe(true)
+      // init actually installed (hooks + config), not just diffed.
+      expect(existsSync(join(root, 'vinaya.config.json'))).toBe(true)
+      expect(existsSync(join(root, '.git/hooks/pre-commit'))).toBe(true)
 
-    // doc-owners binding threaded through to the Part 1 writer.
-    const docOwners = readFileSync(join(root, DOC_OWNERS_PATH), 'utf-8')
-    expect(docOwners).toContain('apps/foo/src/**  apps/foo/specs/foo.md')
+      // doc-owners binding threaded through to the Part 1 writer.
+      const docOwners = readFileSync(join(root, DOC_OWNERS_PATH), 'utf-8')
+      expect(docOwners).toContain('apps/foo/src/**  apps/foo/specs/foo.md')
 
-    // project registration threaded through to `runInitProduct`/`registry-write.ts`.
-    const registry = readFileSync(join(root, PROJECTS_REGISTRY_PATH), 'utf-8')
-    expect(registry).toContain('| demo | `.` |')
+      // project registration threaded through to `runInitProduct`/`registry-write.ts`.
+      const registry = readFileSync(join(root, PROJECTS_REGISTRY_PATH), 'utf-8')
+      expect(registry).toContain('| demo | `.` |')
 
-    // a real commit landed.
-    const log = git(root, ['log', '--oneline'])
-    expect(log.split('\n').length, out).toBe(2) // initial commit + install commit
-    expect(git(root, ['log', '-1', '--format=%s'])).toBe('Chore: install Vinaya')
-    expect(git(root, ['status', '--porcelain'])).toBe('')
+      // a real commit landed.
+      const log = git(root, ['log', '--oneline'])
+      expect(log.split('\n').length, out).toBe(2) // initial commit + install commit
+      expect(git(root, ['log', '-1', '--format=%s'])).toBe('Chore: install Vinaya')
+      expect(git(root, ['status', '--porcelain'])).toBe('')
 
-    // demo break actually ran (real refusal, real fix, real cleanup).
-    expect(out).toContain('✗ Commit refused')
-    expect(out).toContain('✓ Commit passed — the fix worked.')
-    expect(git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/vinaya/demo-break-*'])).toBe('')
+      // demo break actually ran (real refusal, real fix, real cleanup).
+      expect(out).toContain('✗ Commit refused')
+      expect(out).toContain('✓ Commit passed — the fix worked.')
+      expect(git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/vinaya/demo-break-*'])).toBe('')
 
-    // the working tree is previewed before the commit lands (review finding, PR
-    // #838) — status is captured BEFORE `git add -A` runs, so new files are
-    // still untracked (`??`), not staged (`A`).
-    expect(out).toContain('Working tree before commit')
-    expect(out).toContain('?? vinaya.config.json')
+      // the working tree is previewed before the commit lands (review finding, PR
+      // #838) — status is captured BEFORE `git add -A` runs, so new files are
+      // still untracked (`??`), not staged (`A`).
+      expect(out).toContain('Working tree before commit')
+      expect(out).toContain('?? vinaya.config.json')
 
-    // doctor ran.
-    expect(out).toContain('vinaya doctor')
+      // doctor ran.
+      expect(out).toContain('vinaya doctor')
 
-    // push was attempted and failed gracefully (fixture has no remote) — the
-    // command still completes successfully rather than crashing.
-    expect(out).toContain('git push failed')
+      // push was attempted and failed gracefully (fixture has no remote) — the
+      // command still completes successfully rather than crashing.
+      expect(out).toContain('git push failed')
 
-    // next-step hints omit demo break/push since both ran, but the command
-    // still finishes cleanly.
-    expect(out).toContain('Next steps:')
+      // next-step hints omit demo break/push since both ran, but the command
+      // still finishes cleanly.
+      expect(out).toContain('Next steps:')
 
-    expect(closeStdinCalls()).toBe(1)
-  }, 30_000)
+      expect(closeStdinCalls()).toBe(1)
+    },
+    HOOK_TEST_BOUND_MS
+  )
 
   it('decline-everything: nothing installed, no commit, no stray artifacts — closeStdin still called exactly once', async () => {
     const { deps, closeStdinCalls } = makeDeps(root, [
@@ -306,163 +310,183 @@ describe('vinaya quickstart', () => {
     expect(closeStdinCalls()).toBe(1)
   })
 
-  it('declining just the doc-owner prompt skips only that step, keeping project registration', async () => {
-    const { deps } = makeDeps(root, [
-      '', // press-enter pause before the diff
-      'y', // init
-      'n', // bind doc-owner — declined
-      'y', // register project
-      'demo',
-      '.',
-      'n', // register another? — declined
-      'n', // demo break — declined, keep the test fast
-      'n' // push — declined
-    ])
-
-    let rc = -1
-    await captureStdout(async () => {
-      rc = await runQuickstart([], deps)
-    })
-    expect(rc).toBe(0)
-
-    const docOwners = readFileSync(join(root, DOC_OWNERS_PATH), 'utf-8')
-    expect(docOwners).not.toContain('apps/foo/src/**')
-    expect(existsSync(join(root, PROJECTS_REGISTRY_PATH))).toBe(true)
-  }, 15_000)
-
-  it('declining just the project-registration prompt skips only that step, keeping the doc-owner binding', async () => {
-    const { deps } = makeDeps(root, [
-      '', // press-enter pause before the diff
-      'y', // init
-      'y', // bind doc-owner
-      'apps/bar/src/**',
-      'apps/bar/specs/bar.md',
-      'n', // bind another? — declined
-      'n', // register project — declined
-      'n', // demo break — declined
-      'n' // push — declined
-    ])
-
-    let rc = -1
-    await captureStdout(async () => {
-      rc = await runQuickstart([], deps)
-    })
-    expect(rc).toBe(0)
-
-    const docOwners = readFileSync(join(root, DOC_OWNERS_PATH), 'utf-8')
-    expect(docOwners).toContain('apps/bar/src/**  apps/bar/specs/bar.md')
-    expect(existsSync(join(root, PROJECTS_REGISTRY_PATH))).toBe(false)
-  }, 15_000)
-
-  it('rejects a project name or path containing whitespace/pipe/newline, offers a retry, and skips cleanly on decline (review finding, PR #838)', async () => {
-    // console.error goes to stderr, which captureStdout does not capture —
-    // absence of the registry file is the observable proof the guard fired
-    // and runInitProduct was never called, matching this file's own style
-    // for the other declined-step tests.
-    const { deps: depsBadName } = makeDeps(root, [
-      '', // press-enter pause before the diff
-      'y', // init
-      'n', // bind doc-owner — declined
-      'y', // register project
-      'bad name', // whitespace in name — invalid
-      '.',
-      'n', // "Try again?" — declined
-      'n', // demo break — declined
-      'n' // push — declined
-    ])
-    let rc = -1
-    await captureStdout(async () => {
-      rc = await runQuickstart([], depsBadName)
-    })
-    expect(rc).toBe(0)
-    expect(existsSync(join(root, PROJECTS_REGISTRY_PATH))).toBe(false)
-
-    const root2 = initFixture() // separate fixture for the second sub-case
-    try {
-      const { deps: depsBadPath } = makeDeps(root2, [
+  it(
+    'declining just the doc-owner prompt skips only that step, keeping project registration',
+    async () => {
+      const { deps } = makeDeps(root, [
         '', // press-enter pause before the diff
         'y', // init
         'n', // bind doc-owner — declined
         'y', // register project
         'demo',
-        'apps/foo|bar', // pipe in path — invalid
+        '.',
+        'n', // register another? — declined
+        'n', // demo break — declined, keep the test fast
+        'n' // push — declined
+      ])
+
+      let rc = -1
+      await captureStdout(async () => {
+        rc = await runQuickstart([], deps)
+      })
+      expect(rc).toBe(0)
+
+      const docOwners = readFileSync(join(root, DOC_OWNERS_PATH), 'utf-8')
+      expect(docOwners).not.toContain('apps/foo/src/**')
+      expect(existsSync(join(root, PROJECTS_REGISTRY_PATH))).toBe(true)
+    },
+    HOOK_TEST_BOUND_MS
+  )
+
+  it(
+    'declining just the project-registration prompt skips only that step, keeping the doc-owner binding',
+    async () => {
+      const { deps } = makeDeps(root, [
+        '', // press-enter pause before the diff
+        'y', // init
+        'y', // bind doc-owner
+        'apps/bar/src/**',
+        'apps/bar/specs/bar.md',
+        'n', // bind another? — declined
+        'n', // register project — declined
+        'n', // demo break — declined
+        'n' // push — declined
+      ])
+
+      let rc = -1
+      await captureStdout(async () => {
+        rc = await runQuickstart([], deps)
+      })
+      expect(rc).toBe(0)
+
+      const docOwners = readFileSync(join(root, DOC_OWNERS_PATH), 'utf-8')
+      expect(docOwners).toContain('apps/bar/src/**  apps/bar/specs/bar.md')
+      expect(existsSync(join(root, PROJECTS_REGISTRY_PATH))).toBe(false)
+    },
+    HOOK_TEST_BOUND_MS
+  )
+
+  it(
+    'rejects a project name or path containing whitespace/pipe/newline, offers a retry, and skips cleanly on decline (review finding, PR #838)',
+    async () => {
+      // console.error goes to stderr, which captureStdout does not capture —
+      // absence of the registry file is the observable proof the guard fired
+      // and runInitProduct was never called, matching this file's own style
+      // for the other declined-step tests.
+      const { deps: depsBadName } = makeDeps(root, [
+        '', // press-enter pause before the diff
+        'y', // init
+        'n', // bind doc-owner — declined
+        'y', // register project
+        'bad name', // whitespace in name — invalid
+        '.',
         'n', // "Try again?" — declined
         'n', // demo break — declined
         'n' // push — declined
       ])
-      let rc2 = -1
+      let rc = -1
       await captureStdout(async () => {
-        rc2 = await runQuickstart([], depsBadPath)
+        rc = await runQuickstart([], depsBadName)
       })
-      expect(rc2).toBe(0)
-      expect(existsSync(join(root2, PROJECTS_REGISTRY_PATH))).toBe(false)
-    } finally {
-      rmSync(root2, { recursive: true, force: true })
-    }
-  }, 15_000)
+      expect(rc).toBe(0)
+      expect(existsSync(join(root, PROJECTS_REGISTRY_PATH))).toBe(false)
 
-  it('retries the doc-owner bind after a bad pointer and succeeds on the second attempt', async () => {
-    const { deps } = makeDeps(root, [
-      '', // press-enter pause before the diff
-      'y', // init
-      'y', // bind doc-owner
-      'apps/foo/src/**', // glob (valid)
-      'does-not-exist.md', // pointer — no such file, first attempt fails
-      'y', // "Try again?" — accepted
-      'apps/foo/src/**', // glob, retried
-      'apps/foo/specs/foo.md', // pointer — a real file this time
-      'n', // bind another? — declined
-      'n', // register project — declined
-      'n', // demo break — declined
-      'n' // push — declined
-    ])
+      const root2 = initFixture() // separate fixture for the second sub-case
+      try {
+        const { deps: depsBadPath } = makeDeps(root2, [
+          '', // press-enter pause before the diff
+          'y', // init
+          'n', // bind doc-owner — declined
+          'y', // register project
+          'demo',
+          'apps/foo|bar', // pipe in path — invalid
+          'n', // "Try again?" — declined
+          'n', // demo break — declined
+          'n' // push — declined
+        ])
+        let rc2 = -1
+        await captureStdout(async () => {
+          rc2 = await runQuickstart([], depsBadPath)
+        })
+        expect(rc2).toBe(0)
+        expect(existsSync(join(root2, PROJECTS_REGISTRY_PATH))).toBe(false)
+      } finally {
+        rmSync(root2, { recursive: true, force: true })
+      }
+    },
+    HOOK_TEST_BOUND_MS
+  )
 
-    let rc = -1
-    const out = await captureStdout(async () => {
-      rc = await runQuickstart([], deps)
-    })
-    expect(rc, out).toBe(0)
+  it(
+    'retries the doc-owner bind after a bad pointer and succeeds on the second attempt',
+    async () => {
+      const { deps } = makeDeps(root, [
+        '', // press-enter pause before the diff
+        'y', // init
+        'y', // bind doc-owner
+        'apps/foo/src/**', // glob (valid)
+        'does-not-exist.md', // pointer — no such file, first attempt fails
+        'y', // "Try again?" — accepted
+        'apps/foo/src/**', // glob, retried
+        'apps/foo/specs/foo.md', // pointer — a real file this time
+        'n', // bind another? — declined
+        'n', // register project — declined
+        'n', // demo break — declined
+        'n' // push — declined
+      ])
 
-    const docOwners = readFileSync(join(root, DOC_OWNERS_PATH), 'utf-8')
-    expect(docOwners).toContain('apps/foo/src/**  apps/foo/specs/foo.md')
-  }, 15_000)
+      let rc = -1
+      const out = await captureStdout(async () => {
+        rc = await runQuickstart([], deps)
+      })
+      expect(rc, out).toBe(0)
 
-  it('binds two doc-owner pairs and registers two projects in one run (review finding, live: was one-shot only)', async () => {
-    const { deps } = makeDeps(root, [
-      '', // press-enter pause before the diff
-      'y', // init
-      'y', // bind doc-owner
-      'apps/foo/src/**',
-      'apps/foo/specs/foo.md',
-      'y', // bind another? — accepted
-      'apps/bar/src/**',
-      'apps/bar/specs/bar.md',
-      'n', // bind another? — declined
-      'y', // register project
-      'foo',
-      'apps/foo',
-      'y', // register another? — accepted
-      'bar',
-      'apps/bar',
-      'n', // register another? — declined
-      'n', // demo break — declined, keep the test fast
-      'n' // push — declined
-    ])
+      const docOwners = readFileSync(join(root, DOC_OWNERS_PATH), 'utf-8')
+      expect(docOwners).toContain('apps/foo/src/**  apps/foo/specs/foo.md')
+    },
+    HOOK_TEST_BOUND_MS
+  )
 
-    let rc = -1
-    const out = await captureStdout(async () => {
-      rc = await runQuickstart([], deps)
-    })
-    expect(rc, out).toBe(0)
+  it(
+    'binds two doc-owner pairs and registers two projects in one run (review finding, live: was one-shot only)',
+    async () => {
+      const { deps } = makeDeps(root, [
+        '', // press-enter pause before the diff
+        'y', // init
+        'y', // bind doc-owner
+        'apps/foo/src/**',
+        'apps/foo/specs/foo.md',
+        'y', // bind another? — accepted
+        'apps/bar/src/**',
+        'apps/bar/specs/bar.md',
+        'n', // bind another? — declined
+        'y', // register project
+        'foo',
+        'apps/foo',
+        'y', // register another? — accepted
+        'bar',
+        'apps/bar',
+        'n', // register another? — declined
+        'n', // demo break — declined, keep the test fast
+        'n' // push — declined
+      ])
 
-    const docOwners = readFileSync(join(root, DOC_OWNERS_PATH), 'utf-8')
-    expect(docOwners).toContain('apps/foo/src/**  apps/foo/specs/foo.md')
-    expect(docOwners).toContain('apps/bar/src/**  apps/bar/specs/bar.md')
+      let rc = -1
+      const out = await captureStdout(async () => {
+        rc = await runQuickstart([], deps)
+      })
+      expect(rc, out).toBe(0)
 
-    const registry = readFileSync(join(root, PROJECTS_REGISTRY_PATH), 'utf-8')
-    expect(registry).toContain('| foo |')
-    expect(registry).toContain('| bar |')
-  }, 15_000)
+      const docOwners = readFileSync(join(root, DOC_OWNERS_PATH), 'utf-8')
+      expect(docOwners).toContain('apps/foo/src/**  apps/foo/specs/foo.md')
+      expect(docOwners).toContain('apps/bar/src/**  apps/bar/specs/bar.md')
+
+      const registry = readFileSync(join(root, PROJECTS_REGISTRY_PATH), 'utf-8')
+      expect(registry).toContain('| foo |')
+      expect(registry).toContain('| bar |')
+    },
+    HOOK_TEST_BOUND_MS
+  )
 
   it('closeStdin() is called exactly once when `vinaya init` itself fails', async () => {
     // One answer now: the press-enter pause fires before quickstart even
@@ -516,65 +540,69 @@ describe('vinaya quickstart', () => {
 })
 
 describe('vinaya quickstart --yes / --dry-run passthrough (Issue #53)', () => {
-  it('--yes completes the full flow with no prompt EVER opened — install, demo break, push all run on their documented defaults', async () => {
-    const { deps, questions, closeStdinCalls } = makeDeps(root, [])
-    // Under `--yes`, quickstart never calls `deps.confirm`/`deps.ask` (proven
-    // below via `questions`), so the swap this file's other tests hang off
-    // quickstart's own first `confirm` call never fires. `applyInstall`
-    // (lib/ops.ts) writes every file — including the hook — in Pass 1, then
-    // makes its network-bound label calls in Pass 2, so hooking the swap onto
-    // the label gateway's `exists()` (called once per label, all in Pass 2)
-    // still lands it before the FIRST post-install `git commit`.
-    let hookSwapped = false
-    const realLabelGateway = deps.initDeps.labelGateway
-    deps.initDeps.labelGateway = (repoRoot: string) => {
-      const real = realLabelGateway(repoRoot)
-      return {
-        async exists(name: string) {
-          if (!hookSwapped) {
-            makeHookLocal(repoRoot)
-            hookSwapped = true
+  it(
+    '--yes completes the full flow with no prompt EVER opened — install, demo break, push all run on their documented defaults',
+    async () => {
+      const { deps, questions, closeStdinCalls } = makeDeps(root, [])
+      // Under `--yes`, quickstart never calls `deps.confirm`/`deps.ask` (proven
+      // below via `questions`), so the swap this file's other tests hang off
+      // quickstart's own first `confirm` call never fires. `applyInstall`
+      // (lib/ops.ts) writes every file — including the hook — in Pass 1, then
+      // makes its network-bound label calls in Pass 2, so hooking the swap onto
+      // the label gateway's `exists()` (called once per label, all in Pass 2)
+      // still lands it before the FIRST post-install `git commit`.
+      let hookSwapped = false
+      const realLabelGateway = deps.initDeps.labelGateway
+      deps.initDeps.labelGateway = (repoRoot: string) => {
+        const real = realLabelGateway(repoRoot)
+        return {
+          async exists(name: string) {
+            if (!hookSwapped) {
+              makeHookLocal(repoRoot)
+              hookSwapped = true
+            }
+            return real.exists(name)
+          },
+          async create(name: string, color: string, description: string) {
+            return real.create(name, color, description)
           }
-          return real.exists(name)
-        },
-        async create(name: string, color: string, description: string) {
-          return real.create(name, color, description)
         }
       }
-    }
 
-    let rc = -1
-    const out = await captureStdout(async () => {
-      rc = await runQuickstart(['--yes'], deps)
-    })
-    expect(rc, out).toBe(0)
+      let rc = -1
+      const out = await captureStdout(async () => {
+        rc = await runQuickstart(['--yes'], deps)
+      })
+      expect(rc, out).toBe(0)
 
-    // the whole point: zero questions asked, human or otherwise.
-    expect(questions).toEqual([])
+      // the whole point: zero questions asked, human or otherwise.
+      expect(questions).toEqual([])
 
-    // init actually installed — `--yes` reached `runInit`, which is the bug
-    // this task fixes (previously `runInit([], ...)` always got empty args).
-    expect(existsSync(join(root, 'vinaya.config.json'))).toBe(true)
-    expect(existsSync(join(root, '.git/hooks/pre-commit'))).toBe(true)
+      // init actually installed — `--yes` reached `runInit`, which is the bug
+      // this task fixes (previously `runInit([], ...)` always got empty args).
+      expect(existsSync(join(root, 'vinaya.config.json'))).toBe(true)
+      expect(existsSync(join(root, '.git/hooks/pre-commit'))).toBe(true)
 
-    // bind/register both default to declined — no sub-prompts, no project
-    // registration written.
-    expect(existsSync(join(root, PROJECTS_REGISTRY_PATH))).toBe(false)
+      // bind/register both default to declined — no sub-prompts, no project
+      // registration written.
+      expect(existsSync(join(root, PROJECTS_REGISTRY_PATH))).toBe(false)
 
-    // the install landed as a real commit.
-    const log = git(root, ['log', '--oneline'])
-    expect(log.split('\n').length, out).toBe(2)
-    expect(git(root, ['log', '-1', '--format=%s'])).toBe('Chore: install Vinaya')
+      // the install landed as a real commit.
+      const log = git(root, ['log', '--oneline'])
+      expect(log.split('\n').length, out).toBe(2)
+      expect(git(root, ['log', '-1', '--format=%s'])).toBe('Chore: install Vinaya')
 
-    // demo break defaults to true and ran for real against the swapped hook.
-    expect(out).toContain('✗ Commit refused')
-    expect(out).toContain('✓ Commit passed — the fix worked.')
+      // demo break defaults to true and ran for real against the swapped hook.
+      expect(out).toContain('✗ Commit refused')
+      expect(out).toContain('✓ Commit passed — the fix worked.')
 
-    // push defaults to true and was attempted (fails gracefully — no remote).
-    expect(out).toContain('git push failed')
+      // push defaults to true and was attempted (fails gracefully — no remote).
+      expect(out).toContain('git push failed')
 
-    expect(closeStdinCalls()).toBe(1)
-  }, 30_000)
+      expect(closeStdinCalls()).toBe(1)
+    },
+    HOOK_TEST_BOUND_MS
+  )
 
   it('--dry-run previews the install and stops — no commit, no further steps, only the press-enter pause is asked', async () => {
     const { deps, questions } = makeDeps(root, [''])
@@ -608,40 +636,44 @@ describe('vinaya quickstart --yes / --dry-run passthrough (Issue #53)', () => {
 })
 
 describe('vinaya quickstart — push status honesty (Issue #53)', () => {
-  it('reports "Nothing to push" — never "✓ Pushed." — on a second run with nothing new to send', async () => {
-    const bareRoot = join(tmpdir(), `vinaya-quickstart-bare-${Date.now()}-${Math.random().toString(36).slice(2)}`)
-    execFileSync('git', ['init', '-q', '--bare', bareRoot])
-    git(root, ['remote', 'add', 'origin', bareRoot])
+  it(
+    'reports "Nothing to push" — never "✓ Pushed." — on a second run with nothing new to send',
+    async () => {
+      const bareRoot = join(tmpdir(), `vinaya-quickstart-bare-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+      execFileSync('git', ['init', '-q', '--bare', bareRoot])
+      git(root, ['remote', 'add', 'origin', bareRoot])
 
-    try {
-      const first = makeDeps(root, [
-        '', // press-enter
-        'y', // init
-        'n', // bind doc-owner — declined
-        'n', // register project — declined
-        'n', // demo break — declined, keep this run fast/offline
-        'y' // push
-      ])
-      let rc1 = -1
-      const out1 = await captureStdout(async () => {
-        rc1 = await runQuickstart([], first.deps)
-      })
-      expect(rc1, out1).toBe(0)
-      expect(out1).toContain('✓ Pushed.')
+      try {
+        const first = makeDeps(root, [
+          '', // press-enter
+          'y', // init
+          'n', // bind doc-owner — declined
+          'n', // register project — declined
+          'n', // demo break — declined, keep this run fast/offline
+          'y' // push
+        ])
+        let rc1 = -1
+        const out1 = await captureStdout(async () => {
+          rc1 = await runQuickstart([], first.deps)
+        })
+        expect(rc1, out1).toBe(0)
+        expect(out1).toContain('✓ Pushed.')
 
-      // second run: install is already current, nothing new is committed,
-      // and the branch already matches its upstream from the first push.
-      const second = makeDeps(root, ['', 'y', 'n', 'n', 'n', 'y'])
-      let rc2 = -1
-      const out2 = await captureStdout(async () => {
-        rc2 = await runQuickstart([], second.deps)
-      })
-      expect(rc2, out2).toBe(0)
-      expect(out2).toContain('Nothing to commit')
-      expect(out2).toContain('Nothing to push — already up to date with the remote.')
-      expect(out2).not.toContain('✓ Pushed.')
-    } finally {
-      rmSync(bareRoot, { recursive: true, force: true })
-    }
-  }, 30_000)
+        // second run: install is already current, nothing new is committed,
+        // and the branch already matches its upstream from the first push.
+        const second = makeDeps(root, ['', 'y', 'n', 'n', 'n', 'y'])
+        let rc2 = -1
+        const out2 = await captureStdout(async () => {
+          rc2 = await runQuickstart([], second.deps)
+        })
+        expect(rc2, out2).toBe(0)
+        expect(out2).toContain('Nothing to commit')
+        expect(out2).toContain('Nothing to push — already up to date with the remote.')
+        expect(out2).not.toContain('✓ Pushed.')
+      } finally {
+        rmSync(bareRoot, { recursive: true, force: true })
+      }
+    },
+    HOOK_TEST_BOUND_MS
+  )
 })
