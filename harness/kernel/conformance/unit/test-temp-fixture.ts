@@ -48,7 +48,7 @@ export async function releaseFixtureRun(remover: readonly string[] = ['rm', '-rf
   }
   const script = `
     import { spawnSync } from 'node:child_process';
-    import { readFileSync, renameSync, writeFileSync, rmSync } from 'node:fs';
+    import { existsSync, readFileSync, renameSync, writeFileSync, rmSync } from 'node:fs';
     const claimed = ${JSON.stringify(result.claimed)};
     const receipt = ${JSON.stringify(receipt)};
     const command = ${JSON.stringify(remover)};
@@ -65,6 +65,12 @@ export async function releaseFixtureRun(remover: readonly string[] = ['rm', '-rf
       execute(command[0], [...command.slice(1), claimed]);
       rmSync(receipt, { force: true });
     } catch (error) {
+      // A claimed tree belongs to no one: another test process's startup sweep may finish removing it while this
+      // removal runs, as runners running at once do. A tree that is gone is removed, whoever removed it.
+      if (!existsSync(claimed)) {
+        rmSync(receipt, { force: true });
+        process.exit(0);
+      }
       let message = String(error);
       try {
         const saved = JSON.parse(readFileSync(receipt, 'utf8'));

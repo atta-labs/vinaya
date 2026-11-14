@@ -7,8 +7,8 @@ caller has one, a record of what each test actually read.
 
 The package knows no hook, CI job, forge or process. Its library touches git,
 the file system or the network only through the reader its caller passes. The
-one exception is the `test-selection` command, which builds a git reader for
-the repository it is started in.
+exceptions are the two commands, which find the repository they are started
+in through `git`, and the read recorder, which runs and traces its tests.
 
 ## Install
 
@@ -126,7 +126,18 @@ is among `scanned`, when the test read a name there sharing a dot-delimited stem
 with the path's name (`mod.tsx` or `mod/` beside a read `mod.ts`, since the
 resolver decides from its cached listing), or when the name is one the loader
 reads by convention (`package.json`, `tsconfig.json`, `jsconfig.json`,
-`bunfig.toml`, a `.env` name). The reason names which. `passKeys` keeps
+`bunfig.toml`, a `.env` name). The reason names which. Past an unlisted folder
+the walk also needs a folder that changed: the selection gives each added or
+deleted path, between the base and the head and between the record's commit
+and the base alike, the shallowest folder on it absent from the other side
+(the earlier revision for an added path, the later one for a deleted one),
+read once from the two revisions' file lists. The walk goes on as above only
+when there is such a folder: below the listed folder it reached, that folder
+itself, or one above it, so deleting the whole tree a test listed still
+reaches the test. A file added inside folders that exist on both sides, such
+as a new `.changeset/` entry, leaves that listing as it was and reaches no test
+through it; a new top-level folder still reaches a test that listed the root.
+A path change without that fact walks as before. `passKeys` keeps
 covering every listed folder: `scanned` narrows the selection, never pass reuse.
 - `PassEntry` / `SelectionHistory` — earlier complete passes, each under the
   key that proves it still holds, and the tests that failed; `selectTests`
@@ -339,11 +350,13 @@ npx test-selection --base HEAD~1 --head HEAD --config selection.json
 ### In a pull request's CI
 
 The record comes from a recording job on the default branch, documented with
-the package's record command; that job keeps each record as an artifact of its
-run. A pull-request job downloads the record of the base commit and passes it
-with `--record`; with no record found it selects without one. The workflow
-file, artifact and file names below (`record.yml`, `read-record`,
-`read-record.json`) are the ones your recording job uses:
+the package's record command (see "The `test-selection-record` command"
+below); that job keeps each record as an artifact named for its commit. A
+pull-request job downloads the record of the base commit and passes it with
+`--record`; with no record found it selects without one. The workflow file
+name below (`record.yml`) is the one your recording job lives in; the artifact
+(`read-record-<commit>`) and file (`read-record.json`) names are the ones that
+job's example uses:
 
 ```yaml
 name: tests
@@ -368,7 +381,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           run_id=$(gh run list --workflow record.yml --commit "$BASE" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          if [ -n "$run_id" ]; then gh run download "$run_id" --name read-record --dir .record; fi
+          if [ -n "$run_id" ]; then gh run download "$run_id" --name "read-record-$BASE" --dir .record; fi
       - name: Select
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
@@ -420,6 +433,104 @@ The document:
   `tests`;
 - `leftOut` — what the head commit's inventory left out.
 
+## The `test-selection-record` command
+
+The package installs a second command. It records what each test file reads
+and writes the read record `selectTests` takes as `records`. It runs on Linux
+only, with `strace` installed, since it traces every test at the syscall:
+
+```sh
+sudo apt-get install -y strace
+npx test-selection-record --out read-record
+```
+
+Started in any folder of a git repository, it builds the commit's inventory
+with `workspaceInventory`, as the `test-selection` command does, and runs each
+test file in its own process under
+`strace -f -yy -qq -s 4096 -e trace=%file,getdents64,clone,clone3,fork,vfork`,
+child processes included: `bun test <file>` or `vitest run <file>` in its
+suite's folder, with the installed Vitest found through each
+`node_modules/.bin` from that folder up. Each Bun run also preloads the
+listing probe (`src/listing-probe.ts`, copied outside the repository first),
+so the record can tell a folder the test's own code listed from one the module
+resolver listed. A file whose run does not exit 0 gets no record, so its
+selection stays static. A read under installed dependencies is recorded as the
+repository's lockfile joined to the package's name (`bun.lock#zod`).
+
+Flags:
+
+- `--out <dir>` — the folder the record is written to (required);
+- `--commit <rev>` — the commit the record names; default `HEAD`;
+- `--concurrency <n>` — test files traced at once; default 3;
+- `--shard <i>/<n>` — record only the i-th of n disjoint slices of the sorted
+  test list, and write `shard.json` beside the partial record, naming the
+  slice and every test it attempted;
+- `--merge <dir>` — merge the shard outputs (each a folder holding
+  `shard.json` and `read-record.json`) directly under `<dir>` into the record
+  an unsharded run would have written; it refuses a missing, doubled or
+  overlapping shard, and shards that do not attempt every test of the commit;
+- `--only <test,test>` — record only these test files;
+- `--expect <test>=<path>` — fail unless the test's record reaches `path`;
+- `--summary <file>` — append a Markdown summary, such as
+  `$GITHUB_STEP_SUMMARY`.
+
+It writes `<out>/read-record.json`, one JSON document:
+
+```json
+{
+  "schema": "vinaya.read-record",
+  "schemaVersion": 1,
+  "commit": "<commit id>",
+  "platform": "linux",
+  "tests": {
+    "packages/app/tests/greet.test.ts": {
+      "reads": ["bun.lock#zod", "packages/app/src/greet.ts", "packages/app/tests/greet.test.ts"],
+      "listed": ["packages/app/tests"],
+      "scanned": []
+    }
+  }
+}
+```
+
+A test entry may also hold `fallback` (`git-read`, with the `gitReaders` that
+read repository content under `.git/`, or `truncated-path`) and
+`branchesOnPlatform`. It exits 0 when it wrote a record; 2 for a missing
+`--out`, a malformed `--shard`, a host that is not Linux or a missing
+`strace`, each with one message on standard error; 1 when a merge is refused
+or an `--expect` read is missing.
+
+A GitHub Actions job that records every push to the default branch and keeps
+the record as an artifact named for the commit:
+
+```yaml
+on:
+  push:
+    branches: [main]
+jobs:
+  record-reads:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: sudo apt-get install -y strace
+      - run: npx test-selection-record --out "$RUNNER_TEMP/read-record" --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: read-record-${{ github.sha }}
+          path: ${{ runner.temp }}/read-record/read-record.json
+          retention-days: 60
+```
+
+A selection for a change then downloads the artifact of its base commit and
+passes the parsed record to `selectTests`, or the file to the `test-selection`
+command with `--record`.
+
+From code, `recordReads` records the same way and returns the record; a
+caller with its own inventory, runner launch, run-outcome check, time limit or
+dependency input passes them (`RecorderSetup`), and `recordCommand` is the
+command itself with those injected.
+
 
 ## Files
 
@@ -432,6 +543,10 @@ The document:
 | `src/workspace-inventory.ts` | an inventory view built from one commit's package manifests |
 | `src/cli.ts` | the `test-selection` command, never imported by the entrypoint |
 | `src/consumer-config.ts` | the command's consumer config: its validation, and its declared inputs as edges |
+| `src/record-command.ts` | the `test-selection-record` command, never imported by the entrypoint |
+| `src/recorder.ts` | the read recorder: traced runs, the record entry each builds, shards and their merge |
+| `src/listing-probe.ts` | the listing probe a recorded Bun run preloads, never imported by the entrypoint |
+| `src/listing-probe-paths.ts` | the probe's log variable and path helpers |
 | `src/lockfile-identity.ts` | a parsed `bun.lock`'s dependency identity, its path text replaced |
 | `src/selector.ts` | trees, repository readers, the graph walk and `selectTests` |
 | `src/recorded-reads.ts` | read records, and what a record decides for a change |
@@ -446,11 +561,13 @@ The document:
 
 ## Dependencies
 
-- Node.js standard library: `node:child_process`, `node:crypto`, `node:fs`, `node:module`, `node:path`, `node:util`
+- Node.js standard library: `node:child_process`, `node:crypto`, `node:fs`, `node:module`, `node:os`, `node:path`, `node:readline`, `node:url`, `node:util`, `node:worker_threads`
+- Bun, only inside a recorded Bun run: the listing probe wraps `Bun`'s own functions and `bun:ffi` there
 - `typescript` — an optional peer, loaded at runtime through `createRequire` and imported only as types; without it the selection falls back to its text-scan graph
-- `git` — the executable, only for `gitRepository` and the `test-selection` command
+- `git` — the executable, only for `gitRepository` and the two commands
+- `strace` — the executable, only for the read recorder, on Linux
 
-The tests also use `bun:test` (`bun test`). No preload, global, configuration
+The tests also use `bun:test` (`bun test`). Outside the recorder's own runs (the probe reads `VINAYA_LISTING_PROBE_LOG`), no preload, global, configuration
 file or environment variable is read.
 
 `tests/isolation.test.ts` fails if anything in the package imports from outside
@@ -459,8 +576,9 @@ outside it imports past the package name. `tests/consumer.test.ts` packs the
 package, installs the tarball into a fresh repository and runs a selection
 there — this README's example included — and runs the `test-selection`
 command under Node in a fresh repository of one Bun package and one Vitest
-package, then with a read record and a consumer config in another.
-
+package, then with a read record and a consumer config in another, and runs
+the `test-selection-record` command and a direct `bun --preload` of the
+shipped probe.
 ## License
 
 `LICENSE` beside this file is the license the package is distributed under.

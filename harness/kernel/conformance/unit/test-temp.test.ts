@@ -201,6 +201,30 @@ describe('fixture cleanup reporting', () => {
     expect(report.failed).toEqual([{ dir: expect.any(String), error: expect.stringContaining('42') }])
     expect(report.removed).toHaveLength(1)
   })
+
+  test('a released run another process removed first is no cleanup failure', async () => {
+    const root = fixtureDir('cleanup-race-')
+    const module = resolve(import.meta.dir, 'test-temp-fixture.ts')
+    // The remover finds its tree already being removed by another sweep: the tree is gone, and its own step fails.
+    const child = spawnSyncBudgeted(
+      process.execPath,
+      [
+        '--eval',
+        `
+      import { fixtureDir, releaseFixtureRun } from ${JSON.stringify(module)};
+      import { dirname } from 'node:path';
+      const dir = dirname(fixtureDir('payload-'));
+      const error = await releaseFixtureRun(['/bin/sh', '-c', 'rm -rf "$1"; echo raced >&2; exit 1', 'cleanup']);
+      console.log(JSON.stringify({ dir, error }));
+    `
+      ],
+      { encoding: 'utf8', env: { ...stripVinayaEnv(), VINAYA_TEST_TMP: root } }
+    )
+    expect(child.status).toBe(0)
+    const result = JSON.parse(child.stdout.trim()) as { dir: string; error: string | null }
+    expect(result.error).toBeNull()
+    expect(readdirSync(join(root, 'vinaya'))).toEqual([])
+  })
 })
 
 describe('read-only default test storage', () => {

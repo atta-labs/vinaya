@@ -1,22 +1,32 @@
 // The syscall-trace reader's own tests: hand-written `strace -f -yy -e trace=%file,getdents64` output, the shapes
-// a Bun test and the child processes it starts leave. They import only the public entrypoint.
+// a Bun test and the child processes it starts leave, and the shipped recorder that builds a record entry from them.
+// They import only the public entrypoint.
 import { describe, expect, it } from 'bun:test'
-import { posix } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { join, posix } from 'node:path'
 import {
   gitPathArguments,
   isGitContentRead,
   bunLockIdentity,
   changedLockPackages,
+  foldersOf,
   indexRecordedTest,
   installedPackageName,
   isConventionName,
   lockKeyPackageName,
   nameStems,
+  newFolderOf,
   readsOfTrace,
   recordReach,
   stableJson,
   startsThread,
-  type TraceOptions
+  type TraceOptions,
+  exitStatusOutcome,
+  type NativeGroup,
+  plainLaunch,
+  readProbeLog,
+  recordCommand,
+  recordedTestOf
 } from '../src/index.js'
 
 const ROOT = '/work/repo'
@@ -350,6 +360,72 @@ describe('an added or deleted path, with the folders the test’s own code liste
     expect(recordReach(everything, { path: 'other/x.ts', status: 'added' })).not.toBeNull()
   })
 
+  it('past an unlisted folder, keeps a test only when a folder between the path and the listed one is new', () => {
+    // The test's code listed the root; `.changeset` exists on both sides, so the root's listing is unchanged.
+    const root = indexRecordedTest({ reads: [], listed: ['.'], scanned: ['.'] })
+    expect(recordReach(root, { path: '.changeset/one.md', status: 'added', newFolder: null })).toBeNull()
+    expect(recordReach(root, { path: 'a/b/c.ts', status: 'deleted', newFolder: null })).toBeNull()
+    // A new top-level folder adds a name to the root's listing.
+    expect(recordReach(root, { path: 'fresh/x.ts', status: 'added', newFolder: 'fresh' })?.detail).toBe(
+      "an added path adds or removes fresh in ., which the recorded run's own code listed"
+    )
+    // Deleting a folder's last file removes it from the head.
+    expect(recordReach(root, { path: 'gone/x.ts', status: 'deleted', newFolder: 'gone' })?.detail).toBe(
+      "a deleted path adds or removes gone in ., which the recorded run's own code listed"
+    )
+    // A new folder deeper on the path still lies between the path and the listed root.
+    expect(recordReach(root, { path: 'a/new/x.ts', status: 'added', newFolder: 'a/new' })).not.toBeNull()
+    // A change without the fact keeps the walk as before.
+    expect(recordReach(root, { path: '.changeset/one.md', status: 'added' })).not.toBeNull()
+    // The same rule holds for a convention name and a shadowed stem past an unlisted folder.
+    expect(recordReach(loaded, { path: 'int/nested/package.json', status: 'added', newFolder: null })).toBeNull()
+    expect(recordReach(loaded, { path: 'int/mod/index.ts', status: 'added', newFolder: null })).toBeNull()
+    expect(recordReach(loaded, { path: 'int/mod/index.ts', status: 'added', newFolder: 'int/mod' })).not.toBeNull()
+    // The listed folder itself, or one above it, absent on the other side keeps today's walk.
+    const deep = indexRecordedTest({ reads: [], listed: ['x/y'], scanned: ['x/y'] })
+    expect(recordReach(deep, { path: 'x/y/z/f.ts', status: 'added', newFolder: 'x' })).not.toBeNull()
+    expect(recordReach(deep, { path: 'x/y/z/f.ts', status: 'added', newFolder: 'x/y' })).not.toBeNull()
+    expect(recordReach(deep, { path: 'x/y/z/f.ts', status: 'added', newFolder: null })).toBeNull()
+  })
+
+  it('deleting the whole tree a test listed still reaches it, whichever folder on it is gone', () => {
+    // The test listed and scanned `x/y`; the change deletes every file under `x/y`, so its listing call now fails.
+    const deep = indexRecordedTest({ reads: [], listed: ['x/y'], scanned: ['x/y'] })
+    const head = foldersOf(['other/keep.ts'])
+    const deletedTree = ['x/y/z/f.ts', 'x/y/z/g/h.ts'].map((path) => ({
+      path,
+      status: 'deleted' as const,
+      newFolder: newFolderOf(path, head)
+    }))
+    expect(deletedTree.map((c) => c.newFolder)).toEqual(['x', 'x'])
+    for (const change of deletedTree)
+      expect(recordReach(deep, change)?.detail).toBe(
+        "a deleted path adds or removes z in x/y, which the recorded run's own code listed"
+      )
+    // `x` survives at the head, so the shallowest absent folder is the listed folder itself.
+    const keepsX = foldersOf(['x/other.ts'])
+    expect(newFolderOf('x/y/z/f.ts', keepsX)).toBe('x/y')
+    expect(recordReach(deep, { path: 'x/y/z/f.ts', status: 'deleted', newFolder: 'x/y' })).not.toBeNull()
+  })
+
+  it('a path in a listed folder reaches the test as before, whatever its new folder', () => {
+    expect(recordReach(scanner, { path: 'int/unrelated.ts', status: 'added', newFolder: null })?.detail).toBe(
+      "an added path sits in int, which the recorded run's own code listed"
+    )
+    expect(recordReach(scanner, { path: 'int/old.ts', status: 'deleted', newFolder: 'int' })).not.toBeNull()
+    const root = indexRecordedTest({ reads: [], listed: ['.'], scanned: ['.'] })
+    expect(recordReach(root, { path: 'top.ts', status: 'added', newFolder: null })).not.toBeNull()
+  })
+
+  it('names the shallowest folder on a path that the other side lacks', () => {
+    const folders = foldersOf(['.changeset/a.md', 'a/b/c.ts', 'top.ts'])
+    expect([...folders].sort()).toEqual(['.', '.changeset', 'a', 'a/b'])
+    expect(newFolderOf('.changeset/new.md', folders)).toBeNull()
+    expect(newFolderOf('top2.ts', folders)).toBeNull()
+    expect(newFolderOf('fresh/x.ts', folders)).toBe('fresh')
+    expect(newFolderOf('a/b/new/deeper/x.ts', folders)).toBe('a/b/new')
+  })
+
   it('a modified path reaches the test only through its reads, scanned or not', () => {
     expect(recordReach(scanner, { path: 'int/mod.ts', status: 'modified' })?.exact).toBe(true)
     expect(recordReach(scanner, { path: 'int/unrelated.ts', status: 'modified' })).toBeNull()
@@ -464,5 +540,71 @@ describe('installed packages', () => {
     expect(
       recordReach(indexRecordedTest({ reads: ['bun.lock'], listed: [] }), { path: 'bun.lock', status: 'modified' })
     ).not.toBeNull()
+  })
+})
+
+describe('the shipped recorder', () => {
+  // Copies of the repository recorder's captured trace and probe log, under this package's own fixtures.
+  const FIXTURES = join(import.meta.dir, 'fixtures')
+  const repo: TraceOptions = {
+    repoRoot: ROOT,
+    startCwd: ROOT,
+    realpath: (absolute) => absolute,
+    packageDirs: [],
+    dependencyInput: 'bun.lock'
+  }
+
+  it('builds, from a captured trace and probe log, the record entry the repository recorder built before it shipped', () => {
+    const probe = readProbeLog(readFileSync(join(FIXTURES, 'captured.probe.jsonl'), 'utf8'))
+    const result = readsOfTrace(readFileSync(join(FIXTURES, 'captured.trace'), 'utf8'), {
+      ...repo,
+      probe: { log: '/scratch/3.probe.jsonl', starts: probe.starts, wholly: probe.wholly }
+    })
+    expect(JSON.stringify(recordedTestOf({ result, probe, trace: repo, sourceRoot: ROOT, packages: new Map() }))).toBe(
+      '{"reads":["bun.lock#zod","fixtures/data","lib/modules"],"listed":["bin","docs","fixtures/data","fixtures/tree","fixtures/tree/deep","harness/x","lib/cache","lib/modules","packages/core/src","scripts","tmp-unknown"],"scanned":["bin","docs","fixtures/data","fixtures/tree/","harness/x","packages/core/src","scripts","tmp-unknown"]}'
+    )
+  })
+
+  it('refuses a host that is not Linux with one message, before reading anything', async () => {
+    const written: string[] = []
+    const status = await recordCommand(['--out', '/nonexistent/record'], {
+      name: 'test-selection-record',
+      platform: 'darwin',
+      write: (text) => written.push(text)
+    })
+    expect(status).toBe(2)
+    expect(written).toEqual(['test-selection-record: the recorder runs on Linux only (strace)\n'])
+  })
+
+  it('launches a plain runner in the suite’s folder, and confirms the one file by its exit status alone', () => {
+    const group: NativeGroup = {
+      id: 'web@default',
+      suite: 'web',
+      owner: 'web',
+      kind: 'workspace',
+      runner: 'vitest',
+      cwd: 'packages/web',
+      preload: null,
+      environment: {},
+      configuration: 'default',
+      scope: 'files',
+      reason: null,
+      tests: ['packages/web/tests/view.spec.ts'],
+      args: ['tests/view.spec.ts'],
+      exclude: ['tests/view.spec.tsx']
+    }
+    const vitest = plainLaunch(group, '/scratch/0.json', '/nowhere/packages/web')
+    expect(vitest.command).toEqual(['vitest', 'run', '--exclude', 'tests/view.spec.tsx', 'tests/view.spec.ts'])
+    const bun = plainLaunch(
+      { ...group, runner: 'bun', args: ['./tests/a.test.ts'], exclude: [] },
+      '/x/0.xml',
+      '/nowhere'
+    )
+    expect(bun).toEqual({ command: ['bun', 'test', './tests/a.test.ts'], env: {} })
+    const confirmed = (status: number | null, signal: string | null = null) =>
+      exitStatusOutcome(group, { status, signal, report: null }, ROOT, [ROOT]).confirmed
+    expect(confirmed(0)).toEqual(group.tests)
+    expect(confirmed(1)).toEqual([])
+    expect(confirmed(null, 'SIGKILL')).toEqual([])
   })
 })
