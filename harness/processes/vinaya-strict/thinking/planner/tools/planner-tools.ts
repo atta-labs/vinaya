@@ -260,8 +260,8 @@ const REFUSAL_NOTE =
   'A refusal is a `validation` error: `message` is the first finding, `detail` is the JSON text of every finding as {check, message, recovery}.'
 
 const DESCRIPTIONS: Record<PlannerToolName, string> = {
-  task_issue_create: `Create a task Issue from a title, a body and labels through the Issue write gate (the same gates as \`vinaya issue create\`), then write it. Returns the written Issue's link. ${REFUSAL_NOTE}`,
-  task_issue_edit: `Edit a task Issue's title, body or labels through the Issue write gate (the same gates as \`vinaya issue edit\`). Returns the Issue's link. ${REFUSAL_NOTE}`,
+  task_issue_create: `Create a task Issue from a title, a body and labels through the Issue write gate (the same gates \`task_issue_validate\` dry-runs for a create), then write it. Returns the written Issue's link. ${REFUSAL_NOTE}`,
+  task_issue_edit: `Edit a task Issue's title, body or labels through the Issue write gate (the same gates \`task_issue_validate\` dry-runs for an edit). Returns the Issue's link. ${REFUSAL_NOTE}`,
   task_issue_surface: `Report what a draft Issue body's Boundary pins force on its Surface. Writes nothing. ${REFUSAL_NOTE}`,
   task_objectives_edit: `Add, drop or replace one objective of an Issue's \`## Objectives\` (Principal only); supersedes a frozen brief when one exists. Returns the new objectives version. ${REFUSAL_NOTE}`,
   brief_render: `Render a task's brief from its Issue; a refusal lists the facts it could not find. Writes nothing. ${REFUSAL_NOTE}`,
