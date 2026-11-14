@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import {
+  PROCESS_FIXTURE_BUDGET_MS,
+  spawnSyncBudgeted,
+  stripVinayaEnv
+} from '../../../../../kernel/conformance/unit/process-fixture.js'
 import { SEAT_ARGUMENT } from '../../../../../kernel/tools/host/seat-host.js'
 import type { VendoredVinaya } from '../../../tools/self-host.js'
 import {
@@ -374,9 +379,15 @@ describe('the registration builder loads no tool module', () => {
 
   it('imports neither the tool server nor the Planner, Architect or milestone tools', () => {
     const script = `await import(${JSON.stringify(ADAPTERS)}); console.log(JSON.stringify(Object.keys(require.cache)))`
-    const child = Bun.spawnSync([process.execPath, '-e', script], { cwd: REPO_ROOT, stdout: 'pipe', stderr: 'pipe' })
-    expect(child.exitCode).toBe(0)
-    const loaded: string[] = JSON.parse(child.stdout.toString().trim().split('\n').at(-1) ?? '[]')
+    const child = spawnSyncBudgeted(
+      process.execPath,
+      ['-e', script],
+      { cwd: REPO_ROOT, env: stripVinayaEnv(), encoding: 'utf8' },
+      PROCESS_FIXTURE_BUDGET_MS,
+      'adapters module-load probe'
+    )
+    expect({ status: child.status, stderr: child.stderr }).toEqual({ status: 0, stderr: '' })
+    const loaded: string[] = JSON.parse(child.stdout.trim().split('\n').at(-1) ?? '[]')
     const normalized = loaded.map((path) => path.replaceAll('\\', '/'))
     expect(normalized.some((path) => path.endsWith('harness/processes/vinaya-strict/integration/adapters.ts'))).toBe(
       true
