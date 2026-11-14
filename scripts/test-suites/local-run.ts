@@ -471,7 +471,7 @@ export function frozenPlanRunOptions(input: { allGroups: boolean; concurrency?: 
 
 /**
  * Runs a frozen native plan: every group, as many at once as `concurrency`
- * says (one after another when absent), with the git variables of the
+ * says (four at a time when absent, the default), with the git variables of the
  * invoking hook removed, then the check that each runner executed exactly
  * its tests. A green verdict needs every runner to pass and to have executed
  * its tests once, and the head, the tracked tree and the verification context
@@ -505,7 +505,7 @@ export async function runFrozenPlan(
     allGroups?: boolean
     /** The scheduler the default `run` calls; tests substitute it to see the options it receives. */
     runGroups?: (...args: Parameters<typeof runGroups>) => RunResult | Promise<RunResult>
-    /** The most runners running at once (`testConcurrency`); one when absent. */
+    /** The most runners running at once (`testConcurrency`); the default of four when absent. */
     concurrency?: number
   } = {}
 ): Promise<LocalRunOutcome> {

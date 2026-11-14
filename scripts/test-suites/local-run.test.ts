@@ -1300,6 +1300,9 @@ describe('the real adapter, select then run, on a fixture clone of this head', (
     // The clone has no forge remote, so without a name of its own its tests would watch the machine-wide
     // "unresolved" runtime directory, which any other process may write to; this name is the fixture's alone.
     out.VINAYA_REPO = `native-fixture-${process.pid}/repo`
+    // One file after another: the refused push below stops at its failing file before the next one starts, which only
+    // a run of one runner at a time guarantees (at the default of four both files start together).
+    out.VINAYA_TEST_CONCURRENCY = '1'
     return out
   }
   // A test the shared selector always plans, so every push here runs the same small native group.
