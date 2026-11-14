@@ -101,6 +101,12 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     trigger: 'process-start'
   },
   { test: 'harness/processes/vinaya-strict/tests/run-engine.test.ts', roots: ['.'], trigger: 'content' },
+  // Reads every source in the process folder for a spread of the live forge and for the trusted policy readers' callers.
+  {
+    test: 'harness/processes/vinaya-strict/tests/live-forge-seam.test.ts',
+    roots: ['harness/processes/vinaya-strict/'],
+    trigger: 'content'
+  },
   {
     test: 'harness/kernel/dev-process-socket/loader/load-process.test.ts',
     roots: ['harness/processes/'],

@@ -2814,8 +2814,8 @@ export async function liveTaskInput(
     fetchTitle?: (n: number) => string
     fetchLabels?: (n: number) => string[]
     policy?: typeof reviewPolicyForLoop
-    /** Replaces forge reads and writes, for a run that must not reach the forge. */
-    forge?: Partial<EngineForge>
+    /** Replaces every forge read and write, for a run that must not reach the forge; absent means the live forge. */
+    forge?: EngineForge
     /** Replaces the wait between retries of a forge connection failure, so a test never sleeps. */
     forgeRetrySleep?: (ms: number) => void
     /** Replaces the role doctrine resolver the reviewer prompts take their doctrine from. */
@@ -2838,7 +2838,7 @@ export async function liveTaskInput(
     repairPlan: NonNullable<DevToolContext['repairPlan']>
   }
 > {
-  const forge: EngineForge = retryingForge({ ...liveForge, ...lookups.forge }, lookups.forgeRetrySleep)
+  const forge: EngineForge = retryingForge(lookups.forge ?? liveForge, lookups.forgeRetrySleep)
   // Tranche tasks live on `task/<tranche>/<n>`, backlog tasks on `task/issue-<n>`.
   // The same Issue read hands back the task's title, which `loop_started` records; absent when no title was read.
   const { branch, title: taskTitle } = developerBranchAndTitleFor(args.task, lookups.fetchTitle, lookups.fetchLabels)
@@ -3165,7 +3165,8 @@ export const developerSourceStoreDir = (runtimeDir: string, task: number): strin
 
 /** The Developer's prompt facts as the review loop reads them for the same Issue, read when its step starts. */
 export function liveDeveloperFacts(input: {
-  forge?: Partial<EngineForge>
+  /** A complete forge replacing the live one; absent means the live forge. */
+  forge?: EngineForge
   policy?: typeof reviewPolicyForLoop
   task: number
   repoRoot: string
@@ -3179,7 +3180,7 @@ export function liveDeveloperFacts(input: {
   takeRulingsOwed?: () => boolean
 }): () => Promise<DeveloperPromptFacts> {
   const { task, repoRoot, runtimeDir, branch, worktreePath } = input
-  const forge: EngineForge = retryingForge({ ...liveForge, ...input.forge })
+  const forge: EngineForge = retryingForge(input.forge ?? liveForge)
   return async () => {
     const policy = (input.policy ?? reviewPolicyForLoop)()
     const brief = forge.fetchFrozenBrief(task)
@@ -3294,10 +3295,11 @@ export function liveRecovery(input: {
   args: EngineArgs
   runtimeDir: string
   taskInput: Awaited<ReturnType<typeof liveTaskInput>>
-  forge?: Partial<EngineForge>
+  /** A complete forge replacing the live one; absent means the live forge. */
+  forge?: EngineForge
   repo?: { owner: string; repo: string } | null
 }): RecoveryDeps {
-  const forge: EngineForge = retryingForge({ ...liveForge, ...input.forge })
+  const forge: EngineForge = retryingForge(input.forge ?? liveForge)
   const { args, runtimeDir, taskInput } = input
   return {
     prNumber: () => forge.findOpenPrForBranch(taskInput.branch)?.number ?? null,

@@ -15,7 +15,13 @@ import {
 import { objectivesVersion } from '../../../tools/task-contract/objectives'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '../../../../../../harness/kernel/dev-process-socket/loader/load-process'
-import { keepLogLocal, QUIET_FORGE_GATES, SCENARIO_ENV_KEYS, useRuntimeDir } from '../../../tests/round-fakes'
+import {
+  keepLogLocal,
+  QUIET_FORGE_GATES,
+  SCENARIO_ENV_KEYS,
+  testForge,
+  useRuntimeDir
+} from '../../../tests/round-fakes'
 import type { ActionRegistry } from '../../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import { pauseMarker, writePauseState } from '../standalone/dev-review-loop/pause-resume'
 import { cleanupAllReviewerIsolationArtifacts } from '../standalone/dev-review-loop/reviewer-isolation'
@@ -207,6 +213,8 @@ export interface World {
   requiredCiReads: string[]
   /** Loop-baseline guard reads made. */
   baselineChecks: number
+  /** The default branch's names the fake forge answered, in turn; the live read never runs. */
+  parentBranchReads: string[]
 }
 
 export interface Observed {
@@ -392,6 +400,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     explicitRuns: [],
     requiredCiReads: [],
     baselineChecks: 0,
+    parentBranchReads: [],
     evidenceWrites: [],
     evidenceLogs: [],
     evidenceWaits: [],
@@ -528,7 +537,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
   const brief = `# Frozen brief\n\n## Objectives\n\nO1. Do the thing.\n\n**Revision:** ${world.remote}\n`
   const published: Array<Record<string, unknown>> = []
   const markers: string[] = []
-  const forge: Partial<EngineForge> = {
+  const forge: EngineForge = testForge({
     checkTaskDispatchReadiness: () => ({ ready: true, output: 'ready' }),
     createTaskWorktree: () => worktree,
     findOpenPrForBranch: () => (world.prOpen ? { number: PR, branch: BRANCH } : null),
@@ -569,6 +578,11 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       journalFinalized: null
     }),
     resolveHead: () => world.remote,
+    // The default branch's name, answered here so a parent read never asks the repository the test sits in.
+    resolveParentBranch: () => {
+      world.parentBranchReads.push('main')
+      return 'main'
+    },
     resolveDeveloperDoctrineText: () => Promise.resolve('Execute the frozen brief.'),
     prBody: () => `Closes #${TASK}`,
     pullRequestView: () => ({ number: PR, body: `Closes #${TASK}`, headRefOid: world.remote, state: 'OPEN' }),
@@ -576,7 +590,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
       world.verdictHeads.push(input.expectedHead)
       published.push(input as unknown as Record<string, unknown>)
     }
-  }
+  })
   let record: FailedTestsRecord | null = null
   const makeTask = async () => {
     const fresh = await liveTaskInput({ task: TASK, agent, dryRun: false, flow: 'v2' }, repo, runtimeDir, 'v2-world', {

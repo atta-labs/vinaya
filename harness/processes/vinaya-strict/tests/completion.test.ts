@@ -31,7 +31,7 @@ import {
 import { runIdentityOfTask } from '../bin/run-lifecycle'
 import { clearDriverLock } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { recordedHandoff } from './handoff-fakes'
-import { confidentTurn, heldReviews, PASSING_FORGE_GATES, vendorLines } from './round-fakes'
+import { confidentTurn, heldReviews, PASSING_FORGE_GATES, testForge, vendorLines } from './round-fakes'
 
 const PROCESS = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
 const AGENTS: readonly Agent[] = ['claude', 'codex']
@@ -574,7 +574,7 @@ describe.each(AGENTS)('the reviewer prompts (%s)', (agent) => {
         fetchTitle: () => 'A test task',
         policy: () => DEFAULT_REVIEW_POLICY,
         ...(resolveReviewerDoctrine ? { resolveReviewerDoctrine } : {}),
-        forge: {
+        forge: testForge({
           findOpenPrForBranch: () => ({ number: 70, branch: 'task/issue-7' }),
           fetchFrozenBrief: () => '# Frozen brief\n',
           resolveIssueObjectives: () => ({
@@ -589,7 +589,7 @@ describe.each(AGENTS)('the reviewer prompts (%s)', (agent) => {
           fetchIssueRulingsAfterBrief: () => [],
           fetchRulings: () => [],
           prBody: () => 'Closes #7'
-        }
+        })
       })
       const results = { 'run-security-scan': mech(0, JSON.stringify({ kind: 'ran', output: 'SCAN-OUTPUT-MARK' })) }
       return {

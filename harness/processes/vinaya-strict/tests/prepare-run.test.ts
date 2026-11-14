@@ -34,6 +34,7 @@ import { createHandoff } from '../executing/handoff'
 import { handoffHaltReason } from '../executing/log-events'
 import { developerSourceStoreDir, engineLiveDevToolsContext, liveTaskInput } from '../bin/run-engine'
 import { recordedHandoff } from './handoff-fakes'
+import { testForge } from './round-fakes'
 import { DEPENDENCY_WAIT_BOUND_MS, DEPENDENCY_WAIT_INTERVAL_MS } from '../tools/task-contract/plan-repair'
 
 const TASK = 10
@@ -131,7 +132,8 @@ describe('prepare-run reads the review policy', () => {
       fetchLabels: () => [],
       policy: () => {
         throw new Error('trust-anchor read failed')
-      }
+      },
+      forge: testForge()
     })
     const { task, run, control, recorded, calls } = setup({
       reviewPolicy: live.reviewPolicy,
@@ -164,12 +166,12 @@ describe('prepare-run reads the review policy', () => {
         policy: () => {
           throw new Error('unreadable')
         },
-        forge: {
+        forge: testForge({
           findOpenPrForBranch: () => null,
           fetchFrozenBrief: () => 'brief',
           resolveIssueObjectives: () => ({ text: '', objectives: [], version: 'objectives' }) as never,
           fetchNewestIssueRulingOrdinal: () => 0
-        }
+        })
       }
     )
     expect(unreadable.inputVersions?.()).toMatchObject({ policyDigest: 'unknown' })

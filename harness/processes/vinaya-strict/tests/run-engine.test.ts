@@ -13,7 +13,7 @@ import {
 } from '../loops/dev-review/v2/v2-world'
 import { DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 import { recordedHandoff } from './handoff-fakes'
-import { PASSING_FORGE_GATES } from './round-fakes'
+import { PASSING_FORGE_GATES, testForge } from './round-fakes'
 import { Database } from 'bun:sqlite'
 import { execFileSync, spawn } from 'node:child_process'
 import {
@@ -92,7 +92,6 @@ import {
   launcherRoleOf,
   roleBridgeCommands,
   ROLE_HOST_BRIDGES,
-  liveForge,
   retryForgeRead,
   retryingForge,
   runDirectory,
@@ -1015,7 +1014,8 @@ describe('agent-step failures and the live task context', () => {
     const lookups = {
       policy: () => ({ maxRounds: 4, maxTaskMinutes: 90 }) as never,
       fetchLabels: (n: number) => (n === 1564 ? ['vinaya/tranche:engine-harness-v1'] : []),
-      fetchTitle: () => '[engine-harness-v1] 5 — The Engine runs one task'
+      fetchTitle: () => '[engine-harness-v1] 5 — The Engine runs one task',
+      forge: testForge()
     }
     const tranche = await liveTaskInput(
       { task: 1564, agent: 'claude', dryRun: false },
@@ -1039,7 +1039,8 @@ describe('agent-step failures and the live task context', () => {
         reads.push(n)
         if (n === 11) throw new Error('gh issue view: could not reach the forge')
         return n === 1564 ? '[engine-harness-v1] 5 — The Engine runs one task' : 'A backlog Issue'
-      }
+      },
+      forge: testForge()
     }
     const input = (task: number) =>
       liveTaskInput({ task, agent: 'claude', dryRun: false }, '/repo', '/runtime', 'l', lookups)
@@ -1074,7 +1075,7 @@ describe('agent-step failures and the live task context', () => {
         policy: () => ({ maxRounds: 4, maxTaskMinutes: 90 }) as never,
         fetchLabels: () => [],
         fetchTitle: () => 'Fake task 9001',
-        forge: { findOpenPrForBranch: () => null },
+        forge: testForge({ findOpenPrForBranch: () => null }),
         reviewSources: { baseOf: () => 'base', brief: () => 'brief', diff: () => 'diff' }
       })
       const staged = input.stageReviewInput(1)
@@ -1102,6 +1103,7 @@ describe('agent-step failures and the live task context', () => {
       policy: () => ({ maxRounds: 4, maxTaskMinutes: 90 }) as never,
       fetchLabels: () => [],
       fetchTitle: () => 'a backlog Issue',
+      forge: testForge(),
       reviewSources: { baseOf: () => 'base', brief: () => 'brief', prBody: () => '', diff: () => 'diff' }
     })
     const staged = input.stageReviewInput(1)
@@ -1669,7 +1671,8 @@ describe("the reviewers' Tokens line on the Engine path", () => {
       liveTaskInput({ task: 7, agent: 'claude', dryRun: false }, run.runtimeDir, run.runtimeDir, 'loop-under-test', {
         fetchTitle: () => 'A task',
         fetchLabels: () => [],
-        policy: () => DEFAULT_REVIEW_POLICY
+        policy: () => DEFAULT_REVIEW_POLICY,
+        forge: testForge()
       })
     const firstTask = await fresh()
     run.options.taskInput = { ...run.options.taskInput, recordUsage: firstTask.recordUsage, reviewRound: () => 1 }
@@ -1741,7 +1744,8 @@ describe("the reviewers' Tokens line on the Engine path", () => {
         const live = await liveTaskInput({ task: 7, agent, dryRun: false }, runtimeDir, runtimeDir, 'loop-1', {
           fetchTitle: () => 'A task',
           fetchLabels: () => [],
-          policy: () => DEFAULT_REVIEW_POLICY
+          policy: () => DEFAULT_REVIEW_POLICY,
+          forge: testForge()
         })
         expect(live.buildVerdict(role, completed(role), inputs).rendered).toContain('—/—/—')
         live.recordUsage?.(role, { input: 4321, output: 87 })
@@ -1921,8 +1925,7 @@ describe('the Engine runner retries a forge connection failure on the newest-rul
     const waits: number[] = []
     let calls = 0
     const forge = retryingForge(
-      {
-        ...liveForge,
+      testForge({
         fetchNewestRulingOrdinal: () => {
           calls += 1
           if (calls === 1) {
@@ -1933,7 +1936,7 @@ describe('the Engine runner retries a forge connection failure on the newest-rul
           }
           return 5
         }
-      },
+      }),
       (ms) => waits.push(ms)
     )
     expect(forge.fetchNewestRulingOrdinal(1)).toBe(5)
@@ -1983,8 +1986,7 @@ describe('the Engine runner retries a forge connection failure on the newest-rul
     const waits: number[] = []
     let calls = 0
     const forge = retryingForge(
-      {
-        ...liveForge,
+      testForge({
         fetchNewestRulingOrdinal: () => {
           calls += 1
           if (calls === 1) throw connectionFailure()
@@ -1995,7 +1997,7 @@ describe('the Engine runner retries a forge connection failure on the newest-rul
           if (calls === 3) throw connectionFailure()
           return 4
         }
-      },
+      }),
       (ms) => waits.push(ms)
     )
     expect(forge.fetchNewestRulingOrdinal(1)).toBe(3)

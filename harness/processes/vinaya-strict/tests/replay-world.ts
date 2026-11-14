@@ -1,6 +1,6 @@
 import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 import { recordedHandoff } from './handoff-fakes'
-import { keepLogLocal, QUIET_FORGE_GATES, useRuntimeDir } from './round-fakes'
+import { keepLogLocal, QUIET_FORGE_GATES, testForge, useRuntimeDir } from './round-fakes'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync, writeSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -367,7 +367,7 @@ export async function replay(scenario: Scenario) {
       boundary(`effect:${key}:after-acknowledgement`)
     }
   }
-  const forge: Partial<EngineForge> = {
+  const forge: EngineForge = testForge({
     checkTaskDispatchReadiness: (b) => {
       forgeCall(`readiness ${b}`)
       return { ready: true, output: 'ready' } as never
@@ -396,6 +396,11 @@ export async function replay(scenario: Scenario) {
     fetchRulings: () => [],
     fetchLoopHistory: () => fetchLoopHistory(null),
     resolveHead: () => git(worktree, 'rev-parse', 'HEAD'),
+    // The default branch's name, answered here so a parent read never asks the repository the test sits in.
+    resolveParentBranch: () => {
+      forgeCall('parent branch')
+      return 'main'
+    },
     resolveDeveloperDoctrineText: async () => 'DEVELOPER DOCTRINE (replay)',
     prBody: () => `Closes #${TASK}`,
     pullRequestView: () => ({ number: PR, body: `Closes #${TASK}`, headRefOid: 'head', state: 'OPEN' }),
@@ -410,7 +415,7 @@ export async function replay(scenario: Scenario) {
       updateLedger(runtimeDir, (ledger) => void ledger.published.push(entry))
     },
     ...scenario.forge
-  }
+  })
   const policy = () => ({ ...DEFAULT_REVIEW_POLICY, maxRounds: 4, maxTaskMinutes: 0 })
   const args = { task: TASK, agent: scenario.vendor, dryRun: false } as const
   const taskInput = await liveTaskInput(args, root, runtimeDir, 'replay-loop', {
