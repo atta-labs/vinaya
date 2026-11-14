@@ -425,6 +425,26 @@ describe('selectTests decided by recorded reads', () => {
     expect(removed.required.map((t) => t.test)).toContain('packages/app/tests/cli.test.ts')
   })
 
+  it('the same rule holds between the record commit and the base: a file in an existing folder leaves the record valid', () => {
+    const cli = 'packages/app/tests/cli.test.ts'
+    const drifted = (added: string) => {
+      const base = { ...fx.files, [added]: 'later\n' }
+      const head = { ...base, 'opaque/input.json': '{ "value": 9 }\n' }
+      const input = scenarioInput(fx, scenario({ 'opaque/input.json': '{ "value": 9 }\n' }))
+      const plan = selectTests({
+        ...input,
+        repo: memoryRepository({ [RECORD_COMMIT]: fx.files, base, head }),
+        records: {
+          record: record({ [cli]: { listed: ['.'], scanned: ['.'] } }, RECORD_COMMIT),
+          platform: 'linux'
+        }
+      })
+      return plan.records.fallbacks.find((f) => f.id === 'record-input-changed')?.tests ?? []
+    }
+    expect(drifted('scratch/later.txt')).not.toContain(cli)
+    expect(drifted('fresh/later.txt')).toContain(cli)
+  })
+
   it('a lookup that failed is a read: the path added later selects the test', () => {
     const plan = select(
       { 'probe/missing.json': '{}\n' },

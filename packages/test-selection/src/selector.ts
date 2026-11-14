@@ -2040,12 +2040,18 @@ function changesBetween(repo: RepositoryReader, from: string, to: string): PathC
   }
   const fromSet = new Set(fromFiles)
   const toSet = new Set(toFiles)
+  const added = toFiles.filter((p) => !fromSet.has(p))
+  const deleted = fromFiles.filter((p) => !toSet.has(p))
+  // Each side's folders, read once from the two listings: an added path's new folder is one `from` lacks, a deleted
+  // path's one `to` lacks.
+  const fromFolders = added.length > 0 ? foldersOf(fromFiles) : new Set<string>()
+  const toFolders = deleted.length > 0 ? foldersOf(toFiles) : new Set<string>()
   return [
     ...toFiles
       .filter((p) => fromSet.has(p) && key(from, p) !== key(to, p))
       .map((path): PathChange => ({ path, status: 'modified' })),
-    ...toFiles.filter((p) => !fromSet.has(p)).map((path): PathChange => ({ path, status: 'added' })),
-    ...fromFiles.filter((p) => !toSet.has(p)).map((path): PathChange => ({ path, status: 'deleted' }))
+    ...added.map((path): PathChange => ({ path, status: 'added', newFolder: newFolderOf(path, fromFolders) })),
+    ...deleted.map((path): PathChange => ({ path, status: 'deleted', newFolder: newFolderOf(path, toFolders) }))
   ]
 }
 

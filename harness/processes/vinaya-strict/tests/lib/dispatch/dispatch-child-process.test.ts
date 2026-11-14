@@ -110,28 +110,37 @@ function collectLaunches(): void {
  * Whether a recorded launch is still running. A pid that answers no signal is
  * gone; one that answers with a different start time is a process the OS has
  * since given the same number, not this launch; a zombie has exited, and so
- * has one whose state can no longer be read. The start time is the identity,
- * never the command name — a shell vendor that `exec`s another program keeps
- * its pid and start time but changes its name.
+ * has one whose state reads empty and that then answers the zero signal no
+ * more. The start time is the identity, never the command name — a shell
+ * vendor that `exec`s another program keeps its pid and start time but
+ * changes its name.
  */
 function launchStillRunning(child: LaunchedChild): boolean {
   if (child.pid <= 0) return false
-  try {
-    process.kill(child.pid, 0)
-  } catch {
-    return false
+  const answers = (): boolean => {
+    try {
+      process.kill(child.pid, 0)
+      return true
+    } catch {
+      return false
+    }
   }
+  if (!answers()) return false
   const live = getProcessSnapshot(child.pid)
   if (live !== null && child.childStartedAt !== null && live.startedAt !== child.childStartedAt) return false
-  return stateIsRunning(processState(child.pid))
+  return stateIsRunning(processState(child.pid), answers)
 }
 
 /**
- * Whether a `ps` state names a running process: one read and not a zombie. An
- * empty state is a process that exited between the zero signal and the read.
+ * Whether a `ps` state names a running process. A zombie has exited. An empty
+ * state is either a process that exited between the zero signal and the read,
+ * or a `ps` that failed (timed out, or is missing): `answers` sends the zero
+ * signal again, and the launch is gone only when that fails, so a failed read
+ * never hides a live survivor.
  */
-function stateIsRunning(state: string): boolean {
-  return state !== '' && !state.startsWith('Z')
+function stateIsRunning(state: string, answers: () => boolean): boolean {
+  if (state === '') return answers()
+  return !state.startsWith('Z')
 }
 
 function processState(pid: number): string {
@@ -220,13 +229,33 @@ function tempDir(prefix: string): string {
 }
 
 describe('the survivor check', () => {
-  it('counts a launch as running only when its state is read and is not a zombie', () => {
-    expect(stateIsRunning('S')).toBe(true)
-    expect(stateIsRunning('R+')).toBe(true)
-    expect(stateIsRunning('Z')).toBe(false)
-    expect(stateIsRunning('Z+')).toBe(false)
-    // `ps` no longer finds the pid: it exited after answering the zero signal.
-    expect(stateIsRunning('')).toBe(false)
+  it('counts a launch as running when its state is read and is not a zombie', () => {
+    const unasked = () => {
+      throw new Error('a read state needs no second signal')
+    }
+    expect(stateIsRunning('S', unasked)).toBe(true)
+    expect(stateIsRunning('R+', unasked)).toBe(true)
+    expect(stateIsRunning('Z', unasked)).toBe(false)
+    expect(stateIsRunning('Z+', unasked)).toBe(false)
+  })
+
+  it('on an empty state signals again: gone only when that signal fails, so a failed ps hides no survivor', () => {
+    let signals = 0
+    // The pid exited after answering the first zero signal: `ps` no longer finds it, and the second signal fails.
+    expect(
+      stateIsRunning('', () => {
+        signals++
+        return false
+      })
+    ).toBe(false)
+    // `ps` failed (timed out, or is missing) while the launch still runs: the second signal still answers.
+    expect(
+      stateIsRunning('', () => {
+        signals++
+        return true
+      })
+    ).toBe(true)
+    expect(signals).toBe(2)
   })
 })
 

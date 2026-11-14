@@ -373,9 +373,31 @@ describe('an added or deleted path, with the folders the test’s own code liste
     expect(recordReach(loaded, { path: 'int/nested/package.json', status: 'added', newFolder: null })).toBeNull()
     expect(recordReach(loaded, { path: 'int/mod/index.ts', status: 'added', newFolder: null })).toBeNull()
     expect(recordReach(loaded, { path: 'int/mod/index.ts', status: 'added', newFolder: 'int/mod' })).not.toBeNull()
-    // A new folder above the listed one is not between them: the listed folder itself is new, not its listing.
+    // The listed folder itself, or one above it, absent on the other side keeps today's walk.
     const deep = indexRecordedTest({ reads: [], listed: ['x/y'], scanned: ['x/y'] })
-    expect(recordReach(deep, { path: 'x/y/z/f.ts', status: 'added', newFolder: 'x' })).toBeNull()
+    expect(recordReach(deep, { path: 'x/y/z/f.ts', status: 'added', newFolder: 'x' })).not.toBeNull()
+    expect(recordReach(deep, { path: 'x/y/z/f.ts', status: 'added', newFolder: 'x/y' })).not.toBeNull()
+    expect(recordReach(deep, { path: 'x/y/z/f.ts', status: 'added', newFolder: null })).toBeNull()
+  })
+
+  it('deleting the whole tree a test listed still reaches it, whichever folder on it is gone', () => {
+    // The test listed and scanned `x/y`; the change deletes every file under `x/y`, so its listing call now fails.
+    const deep = indexRecordedTest({ reads: [], listed: ['x/y'], scanned: ['x/y'] })
+    const head = foldersOf(['other/keep.ts'])
+    const deletedTree = ['x/y/z/f.ts', 'x/y/z/g/h.ts'].map((path) => ({
+      path,
+      status: 'deleted' as const,
+      newFolder: newFolderOf(path, head)
+    }))
+    expect(deletedTree.map((c) => c.newFolder)).toEqual(['x', 'x'])
+    for (const change of deletedTree)
+      expect(recordReach(deep, change)?.detail).toBe(
+        "a deleted path adds or removes z in x/y, which the recorded run's own code listed"
+      )
+    // `x` survives at the head, so the shallowest absent folder is the listed folder itself.
+    const keepsX = foldersOf(['x/other.ts'])
+    expect(newFolderOf('x/y/z/f.ts', keepsX)).toBe('x/y')
+    expect(recordReach(deep, { path: 'x/y/z/f.ts', status: 'deleted', newFolder: 'x/y' })).not.toBeNull()
   })
 
   it('a path in a listed folder reaches the test as before, whatever its new folder', () => {

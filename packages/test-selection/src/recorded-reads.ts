@@ -206,9 +206,10 @@ export function installedPackageName(path: string, depFolder = 'node_modules'): 
  * any listed folder holding the path is enough.
  *
  * When the walk passes above the path's own folder and the change carries
- * `newFolder`, the test is kept only when that new folder lies below the
- * listed folder the walk reached: a path added or deleted inside folders that
- * exist on both sides leaves that listing as it was.
+ * `newFolder`, the walk goes on as above only when some folder on the path is
+ * absent on the other side (`newFolder` is not `null`), the listed folder
+ * itself or one above it included: a path added or deleted inside folders that
+ * exist on both sides leaves the listed folder's listing as it was.
  */
 export function recordReach(
   index: RecordIndex,
@@ -241,11 +242,9 @@ export function recordReach(
     name = posix.basename(dir)
     dir = posix.dirname(dir)
   }
-  // Past the path's own folder, only a folder new on the path between the two can change the listed folder's listing.
-  if (walked && change.newFolder !== undefined) {
-    const fresh = change.newFolder
-    if (fresh === null || !(dir === '.' || fresh.startsWith(`${dir}/`))) return null
-  }
+  // Past the path's own folder, a path whose every folder exists on both sides leaves the listed folder's listing as it
+  // was. A folder absent on the other side — below the listed one, the listed one itself, or one above it — keeps the walk.
+  if (walked && change.newFolder === null) return null
   const at = !walked ? `${what} path sits in ${dir}` : `${what} path adds or removes ${name} in ${dir}`
   if (scannedCovers(index.scanned, dir))
     return { detail: `${at}, which the recorded run's own code listed`, exact: false, via: dir }
