@@ -659,6 +659,30 @@ describe('the trace reader counts opens by process', () => {
     expect([...result.childOpens].sort()).toEqual(['apps/cli/a.ts', 'apps/cli/b.ts'])
   })
 
+  it('counts per file, so a read standing for many files carries its most-opened file’s count, not their sum', () => {
+    const nm = `${ROOT}/node_modules/zod`
+    const dist = `${ROOT}/packages/core/dist`
+    const once = readsOfTrace(
+      trace(
+        `10 openat(${at(pkg)}, "${nm}/index.js", O_RDONLY) = 3<${nm}/index.js>`,
+        `10 openat(${at(pkg)}, "${nm}/lib/types.js", O_RDONLY) = 4<${nm}/lib/types.js>`,
+        `10 openat(${at(pkg)}, "${dist}/a.js", O_RDONLY) = 5<${dist}/a.js>`,
+        `10 openat(${at(pkg)}, "${dist}/b.js", O_RDONLY) = 6<${dist}/b.js>`
+      ),
+      options()
+    )
+    expect(Object.fromEntries(once.opens)).toEqual({ 'bun.lock#zod': 1, 'packages/core/src/': 1 })
+    const twice = readsOfTrace(
+      trace(
+        `10 openat(${at(pkg)}, "${nm}/index.js", O_RDONLY) = 3<${nm}/index.js>`,
+        `10 openat(${at(pkg)}, "${nm}/lib/types.js", O_RDONLY) = 4<${nm}/lib/types.js>`,
+        `10 openat(${at(pkg)}, "${nm}/index.js", O_RDONLY) = 5<${nm}/index.js>`
+      ),
+      options()
+    )
+    expect(Object.fromEntries(twice.opens)).toEqual({ 'bun.lock#zod': 2 })
+  })
+
   it('counts a thread of a process the trace never named as a child', () => {
     const result = readsOfTrace(
       trace(`10 openat(${at(pkg)}, "a.ts", O_RDONLY) = 3<${pkg}/a.ts>`, `77 open("b.ts", O_RDONLY) = 3<${pkg}/b.ts>`),

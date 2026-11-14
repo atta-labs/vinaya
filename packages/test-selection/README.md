@@ -126,8 +126,11 @@ with its own storage implements the type itself.
   `executed` range may span uninstrumented lines, so a line ran when it is in
   both. A file listed with no executed line was loaded but not run; `{}` is a
   run that covered no source file; no `coverage` (a Vitest run, a version-1
-  record) means unknown. The loader opens a module once per process, so an
-  `opens` count above 1 marks a read of the file as data. The selection reads
+  record) means unknown. Opens are counted per file: a read that stands for
+  many files (`bun.lock#zod`, a package's source folder for a read under its
+  `dist/`) carries the count of its most-opened file. The loader opens a module
+  once per process, so an `opens` count above 1 means one file was read as
+  data. The selection reads
   none of these fields yet: a version-1 record and a version-2 record with the
   same reads select the same tests.
 

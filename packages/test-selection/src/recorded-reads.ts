@@ -43,8 +43,10 @@ export type RecordedTest = {
   branchesOnPlatform?: boolean
   /**
    * Version 2: per read, how many times the test's own process (its threads included) successfully opened it; a read
-   * it never opened (a probe, a failed lookup, a file only a child opened) is absent, which is 0. The loader opens each
-   * module once per process, so a count above 1 is a read of the file as data.
+   * it never opened (a probe, a failed lookup, a file only a child opened) is absent, which is 0. Counted per file: a
+   * read that stands for many files (`bun.lock#zod`, a package's source folder for a read under its `dist/`) carries
+   * the count of its most-opened file. The loader opens each module once per process, so a count above 1 means one
+   * file was read as data.
    */
   opens?: Record<string, number>
   /** Version 2: the reads a child process the test started successfully opened (a thread of no known process counts as one). */
@@ -417,7 +419,8 @@ export type TraceReads = {
   /**
    * Per read, how many times the traced command's own process — every image of the first process the trace shows,
    * its threads folded in — opened it with a call whose result shows it succeeded (`open`, `openat`, `openat2`,
-   * `creat`, a result on a `<... resumed>` line included).
+   * `creat`, a result on a `<... resumed>` line included). Counted per file: a read that stands for many files (an
+   * installed package's `<input>#<package>`, a package's source folder for its `dist/`) carries its most-opened file's count.
    */
   opens: Map<string, number>
   /** The reads any other process opened successfully: a child, or a thread of a process the trace never named. */
@@ -676,7 +679,8 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     cwd: string
     /** Whether the image changed its working directory itself, so a later-named parent's does not replace it. */
     moved: boolean
-    opens: Map<string, number>
+    /** Per opened file (its absolute real path): the read it is recorded as, and how many times it was opened. */
+    opens: Map<string, { read: string; count: number }>
     into?: Image
   }
   const images: Image[] = []
@@ -710,7 +714,8 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
       if (seen?.provisional && seen !== owner) {
         for (const folder of seen.listed) owner.listed.add(folder)
         owner.probed ||= seen.probed
-        for (const [path, count] of seen.opens) owner.opens.set(path, (owner.opens.get(path) ?? 0) + count)
+        for (const [file, { read, count }] of seen.opens)
+          owner.opens.set(file, { read, count: (owner.opens.get(file)?.count ?? 0) + count })
         // A thread shares its process's working directory: a change it made before its start arrived is the process's.
         if (seen.moved) {
           owner.cwd = seen.cwd
@@ -744,11 +749,16 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     image.cwd = options.realpath(absolute)
     image.moved = true
   }
-  /** One successful open of a read, by the image the thread `tid` belongs to. */
-  const countOpen = (tid: string, read: string | null): void => {
+  /**
+   * One successful open of `absolute` (resolved through symbolic links unless `resolved`), recorded as `read`, by the
+   * image the thread `tid` belongs to. Counted per file, not per read: one read can stand for many files (every file
+   * of an installed package is `<input>#<package>`, every file under a package's `dist/` its source folder).
+   */
+  const countOpen = (tid: string, read: string | null, absolute: string, resolved: boolean): void => {
     if (read === null) return
+    const file = resolved ? absolute : options.realpath(absolute)
     const image = imageFor(tid)
-    image.opens.set(read, (image.opens.get(read) ?? 0) + 1)
+    image.opens.set(file, { read, count: (image.opens.get(file)?.count ?? 0) + 1 })
   }
   const probeLog = options.probe?.log
   const opened = (path: string, pid: string): void => {
@@ -844,11 +854,11 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
       if (fd && PATH_CALLS.has(callName)) {
         opened(fd[1] as string, pid)
         const read = record(fd[1] as string, true, 'read', pid)
-        if (OPEN_CALLS.has(callName)) countOpen(pid, read)
+        if (OPEN_CALLS.has(callName)) countOpen(pid, read, fd[1] as string, true)
       } else if (OPEN_CALLS.has(callName) && pending !== null && /\)\s*=\s*\d+\s*$/.test(body)) {
         // A descriptor printed without its path: the unfinished half's path, already recorded, is what it opened.
         opened(pending, pid)
-        countOpen(pid, record(pending, false, 'read', pid))
+        countOpen(pid, record(pending, false, 'read', pid), pending, false)
       }
       return
     }
@@ -909,10 +919,10 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
       if (done) opened(done[1] as string, pid)
     }
     // An open counts only when its result is a descriptor: a failed one, or one still unfinished, is a probe here.
-    if (done && !failed && opens) countOpen(pid, record(done[1] as string, true, 'read', pid))
+    if (done && !failed && opens) countOpen(pid, record(done[1] as string, true, 'read', pid), done[1] as string, true)
     else {
       const read = record(target, false, 'read', pid)
-      if (opens && /\)\s*=\s*\d+\s*$/.test(body)) countOpen(pid, read)
+      if (opens && /\)\s*=\s*\d+\s*$/.test(body)) countOpen(pid, read, target, false)
     }
     if (name === 'chdir' && /\)\s*=\s*0\s*$/.test(body)) changedDirectory(pid, target)
   }
@@ -934,15 +944,19 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     // The traced command's own process: every image of the first process id, its threads folded in. Any other image
     // is a child, or a thread of a process the trace never named, and counts as one.
     const own = images[0]?.pid
-    const opens = new Map<string, number>()
+    const perFile = new Map<string, { read: string; count: number }>()
     const childOpens = new Set<string>()
     for (const image of images) {
       if (image.into) continue
       const mine = image.pid === own && !image.provisional
-      for (const [path, count] of image.opens)
-        if (mine) opens.set(path, (opens.get(path) ?? 0) + count)
-        else childOpens.add(path)
+      for (const [file, { read, count }] of image.opens)
+        if (mine) perFile.set(file, { read, count: (perFile.get(file)?.count ?? 0) + count })
+        else childOpens.add(read)
     }
+    // A read that stands for many files carries the count of its most-opened file: above 1 still means one file opened
+    // more than once, never several files opened once each.
+    const opens = new Map<string, number>()
+    for (const { read, count } of perFile.values()) opens.set(read, Math.max(opens.get(read) ?? 0, count))
     return { reads, listed, processScanned, git, gitReaders, truncated, opens, childOpens }
   }
   return { feed, result }
