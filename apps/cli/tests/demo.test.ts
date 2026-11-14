@@ -1,13 +1,11 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runDemoBreak } from '../src/commands/demo.js'
-import { stripAmbientFixtureEnv } from './fixture-env.js'
-import { withSerialLock } from './serial-lock.js'
+import { FIXTURE_HOOK_PARALLEL, HOOK_TEST_BOUND_MS, stripAmbientFixtureEnv } from './fixture-env.js'
 import { programFile } from '../../../harness/processes/vinaya-strict/tools/programs.js'
 
 // The real CLI source, invoked directly by `bun` rather than through a
@@ -28,7 +26,7 @@ function git(cwd: string, args: string[]): string {
  * never fire.
  */
 function installRealHook(root: string): void {
-  const body = `#!/usr/bin/env sh\nbun ${programFile('check')} --all --diff-only || exit 1\n`
+  const body = `#!/usr/bin/env sh\nbun ${programFile('check')} --all --diff-only ${FIXTURE_HOOK_PARALLEL} || exit 1\n`
   writeFileSync(join(root, '.git/hooks/pre-commit'), body, { mode: 0o755 })
 }
 
@@ -61,27 +59,6 @@ async function captureStdout(fn: () => Promise<unknown>): Promise<string> {
   return buf
 }
 
-/**
- * This test and `quickstart.test.ts`'s "demo break" test both spawn a REAL
- * `bun ${INDEX_TS} check --all` subprocess via a real git hook — the same
- * source file, invoked from two different processes. Both have flaked in CI
- * (Issue #399, O4) with no reproducible shared state found on inspection;
- * this filesystem lock (`mkdir` is atomic on POSIX, so the same path in both
- * files serializes them regardless of which order or how many workers the
- * runner schedules them in) removes the only plausible cross-file race —
- * concurrent invocation of the identical CLI entry point — without changing
- * either test's own behavior.
- */
-// Scoped to THIS checkout: the lock exists to serialize the two test files of
-// one run, not every checkout/worktree/session on the machine. A fixed path
-// coupled every concurrent suite on a shared box (waiters died at the 30s test
-// timeout, reading as "load"). Keyed on INDEX_TS, which both files share.
-// Staleness, heartbeat and release live in `./serial-lock.ts`, tested on its own.
-const SERIAL_LOCK_DIR = join(
-  tmpdir(),
-  `vinaya-demo-break-serial-${createHash('sha1').update(INDEX_TS).digest('hex').slice(0, 12)}.lock`
-)
-
 let root: string
 let restoreFixtureEnv: (() => void) | undefined
 
@@ -107,8 +84,9 @@ afterEach(() => {
 })
 
 describe('vinaya demo break', () => {
-  it('refuses the malformed commit with the real check error, fixes, passes, and cleans up — twice, without touching the original branch or leaving stray branches', async () => {
-    await withSerialLock(SERIAL_LOCK_DIR, async () => {
+  it(
+    'refuses the malformed commit with the real check error, fixes, passes, and cleans up — twice, without touching the original branch or leaving stray branches',
+    async () => {
       for (let run = 1; run <= 2; run++) {
         const beforeBranch = git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])
         const beforeHead = git(root, ['rev-parse', 'HEAD'])
@@ -138,24 +116,29 @@ describe('vinaya demo break', () => {
         const stray = git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/vinaya/demo-break-*'])
         expect(stray, `run ${run}: no stray demo branch may survive`).toBe('')
       }
-    })
-  }, 30_000)
+    },
+    HOOK_TEST_BOUND_MS
+  )
 
-  it('--keep leaves the demo branch checked out and removes the crash-recovery state file', async () => {
-    let code = -1
-    const out = await captureStdout(async () => {
-      code = await runDemoBreak(root, ['--keep'])
-    })
-    expect(code).toBe(0)
-    expect(out).toContain('--keep: leaving')
+  it(
+    '--keep leaves the demo branch checked out and removes the crash-recovery state file',
+    async () => {
+      let code = -1
+      const out = await captureStdout(async () => {
+        code = await runDemoBreak(root, ['--keep'])
+      })
+      expect(code).toBe(0)
+      expect(out).toContain('--keep: leaving')
 
-    const branch = git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])
-    expect(branch.startsWith('vinaya/demo-break-')).toBe(true)
+      const branch = git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])
+      expect(branch.startsWith('vinaya/demo-break-')).toBe(true)
 
-    const gitDir = git(root, ['rev-parse', '--git-dir'])
-    const stateAbs = gitDir.startsWith('/') ? gitDir : join(root, gitDir)
-    expect(existsSync(join(stateAbs, 'vinaya-demo-state.json'))).toBe(false)
-  }, 15_000)
+      const gitDir = git(root, ['rev-parse', '--git-dir'])
+      const stateAbs = gitDir.startsWith('/') ? gitDir : join(root, gitDir)
+      expect(existsSync(join(stateAbs, 'vinaya-demo-state.json'))).toBe(false)
+    },
+    HOOK_TEST_BOUND_MS
+  )
 
   it('refuses on a dirty working tree without touching anything', async () => {
     writeFileSync(join(root, 'dirty.txt'), 'uncommitted\n')
@@ -183,31 +166,35 @@ describe('vinaya demo break', () => {
     expect(git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/vinaya/demo-break-*'])).toBe('')
   })
 
-  it('recovers from a crashed prior run (stray branch + state file) before starting fresh', async () => {
-    // Simulate a crash: leave a stray demo branch checked out with its state
-    // file still present — exactly what a killed process would leave behind.
-    git(root, ['checkout', '-b', 'vinaya/demo-break-crashed-1'])
-    const gitDir = git(root, ['rev-parse', '--git-dir'])
-    const stateAbs = gitDir.startsWith('/') ? gitDir : join(root, gitDir)
-    writeFileSync(
-      join(stateAbs, 'vinaya-demo-state.json'),
-      JSON.stringify({ originalBranch: 'main', demoBranch: 'vinaya/demo-break-crashed-1' }),
-      'utf-8'
-    )
+  it(
+    'recovers from a crashed prior run (stray branch + state file) before starting fresh',
+    async () => {
+      // Simulate a crash: leave a stray demo branch checked out with its state
+      // file still present — exactly what a killed process would leave behind.
+      git(root, ['checkout', '-b', 'vinaya/demo-break-crashed-1'])
+      const gitDir = git(root, ['rev-parse', '--git-dir'])
+      const stateAbs = gitDir.startsWith('/') ? gitDir : join(root, gitDir)
+      writeFileSync(
+        join(stateAbs, 'vinaya-demo-state.json'),
+        JSON.stringify({ originalBranch: 'main', demoBranch: 'vinaya/demo-break-crashed-1' }),
+        'utf-8'
+      )
 
-    let code = -1
-    const out = await captureStdout(async () => {
-      code = await runDemoBreak(root, [])
-    })
-    expect(code, out).toBe(0)
-    expect(out).toContain('Found a leftover demo branch from a previous run')
+      let code = -1
+      const out = await captureStdout(async () => {
+        code = await runDemoBreak(root, [])
+      })
+      expect(code, out).toBe(0)
+      expect(out).toContain('Found a leftover demo branch from a previous run')
 
-    expect(git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('main')
-    expect(git(root, ['status', '--porcelain'])).toBe('')
-    const remaining = git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/vinaya/demo-break-*'])
-    expect(remaining).toBe('')
-    expect(existsSync(join(stateAbs, 'vinaya-demo-state.json'))).toBe(false)
-  }, 15_000)
+      expect(git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('main')
+      expect(git(root, ['status', '--porcelain'])).toBe('')
+      const remaining = git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/vinaya/demo-break-*'])
+      expect(remaining).toBe('')
+      expect(existsSync(join(stateAbs, 'vinaya-demo-state.json'))).toBe(false)
+    },
+    HOOK_TEST_BOUND_MS
+  )
 
   // F1 regression (security review HIGH, PR #713): a kill mid-demo leaves the
   // fixture STAGED but uncommitted on the demo branch — the exact window
@@ -217,95 +204,103 @@ describe('vinaya demo break', () => {
   // fixture would land staged on the user's REAL original branch. This test
   // reproduces that exact window and asserts genuinely no residue survives,
   // not just that the branch name matches.
-  it('recovers from a crash mid-demo (staged, uncommitted fixture on the demo branch) leaving the original branch genuinely clean', async () => {
-    const beforeHead = git(root, ['rev-parse', 'HEAD'])
+  it(
+    'recovers from a crash mid-demo (staged, uncommitted fixture on the demo branch) leaving the original branch genuinely clean',
+    async () => {
+      const beforeHead = git(root, ['rev-parse', 'HEAD'])
 
-    // A real branch that happens to share the reserved prefix, created before
-    // this "crash" and NOT part of this run's own state — proves recovery
-    // never sweeps by prefix, only ever deletes the one branch it recorded.
-    git(root, ['branch', 'vinaya/demo-break-not-mine'])
+      // A real branch that happens to share the reserved prefix, created before
+      // this "crash" and NOT part of this run's own state — proves recovery
+      // never sweeps by prefix, only ever deletes the one branch it recorded.
+      git(root, ['branch', 'vinaya/demo-break-not-mine'])
 
-    // Simulate the crash window: on the demo branch, with the fixture staged
-    // (git add'd) but never committed — exactly what `runDemoBreak` leaves on
-    // disk between staging and the first (deliberately-refused) commit.
-    git(root, ['checkout', '-b', 'vinaya/demo-break-crashed-2'])
-    writeFileSync(join(root, '.vinaya-demo-brief.md'), 'incomplete fixture, never committed\n')
-    git(root, ['add', '.vinaya-demo-brief.md'])
-    expect(git(root, ['status', '--porcelain'])).toContain('A  .vinaya-demo-brief.md')
+      // Simulate the crash window: on the demo branch, with the fixture staged
+      // (git add'd) but never committed — exactly what `runDemoBreak` leaves on
+      // disk between staging and the first (deliberately-refused) commit.
+      git(root, ['checkout', '-b', 'vinaya/demo-break-crashed-2'])
+      writeFileSync(join(root, '.vinaya-demo-brief.md'), 'incomplete fixture, never committed\n')
+      git(root, ['add', '.vinaya-demo-brief.md'])
+      expect(git(root, ['status', '--porcelain'])).toContain('A  .vinaya-demo-brief.md')
 
-    const gitDir = git(root, ['rev-parse', '--git-dir'])
-    const stateAbs = gitDir.startsWith('/') ? gitDir : join(root, gitDir)
-    writeFileSync(
-      join(stateAbs, 'vinaya-demo-state.json'),
-      JSON.stringify({ originalBranch: 'main', demoBranch: 'vinaya/demo-break-crashed-2' }),
-      'utf-8'
-    )
+      const gitDir = git(root, ['rev-parse', '--git-dir'])
+      const stateAbs = gitDir.startsWith('/') ? gitDir : join(root, gitDir)
+      writeFileSync(
+        join(stateAbs, 'vinaya-demo-state.json'),
+        JSON.stringify({ originalBranch: 'main', demoBranch: 'vinaya/demo-break-crashed-2' }),
+        'utf-8'
+      )
 
-    let code = -1
-    const out = await captureStdout(async () => {
-      code = await runDemoBreak(root, [])
-    })
-    expect(code, out).toBe(0)
+      let code = -1
+      const out = await captureStdout(async () => {
+        code = await runDemoBreak(root, [])
+      })
+      expect(code, out).toBe(0)
 
-    // Back on main, genuinely clean — not just the right branch name, but no
-    // staged, modified, or untracked residue of any kind, and the fixture
-    // file itself does not exist there at all.
-    expect(git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('main')
-    expect(git(root, ['status', '--porcelain'])).toBe('')
-    expect(git(root, ['diff', '--cached', '--name-only'])).toBe('')
-    expect(git(root, ['ls-files', '.vinaya-demo-brief.md'])).toBe('')
-    expect(git(root, ['rev-parse', 'HEAD'])).toBe(beforeHead) // no stray commit landed on main either
+      // Back on main, genuinely clean — not just the right branch name, but no
+      // staged, modified, or untracked residue of any kind, and the fixture
+      // file itself does not exist there at all.
+      expect(git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('main')
+      expect(git(root, ['status', '--porcelain'])).toBe('')
+      expect(git(root, ['diff', '--cached', '--name-only'])).toBe('')
+      expect(git(root, ['ls-files', '.vinaya-demo-brief.md'])).toBe('')
+      expect(git(root, ['rev-parse', 'HEAD'])).toBe(beforeHead) // no stray commit landed on main either
 
-    // Only the crashed run's own recorded branch was deleted — the unrelated
-    // pre-existing branch sharing the prefix survives untouched.
-    expect(() => git(root, ['rev-parse', '--verify', 'refs/heads/vinaya/demo-break-crashed-2'])).toThrow()
-    expect(git(root, ['rev-parse', '--verify', 'refs/heads/vinaya/demo-break-not-mine'])).toMatch(/^[0-9a-f]{40}$/)
+      // Only the crashed run's own recorded branch was deleted — the unrelated
+      // pre-existing branch sharing the prefix survives untouched.
+      expect(() => git(root, ['rev-parse', '--verify', 'refs/heads/vinaya/demo-break-crashed-2'])).toThrow()
+      expect(git(root, ['rev-parse', '--verify', 'refs/heads/vinaya/demo-break-not-mine'])).toMatch(/^[0-9a-f]{40}$/)
 
-    // cleanup for subsequent assertions/afterEach
-    git(root, ['branch', '-D', 'vinaya/demo-break-not-mine'])
-  }, 15_000)
+      // cleanup for subsequent assertions/afterEach
+      git(root, ['branch', '-D', 'vinaya/demo-break-not-mine'])
+    },
+    HOOK_TEST_BOUND_MS
+  )
 
-  it('does not crash with a raw git error on a zero-commit repo — the exact real-published-path crash found live 2026-08-07', async () => {
-    // The REALISTIC reproduction, matching the real brief's own command
-    // sequence (`vinaya init` then `vinaya demo break`, no intermediate
-    // manual commit): a fresh repo, `vinaya init`-shaped dirty working tree
-    // (real config/doctrine files present but never committed), zero
-    // commits. `runDemoBreak` calls `recoverFromCrash` FIRST, before its own
-    // dirty-tree check — and `recoverFromCrash`'s first line used to be
-    // `git rev-parse --abbrev-ref HEAD`, which throws `fatal: ambiguous
-    // argument 'HEAD'` on this exact unborn-HEAD state regardless of
-    // dirtiness. That unhandled throw is the real crash task 3's dress
-    // rehearsal hit against the real published package — it fired before
-    // the dirty-tree check ever got a chance to return its own, correct,
-    // non-crashing "commit or stash first" message.
-    rmSync(root, { recursive: true, force: true })
-    root = join(tmpdir(), `vinaya-demo-zero-commit-${Date.now()}-${Math.random().toString(36).slice(2)}`)
-    mkdirSync(root, { recursive: true })
-    git(root, ['init', '-q', '-b', 'main'])
-    git(root, ['config', 'user.email', 'test@example.com'])
-    git(root, ['config', 'user.name', 'Test'])
-    installRealHook(root)
-    writeFileSync(join(root, 'vinaya.config.json'), '{}\n') // stand-in for init's real, uncommitted output
+  it(
+    'does not crash with a raw git error on a zero-commit repo — the exact real-published-path crash found live 2026-08-07',
+    async () => {
+      // The REALISTIC reproduction, matching the real brief's own command
+      // sequence (`vinaya init` then `vinaya demo break`, no intermediate
+      // manual commit): a fresh repo, `vinaya init`-shaped dirty working tree
+      // (real config/doctrine files present but never committed), zero
+      // commits. `runDemoBreak` calls `recoverFromCrash` FIRST, before its own
+      // dirty-tree check — and `recoverFromCrash`'s first line used to be
+      // `git rev-parse --abbrev-ref HEAD`, which throws `fatal: ambiguous
+      // argument 'HEAD'` on this exact unborn-HEAD state regardless of
+      // dirtiness. That unhandled throw is the real crash task 3's dress
+      // rehearsal hit against the real published package — it fired before
+      // the dirty-tree check ever got a chance to return its own, correct,
+      // non-crashing "commit or stash first" message.
+      rmSync(root, { recursive: true, force: true })
+      root = join(tmpdir(), `vinaya-demo-zero-commit-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+      mkdirSync(root, { recursive: true })
+      git(root, ['init', '-q', '-b', 'main'])
+      git(root, ['config', 'user.email', 'test@example.com'])
+      git(root, ['config', 'user.name', 'Test'])
+      installRealHook(root)
+      writeFileSync(join(root, 'vinaya.config.json'), '{}\n') // stand-in for init's real, uncommitted output
 
-    expect(() => git(root, ['rev-parse', 'HEAD'])).toThrow() // sanity: genuinely zero commits
-    expect(git(root, ['status', '--porcelain'])).not.toBe('') // sanity: genuinely dirty, like a real post-init repo
+      expect(() => git(root, ['rev-parse', 'HEAD'])).toThrow() // sanity: genuinely zero commits
+      expect(git(root, ['status', '--porcelain'])).not.toBe('') // sanity: genuinely dirty, like a real post-init repo
 
-    let code = -1
-    const out = await captureStdout(async () => {
-      code = await runDemoBreak(root, [])
-    })
-    // The historical bug: an unhandled `execFileSync` throw crashed the
-    // whole process with a raw, unhandled Node stack trace — never reaching
-    // any of `runDemoBreak`'s own output, and never returning a code at all
-    // (the test process itself would throw). The fix does not make this
-    // succeed — a dirty tree is still correctly refused — it makes the
-    // refusal an ORDINARY, handled `return 1` with a clear message, not a
-    // crash.
-    expect(code, out).toBe(1)
-    expect(out).toBe('')
-    // No raw git stderr text ever reached the top-level catch as an
-    // exception message — the assertion above (return 1, not a throw)
-    // already proves this; this call directly proves runDemoBreak returns
-    // rather than throws, since a throw would have failed the `await` above.
-  }, 15_000)
+      let code = -1
+      const out = await captureStdout(async () => {
+        code = await runDemoBreak(root, [])
+      })
+      // The historical bug: an unhandled `execFileSync` throw crashed the
+      // whole process with a raw, unhandled Node stack trace — never reaching
+      // any of `runDemoBreak`'s own output, and never returning a code at all
+      // (the test process itself would throw). The fix does not make this
+      // succeed — a dirty tree is still correctly refused — it makes the
+      // refusal an ORDINARY, handled `return 1` with a clear message, not a
+      // crash.
+      expect(code, out).toBe(1)
+      expect(out).toBe('')
+      // No raw git stderr text ever reached the top-level catch as an
+      // exception message — the assertion above (return 1, not a throw)
+      // already proves this; this call directly proves runDemoBreak returns
+      // rather than throws, since a throw would have failed the `await` above.
+    },
+    HOOK_TEST_BOUND_MS
+  )
 })
