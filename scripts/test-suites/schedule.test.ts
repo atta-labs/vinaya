@@ -7,7 +7,17 @@
  * interrupted run and an unreadable report among them.
  */
 import { afterAll, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -17,6 +27,13 @@ import {
   CI_SHARD_LIST_OWNER
 } from '../../harness/processes/vinaya-strict/checks/ci-shard-membership.ts'
 import { groupNativeTests, type NativeGroup, type NativeTestRequest, type TestIdentity } from '@attalabs/test-selection'
+import {
+  createTestTempRun,
+  OWNER_MARKER_FILE,
+  removeTestTempRun,
+  TEST_TEMP_ROOT_ENV,
+  type TestTempRun
+} from '../../harness/kernel/conformance/unit/test-temp.ts'
 import { type InventoryView, readTestInventory } from './inventory-check.ts'
 import {
   assignShards,
@@ -32,6 +49,8 @@ import {
   readShardLists,
   runGroups,
   runnerCommand,
+  runTestTempRoot,
+  SCHEDULE_TEST_TEMP_REPO_ID,
   vitestJsonFiles
 } from './schedule.ts'
 
@@ -818,5 +837,79 @@ describe('what a runner group confirms', () => {
       { numFailedTestSuites: 1, numFailedTests: 2, success: true }
     ])
       expect(outcome(group('vitest'), 1, vitest(totals, listed))).toMatchObject({ trusted: false, obligations: ids })
+  })
+})
+
+describe("each run's own test-temp root", () => {
+  const fixture = runnerFixture()
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'schedule-test-temp-')))
+  scratch.push(base)
+  const runs = join(base, SCHEDULE_TEST_TEMP_REPO_ID)
+  const create = () => createTestTempRun(SCHEDULE_TEST_TEMP_REPO_ID, runs)
+  const group = groupNativeTests({
+    tests: [fixture.universe.find((t) => t.id === 'pkg/bun/tests/a.test.ts') as TestIdentity],
+    universe: fixture.universe
+  }).groups[0] as NativeGroup
+  /** Runs one group twice with a recording spawn: each runner's root, and whether it existed while the runner ran. */
+  const run = (env: NodeJS.ProcessEnv, fail = false) => {
+    const seen: { root: string | undefined; existed: boolean }[] = []
+    const spawn = ((_cmd: string, _args: string[], opts: { env: NodeJS.ProcessEnv }) => {
+      const root = opts.env[TEST_TEMP_ROOT_ENV]
+      seen.push({ root, existed: root !== undefined && existsSync(join(root, OWNER_MARKER_FILE)) })
+      if (fail) throw new Error('runner could not start')
+      return { status: 0, signal: null }
+    }) as unknown as typeof import('node:child_process').spawnSync
+    const go = () => runGroups(fixture.root, [group, group], { log: () => {}, spawn, env, createTestTempRoot: create })
+    if (fail) expect(go).toThrow('runner could not start')
+    else go()
+    return seen
+  }
+  const unset = { PATH: process.env.PATH }
+
+  test('two runs hand their runners two distinct roots, each removed once the run ends', () => {
+    const first = run(unset)
+    const second = run(unset)
+    // Every runner of one run shares its run's root; the two runs never share one.
+    expect(new Set(first.map((s) => s.root)).size).toBe(1)
+    expect(new Set(second.map((s) => s.root)).size).toBe(1)
+    expect(first[0]?.root).not.toBe(second[0]?.root)
+    for (const { root } of [...first, ...second]) {
+      expect(dirname(root as string)).toBe(runs)
+      expect(existsSync(root as string)).toBe(false)
+    }
+    // Each root carried its owner marker while its runners ran, so a later sweep can judge one a killed run left.
+    expect([...first, ...second].every((s) => s.existed)).toBe(true)
+    expect(readdirSync(runs).filter((name) => !name.endsWith('.owner.json'))).toEqual([])
+  })
+
+  test("a caller's own root is kept and never removed", () => {
+    const own = join(base, 'caller-root')
+    mkdirSync(own)
+    const seen = run({ ...unset, [TEST_TEMP_ROOT_ENV]: own })
+    expect(seen.map((s) => s.root)).toEqual([own, own])
+    expect(existsSync(own)).toBe(true)
+  })
+
+  test('the root a run created is removed even when its runner fails to start', () => {
+    const seen = run(unset, true)
+    expect(seen).toHaveLength(1)
+    expect(existsSync(seen[0]?.root as string)).toBe(false)
+  })
+
+  test('a set root is kept without creating one; an empty setting creates one', () => {
+    let created = 0
+    const counted = () => {
+      created++
+      return create()
+    }
+    expect(runTestTempRoot({ [TEST_TEMP_ROOT_ENV]: '/disk/own' }, counted)).toEqual({
+      root: '/disk/own',
+      created: null
+    })
+    expect(created).toBe(0)
+    const fresh = runTestTempRoot({ [TEST_TEMP_ROOT_ENV]: '' }, counted)
+    expect(created).toBe(1)
+    expect(fresh.created?.dir).toBe(fresh.root)
+    expect(removeTestTempRun(fresh.created as TestTempRun).failed).toEqual([])
   })
 })
