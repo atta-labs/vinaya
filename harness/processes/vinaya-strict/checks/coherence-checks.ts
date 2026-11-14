@@ -22,7 +22,6 @@ import {
   type TaskSurfaceFacts
 } from '../tools/task-contract/issue-validation'
 import { parseTaskBranchIdentity } from '../tools/task-contract/task-branch-identity'
-import { LEGACY_TRANCHES_DIR } from '../tools/legacy-paths'
 import { isPrincipal } from '../tools/task-contract/waiver-label'
 import type { ForgeIssue, TaskIssueRef } from '../tools/task-contract/tranche-types'
 import type { GhIssue } from '../../../kernel/adapters/code-host/github/gh'
@@ -965,7 +964,7 @@ export function checkClosesNTopology(
   if (!trancheFile) {
     return {
       ok: false,
-      message: `closes-n: branch "${branch}" references tranche "${trancheSlug}" but no topology file found at ${LEGACY_TRANCHES_DIR}/${trancheSlug}.md. Ensure the tranche file exists before opening the PR.`
+      message: `closes-n: branch "${branch}" references tranche "${trancheSlug}" but the tranche could not be read from the forge: no Issue carries the tranche label "${trancheSlug}", or the forge was unreachable. Check that the tranche's task Issues carry its label, then retry.`
     }
   }
 

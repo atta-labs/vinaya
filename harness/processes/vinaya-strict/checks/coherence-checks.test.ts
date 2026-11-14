@@ -99,10 +99,13 @@ describe('checkClosesNTopology', () => {
     expect(r.expectedIssue).toBe(264)
   })
 
-  it('fail — no topology file found for the branch tranche', () => {
+  it('fail — the branch tranche could not be read from the forge', () => {
     const r = checkClosesNTopology('task/unknown-iter/2', 'Closes #1', [])
     expect(r.ok).toBe(false)
-    expect(r.message).toMatch(/no topology file found/)
+    expect(r.message).toContain('the tranche could not be read from the forge')
+    expect(r.message).toContain('no Issue carries the tranche label "unknown-iter"')
+    expect(r.message).toContain('the forge was unreachable')
+    expect(r.message).not.toMatch(/topology file|\.md\b/)
   })
 
   // A backlog Issue's task/issue-<n> branch — no
