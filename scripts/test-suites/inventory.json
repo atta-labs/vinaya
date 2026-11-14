@@ -83,6 +83,7 @@
         "scripts/test-suites/bun-runtime.test.ts",
         "scripts/test-suites/relocation-fixture.test.ts",
         "scripts/test-suites/schedule.test.ts",
+        "scripts/test-suites/independence-check.test.ts",
         "scripts/test-suites/staged-driver-move.test.ts",
         "scripts/test-suites/recorded-selection.test.ts",
         "scripts/test-suites/read-records.test.ts",
@@ -411,6 +412,21 @@
         }
       ],
       "reason": "Each reads the advisory macOS sandbox workflow from disk and asserts its job and steps."
+    },
+    {
+      "id": "test-independence-workflow",
+      "kind": "config",
+      "paths": [".github/workflows/test-independence.yml"],
+      "readers": [
+        {
+          "kind": "raw-bytes",
+          "tests": [
+            "scripts/test-suites/independence-check.test.ts",
+            "harness/processes/vinaya-strict/integration/log/client/log-entry-paths.test.ts"
+          ]
+        }
+      ],
+      "reason": "Each reads the nightly test independence workflow from disk and asserts its triggers, jobs and steps."
     },
     {
       "id": "ci-impact-replay",
