@@ -42,6 +42,7 @@ import {
 import { readUnpushedWorkDetail } from '../standalone/dev-review-loop/unpushed-work'
 import { spawnSync } from 'node:child_process'
 import { relative, resolve, sep } from 'node:path'
+import { runGit } from './git-read-memo'
 
 import {
   DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
@@ -1559,8 +1560,20 @@ export interface ConflictRepairFailure {
 const gitIn = (cwd: string, args: readonly string[]) =>
   spawnSync('git', [...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
 
-const isAncestor = (cwd: string, ancestor: string, descendant: string): boolean =>
-  gitIn(cwd, ['merge-base', '--is-ancestor', ancestor, descendant]).status === 0
+/** Through the round's git read memo: a yes is kept, a no (a non-zero exit) is never kept. */
+const isAncestor = (cwd: string, ancestor: string, descendant: string): boolean => {
+  const args = ['merge-base', '--is-ancestor', ancestor, descendant]
+  try {
+    runGit(cwd, args, () => {
+      const result = gitIn(cwd, args)
+      if (result.status !== 0) throw new Error(`git merge-base --is-ancestor exited ${result.status ?? 'unknown'}`)
+      return ''
+    })
+    return true
+  } catch {
+    return false
+  }
+}
 
 /**
  * The local half of a conflict repair's proof, read from the task worktree with plain git: the published head moved

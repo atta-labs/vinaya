@@ -500,6 +500,43 @@ test('the Engine runner reads unpushed work with the standalone reader, and noth
   expect(readUnpublishedWork(join(dir, 'missing'))).toBeNull()
 })
 
+test("a run asks the remote for the default branch's name once across its rounds, and reads its head fresh each time", async () => {
+  const root = fixtureDir('round-decisions-parent-')
+  roots.push(root)
+  const runtimeDir = join(root, 'runtime')
+  mkdirSync(runtimeDir)
+  let nameReads = 0
+  let headReads = 0
+  const task = await liveTaskInput({ task: TASK, agent: 'claude', dryRun: false }, root, runtimeDir, 'parent-once', {
+    fetchLabels: () => [],
+    fetchTitle: () => 'A test task',
+    forge: testForge({
+      resolveParentBranch: () => {
+        nameReads += 1
+        // The first answer fails: a failed resolution is not kept, so the next use asks again.
+        if (nameReads === 1) throw new Error('the remote did not answer')
+        return 'trunk'
+      },
+      resolveHead: (branch) => {
+        headReads += 1
+        return `${branch}@${headReads}`
+      }
+    })
+  })
+  const resolveParentHead = task.bound?.resolveParentHead
+  if (!resolveParentHead) throw new Error('the Engine runner binds no parent-head reader')
+  expect(() => resolveParentHead()).toThrow('the remote did not answer')
+  const heads: string[] = []
+  for (let round = 0; round < 3; round++) {
+    heads.push(resolveParentHead(), resolveParentHead())
+    task.seedRound?.(round + 2)
+  }
+  expect(task.reviewRound?.()).toBe(4)
+  // One failed read, then one that answered; never again for the rest of the run.
+  expect(nameReads).toBe(2)
+  expect(heads).toEqual(['trunk@1', 'trunk@2', 'trunk@3', 'trunk@4', 'trunk@5', 'trunk@6'])
+})
+
 for (const agent of AGENTS) {
   test(`launch schemas follow each review handoff (${agent})`, async () => {
     const observed = await run(agent, {

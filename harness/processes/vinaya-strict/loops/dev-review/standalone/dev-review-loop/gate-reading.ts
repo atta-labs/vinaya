@@ -24,6 +24,7 @@ import { REVIEW_GATE_CHECK_RUN_NAME, REVIEW_GATE_WORKFLOW_NAME } from '../../../
 import { reassertPrBodyPremise } from '../../../../tools/premise-reassert-logic.js'
 import type { PremiseReassertResult } from '../../../../tools/premise-reassert-logic.js'
 import { pollUntil } from './round-assess.js'
+import { clearGitReadMemo, runGit } from '../../v2/git-read-memo.js'
 
 /** Env-overridable, same idiom `dev-review-loop.ts`'s own `gatePollEnvOverride` uses — a fixture needs sub-millisecond backoff, real usage needs real spacing between retries. */
 function shEnvOverride(name: string, fallback: number): number {
@@ -57,11 +58,14 @@ function sleepSyncMs(ms: number): void {
 /** `attempts` replaces the retry count for a `gh` read that is best-effort, so a failure costs one call and no backoff. */
 function sh(cmd: string, args: string[], options: { attempts?: number } = {}): string {
   if (cmd !== 'gh') {
-    return execFileSync(cmd, args, {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      maxBuffer: MAX_GH_OUTPUT_BYTES
-    }).trim()
+    const run = (): string =>
+      execFileSync(cmd, args, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: MAX_GH_OUTPUT_BYTES
+      }).trim()
+    // Git runs in this process's own cwd here (no `cwd` option), so the memo keys it on that directory.
+    return cmd === 'git' ? runGit(undefined, args, run) : run()
   }
   // O5: every `gh` READ this driver makes retries this many times, total,
   // before a transient forge hiccup counts as a real failure — never
@@ -99,6 +103,19 @@ export function resolveParentBranch(): string {
   const match = /^ref:\s+refs\/heads\/(\S+)\s+HEAD$/m.exec(out)
   if (match?.[1] === undefined) throw new Error('resolveParentBranch: origin reports no default branch for HEAD.')
   return match[1]
+}
+
+/**
+ * `read` (the remote's default branch name; `resolveParentBranch` unless a caller supplies its own) resolved at its
+ * first use and reused by every later call, so one run asks the remote for the name once. A failed resolution is not
+ * kept: the next call asks again. The name only — the branch's head is still read fresh each time it is needed.
+ */
+export function parentBranchOncePerRun(read: () => string = resolveParentBranch): () => string {
+  let name: string | null = null
+  return () => {
+    if (name === null) name = read()
+    return name
+  }
 }
 
 /**
@@ -649,6 +666,9 @@ export function fetchConflictingFiles(baseBranch: string, headBranch: string): s
     })
   } catch {
     // Best-effort — the refs may already be current locally.
+  } finally {
+    // The fetch moves remote-tracking refs: no memoized read may answer from before it.
+    clearGitReadMemo('git fetch')
   }
   try {
     execFileSync('git', ['merge-tree', '--write-tree', `origin/${baseBranch}`, `origin/${headBranch}`], {
