@@ -1,5 +1,6 @@
 import { sh } from './gate-reading.js'
 import { execFileSync } from 'node:child_process'
+import { clearGitReadMemo, runGit } from '../../v2/git-read-memo.js'
 import { resolveMergeBase } from '../../../../tools/pr-report/pr-report-engine.js'
 import type { SecurityScanRun } from './reviewer-dispatch.js'
 import { mkdtempSync } from 'node:fs'
@@ -29,8 +30,10 @@ export function defaultGitRevParseOriginMain(): string {
 
 export function defaultGitIsAncestor(ancestor: string, descendant: string): boolean {
   try {
-    execFileSync('git', ['merge-base', '--is-ancestor', ancestor, descendant], {
-      stdio: ['ignore', 'ignore', 'ignore']
+    const args = ['merge-base', '--is-ancestor', ancestor, descendant]
+    runGit(undefined, args, () => {
+      execFileSync('git', args, { stdio: ['ignore', 'ignore', 'ignore'] })
+      return ''
     })
     return true
   } catch (err) {
@@ -40,7 +43,8 @@ export function defaultGitIsAncestor(ancestor: string, descendant: string): bool
 }
 
 export function defaultGitMergeBase(head: string): Promise<string> {
-  return resolveMergeBase(head)
+  // The report engine's base read may fetch the default branch, so no memoized read may answer from before it.
+  return resolveMergeBase(head).finally(() => clearGitReadMemo('merge-base resolution'))
 }
 
 export function defaultGitFetch(sha: string): void {
@@ -48,6 +52,8 @@ export function defaultGitFetch(sha: string): void {
     execFileSync('git', ['fetch', '--quiet', 'origin', sha], { stdio: ['ignore', 'ignore', 'ignore'] })
   } catch {
     // Non-fatal — the object may already be local; the diff below is the real test.
+  } finally {
+    clearGitReadMemo('git fetch')
   }
 }
 
@@ -187,6 +193,8 @@ export function defaultRunSecurityScanSubprocess(command: readonly string[], sca
     if (typeof e.status === 'number' && combined.length > 0) return { ok: true, output: combined }
     return { ok: false, reason: e.message }
   } finally {
+    // A child process the step started: whatever it did to a repository is unseen, so the memo is emptied.
+    clearGitReadMemo('security scan')
     try {
       rmSync(sandbox, { recursive: true, force: true })
     } catch {
@@ -216,7 +224,12 @@ export function defaultResolveTaskSurface(task: number): IssueSurface | null {
 
 /** issue-711 O1 — this driver's base is always `main`, the same hardcoded base `gitRevParseOriginMain`/`defaultPullDefaultBranch` already use; never the PR's own `baseRefName` (the loop has no forge PR object to read one from). */
 export function defaultPatchIdOf(sha: string): string | null {
-  return patchIdAt('main', sha)
+  try {
+    return patchIdAt('main', sha)
+  } finally {
+    // The kernel's patch-id reader fetches from origin: the memo is emptied here, at its call site.
+    clearGitReadMemo('patch-id fetch')
+  }
 }
 
 /**
@@ -310,11 +323,14 @@ export function defaultGitWorktreeUntrackedPaths(worktreePath: string): string[]
 }
 
 export function gitOk(worktreePath: string, args: string[]): string | null {
+  const full = ['-C', worktreePath, ...args]
   try {
-    return execFileSync('git', ['-C', worktreePath, ...args], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    }).trim()
+    return runGit(undefined, full, () =>
+      execFileSync('git', full, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      }).trim()
+    )
   } catch {
     return null
   }
@@ -523,6 +539,7 @@ export function defaultMergeDefaultTip(
     env: { ...process.env, GIT_EDITOR: 'true' },
     stdio: ['ignore', 'pipe', 'pipe']
   })
+  clearGitReadMemo('git merge')
   if (!merged.error && merged.status === 0 && !mergeInProgress(worktreePath)) {
     const head = gitOk(worktreePath, ['rev-parse', 'HEAD'])
     if (head) return { ok: true, merged: true, oldHead, head }
@@ -589,6 +606,7 @@ export function defaultRebaseOntoDefaultTip(
       stdio: ['ignore', 'pipe', 'pipe']
     }
   )
+  clearGitReadMemo('git rebase')
   if (!rebased.error && rebased.status === 0 && !rebaseInProgress(worktreePath)) {
     const head = gitOk(worktreePath, ['rev-parse', 'HEAD'])
     if (head) return { ok: true, head }
@@ -634,7 +652,11 @@ export function defaultRestoreWorktreeHead(worktreePath: string, head: string): 
 export function ownChangesRangeBase(worktreePath: string, pushedBase: string | null): string | null {
   if (pushedBase === null) return null
   try {
-    execFileSync('git', ['-C', worktreePath, 'merge-base', '--is-ancestor', pushedBase, 'HEAD'], { stdio: 'ignore' })
+    const args = ['-C', worktreePath, 'merge-base', '--is-ancestor', pushedBase, 'HEAD']
+    runGit(undefined, args, () => {
+      execFileSync('git', args, { stdio: 'ignore' })
+      return ''
+    })
     return pushedBase
   } catch (err) {
     if ((err as { status?: number }).status !== 1) return pushedBase

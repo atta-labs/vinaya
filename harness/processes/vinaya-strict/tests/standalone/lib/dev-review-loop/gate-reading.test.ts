@@ -26,7 +26,8 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,9 +39,12 @@ import {
   readPublishedPullRequest,
   renderConflictPrompt,
   type MergeableState,
+  parentBranchOncePerRun,
+  readWorktreeHead,
   type RestCheckRun,
   type RestWorkflowRun
 } from '../../../../loops/dev-review/standalone/dev-review-loop/gate-reading'
+import { observeGitReads, withGitReadMemo } from '../../../../loops/dev-review/v2/git-read-memo'
 
 const GATE_READING = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -512,6 +516,82 @@ describe('the gate reads both runners share, each value passed explicitly', () =
       ].join('\n\n')
     )
     expect(renderConflictPrompt([], 'x')).toEndWith('(no specific file could be determined)')
+  })
+})
+
+describe("the default branch's name, once per run", () => {
+  it('a counting parent-branch reader is called once across several rounds of one run, and a failure is not kept', () => {
+    let reads = 0
+    const parentBranch = parentBranchOncePerRun(() => {
+      reads += 1
+      if (reads === 1) throw new Error('origin did not answer')
+      return 'trunk'
+    })
+    expect(() => parentBranch()).toThrow('origin did not answer')
+    for (let round = 1; round <= 3; round++) {
+      expect(parentBranch()).toBe('trunk')
+      expect(parentBranch()).toBe('trunk')
+    }
+    expect(reads).toBe(2)
+    // Each run resolves the name afresh.
+    expect(parentBranchOncePerRun(() => 'main')()).toBe('main')
+  })
+})
+
+describe("the worktree head through the round's git read memo", () => {
+  const repoAt = (dir: string): string => {
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], {
+        cwd: dir,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      }).trim()
+    git('init', '-q', '-b', 'main')
+    writeFileSync(join(dir, 'a.txt'), `${dir}\n`)
+    git('add', '-A')
+    git('commit', '-q', '-m', 'base')
+    return git('rev-parse', 'HEAD')
+  }
+  const headSpawns = (run: () => Promise<void> | void) => async (): Promise<string[]> => {
+    const keys: string[] = []
+    const stop = observeGitReads((event) => {
+      if (event.kind === 'spawn') keys.push(event.key)
+    })
+    try {
+      await run()
+    } finally {
+      stop()
+    }
+    return keys
+  }
+
+  it('starts git once per worktree within a driver step, keyed on the worktree, and every time outside one', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gate-reading-memo-'))
+    try {
+      const one = join(root, 'one')
+      const two = join(root, 'two')
+      mkdirSync(one)
+      mkdirSync(two)
+      const oneHead = repoAt(one)
+      const twoHead = repoAt(two)
+      const inStep = await headSpawns(() =>
+        withGitReadMemo(async () => {
+          expect(readWorktreeHead(one)).toBe(oneHead)
+          expect(readWorktreeHead(one)).toBe(oneHead)
+          expect(readWorktreeHead(two)).toBe(twoHead)
+          expect(readWorktreeHead(two)).toBe(twoHead)
+        })
+      )()
+      expect(inStep).toHaveLength(2)
+      const outside = await headSpawns(() => {
+        readWorktreeHead(one)
+        readWorktreeHead(one)
+      })()
+      expect(outside).toHaveLength(2)
+      expect(readWorktreeHead(join(root, 'missing'))).toBeNull()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 
