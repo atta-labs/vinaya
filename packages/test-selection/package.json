@@ -17,7 +17,8 @@
   },
   "types": "./dist/index.d.ts",
   "bin": {
-    "test-selection": "dist/cli.js"
+    "test-selection": "dist/cli.js",
+    "test-selection-record": "dist/record-command.js"
   },
   "files": [
     "dist",

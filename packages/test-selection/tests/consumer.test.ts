@@ -222,6 +222,61 @@ describe('a fresh repository installs the packed package and selects with it', (
         expect(refused.stdout).toBe('')
         expect(refused.stderr.trim().split('\n')).toHaveLength(1)
       }
+
+      // The record command, linked by npm, under Node: the built `dist/`, with the probe's source shipped beside it.
+      expect(listing).toContain('package/dist/record-command.js')
+      expect(listing).toContain('package/src/listing-probe.ts')
+      expect(listing).toContain('package/src/listing-probe-paths.ts')
+      const recorder = join(mono, 'node_modules/.bin/test-selection-record')
+      const usage = spawnSync('node', [recorder], { cwd: mono, encoding: 'utf8', env: bareEnv(home) })
+      expect(usage.status).toBe(2)
+      expect(usage.stderr.startsWith('usage: test-selection-record --out <dir>')).toBe(true)
+      const out = join(home, 'record')
+      const recording = spawnSync('node', [recorder, '--out', out, '--only', 'packages/app/tests/none.test.ts'], {
+        cwd: mono,
+        encoding: 'utf8',
+        env: bareEnv(home)
+      })
+      if (process.platform !== 'linux') {
+        expect(recording.status).toBe(2)
+        expect(recording.stderr).toBe('test-selection-record: the recorder runs on Linux only (strace)\n')
+        expect(existsSync(out)).toBe(false)
+      } else if (spawnSync('strace', ['-V'], { stdio: 'ignore' }).status !== 0) {
+        expect(recording.status).toBe(2)
+        expect(recording.stderr).toBe(
+          'test-selection-record: strace cannot be started: the recorder traces every test with it\n'
+        )
+      } else {
+        expect(recording.status).toBe(0)
+        const record = JSON.parse(readFileSync(join(out, 'read-record.json'), 'utf8'))
+        expect(record).toMatchObject({ schema: 'vinaya.read-record', schemaVersion: 1, tests: {} })
+      }
+
+      // The shipped probe, copied from the installed package under Node and preloaded directly by Bun, logs a listing.
+      const probeDir = join(home, 'probe')
+      mkdirSync(probeDir)
+      writeFileSync(
+        join(mono, 'copy-probe.mjs'),
+        "import { copyListingProbe } from '@attalabs/test-selection'\nprocess.stdout.write(copyListingProbe(process.argv[2]))\n"
+      )
+      const probe = run('node', ['copy-probe.mjs', probeDir], mono, home).stdout
+      expect(probe).toBe(join(probeDir, 'listing-probe.ts'))
+      writeFileSync(join(mono, 'lists.mjs'), "import { readdirSync } from 'node:fs'\nreaddirSync('packages')\n")
+      const log = join(probeDir, 'probe.jsonl')
+      const probed = spawnSync('bun', ['--preload', probe, 'lists.mjs'], {
+        cwd: mono,
+        encoding: 'utf8',
+        env: { ...bareEnv(home), VINAYA_LISTING_PROBE_LOG: log }
+      })
+      expect(probed.status).toBe(0)
+      const lines = readFileSync(log, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+      expect(lines[0]).toMatchObject({ start: true })
+      expect(lines.some((line) => line.list === join(realpathSync(mono), 'packages') && line.recursive === false)).toBe(
+        true
+      )
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
