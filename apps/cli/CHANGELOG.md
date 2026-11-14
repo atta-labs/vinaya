@@ -1,5 +1,13 @@
 # @attalabs/vinaya
 
+## 0.42.1
+
+### Patch Changes
+
+- b304859: The Developer doctrine's manual premise re-check now names `PREMISE_FILE=<body-file> vinaya-check dispatch-readiness`, run from the task branch, a command an installed package carries, instead of a source script only the authoring repository has. The Planner's `task_issue_create` and `task_issue_edit` tool descriptions no longer name the retired `vinaya issue` command words.
+- 04d419c: Generating the tool-server registrations (`.mcp.json` and the Codex `[mcp_servers]` tables) now reads the seat and server names from a names-only module instead of loading the tool server and every role's tools, so `init`, `upgrade` and `doctor` load less, and a change to one role's tools no longer selects every configuration-generating test. The generated registrations are byte-identical.
+- 41eea46: The refusal that names `task switch` after a run's checkpoint started on another agent now prints the command in the form the repository can run: `npx --yes @attalabs/vinaya@<installed version>` in a repository that does not vendor the command line, and the source form only in the one that does. The `closes-n` check, when it cannot find the branch's tranche, now says the tranche could not be read from the forge instead of naming a retired topology file.
+
 ## 0.42.0
 
 ### Minor Changes
