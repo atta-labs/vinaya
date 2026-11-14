@@ -15,8 +15,8 @@
  */
 
 import { programCommandLine } from '../../../tools/programs.js'
-import { afterEach, beforeAll, describe, expect, it } from 'bun:test'
-import { execFileSync, execSync, spawn, spawnSync } from 'node:child_process'
+import { afterEach, describe, expect, it as bunIt } from 'bun:test'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -36,7 +36,10 @@ import {
   resolveDispatchTimeoutMs,
   colourAgentLine,
   colourEnabled,
-  colourLoopLine
+  colourLoopLine,
+  getProcessSnapshot,
+  captureSettledChildSnapshot,
+  type ProcessSnapshot
 } from '../../../loops/dev-review/dispatch/dispatch.js'
 import {
   claimLaunchAttribution,
@@ -50,10 +53,12 @@ import {
   pathWithoutRealVendors,
   collectLaunchedChildren,
   killLaunchedChild,
+  type LaunchedChild,
   stripVinayaEnv,
-  runDispatch,
-  runScriptWithBudget,
-  spawnBudgeted,
+  DISPATCH_SUBPROCESS_BUDGET_MS,
+  runDispatch as runFixtureDispatch,
+  runScriptWithBudget as runFixtureScript,
+  spawnBudgeted as spawnFixtureBudgeted,
   writeFakeBinary,
   writeIdentityStableFakeBinary,
   outboxLines,
@@ -64,8 +69,7 @@ import {
   readArgv,
   withoutTurnResultFlag,
   RESUME_VENDOR_FIXTURES,
-  teeDirOf,
-  readWhenReady
+  teeDirOf
 } from './dispatch-fixtures.js'
 
 const tempDirs: string[] = []
@@ -73,11 +77,130 @@ afterEach(() => {
   // O1: unconditional — runs whether the test above passed, failed, or hit
   // its own subprocess budget, since `afterEach` fires regardless of how the
   // test body exited.
+  for (const child of launches.values()) killLaunchedChild(child)
+  launches.clear()
   for (const dir of tempDirs.splice(0)) {
     for (const child of collectLaunchedChildren(dir)) killLaunchedChild(child)
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+/**
+ * Process hygiene, checked over this file's own launches only. `dispatchRole`
+ * writes one launch record per repository, role, vendor and scope under the
+ * fixture's `HOME` — the vendor's pid and its start time — and a later
+ * dispatch of the same kind overwrites it, so every helper below that runs a
+ * dispatch collects the records the moment it returns, and the case keeps the
+ * list itself. At the end of each case (`it`, below) every collected launch
+ * must be gone, before `afterEach` kills anything. No process this file did not
+ * launch — a sibling file, worktree or run with its own fake vendor — is ever
+ * read, so another run on the same machine can never fail this check.
+ */
+const launches = new Map<string, LaunchedChild>()
+
+function noteLaunch(child: LaunchedChild): void {
+  launches.set(`${child.pid} ${child.childStartedAt ?? ''}`, child)
+}
+
+function collectLaunches(): void {
+  for (const dir of tempDirs) for (const child of collectLaunchedChildren(dir)) noteLaunch(child)
+}
+
+/**
+ * Whether a recorded launch is still running. A pid that answers no signal is
+ * gone; one that answers with a different start time is a process the OS has
+ * since given the same number, not this launch; a zombie has exited. The start
+ * time is the identity, never the command name — a shell vendor that `exec`s
+ * another program keeps its pid and start time but changes its name.
+ */
+function launchStillRunning(child: LaunchedChild): boolean {
+  if (child.pid <= 0) return false
+  try {
+    process.kill(child.pid, 0)
+  } catch {
+    return false
+  }
+  const live = getProcessSnapshot(child.pid)
+  if (live !== null && child.childStartedAt !== null && live.startedAt !== child.childStartedAt) return false
+  return !processState(child.pid).startsWith('Z')
+}
+
+function processState(pid: number): string {
+  try {
+    return execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: stripVinayaEnv(process.env),
+      timeout: DISPATCH_SUBPROCESS_BUDGET_MS,
+      killSignal: 'SIGKILL'
+    }).trim()
+  } catch {
+    return ''
+  }
+}
+
+function runDispatch(...args: Parameters<typeof runFixtureDispatch>): ReturnType<typeof runFixtureDispatch> {
+  try {
+    return runFixtureDispatch(...args)
+  } finally {
+    collectLaunches()
+  }
+}
+
+function runScriptWithBudget(...args: Parameters<typeof runFixtureScript>): void {
+  try {
+    runFixtureScript(...args)
+  } finally {
+    collectLaunches()
+  }
+}
+
+function spawnBudgeted(...args: Parameters<typeof spawnFixtureBudgeted>): ReturnType<typeof spawnFixtureBudgeted> {
+  try {
+    return spawnFixtureBudgeted(...args)
+  } finally {
+    collectLaunches()
+  }
+}
+
+/**
+ * A case's own time limit: above the subprocess budget, which is the real
+ * guard against a hung dispatch, so a case never fails on the test runner's
+ * clock while its subprocesses are still inside their own budget.
+ */
+const CASE_TIMEOUT_MS = 120_000
+
+function it(name: string, body: () => unknown, timeoutMs = CASE_TIMEOUT_MS): void {
+  bunIt(
+    name,
+    async () => {
+      await body()
+      collectLaunches()
+      const survivors = [...launches.values()].filter(launchStillRunning)
+      expect(survivors).toEqual([])
+    },
+    Math.max(timeoutMs, CASE_TIMEOUT_MS)
+  )
+}
+
+/**
+ * A tee file's contents once `marker` has reached it. `createWriteStream`
+ * flushes on the event loop, so this awaits between reads — a synchronous spin
+ * would block the very flush it waits for. It has no deadline of its own: a
+ * flush that never lands fails the case at the case's own time limit, never
+ * at a fixed window a loaded machine can miss.
+ */
+async function readTeeOnceWritten(path: string, marker: string): Promise<string> {
+  for (;;) {
+    try {
+      const contents = readFileSync(path, 'utf8')
+      if (contents.includes(marker)) return contents
+    } catch {
+      // not created yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
 
 function tempDir(prefix: string): string {
   // The real path: macOS reaches its temporary directory through a symlink, and
@@ -566,20 +689,108 @@ describe('dispatchRole — present but not executable', () => {
   })
 })
 
+const DISPATCH_LIB = join(
+  CLI_ROOT,
+  '..',
+  '..',
+  'harness',
+  'processes',
+  'vinaya-strict',
+  'loops',
+  'dev-review',
+  'dispatch',
+  'dispatch.ts'
+)
+
+/**
+ * A fake vendor that reaches the timeout ceiling on purpose: one process image
+ * (shebang straight at `bun`), so its pid and start time stay its own from
+ * `spawn()` to its death. It drains its prompt, optionally prints one line
+ * first, installs its `SIGTERM` handling — ignore, or exit cleanly — and only
+ * then writes its pid to `readyFile`, its readiness mark. It never ends on its
+ * own. Nothing it does runs in the background, so nothing outlives it.
+ */
+function writeCeilingFakeVendor(
+  binDir: string,
+  readyFile: string,
+  opts: { onTerm: 'ignore' | 'exit'; firstLine?: string }
+): void {
+  writeFakeBinary(
+    binDir,
+    'claude',
+    [
+      `#!${process.execPath}`,
+      `const { writeFileSync, writeSync } = require('node:fs')`,
+      'process.stdin.resume()',
+      opts.firstLine === undefined ? '' : `writeSync(1, ${JSON.stringify(`${opts.firstLine}\n`)})`,
+      `process.on('SIGTERM', () => {${opts.onTerm === 'exit' ? ' process.exit(0) ' : ''}})`,
+      `writeFileSync(${JSON.stringify(readyFile)}, String(process.pid))`,
+      'setInterval(() => {}, 1 << 30)',
+      ''
+    ].join('\n')
+  )
+}
+
+/**
+ * Runs one Developer dispatch from a script, with a ceiling timer
+ * (`DispatchOpts.armCeiling`) that fires once the fake vendor's readiness mark
+ * exists instead of after a fixed number of milliseconds. The ceiling then
+ * never reaches a child that has not yet installed its own `SIGTERM` handling,
+ * however long the child takes to start on a loaded machine. What follows the
+ * ceiling is production's own: `SIGTERM`, then `SIGKILL` once the configured
+ * `killGraceMs` passes. A hung dispatch still ends at the script's subprocess
+ * budget.
+ */
+function dispatchWithCeilingOnReady(
+  dirs: { home: string; cwd: string; binDir: string },
+  readyFile: string
+): { timedOut: boolean; failureReason: string | null } {
+  const script = join(dirs.cwd, 'ceiling-on-ready.ts')
+  const resultPath = join(dirs.cwd, 'ceiling-on-ready-result.json')
+  const promptFile = join(dirs.cwd, 'prompt.txt')
+  writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+  writeFileSync(
+    script,
+    [
+      `import { existsSync, writeFileSync } from 'node:fs'`,
+      `import { dispatchRole } from ${JSON.stringify(DISPATCH_LIB)}`,
+      'function armCeiling(fire) {',
+      '  let timer',
+      `  const poll = () => { if (existsSync(${JSON.stringify(readyFile)})) fire(); else timer = setTimeout(poll, 20) }`,
+      '  timer = setTimeout(poll, 0)',
+      '  return () => clearTimeout(timer)',
+      '}',
+      `const handle = await dispatchRole('developer', 'claude', ${JSON.stringify(PROMPT_FILE_CONTENT)}, { promptFile: ${JSON.stringify(promptFile)}, armCeiling })`,
+      `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ timedOut: handle.timedOut, failureReason: handle.failureReason ?? null }))`,
+      'process.exit(0)'
+    ].join('\n')
+  )
+  runScriptWithBudget(
+    script,
+    dirs.cwd,
+    stripVinayaEnv({ ...process.env, HOME: dirs.home, PATH: `${dirs.binDir}:${pathWithoutRealVendors()}` })
+  )
+  return JSON.parse(readFileSync(resultPath, 'utf8')) as { timedOut: boolean; failureReason: string | null }
+}
+
 describe('dispatchRole — timeout ceiling', () => {
   it('uses reviewerTimeoutMs for reviewers while a Developer keeps timeoutMs', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
-    writeFakeBinary(binDir, 'claude', '#!/bin/sh\ncat > /dev/null\nexec sleep 2\n')
+    const reviewerCeilingMs = 1000
+    // The Developer's ceiling is far beyond anything this case waits for, so
+    // the Developer's outcome can only come from its own child ending.
     writeFileSync(
       join(cwd, 'vinaya.config.json'),
-      JSON.stringify({ dispatch: { timeoutMs: 5000, reviewerTimeoutMs: 1000, killGraceMs: 100 } })
+      JSON.stringify({ dispatch: { timeoutMs: 600_000, reviewerTimeoutMs: reviewerCeilingMs, killGraceMs: 100 } })
     )
     const promptFile = join(cwd, 'prompt.txt')
     writeFileSync(promptFile, PROMPT_FILE_CONTENT)
     const path = `${binDir}:${pathWithoutRealVendors()}`
 
+    // A reviewer child that never ends on its own: only its ceiling ends it.
+    writeFakeBinary(binDir, 'claude', `#!${process.execPath}\nprocess.stdin.resume()\nsetInterval(() => {}, 1 << 30)\n`)
     const reviewer = runDispatch(['code-reviewer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
     expect(reviewer.status).toBe(1)
     expect(
@@ -588,9 +799,18 @@ describe('dispatchRole — timeout ceiling', () => {
       )
     ).toBe(true)
 
+    // A Developer child that stays alive past the reviewer's ceiling — it
+    // cannot exit sooner than twice that ceiling after its own start, which
+    // is after its spawn — and then ends by itself. Under the reviewer's
+    // ceiling it would time out; under the Developer's own it succeeds.
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!${process.execPath}\nprocess.stdin.resume()\nsetTimeout(() => process.exit(0), ${2 * reviewerCeilingMs})\n`
+    )
     const developer = runDispatch(['developer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
     expect(developer.status).toBe(0)
-  }, 10_000)
+  })
 
   it('defaults both reviewer roles to twenty minutes without changing the Developer default', () => {
     expect(DEFAULT_REVIEWER_TIMEOUT_MS).toBe(1_200_000)
@@ -600,72 +820,46 @@ describe('dispatchRole — timeout ceiling', () => {
   })
 
   it('SIGTERMs a child that ignores it, then SIGKILLs after the grace window, and the pid is actually gone', () => {
-    // `killGraceMs` (task-run-v1 20, O2): the escalation this test proves —
-    // SIGTERM ignored, SIGKILL follows once the grace window elapses — does
-    // not need the real 5000ms production default to be observed, only a
-    // real, non-zero window the child can be caught inside. Configuring it
-    // down to 200ms cuts this test's real wall time by ~4.8s without
-    // faking any of the process signalling it exercises.
+    // The child ignores SIGTERM and marks itself ready only once it does, and
+    // the ceiling fires only on that mark — so the SIGTERM always reaches a
+    // child that ignores it, and only the SIGKILL that follows the grace
+    // window can end it. `killGraceMs` (task-run-v1 20, O2) keeps that window
+    // short without faking any signal.
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
-    const pidFile = join(cwd, 'pid')
-    writeFakeBinary(binDir, 'claude', `#!/bin/sh\necho $$ > "${pidFile}"\ntrap '' TERM\ncat > /dev/null &\nsleep 30\n`)
-    // 2500ms, not a shorter value: the shell itself needs real wall time —
-    // under this bun:test file's own contention from other subprocess-heavy
-    // tests, more than 1000ms — to start and reach its own `trap` statement
-    // before `SIGTERM` arrives. A too-short ceiling kills the shell via
-    // SIGTERM's default disposition before it ever traps the signal,
-    // producing a false pass for the wrong reason (found live, authoring
-    // this test: 300ms failed consistently, 1000ms failed intermittently
-    // under full-suite contention).
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { timeoutMs: 2500, killGraceMs: 200 } }))
-    const promptFile = join(cwd, 'prompt.txt')
-    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const readyFile = join(cwd, 'ready')
+    writeCeilingFakeVendor(binDir, readyFile, { onTerm: 'ignore' })
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { killGraceMs: 200 } }))
 
-    const r = runDispatch(
-      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
-      cwd,
-      home,
-      `${binDir}:${pathWithoutRealVendors()}`
-    )
-    expect(r.status).toBe(1)
+    const result = dispatchWithCeilingOnReady({ home, cwd, binDir }, readyFile)
+    expect(result.timedOut).toBe(true)
 
     const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
     const failed = lines.find((l) => l.event === 'dispatch_failed')
     expect((failed as { reason: string }).reason).toBe('timeout')
 
-    const pid = Number(readFileSync(pidFile, 'utf8').trim())
+    const pid = Number(readFileSync(readyFile, 'utf8').trim())
     expect(() => process.kill(pid, 0)).toThrow()
-  }, 10_000)
+  })
 
   it('reports timeout even when the child exits cleanly on SIGTERM alone (no SIGKILL needed)', () => {
+    // The child exits 0 from its own SIGTERM handler, installed before its
+    // readiness mark. The grace window stays the production default, so the
+    // clean exit, not a SIGKILL, is what ends it; the outcome is still a
+    // timeout.
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
-    writeFakeBinary(binDir, 'claude', `#!/bin/sh\ncat > /dev/null &\ntrap 'exit 0' TERM\nsleep 30\n`)
-    // Same startup-latency reasoning as the test above: the shell needs
-    // real wall time, under this file's own subprocess contention, to
-    // reach its own `trap` before `SIGTERM` arrives. killGraceMs: 200 (same
-    // reasoning as the escalation test above) — the child exits cleanly on
-    // SIGTERM alone here, so the grace window is never actually consumed
-    // by a SIGKILL, but a small one still keeps this test from paying the
-    // production default while the parent's own escalation timer is armed.
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { timeoutMs: 2500, killGraceMs: 200 } }))
-    const promptFile = join(cwd, 'prompt.txt')
-    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const readyFile = join(cwd, 'ready')
+    writeCeilingFakeVendor(binDir, readyFile, { onTerm: 'exit' })
 
-    const r = runDispatch(
-      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
-      cwd,
-      home,
-      `${binDir}:${pathWithoutRealVendors()}`
-    )
-    expect(r.status).toBe(1)
+    const result = dispatchWithCeilingOnReady({ home, cwd, binDir }, readyFile)
+    expect(result.timedOut).toBe(true)
     const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
     const failed = lines.find((l) => l.event === 'dispatch_failed')
     expect((failed as { reason: string }).reason).toBe('timeout')
-  }, 10_000)
+  })
 
   // O10 — a run's token record survives the manner of its death: the parent
   // captures usage from the accumulated stdout AT THE MOMENT it ends the
@@ -674,29 +868,20 @@ describe('dispatchRole — timeout ceiling', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
-    // Prints a complete stream-json usage line BEFORE going unresponsive —
-    // the exact shape `parseClaudeUsage` reads. `stdout` is unbuffered on a
-    // bare `echo`, so this line reaches the parent's `stdoutBuf` well before
-    // the timeout ceiling fires.
-    writeFakeBinary(
-      binDir,
-      'claude',
-      `#!/bin/sh\necho '{"usage":{"input_tokens":184327,"output_tokens":22190,"cache_read_input_tokens":500}}'\ntrap '' TERM\ncat > /dev/null &\nsleep 30\n`
-    )
-    // killGraceMs: 200 — same reasoning as the escalation test above; this
-    // test's own concern (usage survives the kill) needs only that a
-    // SIGKILL eventually happens, not the production-sized window before it.
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { timeoutMs: 2500, killGraceMs: 200 } }))
-    const promptFile = join(cwd, 'prompt.txt')
-    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const readyFile = join(cwd, 'ready')
+    // Writes a complete stream-json usage line — the exact shape
+    // `parseClaudeUsage` reads — synchronously, before its readiness mark, so
+    // the line is in the pipe before the ceiling can fire.
+    writeCeilingFakeVendor(binDir, readyFile, {
+      onTerm: 'ignore',
+      firstLine: '{"usage":{"input_tokens":184327,"output_tokens":22190,"cache_read_input_tokens":500}}'
+    })
+    // killGraceMs: 200 — this case needs only that a SIGKILL eventually
+    // happens, not the production-sized window before it.
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { killGraceMs: 200 } }))
 
-    const r = runDispatch(
-      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
-      cwd,
-      home,
-      `${binDir}:${pathWithoutRealVendors()}`
-    )
-    expect(r.status).toBe(1)
+    const result = dispatchWithCeilingOnReady({ home, cwd, binDir }, readyFile)
+    expect(result.timedOut).toBe(true)
 
     const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
     const failed = lines.find((l) => l.event === 'dispatch_failed') as
@@ -714,7 +899,7 @@ describe('dispatchRole — timeout ceiling', () => {
     expect(usageEvent?.units).toEqual({ input: 184327, output: 22190, cache: 500 })
     expect(usageEvent?.unknown_reason).toBeNull()
     expect(lines.find((l) => l.kind === 'role_attempt')).toMatchObject({ outcome: 'timed_out' })
-  }, 10_000)
+  })
 })
 
 describe('dispatchRole — transcript usage fallback', () => {
@@ -748,25 +933,21 @@ describe('dispatchRole — transcript usage fallback', () => {
       units: { input: 101, output: 22, cache: 77 },
       unknown_reason: null
     })
-  }, 20_000)
+  })
 
   it('a killed dispatch still records the usage its transcript holds so far', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
     plantTranscript(join(home, '.claude'), SESSION_ID, [transcriptLine('m1', 7, 8, 9, 10)])
-    writeFakeBinary(binDir, 'claude', `#!/bin/sh\necho '${initLine}'\ntrap '' TERM\ncat > /dev/null &\nsleep 30\n`)
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { timeoutMs: 2500, killGraceMs: 200 } }))
-    const promptFile = join(cwd, 'prompt.txt')
-    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    // Binds its session with the init line, then waits for the ceiling, which
+    // fires only once it has marked itself ready.
+    const readyFile = join(cwd, 'ready')
+    writeCeilingFakeVendor(binDir, readyFile, { onTerm: 'ignore', firstLine: initLine })
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ dispatch: { killGraceMs: 200 } }))
 
-    const r = runDispatch(
-      ['developer', '--agent', 'claude', '--prompt-file', promptFile],
-      cwd,
-      home,
-      `${binDir}:${pathWithoutRealVendors()}`
-    )
-    expect(r.status).toBe(1)
+    const result = dispatchWithCeilingOnReady({ home, cwd, binDir }, readyFile)
+    expect(result.timedOut).toBe(true)
     const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
     expect(lines.find((l) => l.event === 'dispatch_failed')).toMatchObject({ reason: 'timeout' })
     expect(lines.find((l) => l.kind === 'usage')).toMatchObject({
@@ -774,7 +955,7 @@ describe('dispatchRole — transcript usage fallback', () => {
       units: { input: 7, output: 8, cache: 19 },
       unknown_reason: null
     })
-  }, 20_000)
+  })
 
   it('with neither a stream usage line nor a transcript the units are unknown and the reason names both', () => {
     const home = tempDir('vinaya-dispatch-home-')
@@ -800,7 +981,7 @@ describe('dispatchRole — transcript usage fallback', () => {
     expect(usage.units).toEqual({ input: null, output: null, cache: null })
     expect(usage.unknown_reason).toContain('claude emitted no stream-json line')
     expect(usage.unknown_reason).toContain('session transcript')
-  }, 20_000)
+  })
 })
 
 // O4 — the Vinaya log's `usage` event is the record of a turn's token use now
@@ -1000,78 +1181,35 @@ describe("dispatchRole — child identity settles across the vendor's own exec h
     // A real npm-installed vendor CLI shebangs `#!/usr/bin/env node`: the
     // kernel's own shebang-triggered exec lands on `env`, and `env` THEN
     // performs its own, second, user-space exec into `node` — the same
-    // process, but a different `comm`, landing some time after `spawn()`
-    // already returned. Modeled here with a `/bin/sh` launcher that sleeps
-    // briefly before `exec`-ing into the identity-stable leaf binary, so a
-    // read taken the instant `spawn()` returns is guaranteed to still see
-    // `sh`, not the process that survives.
-    const home = tempDir('vinaya-dispatch-home-')
-    const cwd = tempDir('vinaya-dispatch-cwd-')
-    const binDir = tempDir('vinaya-dispatch-bin-')
-    const promptFile = join(cwd, 'prompt.txt')
-    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
-    const finalBinary = writeIdentityStableFakeBinary(binDir, 'claude-final')
-    writeFakeBinary(binDir, 'claude', `#!/bin/sh\nsleep 0.3\nexec "${finalBinary}"\n`)
-
-    const dispatchLib = join(
-      CLI_ROOT,
-      '..',
-      '..',
-      'harness',
-      'processes',
-      'vinaya-strict',
-      'loops',
-      'dev-review',
-      'dispatch',
-      'dispatch.ts'
-    )
-    const script = join(cwd, 'settle-identity.ts')
-    const resultPath = join(cwd, 'result.json')
-    writeFileSync(
-      script,
-      [
-        `import { writeFileSync } from 'node:fs'`,
-        `import { execFileSync } from 'node:child_process'`,
-        `import { dispatchRole, readLaunchRecord } from ${JSON.stringify(dispatchLib)}`,
-        `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 43 }`,
-        // Fire-and-forget, exactly as the shutdown tests above do: the
-        // child never exits on its own (`await new Promise(() => {})`).
-        `void dispatchRole('developer', 'claude', 'p', opts)`,
-        'async function waitForChildCommand(timeoutMs) {',
-        '  const start = Date.now()',
-        '  while (Date.now() - start < timeoutMs) {',
-        `    const parsed = readLaunchRecord('developer', 'claude', null, 43)`,
-        `    if (parsed.status === 'ok' && parsed.record.childCommand !== null) return parsed.record`,
-        '    await new Promise((r) => setTimeout(r, 50))',
-        '  }',
-        `  throw new Error('timed out waiting for the launch record to carry a childCommand')`,
-        '}',
-        'const record = await waitForChildCommand(5000)',
-        // Ground truth, via a FRESH `ps` read on the child's own pid, taken
-        // well after the shell's own 0.3s exec hop has certainly landed —
-        // never the same read `captureSettledChildSnapshot` itself took.
-        `const groundTruth = execFileSync('ps', ['-p', String(record.childPid), '-o', 'comm='], { encoding: 'utf8' }).trim()`,
-        `execFileSync('kill', ['-TERM', String(record.childPid)])`,
-        `writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ childCommand: record.childCommand, groundTruth }))`,
-        'process.exit(0)'
-      ].join('\n')
-    )
-
-    const spawnEnv: NodeJS.ProcessEnv = stripVinayaEnv({
-      ...process.env,
-      HOME: home,
-      PATH: `${binDir}:${pathWithoutRealVendors()}`
+    // process and start time, but a different `comm`, landing some time after
+    // `spawn()` already returned. These are that process's reads from
+    // outside, in order: the launcher first, then the program that survives.
+    // Handing the reads over in order, instead of racing a real launcher's
+    // exec against the settle budget, makes the hop land between two reads
+    // every time, however loaded the machine is.
+    const startedAt = 'Mon Jan  1 00:00:00 2024'
+    const reads: ProcessSnapshot[] = [
+      { ppid: 1, startedAt, command: 'env' },
+      { ppid: 1, startedAt, command: 'node' },
+      { ppid: 1, startedAt, command: 'node' }
+    ]
+    let readCount = 0
+    const settled = captureSettledChildSnapshot(4242, (pid) => {
+      expect(pid).toBe(4242)
+      return reads[Math.min(readCount++, reads.length - 1)] ?? null
     })
-    runScriptWithBudget(script, cwd, spawnEnv)
+    // The launcher's own identity is never what gets recorded: the changed
+    // command kept it reading until two reads agreed on the settled one.
+    expect(settled).toEqual({ ppid: 1, startedAt, command: 'node' })
+    expect(readCount).toBe(3)
+  })
 
-    const result = JSON.parse(readFileSync(resultPath, 'utf8')) as { childCommand: string | null; groundTruth: string }
-    // The launcher's own identity ('sh') must never be what gets recorded.
-    expect(result.childCommand).not.toBe('sh')
-    expect(result.childCommand).not.toBeNull()
-    // The recorded identity must match the SETTLED process, confirmed by an
-    // independent, later `ps` read on the same pid.
-    expect(result.childCommand).toBe(result.groundTruth)
-  }, 10_000)
+  it('keeps the first read when the process is gone by the next one', () => {
+    const first: ProcessSnapshot = { ppid: 1, startedAt: 'Mon Jan  1 00:00:00 2024', command: 'env' }
+    let readCount = 0
+    expect(captureSettledChildSnapshot(4242, () => (readCount++ === 0 ? first : null))).toEqual(first)
+    expect(readCount).toBe(2)
+  })
 })
 
 describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, Issue #605)', () => {
@@ -1120,16 +1258,16 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
         // which (absent our own termination below) would not happen until
         // its own 30s sleep — never awaited here.
         `void dispatchRole('developer', 'claude', 'p', opts)`,
-        'async function waitForChildPid(timeoutMs) {',
-        '  const start = Date.now()',
-        '  while (Date.now() - start < timeoutMs) {',
+        // No deadline of its own: the script's subprocess budget ends a
+        // dispatch that never records its child.
+        'async function waitForChildPid() {',
+        '  for (;;) {',
         `    const parsed = readLaunchRecord('developer', 'claude', null, 42)`,
         `    if (parsed.status === 'ok' && parsed.record.childPid !== null) return`,
         '    await new Promise((r) => setTimeout(r, 50))',
         '  }',
-        `  throw new Error('timed out waiting for the launch record to carry a childPid')`,
         '}',
-        'await waitForChildPid(5000)',
+        'await waitForChildPid()',
         `const before = readLaunchRecord('developer', 'claude', null, 42)`,
         `const childPid = before.status === 'ok' ? before.record.childPid : null`,
         // The call under test — synchronous, and (like the real SIGTERM
@@ -1183,7 +1321,7 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
     expect(result.after.record.status).toBe('interrupted')
     expect(result.after.record.failureReason).toBe('signal')
     expect(result.after.record.finishedAt).not.toBeNull()
-  }, 10_000)
+  })
 
   it('round 4 security review, HIGH: never signals a pid whose recorded identity no longer matches — a stale record naming a recycled pid is left untouched', () => {
     // Simulates the exact scenario the finding named: the on-disk record
@@ -1216,6 +1354,7 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
     )
     const script = join(cwd, 'shutdown-terminate-identity-mismatch.ts')
     const resultPath = join(cwd, 'result-identity-mismatch.json')
+    const originalRecordPath = join(cwd, 'launch-record-before-corruption.json')
     const recordPath = join(
       home,
       '.vinaya',
@@ -1234,21 +1373,25 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
         `import { dispatchRole, readLaunchRecord, terminateLaunchedChildOnShutdown } from ${JSON.stringify(dispatchLib)}`,
         `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 42 }`,
         `void dispatchRole('developer', 'claude', 'p', opts)`,
-        'async function waitForChildPid(timeoutMs) {',
-        '  const start = Date.now()',
-        '  while (Date.now() - start < timeoutMs) {',
+        // No deadline of its own: the script's subprocess budget ends a
+        // dispatch that never records its child.
+        'async function waitForChildPid() {',
+        '  for (;;) {',
         `    const parsed = readLaunchRecord('developer', 'claude', null, 42)`,
         `    if (parsed.status === 'ok' && parsed.record.childPid !== null) return`,
         '    await new Promise((r) => setTimeout(r, 50))',
         '  }',
-        `  throw new Error('timed out waiting for the launch record to carry a childPid')`,
         '}',
-        'await waitForChildPid(5000)',
+        'await waitForChildPid()',
         // Corrupt the record's own captured identity in place, on disk —
         // the real childPid is untouched (still our real sleeping child),
         // only what the record CLAIMS about it changes, exactly as a stale
         // record from an earlier, differently-identified process would read.
         `const raw = JSON.parse(readFileSync(${JSON.stringify(recordPath)}, 'utf8'))`,
+        // Hand the original record back first: it is the only copy of this
+        // launch's real identity, and the case's own survivor check reads it
+        // from this file once the corrupted one can no longer name the child.
+        `writeFileSync(${JSON.stringify(originalRecordPath)}, JSON.stringify(raw, null, 2))`,
         `raw.childStartedAt = 'Mon Jan 1 00:00:00 2024'`,
         `writeFileSync(${JSON.stringify(recordPath)}, JSON.stringify(raw, null, 2))`,
         `const before = readLaunchRecord('developer', 'claude', null, 42)`,
@@ -1275,6 +1418,9 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
       PATH: `${binDir}:${pathWithoutRealVendors()}`
     })
     runScriptWithBudget(script, cwd, spawnEnv)
+    // The launch as it really was, before the script corrupted its record.
+    const original = JSON.parse(readFileSync(originalRecordPath, 'utf8')) as LaunchedChild & { childPid: number }
+    noteLaunch({ pid: original.childPid, childStartedAt: original.childStartedAt, childCommand: original.childCommand })
 
     const result = JSON.parse(readFileSync(resultPath, 'utf8')) as {
       before: { record: { status: string; childStartedAt: string } }
@@ -1289,7 +1435,7 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
     // be a match any more.
     expect(result.after.record.status).toBe('interrupted')
     expect(result.after.record.failureReason).toBe('signal')
-  }, 10_000)
+  })
 
   it("round 3 review, MAJOR/HIGH: terminates a REVIEWER's dispatched child too — the driver now calls this for every in-flight role, not developer only", () => {
     // Same mechanism, same proof — `terminateLaunchedChildOnShutdown` takes
@@ -1327,16 +1473,16 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
         `import { dispatchRole, readLaunchRecord, terminateLaunchedChildOnShutdown } from ${JSON.stringify(dispatchLib)}`,
         `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 42 }`,
         `void dispatchRole('code-reviewer', 'claude', 'p', opts)`,
-        'async function waitForChildPid(timeoutMs) {',
-        '  const start = Date.now()',
-        '  while (Date.now() - start < timeoutMs) {',
+        // No deadline of its own: the script's subprocess budget ends a
+        // dispatch that never records its child.
+        'async function waitForChildPid() {',
+        '  for (;;) {',
         `    const parsed = readLaunchRecord('code-reviewer', 'claude', null, 42)`,
         `    if (parsed.status === 'ok' && parsed.record.childPid !== null) return`,
         '    await new Promise((r) => setTimeout(r, 50))',
         '  }',
-        `  throw new Error('timed out waiting for the launch record to carry a childPid')`,
         '}',
-        'await waitForChildPid(5000)',
+        'await waitForChildPid()',
         `const before = readLaunchRecord('code-reviewer', 'claude', null, 42)`,
         `const childPid = before.status === 'ok' ? before.record.childPid : null`,
         `terminateLaunchedChildOnShutdown('code-reviewer', 'claude', null, 42)`,
@@ -1368,7 +1514,7 @@ describe('terminateLaunchedChildOnShutdown — driver shutdown termination (O1, 
     expect(result.childAlive).toBe(false)
     expect(result.after.record.status).toBe('interrupted')
     expect(result.after.record.failureReason).toBe('signal')
-  }, 10_000)
+  })
 
   it("a launch record that already read 'completed' or 'interrupted' is left untouched — nothing left to terminate", () => {
     const home = tempDir('vinaya-dispatch-home-')
@@ -1517,7 +1663,7 @@ describe('dispatchRole — a shared run_id (a nested dispatch inheriting VINAYA_
     }
     const dispatchLines = lines.filter((l) => l.kind === 'dispatch')
     expect(new Set(dispatchLines.map((l) => l.target_role))).toEqual(new Set(['developer', 'code-reviewer']))
-  }, 10_000)
+  })
 })
 
 describe('dispatchRole — resume identifier (round-trip, per vendor)', () => {
@@ -1907,17 +2053,7 @@ describe('dispatch observability (#450)', () => {
     // `createWriteStream` flushes on the event loop, so this polls with an
     // await — a synchronous spin would block the very flush it waits for,
     // which is exactly how this test first failed.
-    const deadline = Date.now() + 3000
-    let contents = ''
-    while (Date.now() < deadline) {
-      try {
-        contents = readFileSync(tee.path as string, 'utf8')
-        if (contents.includes('second chunk')) break
-      } catch {
-        // not created yet
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25))
-    }
+    const contents = await readTeeOnceWritten(tee.path as string, 'second chunk')
     expect(contents).toContain('first chunk')
     expect(contents).toContain('second chunk')
     rmSync(tee.path as string, { force: true })
@@ -1955,7 +2091,7 @@ describe('dispatch observability (#450)', () => {
     tee.write(Buffer.from('harmless line\n'))
     tee.end()
 
-    const contents = await readWhenReady(tee.path as string, 'harmless line')
+    const contents = await readTeeOnceWritten(tee.path as string, 'harmless line')
     expect(contents).toContain('harmless line')
     expect(contents).not.toContain(FAKE_GITHUB_TOKEN)
     expect(contents).not.toContain('sk-secret-value-here')
@@ -1967,7 +2103,7 @@ describe('dispatch observability (#450)', () => {
     const tee = openOutputTee(effectId)
     tee.write(Buffer.from('x\n'))
     tee.end()
-    await readWhenReady(tee.path as string, 'x')
+    await readTeeOnceWritten(tee.path as string, 'x')
     expect(statSync(tee.path as string).mode & 0o777).toBe(0o600)
     expect(statSync(teeDirOf(tee.path as string)).mode & 0o777).toBe(0o700)
     rmSync(tee.path as string, { force: true })
@@ -1979,7 +2115,7 @@ describe('dispatch observability (#450)', () => {
     const chunk = Buffer.from(`${'y'.repeat(64 * 1024)}\n`)
     for (let i = 0; i < Math.ceil(MAX_TEE_BYTES / chunk.length) + 8; i++) tee.write(chunk)
     tee.end()
-    await readWhenReady(tee.path as string, 'y')
+    await readTeeOnceWritten(tee.path as string, 'y')
     // Bounded by the cap. Slack is one chunk (the write that crosses the cap
     // is allowed to complete) plus the carry tail flushed at `end`.
     expect(statSync(tee.path as string).size).toBeLessThanOrEqual(MAX_TEE_BYTES + chunk.length + 512)
@@ -2371,60 +2507,6 @@ describe('dispatch streaming output (#447 O5)', () => {
   })
 })
 
-/**
- * O2 (Issue #670) — the host-wide proof, run last so it observes every
- * fixture above's own teardown, not just the one test it happens to follow.
- * Same idiom `checks/runner.test.ts` already established for its own
- * process-group tests (`ps -eo pid,command | grep … | grep -v grep || true`)
- * — `-eo` lists every process on the host, not just this test process's own
- * children, so a vendor that reparented to the service manager after its own
- * script died is still caught here. Every fake vendor binary in this file
- * lives under a `tempDir('vinaya-dispatch-bin-')` directory, so its own
- * path — and therefore its `ps` command line — always carries that literal
- * substring; a `--settings <path>` flag (`writeDispatchSettings`) on an
- * unattended fixture additionally carries the fake task's own run folder, on
- * the SAME command line, for the same reason. Bounded (`timeout`/
- * `killSignal`) so a hung `ps`/`grep` cannot itself hang this file's own run
- * — matching this file's own `stripVinayaEnv`+kill-budget discipline
- * (`process-fixture-coverage.test.ts`).
- *
- * The proof is against pids NEW since `beforeAll`, never a bare host-wide
- * zero-count: this machine runs several agents concurrently, each in its own
- * worktree sharing the same real host — an unrelated sibling's own
- * in-flight `vinaya-dispatch-bin-` fixture, alive before this file's first
- * test ever ran, is not a regression this file introduced and must never
- * fail this proof (found live: a sibling worktree's own fixture, started
- * independently, made a bare `ps -eo` scan fail with no leak on this file's
- * own part at all). Snapshotting the baseline first and asserting "nothing
- * new" keeps 100% of the sensitivity to a real leak from this file's own
- * fixtures while dropping the false positive from noise this file never
- * controlled.
- */
-function vendorProcessSurvivors(): string[] {
-  const out = execSync('ps -eo pid,command | grep "vinaya-dispatch-bin-" | grep -v grep || true', {
-    encoding: 'utf8',
-    timeout: 5_000,
-    killSignal: 'SIGKILL'
-  }).trim()
-  if (out.length === 0) return []
-  return out
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-}
-
-let preExistingVendorSurvivors: Set<string> = new Set()
-beforeAll(() => {
-  preExistingVendorSurvivors = new Set(vendorProcessSurvivors())
-})
-
-describe('process hygiene (Issue #670) — the file leaves no fake vendor process behind', () => {
-  it('no NEW process — beyond whatever the host already carried before this file ran — still carries a vinaya-dispatch-bin- path in its command line', () => {
-    const newSurvivors = vendorProcessSurvivors().filter((line) => !preExistingVendorSurvivors.has(line))
-    expect(newSurvivors).toEqual([])
-  })
-})
-
 describe('dispatchRole — an agent usage limit is its own outcome, never a crash', () => {
   it('a claude child that prints a rejected limit event and exits non-zero logs usage_limit with agent and reset', () => {
     const home = tempDir('vinaya-dispatch-home-')
@@ -2538,7 +2620,9 @@ describe('dispatch usage envelopes match between runners', () => {
                 env: { ...stripVinayaEnv(process.env), HOME: home },
                 stdio: ['ignore', 'pipe', 'pipe']
               })
-              const budget = setTimeout(() => child.kill('SIGKILL'), 2000)
+              // A kill budget for a hung child, never a window it must finish
+              // inside: it prints one line and exits.
+              const budget = setTimeout(() => child.kill('SIGKILL'), DISPATCH_SUBPROCESS_BUDGET_MS)
               child.once('close', () => clearTimeout(budget))
               return child
             },

@@ -396,6 +396,23 @@ export type DispatchOpts = {
    * it always has.
    */
   containerMode?: boolean
+  /**
+   * Arms the dispatch's timeout ceiling: calls `fire` once `timeoutMs` has
+   * passed and returns the function that disarms it. Omitted — every
+   * production caller — the real timer arms it (`realCeilingTimer`). What
+   * `fire` does is the same either way: `SIGTERM`, then `SIGKILL` once the
+   * kill grace window passes. A test proving what happens at the ceiling
+   * passes a timer it controls, so the ceiling fires on an event the test
+   * chose — the child marking itself ready — instead of racing the child's
+   * start-up against a fixed window.
+   */
+  armCeiling?: (fire: () => void, timeoutMs: number) => () => void
+}
+
+/** The ceiling timer every dispatch uses unless its caller passes its own (`DispatchOpts.armCeiling`). */
+function realCeilingTimer(fire: () => void, timeoutMs: number): () => void {
+  const timer = setTimeout(fire, timeoutMs)
+  return () => clearTimeout(timer)
 }
 
 /**
@@ -3201,15 +3218,20 @@ const IDENTITY_SETTLE_POLL_MS = 20
  * budget elapses, and keeps the latest read either way. Never returns `null`
  * once a live process has answered at least once; still returns the FIRST
  * read if the process is gone by the next poll (a vendor CLI that exits
- * within this budget is not the case this guards).
+ * within this budget is not the case this guards). `readSnapshot` is the read
+ * of the live process, `getProcessSnapshot` unless a test hands it the reads a
+ * process mid-exec would give, in order.
  */
-export function captureSettledChildSnapshot(pid: number): ProcessSnapshot | null {
-  let snapshot = getProcessSnapshot(pid)
+export function captureSettledChildSnapshot(
+  pid: number,
+  readSnapshot: (pid: number) => ProcessSnapshot | null = getProcessSnapshot
+): ProcessSnapshot | null {
+  let snapshot = readSnapshot(pid)
   if (snapshot === null) return null
   const deadline = Date.now() + IDENTITY_SETTLE_BUDGET_MS
   while (Date.now() < deadline) {
     sleepSyncMs(IDENTITY_SETTLE_POLL_MS)
-    const next = getProcessSnapshot(pid)
+    const next = readSnapshot(pid)
     if (next === null) return snapshot
     if (next.command === snapshot.command) return next
     snapshot = next
@@ -5645,7 +5667,7 @@ export async function dispatchRole(
       Math.max(timeoutMs - warnLeadMs, 0)
     )
 
-    const timeoutTimer = setTimeout(() => {
+    const disarmCeiling = (opts.armCeiling ?? realCeilingTimer)(() => {
       timedOut = true
       writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: ceiling reached — sending SIGTERM`)
       child.kill('SIGTERM')
@@ -5699,7 +5721,7 @@ export async function dispatchRole(
     async function finish(handle: DispatchHandle, event: string, priorSize: number): Promise<void> {
       if (settled) return
       settled = true
-      clearTimeout(timeoutTimer)
+      disarmCeiling()
       if (killTimer) clearTimeout(killTimer)
       clearTimeout(firstWaitTimer)
       if (heartbeatTimer) clearInterval(heartbeatTimer)

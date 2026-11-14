@@ -14,8 +14,8 @@
  * `null` (the `unresolved/` outbox bucket) every time.
  */
 
-import { afterEach, beforeAll, describe, expect, it } from 'bun:test'
-import { execFileSync, spawn, execSync } from 'node:child_process'
+import { afterEach, describe, expect, it as bunIt } from 'bun:test'
+import { execFileSync, spawn } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -42,7 +42,8 @@ import {
   codexSpawnEnvExtras,
   REVIEWER_RESUME_REFUSED_REASON,
   isReviewerResume,
-  confinedTurboEnv
+  confinedTurboEnv,
+  getProcessSnapshot
 } from '../../../loops/dev-review/dispatch/dispatch.js'
 import {
   agentConfigProtectedSubpaths,
@@ -58,10 +59,12 @@ import {
   pathWithoutRealVendors,
   collectLaunchedChildren,
   killLaunchedChild,
+  type LaunchedChild,
   stripVinayaEnv,
-  runDispatch,
-  runScriptWithBudget,
-  spawnBudgeted,
+  DISPATCH_SUBPROCESS_BUDGET_MS,
+  runDispatch as runFixtureDispatch,
+  runScriptWithBudget as runFixtureScript,
+  spawnBudgeted as spawnFixtureBudgeted,
   writeFakeBinary,
   outboxLines,
   PROMPT_FILE_CONTENT,
@@ -69,38 +72,117 @@ import {
   withoutTurnResultFlag
 } from './dispatch-fixtures.js'
 
-/**
- * The process-hygiene proof the child-process file carries, for this file's own fake-vendor launches: the
- * host's `vinaya-dispatch-bin-` processes are read before any test here runs, and the last case below asserts
- * none is new. Each file keeps its own snapshot, so a leak is caught in the file that made it.
- */
-function vendorProcessSurvivors(): string[] {
-  const out = execSync('ps -eo pid,command | grep "vinaya-dispatch-bin-" | grep -v grep || true', {
-    encoding: 'utf8',
-    timeout: 5_000,
-    killSignal: 'SIGKILL'
-  }).trim()
-  if (out.length === 0) return []
-  return out
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-}
-
-let preExistingVendorSurvivors: Set<string> = new Set()
-beforeAll(() => {
-  preExistingVendorSurvivors = new Set(vendorProcessSurvivors())
-})
 const tempDirs: string[] = []
 afterEach(() => {
   // O1: unconditional — runs whether the test above passed, failed, or hit
   // its own subprocess budget, since `afterEach` fires regardless of how the
   // test body exited.
+  for (const child of launches.values()) killLaunchedChild(child)
+  launches.clear()
   for (const dir of tempDirs.splice(0)) {
     for (const child of collectLaunchedChildren(dir)) killLaunchedChild(child)
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+/**
+ * Process hygiene, checked over this file's own launches only — the same check
+ * the child-process file carries. `dispatchRole` writes one launch record per
+ * repository, role, vendor and scope under the fixture's `HOME` — the vendor's
+ * pid and its start time — and a later dispatch of the same kind overwrites
+ * it, so every helper below that runs a dispatch collects the records the
+ * moment it returns, and the case keeps the list itself. At the end of each
+ * case (`it`, below) every collected launch must be gone, before `afterEach`
+ * kills anything. No process this file did not launch — a sibling file,
+ * worktree or run with its own fake vendor — is ever read, so another run on
+ * the same machine can never fail this check.
+ */
+const launches = new Map<string, LaunchedChild>()
+
+function noteLaunch(child: LaunchedChild): void {
+  launches.set(`${child.pid} ${child.childStartedAt ?? ''}`, child)
+}
+
+function collectLaunches(): void {
+  for (const dir of tempDirs) for (const child of collectLaunchedChildren(dir)) noteLaunch(child)
+}
+
+/**
+ * Whether a recorded launch is still running. A pid that answers no signal is
+ * gone; one that answers with a different start time is a process the OS has
+ * since given the same number, not this launch; a zombie has exited. The start
+ * time is the identity, never the command name — a shell vendor that `exec`s
+ * another program keeps its pid and start time but changes its name.
+ */
+function launchStillRunning(child: LaunchedChild): boolean {
+  if (child.pid <= 0) return false
+  try {
+    process.kill(child.pid, 0)
+  } catch {
+    return false
+  }
+  const live = getProcessSnapshot(child.pid)
+  if (live !== null && child.childStartedAt !== null && live.startedAt !== child.childStartedAt) return false
+  return !processState(child.pid).startsWith('Z')
+}
+
+function processState(pid: number): string {
+  try {
+    return execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: stripVinayaEnv(process.env),
+      timeout: DISPATCH_SUBPROCESS_BUDGET_MS,
+      killSignal: 'SIGKILL'
+    }).trim()
+  } catch {
+    return ''
+  }
+}
+
+function runDispatch(...args: Parameters<typeof runFixtureDispatch>): ReturnType<typeof runFixtureDispatch> {
+  try {
+    return runFixtureDispatch(...args)
+  } finally {
+    collectLaunches()
+  }
+}
+
+function runScriptWithBudget(...args: Parameters<typeof runFixtureScript>): void {
+  try {
+    runFixtureScript(...args)
+  } finally {
+    collectLaunches()
+  }
+}
+
+function spawnBudgeted(...args: Parameters<typeof spawnFixtureBudgeted>): ReturnType<typeof spawnFixtureBudgeted> {
+  try {
+    return spawnFixtureBudgeted(...args)
+  } finally {
+    collectLaunches()
+  }
+}
+
+/**
+ * A case's own time limit: above the subprocess budget, which is the real
+ * guard against a hung dispatch, so a case never fails on the test runner's
+ * clock while its subprocesses are still inside their own budget.
+ */
+const CASE_TIMEOUT_MS = 120_000
+
+function it(name: string, body: () => unknown, timeoutMs = CASE_TIMEOUT_MS): void {
+  bunIt(
+    name,
+    async () => {
+      await body()
+      collectLaunches()
+      const survivors = [...launches.values()].filter(launchStillRunning)
+      expect(survivors).toEqual([])
+    },
+    Math.max(timeoutMs, CASE_TIMEOUT_MS)
+  )
+}
 
 function tempDir(prefix: string): string {
   // The real path: macOS reaches its temporary directory through a symlink, and
@@ -2989,11 +3071,4 @@ describe('dispatchRole — container mode on a faked Linux host with no bubblewr
     expect(run.calls).toEqual([])
     expect(run.stderr).toContain('CLAUDE_CODE_OAUTH_TOKEN, which is unset')
   }, 40_000)
-})
-
-describe('process hygiene (Issue #670) — the file leaves no fake vendor process behind', () => {
-  it('no NEW process — beyond whatever the host already carried before this file ran — still carries a vinaya-dispatch-bin- path in its command line', () => {
-    const newSurvivors = vendorProcessSurvivors().filter((line) => !preExistingVendorSurvivors.has(line))
-    expect(newSurvivors).toEqual([])
-  })
 })
