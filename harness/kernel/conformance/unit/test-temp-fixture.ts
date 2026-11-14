@@ -66,20 +66,21 @@ export async function releaseFixtureRun(
       if (result.error || result.status !== 0) throw new Error('cleanup ' + executable + ' exit ' + result.status + ': ' + (result.error?.message ?? result.stderr));
     };
     // A claimed tree belongs to no one: another test process's startup sweep may be removing it while this removal
-    // runs, as runners running at once do, so either step can fail on an entry the sweep deleted under it. One more
-    // attempt, inside the same budget, finishes what is left; a tree that is gone is removed, whoever removed it.
+    // runs, as runners running at once do, so either step can fail on an entry the sweep deleted under it. Restoring
+    // write is best effort and the removal always runs after it; whether the tree is gone decides the attempt. A tree
+    // still there gets one more attempt inside the same budget; a tree that is gone is removed, whoever removed it.
     let failure = null;
     for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        // Restore only owner write within the claimed tree; never follow links into another directory.
-        execute(restore[0], [...restore.slice(1), claimed]);
-        execute(command[0], [...command.slice(1), claimed]);
+      let restoreError = null;
+      let removeError = null;
+      // Restore only owner write within the claimed tree; never follow links into another directory.
+      try { execute(restore[0], [...restore.slice(1), claimed]); } catch (error) { restoreError = error; }
+      try { execute(command[0], [...command.slice(1), claimed]); } catch (error) { removeError = error; }
+      if (!existsSync(claimed)) {
         failure = null;
         break;
-      } catch (error) {
-        failure = existsSync(claimed) ? error : null;
-        if (failure === null) break;
       }
+      failure = removeError ?? restoreError ?? new Error('cleanup ' + command[0] + ' left the claimed tree in place');
     }
     if (failure === null) {
       rmSync(receipt, { force: true });

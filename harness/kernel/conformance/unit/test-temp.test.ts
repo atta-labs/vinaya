@@ -226,11 +226,12 @@ describe('fixture cleanup reporting', () => {
     expect(readdirSync(join(root, 'vinaya'))).toEqual([])
   })
 
-  // Each restorer call appends a line to `$1`, so a test reads how many attempts ran; `$2` is the claimed tree.
-  const releaseWithRestorer = (root: string, restorerScript: string) => {
+  // The release's two steps, each a shell script that appends its name to one log (`$1`) before running, so a test
+  // reads the order the steps ran in; `$2` is the claimed tree, and `grep -c <step> "$1"` the call a step is on.
+  const releaseWithSteps = (root: string, steps: { restore: string; remove: string }) => {
     const module = resolve(import.meta.dir, 'test-temp-fixture.ts')
-    const attempts = join(root, 'restore-attempts.log')
-    const restorer = ['/bin/sh', '-c', `echo attempt >> "$1"; ${restorerScript}`, 'restore', attempts]
+    const log = join(root, 'release-steps.log')
+    const step = (name: 'restore' | 'remove') => ['/bin/sh', '-c', `echo ${name} >> "$1"; ${steps[name]}`, name, log]
     const child = spawnSyncBudgeted(
       process.execPath,
       [
@@ -244,7 +245,7 @@ describe('fixture cleanup reporting', () => {
       writeFileSync(join(fixture, 'nested', 'file.txt'), 'payload');
       const run = dirname(fixture);
       const claimed = join(dirname(run), '.removing-' + basename(run));
-      const error = await releaseFixtureRun(['rm', '-rf'], ${JSON.stringify(restorer)});
+      const error = await releaseFixtureRun(${JSON.stringify(step('remove'))}, ${JSON.stringify(step('restore'))});
       console.log(JSON.stringify({ error, remaining: existsSync(claimed), receipt: existsSync(claimed + '.owner.json') }));
     `
       ],
@@ -252,27 +253,44 @@ describe('fixture cleanup reporting', () => {
     )
     expect(child.status).toBe(0)
     const result = JSON.parse(child.stdout.trim()) as { error: string | null; remaining: boolean; receipt: boolean }
-    const attemptCount = readFileSync(attempts, 'utf8').trim().split('\n').length
-    return { ...result, attemptCount, stderr: child.stderr }
+    const order = readFileSync(log, 'utf8').trim().split('\n')
+    return { ...result, order, stderr: child.stderr }
   }
 
   test('a claimed tree another process removes part of during the release is released without a cleanup failure', () => {
     const root = fixtureDir('cleanup-partial-race-')
-    // First attempt: another process deletes a subfolder after `chmod -R` listed it, so `chmod` fails on the
-    // vanished entry while the claimed tree still exists. The second attempt restores write and removes the rest.
-    const result = releaseWithRestorer(
-      root,
-      `if [ "$(wc -l < "$1")" -eq 1 ]; then rm -rf "$2"/*/nested; echo "chmod: $2/nested: No such file or directory" >&2; exit 1; fi; exec chmod -R u+w "$2"`
-    )
-    expect(result).toMatchObject({ error: null, remaining: false, receipt: false, attemptCount: 2 })
+    // First attempt: another process deletes a subfolder after `chmod -R` listed it, so `chmod` fails on the vanished
+    // entry; the removal that still runs after it finds the tree mid-sweep and fails too, leaving the tree. The
+    // second attempt restores write and removes the rest.
+    const result = releaseWithSteps(root, {
+      restore: `if [ "$(grep -c restore "$1")" -eq 1 ]; then rm -rf "$2"/*/nested; echo "chmod: $2/nested: No such file or directory" >&2; exit 1; fi; exec chmod -R u+w "$2"`,
+      remove: `if [ "$(grep -c remove "$1")" -eq 1 ]; then echo "rm: $2: Directory not empty" >&2; exit 1; fi; exec rm -rf "$2"`
+    })
+    expect(result).toMatchObject({ error: null, remaining: false, receipt: false })
+    // The removal ran after the failed `chmod` in the first attempt, and the release took exactly two attempts.
+    expect(result.order).toEqual(['restore', 'remove', 'restore', 'remove'])
     expect(result.stderr).not.toContain('test temp:')
     expect(readdirSync(join(root, 'vinaya'))).toEqual([])
   })
 
-  test('a claimed tree that stays unwritable after both attempts still records its cleanup failure', async () => {
+  test('a failed chmod never decides the release: the removal still runs, and a tree it removes is released', () => {
+    const root = fixtureDir('cleanup-chmod-fails-')
+    const result = releaseWithSteps(root, {
+      restore: `echo "chmod: $2: No such file or directory" >&2; exit 1`,
+      remove: `exec rm -rf "$2"`
+    })
+    expect(result).toMatchObject({ error: null, remaining: false, receipt: false, order: ['restore', 'remove'] })
+    expect(result.stderr).not.toContain('test temp:')
+  })
+
+  test('a claimed tree that stays in place after both attempts still records its cleanup failure', async () => {
     const root = fixtureDir('cleanup-persistent-')
-    const result = releaseWithRestorer(root, `echo "chmod: $2: Operation not permitted" >&2; exit 1`)
-    expect(result).toMatchObject({ remaining: true, receipt: true, attemptCount: 2 })
+    // The removal fails on both attempts and leaves the tree, as it does on a tree that stays unwritable.
+    const result = releaseWithSteps(root, {
+      restore: `exec chmod -R u+w "$2"`,
+      remove: `echo "rm: $2: Operation not permitted" >&2; exit 1`
+    })
+    expect(result).toMatchObject({ remaining: true, receipt: true, order: ['restore', 'remove', 'restore', 'remove'] })
     expect(result.error).toContain('Operation not permitted')
     expect(result.stderr).toContain('test temp:')
     const report = await sweepOwnedDirs(join(root, 'vinaya'), {
@@ -282,6 +300,13 @@ describe('fixture cleanup reporting', () => {
       { dir: expect.any(String), error: expect.stringContaining('Operation not permitted') }
     ])
     expect(report.removed).toHaveLength(1)
+  })
+
+  test('a removal that exits cleanly but leaves the claimed tree is tried again and recorded as a failure', () => {
+    const root = fixtureDir('cleanup-silent-leftover-')
+    const result = releaseWithSteps(root, { restore: `exec chmod -R u+w "$2"`, remove: 'exit 0' })
+    expect(result).toMatchObject({ remaining: true, receipt: true, order: ['restore', 'remove', 'restore', 'remove'] })
+    expect(result.error).toContain('left the claimed tree in place')
   })
 })
 
