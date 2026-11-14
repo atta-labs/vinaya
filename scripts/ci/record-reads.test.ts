@@ -285,16 +285,22 @@ describe('the listing probe', () => {
     }
   })
 
-  const CALLS: [string, string][] = [
-    ['resolveSync', 'Bun.resolveSync'],
-    ['resolve', 'Bun.resolve'],
-    ['namedResolveSync', 'Bun.resolveSync'],
-    ['dlopen', 'bun:ffi.dlopen'],
-    ['namespaceDlopen', 'bun:ffi.dlopen'],
-    ['dynamicDlopen', 'bun:ffi.dlopen'],
-    ['requireDlopen', 'bun:ffi.dlopen']
+  // Each form and the whole-process lines it logs, in order: `linkSymbols` and `CFunction` call a pointer `cc` compiled
+  // first from C that lists `target/` with raw syscalls, so each logs `cc` and then itself.
+  const CALLS: [string, string[]][] = [
+    ['resolveSync', ['Bun.resolveSync']],
+    ['resolve', ['Bun.resolve']],
+    ['namedResolveSync', ['Bun.resolveSync']],
+    ['dlopen', ['bun:ffi.dlopen']],
+    ['namespaceDlopen', ['bun:ffi.dlopen']],
+    ['dynamicDlopen', ['bun:ffi.dlopen']],
+    ['requireDlopen', ['bun:ffi.dlopen']],
+    ['cc', ['bun:ffi.cc']],
+    ['linkSymbols', ['bun:ffi.cc', 'bun:ffi.linkSymbols']],
+    ['CFunction', ['bun:ffi.cc', 'bun:ffi.CFunction']]
   ]
-  for (const [form, what] of CALLS) {
+  for (const [form, whole] of CALLS) {
+    const what = whole.at(-1) as string
     it(`marks a process that calls ${what} through the ${form} form wholly scanned, and changes nothing it prints`, () => {
       const scratch = probeScratch()
       try {
@@ -303,7 +309,9 @@ describe('the listing probe', () => {
         // `bun:ffi` keeps its other exports, and every import form sees the one wrapped `dlopen`.
         expect(JSON.parse(probed)).toMatchObject({ form, sameDlopen: true })
         const lines = logLines(scratch.log)
-        expect(lines.filter((line) => line.whole)).toEqual([{ pid: lines[0]?.pid as number, whole: what }])
+        expect(lines.filter((line) => line.whole)).toEqual(
+          whole.map((name) => ({ pid: lines[0]?.pid as number, whole: name }))
+        )
       } finally {
         rmSync(scratch.dir, { recursive: true, force: true })
       }

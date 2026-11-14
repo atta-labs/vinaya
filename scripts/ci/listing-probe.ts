@@ -13,8 +13,9 @@
  *   `cp`, `rm` and `rmdir` given `recursive` — each wrapped in place on the object `require('node:fs')` returns, so
  *   named, namespace, default, `require`, `createRequire` and computed imports all reach the wrap;
  * - `{"pid":n,"whole":"<what>"}` on the first use of something whose listings the wrap cannot see: a worker (its
- *   modules load their own `fs`), Bun's Glob scan, shell, bundler or resolve functions (`Bun.resolve`, `Bun.resolveSync`), and native bindings, addons
- *   or libraries (`process.dlopen`, the `dlopen` of `bun:ffi`). The recorder then
+ *   modules load their own `fs`), Bun's Glob scan, shell, bundler or resolve functions (`Bun.resolve`, `Bun.resolveSync`), and native bindings, addons,
+ *   libraries or compiled code (`process.dlopen`, and the `dlopen`, `cc`, `linkSymbols` and `CFunction` of `bun:ffi`).
+ *   Each kind logs one line, on its first use. The recorder then
  *   counts every folder the process listed.
  *
  * Every wrap calls the original with the same receiver and arguments and returns what it returns.
@@ -86,10 +87,11 @@ export function installListingProbe(log: string | undefined = process.env[PROBE_
       if (folder !== null) write({ list: folder, recursive })
     } catch {}
   }
-  let wholeLogged = false
+  // One line per kind, on its first use: the recorder needs only one, and each names what reached past the wrap.
+  const wholeLogged = new Set<string>()
   const whole = (what: string): void => {
-    if (wholeLogged) return
-    wholeLogged = true
+    if (wholeLogged.has(what)) return
+    wholeLogged.add(what)
     write({ whole: what })
   }
   const wrap = (holder: Holder, name: string, before: (args: unknown[]) => void): void => {
@@ -162,10 +164,13 @@ export function installListingProbe(log: string | undefined = process.env[PROBE_
     // a module load's. Replaced in place on the global `Bun` before any test module loads, so `Bun.resolveSync(...)` and
     // `import { resolveSync } from 'bun'` alike reach the wrap.
     for (const name of ['resolve', 'resolveSync']) wrap(bun, name, () => whole(`Bun.${name}`))
-    // The foreign-function module's `dlopen` loads a native library out of the wrap's sight. Replaced on the one object
-    // `require('bun:ffi')` returns, which every import form of the module shares, so its other exports stay as they were.
+    // The foreign-function module's native entry points run code out of the wrap's sight: `dlopen` loads a library,
+    // `cc` compiles C (its compiler reads includes, and the code it builds can list folders), `linkSymbols` and
+    // `CFunction` call native pointers. Replaced on the one object `require('bun:ffi')` returns, which every import form
+    // of the module shares, so its other exports stay as they were.
     try {
-      wrap(require('bun:ffi') as Holder, 'dlopen', () => whole('bun:ffi.dlopen'))
+      const ffi = require('bun:ffi') as Holder
+      for (const name of ['dlopen', 'cc', 'linkSymbols', 'CFunction']) wrap(ffi, name, () => whole(`bun:ffi.${name}`))
     } catch {}
     const shell = bun.$ as AnyFunction | undefined
     if (typeof shell === 'function' && !(shell as unknown as Holder)[WRAPPED as unknown as string]) {
