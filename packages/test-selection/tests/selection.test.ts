@@ -19,7 +19,10 @@ import {
   type SelectionPlan,
   selectTests,
   stableHash,
-  validateInventory
+  validateInventory,
+  validateInventoryView,
+  WORKSPACE_INVENTORY_SCHEMA,
+  workspaceInventory
 } from '../src/index.js'
 import { FIXTURES, type Fixture, fixture, type Scenario, scenarioInput, TEST_NAME, viewOf } from './fixture-repos.js'
 
@@ -647,5 +650,119 @@ describe('selectTests holds every rule a caller used to apply', () => {
     expect(key('touched')).not.toBe(key('base'))
     expect(key('unrelated', null)).not.toBe(key('base', null))
     expect(passEntryKey({ repo, revision: 'base', context: null, records, test: 'app/tests/a.test.ts' })).toBeNull()
+  })
+})
+
+// ── An inventory from the workspace manifests ─────────────────────────────
+
+describe('workspaceInventory builds one commit’s inventory from its own manifests', () => {
+  const files: Record<string, string> = {
+    'package.json':
+      '{ "name": "mono", "workspaces": ["packages/*", "packages/core/plugins/*", "tools/**"], "scripts": { "test": "bun test" } }\n',
+    'scripts/root.test.ts': 'export {}\n',
+    'packages/core/package.json': '{ "name": "core", "scripts": { "test": "bun test --timeout=1000" } }\n',
+    'packages/core/tests/core.test.ts': 'export {}\n',
+    'packages/core/plugins/extra/package.json': '{ "name": "extra", "scripts": { "test": "vitest run" } }\n',
+    'packages/core/plugins/extra/tests/extra.spec.ts': 'export {}\n',
+    'packages/web/package.json': '{ "name": "web", "scripts": { "test": "jest" } }\n',
+    'packages/web/tests/web.test.ts': 'export {}\n',
+    'packages/docs/package.json': '{ "name": "docs" }\n',
+    'packages/docs/docs.test.ts': 'export {}\n',
+    'packages/unnamed/package.json': '{ "private": true, "scripts": { "test": "bun test" } }\n',
+    'packages/unnamed/unnamed.test.ts': 'export {}\n',
+    'tools/deep/package.json': '{ "name": "deep", "scripts": { "test": "bun test" } }\n',
+    'tools/deep/deep.test.ts': 'export {}\n'
+  }
+
+  /** A reader that records every revision it is asked about. */
+  const recording = (revisions: Record<string, Record<string, string>>) => {
+    const inner = memoryRepository(revisions)
+    const asked: string[] = []
+    const repo: RepositoryReader = {
+      list: (revision) => {
+        asked.push(revision)
+        return inner.list(revision)
+      },
+      read: (revision, path) => {
+        asked.push(revision)
+        return inner.read(revision, path)
+      }
+    }
+    return { repo, asked }
+  }
+
+  it('gives each Bun or Vitest package a suite, deepest folder first and the root last, and each test to its deepest package', () => {
+    const { repo, asked } = recording({ c1: files })
+    const { view, leftOut } = workspaceInventory(repo, 'c1')
+    expect(view.revision).toBe('c1')
+    expect(view.schemaIdentity).toBe(WORKSPACE_INVENTORY_SCHEMA)
+    expect(validateInventoryView(view)).toEqual([])
+    expect(view.suites.map((s) => [s.id, s.dir, s.runner])).toEqual([
+      ['extra', 'packages/core/plugins/extra', 'vitest'],
+      ['core', 'packages/core', 'bun'],
+      ['mono', '.', 'bun']
+    ])
+    expect(view.tests.map((t) => [t.id, t.suite, t.cwd])).toEqual([
+      ['packages/core/plugins/extra/tests/extra.spec.ts', 'extra', 'packages/core/plugins/extra'],
+      ['packages/core/tests/core.test.ts', 'core', 'packages/core'],
+      // A member with no `name` is no package: its tests belong to the root.
+      ['packages/unnamed/unnamed.test.ts', 'mono', '.'],
+      ['scripts/root.test.ts', 'mono', '.'],
+      // A `**` pattern segment is not expanded: the folder is no package.
+      ['tools/deep/deep.test.ts', 'mono', '.']
+    ])
+    expect(leftOut).toEqual({
+      packages: [
+        { dir: 'packages/docs', name: 'docs', reason: 'no-test-script', script: null },
+        { dir: 'packages/web', name: 'web', reason: 'other-runner', script: 'jest' }
+      ],
+      tests: ['packages/docs/docs.test.ts', 'packages/web/tests/web.test.ts']
+    })
+    // Every read went through the reader, for the one commit.
+    expect(asked.length).toBeGreaterThan(0)
+    expect(new Set(asked)).toEqual(new Set(['c1']))
+  })
+
+  it('gives a repository with no workspaces field the root suite alone', () => {
+    const single = {
+      'package.json': '{ "name": "single", "scripts": { "test": "vitest" } }\n',
+      'src/a.ts': 'export const a = 1\n',
+      'tests/a.test.ts': "import { a } from '../src/a'\n",
+      'nested/package.json': '{ "name": "nested", "scripts": { "test": "bun test" } }\n',
+      'nested/n.test.ts': 'export {}\n'
+    }
+    const { view, leftOut } = workspaceInventory(memoryRepository({ c1: single }), 'c1')
+    expect(view.suites.map((s) => [s.id, s.dir, s.runner])).toEqual([['single', '.', 'vitest']])
+    expect(view.tests.map((t) => t.id)).toEqual(['nested/n.test.ts', 'tests/a.test.ts'])
+    expect(leftOut).toEqual({ packages: [], tests: [] })
+  })
+
+  it('leaves out every test when the root has no runner and declares no workspaces', () => {
+    const bare = { 'package.json': '{ "name": "bare" }\n', 'a.test.ts': 'export {}\n' }
+    const { view, leftOut } = workspaceInventory(memoryRepository({ c1: bare }), 'c1')
+    expect(view.suites).toEqual([])
+    expect(view.tests).toEqual([])
+    expect(leftOut).toEqual({
+      packages: [{ dir: '.', name: 'bare', reason: 'no-test-script', script: null }],
+      tests: ['a.test.ts']
+    })
+  })
+
+  it('builds views selectTests accepts, and the selection follows the change', () => {
+    const base = {
+      ...files,
+      'packages/core/src/x.ts': 'export const x = 0\n',
+      'packages/core/tests/core.test.ts': "import { x } from '../src/x'\n"
+    }
+    const head = { ...base, 'packages/core/src/x.ts': 'export const x = 1\n' }
+    const repo = memoryRepository({ base, head })
+    const plan = selectTests({
+      repo,
+      base: 'base',
+      head: 'head',
+      inventory: { base: workspaceInventory(repo, 'base').view, head: workspaceInventory(repo, 'head').view },
+      policy: { depth: 'transitive' }
+    })
+    expect(plannedTests(plan)).toEqual(['packages/core/tests/core.test.ts'])
   })
 })

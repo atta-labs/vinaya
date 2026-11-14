@@ -91,6 +91,13 @@ export {
   type TraceOptions,
   type TraceReads
 } from './recorded-reads.js'
+export {
+  type LeftOutPackage,
+  type LeftOutReason,
+  WORKSPACE_INVENTORY_SCHEMA,
+  type WorkspaceInventory,
+  workspaceInventory
+} from './workspace-inventory.js'
 export { type ScannerDeclaration, type ScannerTrigger, scannerTriggered } from './scanner-inputs.js'
 export {
   diskTree,

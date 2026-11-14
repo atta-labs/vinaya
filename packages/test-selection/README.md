@@ -5,8 +5,10 @@ revisions alone, through the TypeScript compiler's own module graph, a
 validated inventory of every test and every non-import input, and, when the
 caller has one, a record of what each test actually read.
 
-The package knows no hook, CI job, forge or process. It touches git, the file
-system or the network only through the reader its caller passes.
+The package knows no hook, CI job, forge or process. Its library touches git,
+the file system or the network only through the reader its caller passes. The
+one exception is the `test-selection` command, which builds a git reader for
+the repository it is started in.
 
 ## Install
 
@@ -133,6 +135,41 @@ covering every listed folder: `scanned` narrows the selection, never pass reuse.
   spawned-program declarations, obligations, and the suites whose whole change
   runs the whole suite.
 
+### `workspaceInventory(repo, revision): WorkspaceInventory`
+
+One commit's inventory view, built from the repository's own manifests, for a
+repository with no inventory program of its own:
+
+```ts
+import { gitRepository, workspaceInventory } from '@attalabs/test-selection'
+
+const repo = gitRepository('/path/to/repository')
+const { view, leftOut } = workspaceInventory(repo, '9a1b…') // a commit id
+```
+
+It reads every file through `repo`, for exactly `revision`, and nothing else.
+It reads the root manifest's `workspaces` field (an array, or the `packages`
+array of the object form) and expands each pattern. A segment `*` matches one
+folder name. It reads no pnpm workspace file, never expands a `**` pattern
+segment, and skips a member whose manifest has no `name`.
+
+- A suite for each member whose `test` script starts `bun test` or Vitest,
+  with that runner, and one for the root package on the same rule from its
+  own `test` script. A root manifest that declares no workspaces gives the
+  root suite alone. A suite's id is its package's `name` (`root` for an
+  unnamed root).
+- Every test-named file (`*.test.*` or `*.spec.*`) is a test of the package
+  whose folder is the deepest one that holds it.
+- `leftOut.packages` lists each package with no suite, with its folder, its
+  `name`, its `test` script and the reason: `no-test-script` or
+  `other-runner`.
+- `leftOut.tests` lists each test-named file outside every suite: one held by
+  a left-out package, or by no package at all.
+
+The view's `schemaIdentity` is `workspace-inventory@1`
+(`WORKSPACE_INVENTORY_SCHEMA`). It declares no input edge, unknown scope or
+policy, so only imports link a test to a file.
+
 ## The plan
 
 `selectTests` reads every file through the repository reader, for exactly the
@@ -209,6 +246,67 @@ root are the caller's to list; a path outside all of them is refused.
 Neither selects, places or launches anything, and neither knows a job, a branch
 or a record of a past run.
 
+## The `test-selection` command
+
+The package installs one command. It selects the tests a change between two
+commits requires and prints the plan as one JSON document on standard output:
+
+```sh
+npm install --save-dev @attalabs/test-selection
+npx test-selection --base origin/main --head HEAD
+```
+
+Started in any folder of a git repository, it selects for that whole
+repository. It resolves both arguments to commit ids first, builds each
+commit's view with `workspaceInventory`, and calls `selectTests` with
+`policy: { depth: 'transitive' }`. It then groups the planned tests with
+`groupNativeTests`. It starts no test and writes no file. It reads no
+environment variable of its own; git's own settings still apply.
+
+It declares no input a test reads without importing it: no input edge, no
+folder-scanning test, no spawned program and no policy. A test that reads a
+file it does not import is required only through a fallback scope or its
+own imports.
+
+It exits 0 when it printed a plan. A missing argument, a folder outside a git
+repository, or an argument that names no commit prints one message on
+standard error and exits 2; any other failure exits 1.
+
+The document:
+
+```json
+{
+  "schema": "test-selection-command",
+  "schemaVersion": 1,
+  "base": "<commit id>",
+  "head": "<commit id>",
+  "tests": ["packages/app/tests/greet.test.ts"],
+  "groups": [
+    {
+      "id": "app@default",
+      "runner": "bun",
+      "cwd": "packages/app",
+      "args": ["./tests/greet.test.ts"],
+      "exclude": [],
+      "tests": ["packages/app/tests/greet.test.ts"]
+    }
+  ],
+  "ungrouped": [],
+  "problems": [],
+  "fallbacks": [],
+  "leftOut": { "packages": [], "tests": [] }
+}
+```
+
+- `tests` — `plannedTests(plan)`, less the plan's `removedTests`;
+- `groups` — one runner start each: start `runner` in `cwd` (relative to the
+  repository root) with `args`, and tell it to leave out `exclude`;
+- `ungrouped` — planned tests the head view has no identity for;
+- `problems` — what `groupNativeTests` refused;
+- `fallbacks` — the plan's fallback scopes, whose tests are already in
+  `tests`;
+- `leftOut` — what the head commit's inventory left out.
+
 
 ## Files
 
@@ -218,6 +316,8 @@ or a record of a past run.
 | `src/types.ts` | the public types |
 | `src/inventory.ts` | inventory validation, and which readers a changed input reaches |
 | `src/memory-inventory.ts` | an inventory view built from a file map and a small declaration |
+| `src/workspace-inventory.ts` | an inventory view built from one commit's package manifests |
+| `src/cli.ts` | the `test-selection` command, never imported by the entrypoint |
 | `src/lockfile-identity.ts` | a parsed `bun.lock`'s dependency identity, its path text replaced |
 | `src/selector.ts` | trees, repository readers, the graph walk and `selectTests` |
 | `src/recorded-reads.ts` | read records, and what a record decides for a change |
@@ -232,9 +332,9 @@ or a record of a past run.
 
 ## Dependencies
 
-- Node.js standard library: `node:child_process`, `node:crypto`, `node:fs`, `node:module`, `node:path`
+- Node.js standard library: `node:child_process`, `node:crypto`, `node:fs`, `node:module`, `node:path`, `node:util`
 - `typescript` — an optional peer, loaded at runtime through `createRequire` and imported only as types; without it the selection falls back to its text-scan graph
-- `git` — the executable, only for `gitRepository`
+- `git` — the executable, only for `gitRepository` and the `test-selection` command
 
 The tests also use `bun:test` (`bun test`). No preload, global, configuration
 file or environment variable is read.
@@ -243,7 +343,9 @@ file or environment variable is read.
 its folder or names a module `package.json` does not declare, and if anything
 outside it imports past the package name. `tests/consumer.test.ts` packs the
 package, installs the tarball into a fresh repository and runs a selection
-there — this README's example included.
+there — this README's example included — and runs the `test-selection`
+command under Node in a fresh repository of one Bun package and one Vitest
+package.
 
 ## License
 
