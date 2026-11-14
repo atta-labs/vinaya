@@ -42,8 +42,8 @@ export function defaultGitIsAncestor(ancestor: string, descendant: string): bool
   }
 }
 
+/** The report engine's base read may fetch the default branch, so no memoized read may answer from before it. */
 export function defaultGitMergeBase(head: string): Promise<string> {
-  // The report engine's base read may fetch the default branch, so no memoized read may answer from before it.
   return resolveMergeBase(head).finally(() => clearGitReadMemo('merge-base resolution'))
 }
 

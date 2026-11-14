@@ -40,6 +40,9 @@ interface MemoState {
 
 const state: MemoState = { scopes: 0, turns: 0, entries: new Map(), listeners: new Set() }
 
+/** Off only for a measurement that compares a run with and without the memo (`setGitReadMemoEnabled`). */
+let memoEnabled = true
+
 const notify = (event: GitReadEvent): void => {
   for (const listener of state.listeners) listener(event)
 }
@@ -65,7 +68,18 @@ export function gitReadKey(cwd: string | undefined, args: readonly string[]): st
 
 /** Whether a read made now would be served from (and kept in) the memo. */
 export function gitReadMemoServing(): boolean {
-  return state.scopes > 0 && state.turns === 0
+  return memoEnabled && state.scopes > 0 && state.turns === 0
+}
+
+/**
+ * Turns the memo off (every read starts git, as outside a step) or back on, returning the previous setting: the
+ * comparison a measurement makes between the same run with and without it. The memo is emptied either way.
+ */
+export function setGitReadMemoEnabled(enabled: boolean): boolean {
+  const previous = memoEnabled
+  memoEnabled = enabled
+  clearGitReadMemo(enabled ? 'memo enabled' : 'memo disabled')
+  return previous
 }
 
 /** Empties the memo: the repository may have changed. */

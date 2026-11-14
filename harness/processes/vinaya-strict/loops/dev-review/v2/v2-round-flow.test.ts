@@ -10,7 +10,7 @@ import { V2_APPROVED_REPAIR_ALLOWANCE, exhaustedPause, withPolicyCeilings } from
 import { heldVerdictPath } from '../standalone/dev-review-loop/reviewer-dispatch'
 import { publicationEffectKey } from '../standalone/dev-review-loop/publication'
 import { conflictRepairFailure, readyTestPlanCommand, type RoundTestsResult } from './v2-actions'
-import { observeGitReads, type GitReadEvent } from './git-read-memo'
+import { observeGitReads, setGitReadMemoEnabled, type GitReadEvent } from './git-read-memo'
 import {
   ALL_TESTS,
   AGENTS,
@@ -63,24 +63,57 @@ for (const agent of AGENTS) {
 }
 
 describe("the loop's own git processes in one scenario", () => {
-  test('no memoized read starts git twice between two clears of the memo, and the outcome is unchanged', async () => {
-    // The memo sees only the loop's own git: the test world runs its git directly, so none of it is counted.
+  /**
+   * One revise-then-approve run, counting every git process the loop itself started, as git's own trace reports it
+   * (`GIT_TRACE2_EVENT`): a top-level git process whose arguments carry the test world's identity is the world's,
+   * never the loop's. Also returns what the memo saw.
+   */
+  const countedRun = async (memo: boolean) => {
+    const trace = join(fixtureDir('v2-git-census-'), 'trace.json')
     const events: GitReadEvent[] = []
     const stop = observeGitReads((event) => void events.push(event))
+    const previous = setGitReadMemoEnabled(memo)
+    process.env.GIT_TRACE2_EVENT = trace
     let observed: Awaited<ReturnType<typeof runV2>>
     try {
       observed = await runV2('claude', {
         reviewer: (role, attempt) => (role === 'code-reviewer' && attempt === 1 ? 'request-changes' : 'approve')
       })
     } finally {
+      delete process.env.GIT_TRACE2_EVENT
+      setGitReadMemoEnabled(previous)
       stop()
     }
-    expect(observed.outcome).toBe('completed')
-    expect(observed.spawns.developer).toBe(2)
-    expect(observed.world.prsOpened).toBe(1)
+    const loopGit = (existsSync(trace) ? readFileSync(trace, 'utf8') : '')
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as { event: string; sid: string; argv?: string[] })
+      .filter((e) => e.event === 'start' && !e.sid.includes('/') && !(e.argv ?? []).includes('user.name=t'))
+    return { observed, events, loopGit: loopGit.length }
+  }
+
+  test('the loop starts fewer git processes with the memo, by exactly its answers, and decides the same', async () => {
+    const without = await countedRun(false)
+    const withMemo = await countedRun(true)
+    for (const { observed } of [without, withMemo]) {
+      expect(observed.outcome).toBe('completed')
+      expect(observed.spawns.developer).toBe(2)
+      expect(observed.spawns['code-reviewer']).toBe(2)
+      expect(observed.world.prsOpened).toBe(1)
+      expect(observed.world.readyRuns).toHaveLength(1)
+    }
+    // The same Log lines, in the same order, either way.
+    expect(withMemo.observed.events).toEqual(without.observed.events)
+    const answered = withMemo.events.filter((event) => event.kind === 'hit').length
+    expect(without.events.some((event) => event.kind === 'hit')).toBe(false)
+    expect(answered).toBeGreaterThan(0)
+    // Every answer the memo gave is one git process the loop did not start; nothing else changed.
+    expect(without.loopGit).toBeGreaterThan(0)
+    expect(withMemo.loopGit).toBe(without.loopGit - answered)
+    // Between two clears, no read the memo keeps started git twice.
     const repeated: string[] = []
     let since = new Set<string>()
-    for (const event of events) {
+    for (const event of withMemo.events) {
       if (event.kind === 'clear') since = new Set()
       else if (event.kind === 'spawn' && event.served) {
         if (since.has(event.key)) repeated.push(event.key.replaceAll('\0', ' '))
@@ -88,11 +121,6 @@ describe("the loop's own git processes in one scenario", () => {
       }
     }
     expect(repeated).toEqual([])
-    const spawns = events.filter((event) => event.kind === 'spawn').length
-    const answered = events.filter((event) => event.kind === 'hit').length
-    // Each answer the memo gave is a git process the round no longer starts.
-    expect(spawns).toBeGreaterThan(0)
-    expect(answered).toBeGreaterThan(0)
   })
 })
 
