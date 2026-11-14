@@ -54,6 +54,8 @@ export function passKeys(input: PassKeyInput): (test: string) => string | null {
     }
     return treeDigest
   }
+  // Every folder the test listed, by its code or by the module resolver: a pass reused under a key must hold whatever
+  // was added to or deleted from any of them, so `scanned`, which narrows what a change selects, never narrows a key.
   const recordPaths = (rev: string, entry: RecordedTest, test: string): string[] | null => {
     const paths = listing(rev)
     if (paths === null) return null

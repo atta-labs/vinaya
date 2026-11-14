@@ -9,10 +9,13 @@ import {
   changedLockPackages,
   indexRecordedTest,
   installedPackageName,
+  isConventionName,
   lockKeyPackageName,
+  nameStems,
   readsOfTrace,
   recordReach,
   stableJson,
+  startsThread,
   type TraceOptions
 } from '../src/index.js'
 
@@ -279,6 +282,125 @@ describe('a record answers for a change', () => {
     expect(recordReach(index, { path: 'a/old.ts', status: 'deleted' })).not.toBeNull()
     expect(recordReach(index, { path: 'a/other.ts', status: 'modified' })).toBeNull()
     expect(recordReach(index, { path: 'z.ts', status: 'added' })).toBeNull()
+  })
+
+  it('a record without scanned keeps every test that listed the folder, as before', () => {
+    const loaded = indexRecordedTest({ reads: ['int/mod.ts'], listed: ['int'] })
+    expect(recordReach(loaded, { path: 'int/unrelated.ts', status: 'added' })?.detail).toBe(
+      'an added path sits in int, which the recorded run listed'
+    )
+    expect(recordReach(loaded, { path: 'int/new/deep.ts', status: 'added' })).toBeNull()
+  })
+})
+
+describe('an added or deleted path, with the folders the test’s own code listed', () => {
+  // The resolver listed `int` to load `int/mod.ts`; the test's code listed nothing there.
+  const loaded = indexRecordedTest({
+    reads: ['int/mod.ts', 'int/widget/index.ts'],
+    listed: ['int', 'int/widget'],
+    scanned: []
+  })
+  // The test's code listed `int` itself.
+  const scanner = indexRecordedTest({ reads: ['int/mod.ts'], listed: ['int'], scanned: ['int'] })
+
+  it('keeps a test whose code listed the folder, and drops one that only loaded a module from it', () => {
+    expect(recordReach(scanner, { path: 'int/unrelated.ts', status: 'added' })?.detail).toBe(
+      "an added path sits in int, which the recorded run's own code listed"
+    )
+    expect(recordReach(scanner, { path: 'int/old.ts', status: 'deleted' })?.detail).toContain('own code listed')
+    expect(recordReach(loaded, { path: 'int/unrelated.ts', status: 'added' })).toBeNull()
+    expect(recordReach(loaded, { path: 'int/old.ts', status: 'deleted' })).toBeNull()
+  })
+
+  it('keeps a test whose read name the added path shadows, by any dot-delimited stem, file or folder', () => {
+    expect(recordReach(loaded, { path: 'int/mod.tsx', status: 'added' })?.detail).toBe(
+      'an added path sits in int, beside int/mod.ts, which the recorded run read and mod.tsx can shadow'
+    )
+    expect(recordReach(loaded, { path: 'int/mod.d.ts', status: 'added' })).not.toBeNull()
+    expect(recordReach(loaded, { path: 'int/widget.tsx', status: 'added' })).not.toBeNull()
+    // A new folder `int/mod/` holds an index the specifier `./mod` can now resolve to.
+    expect(recordReach(loaded, { path: 'int/mod/index.ts', status: 'added' })?.detail).toBe(
+      'an added path adds or removes mod in int, beside int/mod.ts, which the recorded run read and mod can shadow'
+    )
+    expect(recordReach(loaded, { path: 'int/modest.ts', status: 'added' })).toBeNull()
+    // A failed lookup of a name that does not exist yet is a read too.
+    const probed = indexRecordedTest({ reads: ['int/later.config'], listed: ['int'], scanned: [] })
+    expect(recordReach(probed, { path: 'int/later.config.ts', status: 'added' })).not.toBeNull()
+  })
+
+  it('keeps every listing test for a name the loader reads by convention', () => {
+    for (const name of ['package.json', 'tsconfig.json', 'jsconfig.json', 'bunfig.toml', '.env', '.env.local'])
+      expect(recordReach(loaded, { path: `int/${name}`, status: 'added' })?.detail).toContain('by convention')
+    expect(recordReach(loaded, { path: 'int/widget/package.json', status: 'added' })?.detail).toBe(
+      'an added path sits in int/widget, where the loader reads package.json by convention'
+    )
+    // A nested folder the run did not list: the rule applies at `int`, to the new folder `nested`.
+    expect(recordReach(loaded, { path: 'int/nested/tsconfig.json', status: 'added' })).toBeNull()
+    expect(recordReach(loaded, { path: 'elsewhere/package.json', status: 'added' })).toBeNull()
+  })
+
+  it('a folder listed recursively covers the folders beneath it, and the root’s covers everything', () => {
+    const recursive = indexRecordedTest({ reads: [], listed: ['src', 'src/a', 'src/a/b'], scanned: ['src/'] })
+    expect(recordReach(recursive, { path: 'src/a/b/x.ts', status: 'added' })?.detail).toContain('own code listed')
+    expect(recordReach(recursive, { path: 'src/a/new/x.ts', status: 'added' })?.detail).toBe(
+      "an added path adds or removes new in src/a, which the recorded run's own code listed"
+    )
+    const everything = indexRecordedTest({ reads: [], listed: ['.', 'lib'], scanned: ['./'] })
+    expect(recordReach(everything, { path: 'lib/x.ts', status: 'deleted' })).not.toBeNull()
+    expect(recordReach(everything, { path: 'other/x.ts', status: 'added' })).not.toBeNull()
+  })
+
+  it('a modified path reaches the test only through its reads, scanned or not', () => {
+    expect(recordReach(scanner, { path: 'int/mod.ts', status: 'modified' })?.exact).toBe(true)
+    expect(recordReach(scanner, { path: 'int/unrelated.ts', status: 'modified' })).toBeNull()
+  })
+
+  it('names the stems of a name, a leading dot kept on the first', () => {
+    expect(nameStems('x.config.ts')).toEqual(['x', 'x.config', 'x.config.ts'])
+    expect(nameStems('.env.local')).toEqual(['.env', '.env.local'])
+    expect(nameStems('mod')).toEqual(['mod'])
+    expect(isConventionName('.envrc')).toBe(true)
+    expect(isConventionName('package.jsonc')).toBe(false)
+  })
+})
+
+describe('the trace reader attributes each listing to its process', () => {
+  const probe = { log: '/scratch/0.probe.jsonl', starts: new Set(['10']), wholly: new Set<string>() }
+  const open = (pid: string) =>
+    `${pid} openat(AT_FDCWD</work/repo>, "/scratch/0.probe.jsonl", O_WRONLY|O_CREAT|O_APPEND, 0666) = 5</scratch/0.probe.jsonl>`
+
+  it('folds a thread into the process that started it, its flags stitched from the unfinished half', () => {
+    const result = readsOfTrace(
+      trace(
+        open('10'),
+        '10 clone3({flags=CLONE_VM|CLONE_FS|CLONE_THREAD|CLONE_SIGHAND, exit_signal=0} <unfinished ...>',
+        '11 getdents64(4</work/repo/int>, 0x1 /* 3 entries */, 32768) = 96',
+        '10 <... clone3 resumed> => {parent_tid=[11]}, 88) = 11',
+        '11 getdents64(4</work/repo/lib>, 0x1 /* 3 entries */, 32768) = 96'
+      ),
+      options({ probe })
+    )
+    expect([...result.listed].sort()).toEqual(['int', 'lib'])
+    expect([...result.processScanned]).toEqual([])
+  })
+
+  it('counts the listings of a child process, a re-executed image, a thread of no known process, or a run without the probe', () => {
+    const result = readsOfTrace(
+      trace(
+        open('10'),
+        '10 clone(child_stack=NULL, flags=CLONE_CHILD_SETTID|SIGCHLD) = 12',
+        '12 getdents64(4</work/repo/child>, 0x1, 32768) = 96',
+        '10 execve("/usr/bin/find", ["find", "."], 0x1 /* 2 vars */) = 0',
+        '10 getdents64(4</work/repo/after-exec>, 0x1, 32768) = 96',
+        '13 getdents64(4</work/repo/unknown>, 0x1, 32768) = 96'
+      ),
+      options({ probe })
+    )
+    expect([...result.processScanned].sort()).toEqual(['after-exec', 'child', 'unknown'])
+    const unprobed = readsOfTrace(trace('10 getdents64(4</work/repo/int>, 0x1, 32768) = 96'), options())
+    expect([...unprobed.processScanned]).toEqual(['int'])
+    expect(startsThread('{flags=CLONE_VM|CLONE_THREAD}')).toBe(true)
+    expect(startsThread('child_stack=NULL, flags=SIGCHLD')).toBe(false)
   })
 })
 
