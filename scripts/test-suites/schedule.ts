@@ -60,6 +60,12 @@ import {
 } from '@attalabs/test-selection'
 import { testGroupEndLine, testGroupStartLine } from '../../harness/kernel/gates/ring0-hooks/pre-push/push-progress.js'
 import { JUNIT_REPORT_ENV, junitRunConfig } from '../../harness/kernel/gates/ring0-hooks/pre-push/junit-store.js'
+import {
+  createTestTempRun,
+  removeTestTempRun,
+  TEST_TEMP_ROOT_ENV,
+  type TestTempRun
+} from '../../harness/kernel/conformance/unit/test-temp.js'
 import { passEntriesOfRun } from './repository-selection.js'
 import { type InventoryView, readTestInventory, type TestIdentity } from './inventory-check.js'
 
@@ -657,7 +663,9 @@ function scheduledTestOf(group: NativeGroup, written: string, repoRoot: string):
  * Runs `groups` one after another, each in its own working directory under
  * its own runner, and checks every runner executed exactly its files. The
  * environment is this process's unless `env` names one; nothing runs in
- * parallel. Each runner writes its own report (Bun's JUnit, Vitest's JSON)
+ * parallel. Every runner gets the run's own test-temp root
+ * ({@link runTestTempRoot}): the environment's `VINAYA_TEST_TMP` when set,
+ * otherwise one this run creates and removes once every runner has ended. Each runner writes its own report (Bun's JUnit, Vitest's JSON)
  * into a temporary folder removed when the run ends; the report names the
  * files it executed and the ones that failed. With `announce`, each group's
  * scheduled files are printed as it starts and its report's executed and
@@ -672,6 +680,32 @@ function scheduledTestOf(group: NativeGroup, written: string, repoRoot: string):
  * under load.
  */
 export const GROUP_TIME_LIMIT_MS = 15 * 60_000
+
+/** The repository id a scheduler's own test-temp run root is filed under: the id this repository's fixtures use. */
+export const SCHEDULE_TEST_TEMP_REPO_ID = 'vinaya'
+
+/**
+ * The test-temp root a run hands its runners: the caller's own `VINAYA_TEST_TMP` when the environment sets one (kept,
+ * and never removed here), otherwise a fresh owned run directory under the test-temp module's disk-backed default
+ * base (`createTestTempRun`, which falls back to the OS temp directory when that base is read-only). Every fixture
+ * directory and abandoned-run sweep of the run's tests then lives inside it, so two runs on one machine never see
+ * each other's directories; a root left by a killed scheduler carries its owner marker, and a later sweep removes it.
+ */
+export function runTestTempRoot(
+  env: NodeJS.ProcessEnv,
+  create: () => TestTempRun = () => createTestTempRun(SCHEDULE_TEST_TEMP_REPO_ID)
+): { root: string; created: TestTempRun | null } {
+  const set = env[TEST_TEMP_ROOT_ENV]
+  if (set !== undefined && set !== '') return { root: set, created: null }
+  const created = create()
+  return { root: created.dir, created }
+}
+
+/** Removes a run root this run created, reporting each directory it could not remove. */
+function releaseTestTempRoot(run: TestTempRun, log: (line: string) => void): void {
+  for (const { dir, error } of removeTestTempRun(run).failed)
+    log(`vinaya schedule: could not remove the run's test-temp root ${dir}: ${error}`)
+}
 
 /** Whether a runner was stopped at its time limit rather than ending by itself. */
 function timedOut(run: { error?: Error; signal?: NodeJS.Signals | null }): boolean {
@@ -693,11 +727,22 @@ export function runGroups(
     groupTimeLimitMs?: number
     /** Start no later group once a group's runner did not exit zero (failed, signaled or interrupted); off when absent. */
     stopAfterFailedGroup?: boolean
+    /** Creates the run's own test-temp root when the environment sets none; the test-temp module's run by default. */
+    createTestTempRoot?: () => TestTempRun
   } = {}
 ): RunResult {
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`))
   const spawn = options.spawn ?? spawnSync
-  const dir = mkdtempSync(join(tmpdir(), 'vinaya-schedule-'))
+  const baseEnv = options.env ?? process.env
+  const testTemp = runTestTempRoot(baseEnv, options.createTestTempRoot)
+  const runnerEnv: NodeJS.ProcessEnv = { ...baseEnv, [TEST_TEMP_ROOT_ENV]: testTemp.root }
+  let dir: string
+  try {
+    dir = mkdtempSync(join(tmpdir(), 'vinaya-schedule-'))
+  } catch (error) {
+    if (testTemp.created) releaseTestTempRoot(testTemp.created, log)
+    throw error
+  }
   const roots = [...new Set([repoRoot, realpathSync(repoRoot)])]
   const executions: ExecutionFacts[] = []
   const failedRunners: string[] = []
@@ -730,7 +775,7 @@ export function runGroups(
           ...(limit !== undefined ? { timeout: limit, killSignal: 'SIGKILL' as const } : {}),
           // Bun writes the report its configuration names even when `--reporter-outfile` names another: the run's own
           // configuration names this report, or the test preload points the shared path at it (`junit-store.ts`).
-          env: { ...(options.env ?? process.env), ...reportEnv }
+          env: { ...runnerEnv, ...reportEnv }
         })
       let run = start()
       // A runner stopped at the limit is started once more: a test whose synchronous child never returns freezes its
@@ -782,6 +827,8 @@ export function runGroups(
     })
   } finally {
     rmSync(dir, { recursive: true, force: true })
+    // Only a root this run created, and only after every runner has ended; a caller's own root stays theirs.
+    if (testTemp.created) releaseTestTempRoot(testTemp.created, log)
   }
   // A stopped run judges only the groups that ran: a group that never started is not a missing execution.
   const judged = stopped ? groups.slice(0, ranCount) : groups
