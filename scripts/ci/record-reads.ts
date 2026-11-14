@@ -13,8 +13,9 @@
  * folder and put first in the `[test] preload` list of the run's own Bun
  * configuration; it logs the folders the code listed. Each test's `scanned`
  * folders are those, plus every folder listed by a process the probe did not
- * run in or logged as wholly scanned, plus every listed folder of a test whose
- * read source resolves a module specifier or mocks a module (`scannedFolders`).
+ * run in or logged as wholly scanned, plus the folders a read source's literal
+ * module lookup or mock can resolve into, plus every listed folder of a test
+ * whose read source looks a module up with no literal specifier (`scannedFolders`).
  *
  * The record is the selection's input for later changes
  * (`scripts/test-suites/read-records.ts` fetches it by commit). A test file that
@@ -47,7 +48,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, posix } from 'node:path'
 import { createInterface } from 'node:readline'
 import {
   createTraceReader,
@@ -199,46 +200,119 @@ export function realpathOrParent(absolute: string): string {
 }
 
 /**
- * Source text that resolves a module specifier, or mocks a module, from the resolver's folder listing: the module
- * meta object's resolve (and its resolveSync), the resolve of a require function (the module meta object's own
- * require included), Bun's resolve and resolveSync, a test-runner module mock and its Jest- and Vitest-style aliases,
- * Bun's file-system router and its foreign-function module. Such a lookup can open nothing the trace shows, so a test
- * whose code holds one counts every folder it listed as scanned.
+ * Source text that resolves modules from the resolver's folder listings with no specifier the scan can read: Bun's
+ * file-system router. A test whose code holds one counts every folder it listed as scanned. Bun's own resolve and
+ * resolveSync and the `dlopen` of `bun:ffi` are not here: the listing probe wraps them, and their first call logs the
+ * process wholly scanned, so a source that only mentions them counts nothing.
  */
-const RESOLVES = [
-  /\bimport\.meta\.resolve(?:Sync)?\b/,
-  /\brequire\.resolve\b/,
-  /\bcreateRequire\s*\([^)]*\)\s*\.resolve\b/,
-  /\bBun\.resolve(?:Sync)?\b/,
-  /\bresolveSync\b/,
-  /\bmock\.module\b/,
-  /\b(?:jest|vi)\.(?:mock|doMock|unstable_mockModule|importMock|importActual|requireMock|requireActual)\b/,
-  /\bFileSystemRouter\b/,
-  /['"]bun:ffi['"]/
+const RESOLVES_EVERYWHERE = [/\bFileSystemRouter\b/]
+/**
+ * The resolve and mock forms the probe cannot wrap, each looked up from the resolver's folder listing and opening
+ * nothing the trace shows: the module meta object's resolve (and its resolveSync), the resolve of a require function
+ * (the module meta object's own require and a `createRequire` result included), and a test-runner module mock with its
+ * Jest- and Vitest-style aliases. Each occurrence counts the folders its specifier can resolve into (`lookupFolders`).
+ */
+const LOOKUPS = [
+  /\bimport\.meta\.resolve(?:Sync)?\b/g,
+  /\brequire\.resolve\b/g,
+  /\bcreateRequire\s*\([^)]*\)\s*\.resolve\b/g,
+  /\bmock\.module\b/g,
+  /\b(?:jest|vi)\.(?:mock|doMock|unstable_mockModule|importMock|importActual|requireMock|requireActual)\b/g
 ]
 /** A name bound to a `createRequire` result, whose own resolve is then searched for. */
 const REQUIRE_BINDING = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[A-Za-z_$][\w$]*\.)?createRequire\s*\(/g
+/** A call's first argument when it is one string literal: quoted, or a template without substitutions; no escapes. */
+const LITERAL_ARGUMENT = /^\s*\(\s*(?:'([^'\\\n]*)'|"([^"\\\n]*)"|`([^`\\$]*)`)\s*(?:,|\))/
 const MODULE_SOURCE = /\.(?:[cm]?[jt]sx?)$/
 
-/** Whether source text resolves a module specifier or mocks a module (`RESOLVES`, or a `createRequire` result's resolve). */
-export function resolvesModules(text: string): boolean {
-  if (RESOLVES.some((pattern) => pattern.test(text))) return true
+/**
+ * The module specifiers a source looks up or mocks through a form the probe cannot wrap (`LOOKUPS`, or a
+ * `createRequire` result's resolve): each occurrence's specifier when its argument is one string literal. `every` is
+ * true when one is not — a computed specifier, or a mention that is not a call — or when the source uses Bun's
+ * file-system router: then no specifier says where the lookup lists.
+ */
+export function moduleLookups(text: string): { every: boolean; specifiers: string[] } {
+  if (RESOLVES_EVERYWHERE.some((pattern) => pattern.test(text))) return { every: true, specifiers: [] }
+  const patterns = [...LOOKUPS]
   for (const binding of text.matchAll(REQUIRE_BINDING))
-    if (new RegExp(`(?<![\\w$])${(binding[1] as string).replace(/\$/g, '\\$')}\\s*\\.\\s*resolve\\b`).test(text))
-      return true
-  return false
+    patterns.push(new RegExp(`(?<![\\w$])${(binding[1] as string).replace(/\$/g, '\\$')}\\s*\\.\\s*resolve\\b`, 'g'))
+  const specifiers: string[] = []
+  for (const pattern of patterns)
+    for (const match of text.matchAll(pattern)) {
+      const literal = LITERAL_ARGUMENT.exec(text.slice((match.index as number) + match[0].length))
+      if (!literal) return { every: true, specifiers: [] }
+      specifiers.push((literal[1] ?? literal[2] ?? literal[3]) as string)
+    }
+  return { every: false, specifiers }
+}
+
+/** A workspace package name to its repository-relative folder, read from each workspace folder's `package.json`. */
+export function workspacePackages(repoRoot: string, packageDirs: readonly string[]): Map<string, string> {
+  const packages = new Map<string, string>()
+  for (const dir of packageDirs)
+    try {
+      const { name } = JSON.parse(readFileSync(join(repoRoot, dir, 'package.json'), 'utf8')) as { name?: unknown }
+      if (typeof name === 'string' && name !== '' && !packages.has(name)) packages.set(name, dir)
+    } catch {}
+  return packages
+}
+
+/** A repository-relative path, normalized, as `.` for the root, or null outside the repository. */
+const inRepository = (path: string): string | null => {
+  const normal = posix.normalize(path).replace(/\/+$/, '')
+  if (normal === '' || normal === '.') return '.'
+  return normal === '..' || normal.startsWith('../') || normal.startsWith('/') ? null : normal
 }
 
 /**
- * What the source files a test read say about its record: whether any branches on `process.platform`, and whether
- * any module source resolves a specifier or mocks a module (`resolvesModules`).
+ * The folder `path`, from `base`, names: the path itself when it names a folder (it ends in `.`, `..` or `/`), else the
+ * folder holding it.
+ */
+const folderNamed = (base: string, path: string): string => {
+  const joined = posix.join(base, path)
+  return /(?:^|\/)\.{1,2}$/.test(path) || path.endsWith('/') ? joined : posix.dirname(joined)
+}
+
+/**
+ * The repository-relative folders a literal specifier, looked up from the source file `source`, can resolve into; null
+ * when the scan cannot say (an absolute path, a URL, a package-internal `#` import), so every listed folder counts.
+ * A relative specifier: the folder holding the path it names, from the source's folder. A bare one: the repository
+ * root (the root `tsconfig.json`'s `baseUrl` of `.` can map it to a repository path), and, when its package name is a
+ * workspace package's, the folder of its subpath inside that package's folder.
+ */
+export function lookupFolders(
+  specifier: string,
+  source: string,
+  packages: ReadonlyMap<string, string>
+): string[] | null {
+  if (specifier === '.' || specifier === '..' || specifier.startsWith('./') || specifier.startsWith('../')) {
+    const folder = inRepository(folderNamed(posix.dirname(source), specifier))
+    return folder === null ? [] : [folder]
+  }
+  if (specifier === '' || specifier.startsWith('/') || specifier.startsWith('#') || /^file:/i.test(specifier))
+    return null
+  const segments = specifier.split('/')
+  const size = specifier.startsWith('@') ? 2 : 1
+  const dir = packages.get(segments.slice(0, size).join('/'))
+  if (dir === undefined) return ['.']
+  const subpath = segments.slice(size).join('/')
+  const folder = inRepository(subpath === '' ? dir : folderNamed(dir, subpath))
+  return folder === null || folder === '.' ? ['.'] : ['.', folder]
+}
+
+/**
+ * What the source files a test read say about its record: whether any branches on `process.platform`; whether any
+ * module source looks a module up in a way that counts every listed folder (`resolves`); and the folders its literal
+ * lookups can resolve into (`resolved`, repository-relative: `moduleLookups`, `lookupFolders`).
  */
 export function scanSources(
   repoRoot: string,
-  reads: Iterable<string>
-): { branchesOnPlatform: boolean; resolves: boolean } {
+  reads: Iterable<string>,
+  packages: ReadonlyMap<string, string> = new Map()
+): { branchesOnPlatform: boolean; resolves: boolean; resolved: string[] } {
   let branchesOnPlatform = false
   let resolves = false
+  const resolved = new Set<string>()
   for (const read of reads) {
     if (branchesOnPlatform && resolves) break
     if (read.endsWith('/')) continue
@@ -248,10 +322,17 @@ export function scanSources(
       if (!stat.isFile() || stat.size > 2 * 1024 * 1024) continue
       const text = readFileSync(path, 'utf8')
       branchesOnPlatform ||= PLATFORM_BRANCH.test(text)
-      resolves ||= MODULE_SOURCE.test(read) && resolvesModules(text)
+      if (resolves || !MODULE_SOURCE.test(read)) continue
+      const lookups = moduleLookups(text)
+      if (lookups.every) resolves = true
+      for (const specifier of lookups.specifiers) {
+        const folders = lookupFolders(specifier, read, packages)
+        if (folders === null) resolves = true
+        else for (const folder of folders) resolved.add(folder)
+      }
     } catch {}
   }
-  return { branchesOnPlatform, resolves }
+  return { branchesOnPlatform, resolves, resolved: [...resolved].sort() }
 }
 
 /** One folder the listing probe logged: its absolute path and whether the call covered the folders beneath it. */
@@ -282,17 +363,20 @@ export function readProbeLog(text: string): ProbeLog {
 /**
  * A test's `scanned` folders: every folder the probe logged (a recursive listing as `<folder>/`, the root's as `./`),
  * mapped through `folderOf`; every folder the trace counts by process (`processScanned`: a process the probe did not
- * run in, one it logged wholly scanned, a thread of an unknown process); and, when its source resolves modules,
- * every folder it listed.
+ * run in, one it logged wholly scanned, a thread of an unknown process); every folder its source's literal module
+ * lookups can resolve into (`resolved`, already repository folders); and, when its source looks a module up where no
+ * literal says where, every folder it listed.
  */
 export function scannedFolders(input: {
   listed: Iterable<string>
   processScanned: Iterable<string>
   probe: ProbeLog
   resolves: boolean
+  resolved?: Iterable<string>
   folderOf: (absolute: string) => string | null
 }): string[] {
   const scanned = new Set<string>(input.processScanned)
+  for (const folder of input.resolved ?? []) scanned.add(folder)
   if (input.resolves) for (const folder of input.listed) scanned.add(folder)
   for (const { folder, recursive } of input.probe.listings) {
     const rel = input.folderOf(folder)
@@ -374,7 +458,8 @@ async function recordTest(
   test: string,
   trace: TraceOptions,
   scratch: string,
-  index: number
+  index: number,
+  packages: ReadonlyMap<string, string>
 ): Promise<RecordedRun> {
   const started = performance.now()
   const report = join(scratch, `${index}.${group.runner === 'bun' ? 'xml' : 'json'}`)
@@ -446,7 +531,7 @@ async function recordTest(
   for await (const line of lines) reader.feed(line)
   rmSync(traceFile, { force: true })
   const { reads, listed, processScanned, git: touchedGit, gitReaders, truncated } = reader.result()
-  const sources = scanSources(repoRoot, reads)
+  const sources = scanSources(repoRoot, reads, packages)
   const recorded: RecordedTest = {
     reads: [...reads].sort(),
     listed: [...listed].sort(),
@@ -455,6 +540,11 @@ async function recordTest(
       processScanned,
       probe,
       resolves: sources.resolves,
+      // Through real paths, as the trace's folders are: a workspace symlink lands on its package folder.
+      resolved: sources.resolved.flatMap((folder) => {
+        const real = repositoryFolder(realpathOrParent(join(trace.repoRoot, folder)), trace, true)
+        return real === null ? [] : [real]
+      }),
       folderOf: (absolute) => repositoryFolder(absolute, trace)
     }),
     ...(touchedGit
@@ -499,6 +589,7 @@ export async function recordReads(options: {
     packageDirs,
     dependencyInput: DEPENDENCY_INPUT
   }
+  const packages = workspacePackages(real, packageDirs)
   const onlyWanted = options.only ? new Set(options.only) : null
   const candidates = view.tests.filter((t) => onlyWanted === null || onlyWanted.has(t.id))
   const wanted = options.shard
@@ -530,7 +621,7 @@ export async function recordReads(options: {
         results.push({ test: identity.id, recorded: null, reason: 'the test cannot be started on its own', ms: 0 })
         continue
       }
-      const run = await recordTest(repoRoot, group, identity.id, trace, scratch, at)
+      const run = await recordTest(repoRoot, group, identity.id, trace, scratch, at, packages)
       log(`vinaya record-reads: ${run.test} — ${run.reason} [${run.ms} ms]`)
       results.push(run)
     }
