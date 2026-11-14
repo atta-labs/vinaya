@@ -4,7 +4,8 @@
  * `plannedTests(selectTests(loadSelectionInputs({ caller: 'push' })))` — the one
  * adapter (`repository-selection.ts`) reads the push's base, record, failed
  * tests and earlier passes, the selection package holds every rule — and each
- * runs once under its own native runner, one runner start after another. Every
+ * runs once under its own native runner, as many runner starts at once as
+ * `VINAYA_TEST_CONCURRENCY` says (one after another when unset). Every
  * test file a run passes completely is kept as a pass entry the next selection
  * may reuse. This file holds no selection rule and passes no selection option.
  *
@@ -93,7 +94,15 @@ import {
 } from './repository-selection.js'
 
 export { LOCAL_RUN_EXECUTION, nativeContext }
-import { FILES_PER_RUNNER, GROUP_TIME_LIMIT_MS, type GroupOutcome, type RunResult, runGroups } from './schedule.js'
+import {
+  DEFAULT_TEST_CONCURRENCY,
+  FILES_PER_RUNNER,
+  GROUP_TIME_LIMIT_MS,
+  type GroupOutcome,
+  type RunResult,
+  runGroups,
+  testConcurrency
+} from './schedule.js'
 
 /**
  * The most files one local runner start holds: the scheduler's one file per runner, so a push and a review round
@@ -444,18 +453,26 @@ export function parseRunArgs(argv: readonly string[]): { log: string | undefined
 
 /**
  * The scheduler options a frozen plan runs under: a push stops after its first failing runner (one file), a review
- * round (`--all-groups`) runs every one; both stop a file's runner at the per-file limit and run it once more alone.
+ * round (`--all-groups`) runs every one; both stop a file's runner at the per-file limit and run it once more alone,
+ * and keep as many runners running at once as `concurrency` says — the value `testConcurrency` read from
+ * `VINAYA_TEST_CONCURRENCY`, one when absent. A stopped push starts no further file; files already running finish.
  */
-export function frozenPlanRunOptions(input: { allGroups: boolean }): {
+export function frozenPlanRunOptions(input: { allGroups: boolean; concurrency?: number }): {
   stopAfterFailedGroup: boolean
   groupTimeLimitMs: number
+  concurrency: number
 } {
-  return { stopAfterFailedGroup: !input.allGroups, groupTimeLimitMs: GROUP_TIME_LIMIT_MS }
+  return {
+    stopAfterFailedGroup: !input.allGroups,
+    groupTimeLimitMs: GROUP_TIME_LIMIT_MS,
+    concurrency: input.concurrency ?? DEFAULT_TEST_CONCURRENCY
+  }
 }
 
 /**
- * Runs a frozen native plan: every group, serially, with the git variables of
- * the invoking hook removed, then the check that each runner executed exactly
+ * Runs a frozen native plan: every group, as many at once as `concurrency`
+ * says (one after another when absent), with the git variables of the
+ * invoking hook removed, then the check that each runner executed exactly
  * its tests. A green verdict needs every runner to pass and to have executed
  * its tests once, and the head, the tracked tree and the verification context
  * to be what they were when the run started.
@@ -468,13 +485,17 @@ export function frozenPlanRunOptions(input: { allGroups: boolean }): {
  * still to run — bound to this run. A moved state or context writes the
  * record of a run that confirms nothing instead, and stops the writes; a
  * group that leaves nothing confirmed so far writes nothing, so an earlier
- * record stays.
+ * record stays. Groups running together end one at a time on this one
+ * thread, so each record is written whole after the group before it.
  */
-export function runFrozenPlan(
+export async function runFrozenPlan(
   repoRoot: string,
   native: NativeSelection,
   deps: {
-    run?: (groups: readonly NativeGroup[], onGroupEnd: (outcome: GroupOutcome) => void) => RunResult
+    run?: (
+      groups: readonly NativeGroup[],
+      onGroupEnd: (outcome: GroupOutcome) => void
+    ) => RunResult | Promise<RunResult>
     state?: () => string | null
     context?: () => string | null
     roots?: readonly string[]
@@ -483,9 +504,11 @@ export function runFrozenPlan(
     /** Run every group even after one fails, so each passing group is confirmed; a push stops at the first. */
     allGroups?: boolean
     /** The scheduler the default `run` calls; tests substitute it to see the options it receives. */
-    runGroups?: typeof runGroups
+    runGroups?: (...args: Parameters<typeof runGroups>) => RunResult | Promise<RunResult>
+    /** The most runners running at once (`testConcurrency`); one when absent. */
+    concurrency?: number
   } = {}
-): LocalRunOutcome {
+): Promise<LocalRunOutcome> {
   const state = deps.state ?? (() => trackedState(repoRoot))
   const contextNow =
     deps.context ??
@@ -540,14 +563,17 @@ export function runFrozenPlan(
         announce: true,
         onGroupEnd: onEnd,
         onReport: (group, xml) => reports.push({ cwd: group.cwd, xml }),
-        ...frozenPlanRunOptions({ allGroups: deps.allGroups === true })
+        ...frozenPlanRunOptions({
+          allGroups: deps.allGroups === true,
+          ...(deps.concurrency !== undefined ? { concurrency: deps.concurrency } : {})
+        })
       }))
   const reports: { cwd: string; xml: string }[] = []
   // An empty plan starts nothing.
   const result: RunResult =
     native.groups.length === 0
       ? { failedRunners: [], problems: [], executions: [], failedTests: {}, outcomes: [] }
-      : run(native.groups, onGroupEnd)
+      : await run(native.groups, onGroupEnd)
   // A run that stopped after a failing group never started the rest: those groups are unrun, not missing executions.
   // A group ran when the scheduler heard its end (a signaled or interrupted one included) or recorded its execution.
   const started = new Set([...(result.outcomes ?? []).map((o) => o.group), ...result.executions.map((e) => e.group)])
@@ -747,6 +773,16 @@ function selectCommand(repoRoot: string): number {
 
 async function runCommand(repoRoot: string, logPath: string | undefined, allGroups = false): Promise<number> {
   const started = Date.now()
+  // An unreadable setting refuses the run before anything starts or any record changes.
+  let concurrency: number
+  try {
+    concurrency = testConcurrency()
+  } catch (error) {
+    process.stdout.write(
+      `vinaya pre-push: refused — ${error instanceof Error ? error.message : String(error)}; nothing ran\n`
+    )
+    return 1
+  }
   const head = currentHead(repoRoot)
   const note = parseSelectionNote(readJsonUnderGit(repoRoot, SELECTION_NOTE), head)
   if (!note?.native || note.native.version !== 1) {
@@ -754,8 +790,9 @@ async function runCommand(repoRoot: string, logPath: string | undefined, allGrou
     return 1
   }
   const runStartedAt = new Date(started).toISOString()
-  const outcome = runFrozenPlan(repoRoot, note.native, {
+  const outcome = await runFrozenPlan(repoRoot, note.native, {
     allGroups,
+    concurrency,
     groupRecord: {
       head: note.head,
       branch: currentBranch(repoRoot),
@@ -821,11 +858,18 @@ async function runCommand(repoRoot: string, logPath: string | undefined, allGrou
   return 1
 }
 
-function exactCommand(repoRoot: string, argv: readonly string[]): number {
+async function exactCommand(repoRoot: string, argv: readonly string[]): Promise<number> {
   const parsed = parseNativeRunCommand(`bun scripts/test-suites/local-run.ts ${argv.join(' ')}`)
   if (!parsed) {
     process.stderr.write('usage: local-run.ts exact --context <digest> -- <test@configuration>...\n')
     return 2
+  }
+  let concurrency: number
+  try {
+    concurrency = testConcurrency()
+  } catch (error) {
+    process.stderr.write(`vinaya local-run: refused — ${error instanceof Error ? error.message : String(error)}\n`)
+    return 1
   }
   const head = currentHead(repoRoot)
   const view = readTestInventory(repoRoot, { head }).head
@@ -854,7 +898,11 @@ function exactCommand(repoRoot: string, argv: readonly string[]): number {
     process.stderr.write(`vinaya local-run: refused — ${problems.join('; ')}\n`)
     return 1
   }
-  const result = runGroups(repoRoot, grouping.groups, { env: cleanGitEnv(), groupTimeLimitMs: GROUP_TIME_LIMIT_MS })
+  const result = await runGroups(repoRoot, grouping.groups, {
+    env: cleanGitEnv(),
+    groupTimeLimitMs: GROUP_TIME_LIMIT_MS,
+    concurrency
+  })
   for (const p of result.problems)
     process.stderr.write(`vinaya local-run: ${p.code} ${p.path}${p.group ? ` (${p.group})` : ''}: ${p.detail}\n`)
   return result.failedRunners.length > 0 || result.problems.length > 0 ? 1 : 0

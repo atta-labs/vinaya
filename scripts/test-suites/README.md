@@ -33,7 +33,26 @@ kill reaches only the runner itself, so a stopped file's own children may
 outlive it. A push still stops after its first failing runner, which is now one
 file. The failed-tests record is rewritten as each file's runner ends, so a file
 that crashes, exits early or is killed leaves every file that finished before it
-confirmed. The CI build job's literal repository-suite command in
+confirmed.
+
+How many of those one-file runners run at once is one setting,
+`VINAYA_TEST_CONCURRENCY`, a positive integer that `testConcurrency` in
+`schedule.ts` reads and validates for the CI schedule, a push, a review round
+and the exact receipt command alike; any other value is refused with a message
+naming the setting, before any runner starts. The pre-push hook and the CI
+workflow reach it through the environment. A review round's test run gets a
+fixed environment that does not carry it, so a review round runs one file at a
+time until that environment passes the setting on explicitly. Unset, the default is one: each
+file's runner starts only when the one before it ended, and its output streams
+as it comes. Above one, runners start in plan order, never more than the
+setting at once, each with its own report, its own per-file limit and its own
+single retry, and each runner's output is captured and written as one block
+when it ends, between its own group start and end lines, so concurrent runners
+never interleave their lines. Every file's report is still judged on its own,
+the result lists the files in plan order whatever order they ended in, and the
+failed-tests record is rewritten after each file ends. A push that stops after
+a failing file starts no further file, while files already running finish and
+are judged. The CI build job's literal repository-suite command in
 `.github/workflows/ci.yml` is not scheduled and still runs its files in one
 `bun test`.
 

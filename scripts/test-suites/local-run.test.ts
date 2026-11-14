@@ -358,11 +358,11 @@ describe('a plan of many files, one file per runner start', () => {
     expect(identities).toEqual(files.map((f) => `${f}@default`))
   })
 
-  it('writes one checkpoint record per finished file and counts every file executed', () => {
+  it('writes one checkpoint record per finished file and counts every file executed', async () => {
     const { groups, identities } = local()
     const native = nativeOf(groups)
     const written: unknown[] = []
-    const outcome = runFrozenPlan('/repo', native, {
+    const outcome = await runFrozenPlan('/repo', native, {
       run: (gs, onGroupEnd) => {
         const executions = gs.map((g) => ({
           group: g.id,
@@ -430,12 +430,12 @@ const ran = (over: Partial<RunResult> = {}): RunResult => ({
   ...over
 })
 
-const verdict = (
+const verdict = async (
   result: RunResult | null,
   over: { state?: () => string | null; context?: () => string | null } = {}
 ) => {
   let calls = 0
-  const outcome = runFrozenPlan('/repo', nativeOf(result === null ? [] : [GROUP]), {
+  const outcome = await runFrozenPlan('/repo', nativeOf(result === null ? [] : [GROUP]), {
     run: () => {
       calls++
       return result as RunResult
@@ -448,8 +448,8 @@ const verdict = (
 }
 
 describe('the verdict of a native run', () => {
-  it('a complete green run of exactly the plan passes', () => {
-    const { outcome } = verdict(ran())
+  it('a complete green run of exactly the plan passes', async () => {
+    const { outcome } = await verdict(ran())
     expect(outcome).toMatchObject({ passed: true, failed: [], drift: null })
     expect(outcome.completion.executed).toEqual([
       'apps/cli/tests/a.test.ts@default',
@@ -457,14 +457,14 @@ describe('the verdict of a native run', () => {
     ])
   })
 
-  it('an empty plan starts no runner and passes', () => {
-    const { outcome, calls } = verdict(null)
+  it('an empty plan starts no runner and passes', async () => {
+    const { outcome, calls } = await verdict(null)
     expect(calls).toBe(0)
     expect(outcome.passed).toBe(true)
   })
 
-  it('a failing runner names its failing tests', () => {
-    const { outcome } = verdict(
+  it('a failing runner names its failing tests', async () => {
+    const { outcome } = await verdict(
       ran({ failedRunners: ['cli@default'], failedTests: { 'cli@default': ['apps/cli/tests/b.test.ts'] } })
     )
     expect(outcome).toMatchObject({ passed: false, failed: ['apps/cli/tests/b.test.ts'] })
@@ -505,26 +505,26 @@ describe('the verdict of a native run', () => {
       ran({ executions: [{ group: 'cli@default', outcome: 'signaled', detail: 'SIGTERM', files: [] }] })
     ],
     ['no report at all', ran({ executions: [] })]
-  ])('%s never establishes a pass, whatever the exit status', (_name, result) => {
+  ])('%s never establishes a pass, whatever the exit status', async (_name, result) => {
     const problems = completionOf([GROUP], result, ['/repo']).problems
     expect(problems.length).toBeGreaterThan(0)
-    const { outcome } = verdict(result)
+    const { outcome } = await verdict(result)
     expect(outcome.passed).toBe(false)
     expect(outcome.failed).toBe('all')
   })
 
-  it('a head or tree that moved during the run, or a changed context, proves nothing', () => {
+  it('a head or tree that moved during the run, or a changed context, proves nothing', async () => {
     let state = 0
-    expect(verdict(ran(), { state: () => `s${state++}` }).outcome).toMatchObject({
+    expect((await verdict(ran(), { state: () => `s${state++}` })).outcome).toMatchObject({
       passed: false,
       drift: expect.stringContaining('tracked tree')
     })
     let context = 0
-    expect(verdict(ran(), { context: () => (context++ === 0 ? 'ctx' : 'other') }).outcome).toMatchObject({
+    expect((await verdict(ran(), { context: () => (context++ === 0 ? 'ctx' : 'other') })).outcome).toMatchObject({
       passed: false,
       drift: expect.stringContaining('verification context')
     })
-    expect(verdict(ran(), { context: () => null }).outcome.passed).toBe(false)
+    expect((await verdict(ran(), { context: () => null })).outcome.passed).toBe(false)
   })
 })
 
@@ -569,7 +569,7 @@ describe('what a failed native run confirms', () => {
     outcomes
   })
   type Writes = { records: FailedTestsRecord[]; snapshots: FailedTestsRecord[][] }
-  const run = (
+  const run = async (
     outcomes: GroupOutcome[],
     over: {
       state?: () => string | null
@@ -579,7 +579,7 @@ describe('what a failed native run confirms', () => {
     } = {}
   ) => {
     const writes: Writes = { records: [], snapshots: [] }
-    const outcome = runFrozenPlan('/repo', nativeOf([GROUP, VT_GROUP]), {
+    const outcome = await runFrozenPlan('/repo', nativeOf([GROUP, VT_GROUP]), {
       run: (_groups, onGroupEnd) => {
         for (const ended of outcomes) {
           onGroupEnd(ended)
@@ -602,27 +602,30 @@ describe('what a failed native run confirms', () => {
     return { outcome, writes }
   }
 
-  it('one untrusted runner costs only its own tests; a trusted one keeps only its named failure', () => {
-    const { outcome } = run([cliFailedB, vtUntrusted])
+  it('one untrusted runner costs only its own tests; a trusted one keeps only its named failure', async () => {
+    const { outcome } = await run([cliFailedB, vtUntrusted])
     expect(outcome).toMatchObject({ passed: false, failed: [B], unreported: [], unconfirmed: [B, X, Y] })
   })
 
-  it('a runner that names no file yields only its own tests', () => {
+  it('a runner that names no file yields only its own tests', async () => {
     const cliUntrusted = groupOutcome(GROUP, { trusted: false, confirmed: [], obligations: [A, B] })
-    expect(run([cliUntrusted, groupOutcome(VT_GROUP)]).outcome).toMatchObject({ failed: 'all', unconfirmed: [A, B] })
+    expect((await run([cliUntrusted, groupOutcome(VT_GROUP)])).outcome).toMatchObject({
+      failed: 'all',
+      unconfirmed: [A, B]
+    })
   })
 
-  it('named failures and unreported files are named apart, and only they stay unconfirmed', () => {
+  it('named failures and unreported files are named apart, and only they stay unconfirmed', async () => {
     const vtMissingY = groupOutcome(VT_GROUP, { executed: [X], unreported: [Y], confirmed: [X], obligations: [Y] })
-    expect(run([cliFailedB, vtMissingY]).outcome).toMatchObject({
+    expect((await run([cliFailedB, vtMissingY])).outcome).toMatchObject({
       failed: [B, Y],
       unreported: [Y],
       unconfirmed: [B, Y]
     })
   })
 
-  it('after each finished group a record bound to this run holds the finished obligations and every unfinished test', () => {
-    const { writes } = run([cliFailedB, vtUntrusted])
+  it('after each finished group a record bound to this run holds the finished obligations and every unfinished test', async () => {
+    const { writes } = await run([cliFailedB, vtUntrusted])
     // A stop after the first group would find exactly this record.
     expect(writes.snapshots[0]).toEqual([
       {
@@ -646,17 +649,17 @@ describe('what a failed native run confirms', () => {
     expect(writes.records).toHaveLength(2)
   })
 
-  it('a group that leaves nothing confirmed so far writes no record, so an earlier one stays', () => {
+  it('a group that leaves nothing confirmed so far writes no record, so an earlier one stays', async () => {
     const cliUntrusted = groupOutcome(GROUP, { trusted: false, confirmed: [], obligations: [A, B] })
-    expect(run([cliUntrusted, vtUntrusted]).writes.records).toEqual([])
+    expect((await run([cliUntrusted, vtUntrusted])).writes.records).toEqual([])
   })
 
-  it('no record is written per group when the tracked tree was not clean at the start', () => {
+  it('no record is written per group when the tracked tree was not clean at the start', async () => {
     for (const treeClean of [false, null])
-      expect(run([cliFailedB, vtUntrusted], { treeClean }).writes.records).toEqual([])
+      expect((await run([cliFailedB, vtUntrusted], { treeClean })).writes.records).toEqual([])
   })
 
-  it('a state or context that moved during the run writes, at the next group, a record that confirms nothing, then stops', () => {
+  it('a state or context that moved during the run writes, at the next group, a record that confirms nothing, then stops', async () => {
     for (const over of [
       {
         state: (() => {
@@ -671,7 +674,7 @@ describe('what a failed native run confirms', () => {
         })()
       }
     ]) {
-      const { outcome, writes } = run([cliFailedB, groupOutcome(VT_GROUP)], over)
+      const { outcome, writes } = await run([cliFailedB, groupOutcome(VT_GROUP)], over)
       expect(writes.records).toEqual([
         expect.objectContaining({
           selectionCompleted: false,
@@ -707,10 +710,10 @@ describe('real native runner starts', () => {
     args: tests.map((t) => `./${t}`)
   })
 
-  it('every scheduled file executes once and the report confirms exactly those identities', () => {
+  it('every scheduled file executes once and the report confirms exactly those identities', async () => {
     const dir = suiteDir({ 'a.test.ts': pass, 'b.test.ts': pass })
     const g = group(['a.test.ts', 'b.test.ts'])
-    const result = runGroups(dir, [g], { log: () => {} })
+    const result = await runGroups(dir, [g], { log: () => {} })
     expect(result.failedRunners).toEqual([])
     expect(completionOf([g], result, [dir])).toMatchObject({
       completed: true,
@@ -719,21 +722,21 @@ describe('real native runner starts', () => {
     })
   })
 
-  it('a failing file is named, and a file over its own timeout fails rather than reading green', () => {
+  it('a failing file is named, and a file over its own timeout fails rather than reading green', async () => {
     const slow = `import { test } from 'bun:test'\ntest('slow', async () => { await new Promise((r) => setTimeout(r, 2000)) })\n`
     const dir = suiteDir({ 'a.test.ts': pass, 'b.test.ts': fail, 'c.test.ts': slow })
     const g = group(['a.test.ts', 'b.test.ts', 'c.test.ts'], { timeoutMs: 200 })
-    const result = runGroups(dir, [g], { log: () => {} })
+    const result = await runGroups(dir, [g], { log: () => {} })
     expect(result.failedRunners).toEqual(['cli@default'])
     expect(result.failedTests['cli@default']).toEqual(['b.test.ts', 'c.test.ts'])
   })
 
-  it('a runner killed mid-run is interrupted: no executed identity, no pass', () => {
+  it('a runner killed mid-run is interrupted: no executed identity, no pass', async () => {
     const dir = suiteDir({
       'a.test.ts': `import { test } from 'bun:test'\ntest('die', () => { process.kill(process.pid, 'SIGKILL') })\n`
     })
     const g = group(['a.test.ts'])
-    const result = runGroups(dir, [g], { log: () => {} })
+    const result = await runGroups(dir, [g], { log: () => {} })
     expect(result.executions[0]?.outcome).toBe('signaled')
     expect(result.failedTests['cli@default']).toBe('all')
     const completion = completionOf([g], result, [dir])
@@ -741,7 +744,7 @@ describe('real native runner starts', () => {
     expect(completion.executed).toEqual([])
   })
 
-  it('a file that crashes or exits early costs only itself: each finished file rewrites the record, the rest stay confirmed', () => {
+  it('a file that crashes or exits early costs only itself: each finished file rewrites the record, the rest stay confirmed', async () => {
     const dir = suiteDir({
       'a.test.ts': pass,
       'b.test.ts': `import { test } from 'bun:test'\ntest('crash', () => { process.kill(process.pid, 'SIGKILL') })\n`,
@@ -764,10 +767,11 @@ describe('real native runner starts', () => {
     expect(problems).toEqual([])
     expect(groups.map((g) => g.tests)).toEqual([['a.test.ts'], ['b.test.ts'], ['c.test.ts'], ['d.test.ts']])
     const native = nativeOf(groups)
-    const runPlan = (allGroups: boolean) => {
+    const runPlan = async (allGroups: boolean, concurrency?: number) => {
       const records: FailedTestsRecord[] = []
-      const outcome = runFrozenPlan(dir, native, {
+      const outcome = await runFrozenPlan(dir, native, {
         allGroups,
+        ...(concurrency !== undefined ? { concurrency } : {}),
         state: () => 'same',
         context: () => 'ctx',
         roots: [dir],
@@ -785,7 +789,7 @@ describe('real native runner starts', () => {
     const abs = (...ids: string[]) => ids.map((id) => join(dir, id))
 
     // A review round runs every file: the record is rewritten as each one ends, and every one keeps `a` confirmed.
-    const round = runPlan(true)
+    const round = await runPlan(true)
     expect(round.records).toHaveLength(4)
     expect(round.records.map((r) => r.confirmed)).toEqual([
       ['a.test.ts'],
@@ -797,14 +801,33 @@ describe('real native runner starts', () => {
     expect(round.outcome).toMatchObject({ passed: false, unconfirmed: ['b.test.ts', 'c.test.ts'] })
 
     // A push stops after its first failing runner, now one file: the crash leaves `a` confirmed and the rest owed.
-    const push = runPlan(false)
+    const push = await runPlan(false)
     expect(push.records).toHaveLength(2)
     expect(push.records.at(-1)?.confirmed).toEqual(['a.test.ts'])
     expect(push.records.at(-1)?.failed).toEqual(abs('b.test.ts', 'c.test.ts', 'd.test.ts'))
     expect(push.outcome).toMatchObject({ passed: false, stopped: { tests: 2, groups: 2 } })
-  }, 120_000)
 
-  it('a runner never sees the git variables of the hook that started it', () => {
+    // Four files at once: the record is rewritten as each file ends, in whatever order they end, and the round reaches
+    // the same verdict and the same final record as one file after another.
+    const together = await runPlan(true, 4)
+    const verdictOf = (outcome: typeof round.outcome) => {
+      const { reports, ...rest } = outcome
+      return { ...rest, reports: (reports ?? []).length }
+    }
+    expect(verdictOf(together.outcome)).toEqual(verdictOf(round.outcome))
+    expect(together.records.length).toBeGreaterThan(0)
+    expect(together.records.length).toBeLessThanOrEqual(4)
+    for (const record of together.records)
+      expect(['a.test.ts', 'd.test.ts']).toEqual(expect.arrayContaining(record.confirmed ?? []))
+    const last = together.records.at(-1)
+    expect([last?.confirmed, last?.failed, last?.unreported]).toEqual([
+      ['a.test.ts', 'd.test.ts'],
+      abs('b.test.ts', 'c.test.ts'),
+      round.records.at(-1)?.unreported
+    ])
+  }, 180_000)
+
+  it('a runner never sees the git variables of the hook that started it', async () => {
     const probe = join(fixtureDir('local-run-env-'), 'env.json')
     const dir = suiteDir({
       'a.test.ts': `import { test } from 'bun:test'\nimport { writeFileSync } from 'node:fs'\ntest('env', () => writeFileSync(${JSON.stringify(probe)}, JSON.stringify(Object.keys(process.env).filter((k) => k.startsWith('GIT_')))))\n`
@@ -812,7 +835,7 @@ describe('real native runner starts', () => {
     const env: NodeJS.ProcessEnv = { ...process.env, GIT_DIR: '/nowhere', GIT_CONFIG_KEY_0: 'x' }
     const cleaned: NodeJS.ProcessEnv = {}
     for (const [key, value] of Object.entries(env)) if (!key.startsWith('GIT_')) cleaned[key] = value
-    runGroups(dir, [group(['a.test.ts'])], { log: () => {}, env: cleaned })
+    await runGroups(dir, [group(['a.test.ts'])], { log: () => {}, env: cleaned })
     expect(JSON.parse(readFileSync(probe, 'utf8'))).toEqual([])
   })
 })
@@ -935,16 +958,40 @@ describe('what a native run records', () => {
   it('a push stops after the first failing group; a review round runs every group; both under the per-file limit', () => {
     expect(frozenPlanRunOptions({ allGroups: false })).toEqual({
       stopAfterFailedGroup: true,
-      groupTimeLimitMs: GROUP_TIME_LIMIT_MS
+      groupTimeLimitMs: GROUP_TIME_LIMIT_MS,
+      concurrency: 1
     })
-    expect(frozenPlanRunOptions({ allGroups: true })).toEqual({
+    expect(frozenPlanRunOptions({ allGroups: true, concurrency: 4 })).toEqual({
       stopAfterFailedGroup: false,
-      groupTimeLimitMs: GROUP_TIME_LIMIT_MS
+      groupTimeLimitMs: GROUP_TIME_LIMIT_MS,
+      concurrency: 4
     })
     expect(GROUP_TIME_LIMIT_MS).toBe(15 * 60_000)
   })
 
-  it('`run --all-groups` reaches the scheduler as no stop after a failing group; plain `run` stops', () => {
+  it('both local-run paths refuse a concurrency setting that is not a positive integer, naming it, before anything runs', () => {
+    const dir = realpathSync(fixtureDir('local-run-concurrency-'))
+    const context = 'c'.repeat(64)
+    for (const value of ['0', '-2', '1.5', 'four', ''])
+      for (const args of [
+        ['run', '--log', '/dev/null'],
+        ['exact', '--context', context, '--', 'a.test.ts@default']
+      ]) {
+        const run = spawnSync('bun', [join(import.meta.dir, 'local-run.ts'), ...args], {
+          cwd: dir,
+          env: { ...stripVinayaEnv(process.env), VINAYA_TEST_CONCURRENCY: value },
+          encoding: 'utf8',
+          timeout: 60_000,
+          killSignal: 'SIGKILL'
+        })
+        expect(run.status).toBe(1)
+        expect(`${run.stdout}${run.stderr}`).toContain(
+          `VINAYA_TEST_CONCURRENCY must be a positive integer (the most test runners running at once), and it is ${JSON.stringify(value)}`
+        )
+      }
+  }, 120_000)
+
+  it('`run --all-groups` reaches the scheduler as no stop after a failing group; plain `run` stops', async () => {
     expect(parseRunArgs(['run', '--log', '/c'])).toEqual({ log: '/c', allGroups: false })
     expect(parseRunArgs(['run', '--all-groups', '--log', '/c'])).toEqual({ log: '/c', allGroups: true })
     const { dir, head } = repo()
@@ -953,12 +1000,15 @@ describe('what a native run records', () => {
     const native = { ...nativeOf([group], note.context), identities: ['a.test.ts@default'] }
     const seen: (boolean | undefined)[] = []
     const limits: (number | undefined)[] = []
+    const concurrencies: (number | undefined)[] = []
     for (const allGroups of [false, true]) {
-      runFrozenPlan(dir, native, {
+      await runFrozenPlan(dir, native, {
         allGroups: parseRunArgs(allGroups ? ['run', '--all-groups'] : ['run']).allGroups,
+        ...(allGroups ? { concurrency: 3 } : {}),
         runGroups: (_root, groups, options) => {
           seen.push(options?.stopAfterFailedGroup)
           limits.push(options?.groupTimeLimitMs)
+          concurrencies.push(options?.concurrency)
           return {
             failedRunners: [],
             problems: [],
@@ -975,6 +1025,8 @@ describe('what a native run records', () => {
     expect(seen).toEqual([true, false])
     // The push and the review round both reach the scheduler with the per-file limit.
     expect(limits).toEqual([GROUP_TIME_LIMIT_MS, GROUP_TIME_LIMIT_MS])
+    // The setting's number reaches the scheduler; without one, one runner at a time.
+    expect(concurrencies).toEqual([1, 3])
   })
 
   it('a run stopped after its first failing group credits no unrun test and names only the failing one', async () => {
@@ -988,7 +1040,7 @@ describe('what a native run records', () => {
     }
     const stoppedNote: SelectionNote = { ...note, native }
     const startedGroups: string[] = []
-    const outcome = runFrozenPlan(dir, native, {
+    const outcome = await runFrozenPlan(dir, native, {
       run: (groups, onGroupEnd) => {
         startedGroups.push((groups[0] as NativeGroup).id)
         const ended = groupOutcome(first, { failed: ['a.test.ts'], confirmed: [], obligations: ['a.test.ts'] })

@@ -32,12 +32,14 @@
  *   bun scripts/test-suites/schedule.ts --dry-run --full
  *     prints every scheduled test once, with its place, runner and working directory.
  *   bun scripts/test-suites/schedule.ts --run --placement <build|shard-N|shared> (--full [--reason <text>] | --decision <file>)
- *     runs that place's files one after another, each in a runner process of
- *     its own under a per-file time limit ({@link GROUP_TIME_LIMIT_MS}), and
- *     fails when a runner fails, is interrupted, leaves no readable report,
- *     or reports a file it was not given or misses one it was.
+ *     runs that place's files, each in a runner process of its own under a
+ *     per-file time limit ({@link GROUP_TIME_LIMIT_MS}), as many at once as
+ *     `VINAYA_TEST_CONCURRENCY` says ({@link testConcurrency}; one after
+ *     another when it is unset), and fails when a runner fails, is
+ *     interrupted, leaves no readable report, or reports a file it was not
+ *     given or misses one it was.
  */
-import { spawnSync } from 'node:child_process'
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, posix } from 'node:path'
@@ -660,26 +662,38 @@ function scheduledTestOf(group: NativeGroup, written: string, repoRoot: string):
 }
 
 /**
- * Runs `groups` one after another, each in its own working directory under
- * its own runner, and checks every runner executed exactly its files. The
- * environment is this process's unless `env` names one; nothing runs in
- * parallel. Every runner gets the run's own test-temp root
- * ({@link runTestTempRoot}): the environment's `VINAYA_TEST_TMP` when set,
- * otherwise one this run creates and removes once every runner has ended. Each runner writes its own report (Bun's JUnit, Vitest's JSON)
- * into a temporary folder removed when the run ends; the report names the
- * files it executed and the ones that failed. With `announce`, each group's
- * scheduled files are printed as it starts and its report's executed and
- * failing files once it ends (`push-progress.ts`'s group lines), so a progress
- * reader counts only those files. `onGroupEnd` hears what each group proved,
- * right after its report is read.
- */
-/**
  * The longest one runner start may take before it is stopped and run once more, on CI, a local push and a review
  * round alike. Every scheduled runner serves one file ({@link FILES_PER_RUNNER}), so this is a per-file limit: the
  * slowest file takes about eight and a half minutes on a quiet machine and files run two to three times slower
  * under load.
  */
 export const GROUP_TIME_LIMIT_MS = 15 * 60_000
+
+/**
+ * The setting that decides how many one-file runners the scheduler keeps running at once — on CI, a local push, a
+ * review round and the exact receipt command alike. A positive integer; one, one runner after another, when unset.
+ */
+export const TEST_CONCURRENCY_ENV = 'VINAYA_TEST_CONCURRENCY'
+
+/** How many runners {@link runGroups} keeps running at once when {@link TEST_CONCURRENCY_ENV} is unset. */
+export const DEFAULT_TEST_CONCURRENCY = 1
+
+/**
+ * The number of runners to keep running at once, read from {@link TEST_CONCURRENCY_ENV}: its value as a positive
+ * integer written in plain decimal digits, or {@link DEFAULT_TEST_CONCURRENCY} when it is unset. Any other value —
+ * empty, zero, negative, fractional, padded or not a number — throws an error naming the setting, so a run refuses
+ * rather than guessing.
+ */
+export function testConcurrency(env: Readonly<Record<string, string | undefined>> = process.env): number {
+  const raw = env[TEST_CONCURRENCY_ENV]
+  if (raw === undefined) return DEFAULT_TEST_CONCURRENCY
+  const value = Number(raw)
+  if (!/^[1-9][0-9]*$/.test(raw) || !Number.isSafeInteger(value))
+    throw new Error(
+      `${TEST_CONCURRENCY_ENV} must be a positive integer (the most test runners running at once), and it is ${JSON.stringify(raw)}`
+    )
+  return value
+}
 
 /** The repository id a scheduler's own test-temp run root is filed under: the id this repository's fixtures use. */
 export const SCHEDULE_TEST_TEMP_REPO_ID = 'vinaya'
@@ -707,17 +721,109 @@ function releaseTestTempRoot(run: TestTempRun, log: (line: string) => void): voi
     log(`vinaya schedule: could not remove the run's test-temp root ${dir}: ${error}`)
 }
 
-/** Whether a runner was stopped at its time limit rather than ending by itself. */
-function timedOut(run: { error?: Error; signal?: NodeJS.Signals | null }): boolean {
-  return (run.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT'
+/** How one runner start ended: its exit, whether its time limit stopped it, and its output when it was captured. */
+export type RunnerExit = {
+  status: number | null
+  signal: string | null
+  /** The runner was stopped at its time limit rather than ending by itself. */
+  timedOut: boolean
+  /** The runner's stdout and stderr, in the order they arrived, when captured; `null` when they streamed. */
+  output: string | null
 }
 
-export function runGroups(
+/**
+ * Starts one runner and resolves when it ends. With `capture`, its stdout and stderr are collected, never written;
+ * without, they stream to this process's own. With `timeLimitMs`, the runner is killed (`SIGKILL`) once that long
+ * has passed. A runner that cannot be started resolves with no status and no signal, as a failed runner.
+ */
+export type RunnerStart = (
+  command: readonly string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv; capture: boolean; timeLimitMs?: number }
+) => Promise<RunnerExit>
+
+/**
+ * How long a captured runner's output pipes may stay open after the runner itself exited. A child the runner left
+ * behind can hold them open with no end; past this bound the scheduler stops reading them.
+ */
+export const OUTPUT_DRAIN_MS = 2_000
+
+/**
+ * The scheduler's own {@link RunnerStart}: one child process with its own time-limit timer. It ends when the runner
+ * process exits — never when its output pipes close, which a child the runner left behind can hold open — and reads
+ * captured output for at most {@link OUTPUT_DRAIN_MS} after that exit.
+ */
+export const startRunner: RunnerStart = (command, options) =>
+  new Promise<RunnerExit>((resolve) => {
+    const chunks: Buffer[] = []
+    let timedOut = false
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let drain: ReturnType<typeof setTimeout> | undefined
+    const settle = (status: number | null, signal: string | null) => {
+      if (settled) return
+      settled = true
+      if (timer !== undefined) clearTimeout(timer)
+      if (drain !== undefined) clearTimeout(drain)
+      child?.stdout?.destroy()
+      child?.stderr?.destroy()
+      resolve({ status, signal, timedOut, output: options.capture ? Buffer.concat(chunks).toString('utf8') : null })
+    }
+    let child: ChildProcess | undefined
+    try {
+      child = spawn(command[0] as string, command.slice(1), {
+        cwd: options.cwd,
+        env: options.env,
+        stdio: options.capture ? ['inherit', 'pipe', 'pipe'] : 'inherit'
+      })
+    } catch {
+      settle(null, null)
+      return
+    }
+    const started = child
+    if (options.timeLimitMs !== undefined)
+      timer = setTimeout(() => {
+        timedOut = true
+        started.kill('SIGKILL')
+      }, options.timeLimitMs)
+    started.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk))
+    started.stderr?.on('data', (chunk: Buffer) => chunks.push(chunk))
+    started.on('error', () => settle(null, null))
+    // The runner's own exit ends it; its time limit stops with it. Captured output is read until the pipes close or
+    // the drain bound passes, whichever is first.
+    let exit: { code: number | null; signal: string | null } | null = null
+    started.on('exit', (code, signal) => {
+      exit = { code, signal }
+      if (timer !== undefined) clearTimeout(timer)
+      timer = undefined
+      if (!options.capture) return settle(code, signal)
+      drain = setTimeout(() => settle(code, signal), OUTPUT_DRAIN_MS)
+    })
+    started.on('close', (code, signal) => settle(exit?.code ?? code, exit?.signal ?? signal))
+  })
+
+/**
+ * Runs `groups`, each in its own working directory under its own runner, and checks every runner executed exactly
+ * its files. Up to `concurrency` runners (one when absent) run at once, started in plan order; at one, each starts
+ * only when the one before it ended. The environment is this process's unless `env` names one. Every runner gets the
+ * run's own test-temp root ({@link runTestTempRoot}): the environment's `VINAYA_TEST_TMP` when set, otherwise one this
+ * run creates and removes once every runner has ended. If a group throws, no further group starts, and the run waits
+ * for the runners already running before it removes its folders and throws that error. Each runner writes its
+ * own report (Bun's JUnit, Vitest's JSON) into a temporary folder removed when the run ends, under a file name of its
+ * own, so runners running together never share a report; the report names the files it executed and the ones that
+ * failed. With `announce`, each group's scheduled files are printed as it starts and its report's executed and failing
+ * files once it ends (`push-progress.ts`'s group lines), so a progress reader counts only those files. At a
+ * concurrency of one a runner's output streams as it comes; above one it is captured and written whole once the
+ * runner ends, in one block with that runner's own lines — its start line first and its end line last — so the lines
+ * of runners running together never interleave. `onGroupEnd` hears what each group proved, right after its report is
+ * read, in the order the groups end. The result lists every group in plan order, whatever order they ended in.
+ */
+export async function runGroups(
   repoRoot: string,
   groups: readonly NativeGroup[],
   options: {
     log?: (line: string) => void
-    spawn?: typeof spawnSync
+    /** Starts one runner; the scheduler's own {@link startRunner} when absent. */
+    spawn?: RunnerStart
     env?: NodeJS.ProcessEnv
     announce?: boolean
     onGroupEnd?: (outcome: GroupOutcome, index: number) => void
@@ -725,14 +831,23 @@ export function runGroups(
     onReport?: (group: NativeGroup, xml: string) => void
     /** How long one runner may take before it is stopped and run once more; none when absent. */
     groupTimeLimitMs?: number
-    /** Start no later group once a group's runner did not exit zero (failed, signaled or interrupted); off when absent. */
+    /**
+     * Start no later group once a group's runner did not exit zero (failed, signaled or interrupted); off when
+     * absent. Groups already running when one fails still finish and are judged.
+     */
     stopAfterFailedGroup?: boolean
+    /** The most runners running at once, a positive integer ({@link testConcurrency}); one when absent. */
+    concurrency?: number
     /** Creates the run's own test-temp root when the environment sets none; the test-temp module's run by default. */
     createTestTempRoot?: () => TestTempRun
   } = {}
-): RunResult {
+): Promise<RunResult> {
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`))
-  const spawn = options.spawn ?? spawnSync
+  const start = options.spawn ?? startRunner
+  const concurrency = options.concurrency ?? DEFAULT_TEST_CONCURRENCY
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1)
+    throw new Error(`runGroups: the concurrency must be a positive integer, and it is ${concurrency}`)
+  const capture = concurrency > 1
   const baseEnv = options.env ?? process.env
   const testTemp = runTestTempRoot(baseEnv, options.createTestTempRoot)
   const runnerEnv: NodeJS.ProcessEnv = { ...baseEnv, [TEST_TEMP_ROOT_ENV]: testTemp.root }
@@ -744,54 +859,66 @@ export function runGroups(
     throw error
   }
   const roots = [...new Set([repoRoot, realpathSync(repoRoot)])]
-  const executions: ExecutionFacts[] = []
-  const failedRunners: string[] = []
-  const failedTests: Record<string, string[] | 'all'> = {}
-  const outcomes: GroupOutcome[] = []
-  const ended = (group: NativeGroup, index: number, run: GroupRun) => {
-    const outcome = groupOutcomeOf(group, run, repoRoot, roots)
-    outcomes.push(outcome)
-    if (options.announce) log(testGroupEndLine({ group: group.id, executed: outcome.executed, failed: outcome.failed }))
-    options.onGroupEnd?.(outcome, index)
-  }
+  // Each group's facts, kept by its plan index, so the result reads the same whatever order the groups ended in.
+  const executionAt = new Map<number, ExecutionFacts>()
+  const failedAt = new Map<number, string[] | 'all'>()
+  const outcomeAt = new Map<number, GroupOutcome>()
+  const limit = options.groupTimeLimitMs
   let stopped = false
-  let ranCount = 0
-  try {
-    groups.forEach((group, index) => {
-      if (stopped) return
-      ranCount = index + 1
+  let next = 0
+
+  const runOne = async (group: NativeGroup, index: number): Promise<void> => {
+    // Above one runner at a time, every line of this group waits here and is written as one block when it ends.
+    const block: string[] = []
+    const emit = (line: string) => {
+      if (capture) block.push(line)
+      else log(line)
+    }
+    const keep = (exit: RunnerExit) => {
+      if (exit.output) block.push(exit.output.replace(/\n$/, ''))
+    }
+    try {
       const report = join(dir, `${index}.${group.runner === 'bun' ? 'xml' : 'json'}`)
+      // A Bun run gets its own copy of its folder's configuration naming this report. Where none can be made, the run
+      // still names this report of its own (`--reporter-outfile`), never one another runner writes.
       const { command, env: reportEnv } = runnerLaunch(group, report, join(repoRoot, group.cwd))
-      log(
+      emit(
         `vinaya schedule: ${group.id} — ${group.owner}, ${group.runner} in ${group.cwd}, ${group.tests.length} file(s)`
       )
       if (options.announce)
-        log(testGroupStartLine({ group: group.id, runner: group.runner, cwd: group.cwd, tests: group.tests }))
-      const limit = options.groupTimeLimitMs
-      const start = () =>
-        spawn(command[0] as string, command.slice(1), {
+        emit(testGroupStartLine({ group: group.id, runner: group.runner, cwd: group.cwd, tests: group.tests }))
+      const launch = () =>
+        start(command, {
           cwd: join(repoRoot, group.cwd),
-          stdio: 'inherit',
-          ...(limit !== undefined ? { timeout: limit, killSignal: 'SIGKILL' as const } : {}),
+          capture,
+          ...(limit !== undefined ? { timeLimitMs: limit } : {}),
           // Bun writes the report its configuration names even when `--reporter-outfile` names another: the run's own
           // configuration names this report, or the test preload points the shared path at it (`junit-store.ts`).
           env: { ...runnerEnv, ...reportEnv }
         })
-      let run = start()
+      let run = await launch()
+      keep(run)
       // A runner stopped at the limit is started once more: a test whose synchronous child never returns freezes its
       // whole runner, and the freeze is intermittent. A second stop fails the group as interrupted.
-      if (timedOut(run)) {
-        log(
+      if (run.timedOut) {
+        emit(
           `vinaya schedule: ${group.id} stopped after ${Math.round((limit ?? 0) / 60_000)} min with no end; running it once more`
         )
         rmSync(report, { force: true })
-        run = start()
+        run = await launch()
+        keep(run)
+      }
+      const ended = (groupRun: GroupRun) => {
+        const outcome = groupOutcomeOf(group, groupRun, repoRoot, roots)
+        outcomeAt.set(index, outcome)
+        if (options.announce)
+          emit(testGroupEndLine({ group: group.id, executed: outcome.executed, failed: outcome.failed }))
+        options.onGroupEnd?.(outcome, index)
       }
       if (run.signal) {
-        executions.push({ group: group.id, outcome: 'signaled', detail: run.signal, files: [] })
-        failedRunners.push(group.id)
-        failedTests[group.id] = 'all'
-        ended(group, index, { status: run.status, signal: run.signal, report: null })
+        executionAt.set(index, { group: group.id, outcome: 'signaled', detail: run.signal, files: [] })
+        failedAt.set(index, 'all')
+        ended({ status: run.status, signal: run.signal, report: null })
         if (options.stopAfterFailedGroup) stopped = true
         return
       }
@@ -802,7 +929,7 @@ export function runGroups(
         text = null
       }
       if (text !== null && group.runner === 'bun') options.onReport?.(group, text)
-      ended(group, index, { status: run.status, signal: null, report: text })
+      ended({ status: run.status, signal: null, report: text })
       const files =
         text === null
           ? null
@@ -810,28 +937,65 @@ export function runGroups(
             ? bunReportedFiles(group, bunJunitFiles(text), repoRoot)
             : vitestJsonFiles(text)
       if (run.status !== 0) {
-        failedRunners.push(group.id)
         const written =
           text === null ? null : group.runner === 'bun' ? bunJunitFailedFiles(text) : vitestJsonFailedFiles(text)
         const named = (written ?? [])
           .map((entry) => scheduledTestOf(group, entry, repoRoot))
           .filter((id): id is string => id !== null)
-        failedTests[group.id] = named.length > 0 ? [...new Set(named)].sort() : 'all'
+        failedAt.set(index, named.length > 0 ? [...new Set(named)].sort() : 'all')
         if (options.stopAfterFailedGroup) stopped = true
       }
-      executions.push(
+      executionAt.set(
+        index,
         files === null
           ? { group: group.id, outcome: 'unreadable', detail: `no readable ${group.runner} report`, files: [] }
           : { group: group.id, outcome: 'completed', files }
       )
-    })
+    } finally {
+      if (capture && block.length > 0) log(block.join('\n'))
+    }
+  }
+
+  // Each worker takes the next group in plan order, so the groups started always form a prefix of the plan. Once a
+  // failure stops the run no worker starts another group, and the groups already running finish and are judged.
+  // A group that throws (its runner could not be launched, or a hook threw) starts nothing further either.
+  let thrown = false
+  const worker = async (): Promise<void> => {
+    while (!stopped && !thrown && next < groups.length) {
+      const index = next++
+      try {
+        await runOne(groups[index] as NativeGroup, index)
+      } catch (error) {
+        thrown = true
+        throw error
+      }
+    }
+  }
+  try {
+    // Every worker settles before the shared report folder and the test-temp root are removed, so a runner still
+    // running when another throws never writes into a removed folder; the first error is then thrown.
+    const settled = await Promise.allSettled(
+      Array.from({ length: Math.min(concurrency, groups.length) }, () => worker())
+    )
+    const failure = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (failure) throw failure.reason
   } finally {
     rmSync(dir, { recursive: true, force: true })
     // Only a root this run created, and only after every runner has ended; a caller's own root stays theirs.
     if (testTemp.created) releaseTestTempRoot(testTemp.created, log)
   }
-  // A stopped run judges only the groups that ran: a group that never started is not a missing execution.
-  const judged = stopped ? groups.slice(0, ranCount) : groups
+  const inOrder = <T>(facts: Map<number, T>): [number, T][] => [...facts].sort((a, b) => a[0] - b[0])
+  const executions = inOrder(executionAt).map(([, facts]) => facts)
+  const failedRunners: string[] = []
+  const failedTests: Record<string, string[] | 'all'> = {}
+  for (const [index, tests] of inOrder(failedAt)) {
+    const id = (groups[index] as NativeGroup).id
+    failedRunners.push(id)
+    failedTests[id] = tests
+  }
+  const outcomes = inOrder(outcomeAt).map(([, outcome]) => outcome)
+  // A stopped run judges only the groups that started: a group that never started is not a missing execution.
+  const judged = stopped ? groups.slice(0, next) : groups
   const { problems } = validateExecutedIdentities(judged, executions, { roots })
   return { failedRunners, problems, executions, failedTests, outcomes }
 }
@@ -847,7 +1011,7 @@ function repositoryRoot(): string {
   return spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).stdout.trim()
 }
 
-function main(argv: readonly string[]): number {
+async function main(argv: readonly string[]): Promise<number> {
   // The step summary file the workflow names (`--summary "$GITHUB_STEP_SUMMARY"`); none outside CI.
   const summaryFile = argValue(argv, '--summary')
   const summary = (lines: readonly string[]): void => {
@@ -900,6 +1064,13 @@ function main(argv: readonly string[]): number {
     process.stderr.write('schedule.ts --run needs --placement build, shard-<n> or shared\n')
     return 2
   }
+  let concurrency: number
+  try {
+    concurrency = testConcurrency()
+  } catch (error) {
+    process.stderr.write(`vinaya schedule: refused — ${error instanceof Error ? error.message : String(error)}\n`)
+    return 2
+  }
   // The build placement runs the selected repository tests only: the package-compatibility suite has its own step.
   const repository = new Set(view.tests.filter((t) => t.kind === 'repository').map((t) => t.id))
   const groups =
@@ -923,8 +1094,9 @@ function main(argv: readonly string[]): number {
   ])
   // Each Bun group's report, kept as the pass entries a later run of the same pull request reuses.
   const reports: { cwd: string; xml: string }[] = []
-  const result = runGroups(repoRoot, groups, {
+  const result = await runGroups(repoRoot, groups, {
     groupTimeLimitMs: GROUP_TIME_LIMIT_MS,
+    concurrency,
     onReport: (group, xml) => reports.push({ cwd: group.cwd, xml })
   })
   const passesFile = argValue(argv, '--pass-entries')
@@ -953,4 +1125,4 @@ function main(argv: readonly string[]): number {
   return result.failedRunners.length > 0 || result.problems.length > 0 ? 1 : 0
 }
 
-if (import.meta.main) process.exitCode = main(process.argv.slice(2))
+if (import.meta.main) process.exitCode = await main(process.argv.slice(2))
