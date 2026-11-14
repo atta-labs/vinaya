@@ -1,15 +1,39 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { generateClaudeSettings } from './claude-code/settings'
 import { generateCodexConfig } from './codex/config'
-import { loadRoleGrants } from './manifest'
+import { type RoleContract, resolveRoleGrants } from './manifest'
 
-const processRoot = join(import.meta.dir, '../../../../harness/processes/vinaya-strict/executing')
+// The grants here are defined inline: a role whose shell runs anything not denied, that writes its worktree and
+// scratch directory, and whose hooks refuse a commit on the default branch. A process proves its own grants files
+// through the same hooks in its own tests.
+const WRITER: RoleContract = {
+  role: 'developer',
+  models: { claude: 'process-supplied', codex: 'process-supplied' },
+  capabilities: {
+    read_files: 'allow',
+    run_commands: { default: 'allow', allow: [], deny: ['git push', 'gh'] },
+    write_files: ['${WORKTREE}', '${SCRATCH}'],
+    network: ['example.com'],
+    web_fetch: 'deny',
+    web_search: 'deny',
+    subagents: 'deny',
+    plan_tool: 'allow',
+    view_image: 'allow'
+  },
+  mcp_tools: { tools: ['read_source'] },
+  hooks: { background_shell: true, force_push: true, no_verify: true, default_branch_commit: true, write_scope: true },
+  sandbox: 'enabled'
+}
+const READER: RoleContract = {
+  ...WRITER,
+  capabilities: { ...WRITER.capabilities, run_commands: 'deny', write_files: 'deny' }
+}
 
 function repository(branch: 'main' | 'task'): string {
-  const directory = mkdtempSync(join(tmpdir(), `vinaya-cd-${branch}-`))
+  const directory = mkdtempSync(join(tmpdir(), `cd-and-then-${branch}-`))
   const git = (...args: string[]) => {
     const result = Bun.spawnSync(['git', '-C', directory, ...args])
     if (result.exitCode !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr.toString()}`)
@@ -29,18 +53,12 @@ function repository(branch: 'main' | 'task'): string {
 describe('a git command after `cd <worktree> &&` is judged in the worktree alone', () => {
   const main = repository('main')
   const task = repository('task')
-  const grants = loadRoleGrants(join(processRoot, 'developer/grants.yaml'))
-  const outputSchema = JSON.parse(readFileSync(join(processRoot, 'developer/output.schema.json'), 'utf8'))
+  const grants = resolveRoleGrants(WRITER)
   const paths = {
     generatedDir: task,
     outputSchemaPath: 'output.schema.json',
-    outputSchema,
-    variables: {
-      WORKTREE: task,
-      SCRATCH: join(task, 'scratch'),
-      BUN_INSTALL_CACHE: '/bun',
-      GIT_COMMON_DIR: join(task, '.git')
-    }
+    outputSchema: {},
+    variables: { WORKTREE: task, SCRATCH: join(task, 'scratch') }
   }
   for (const vendor of ['claude', 'codex'] as const) {
     const config = vendor === 'claude' ? generateClaudeSettings(grants, paths) : generateCodexConfig(grants, paths)
@@ -63,23 +81,23 @@ describe('a git command after `cd <worktree> &&` is judged in the worktree alone
 })
 
 describe('a role that writes its scratch directory keeps npm cache there', () => {
-  const grants = loadRoleGrants(join(processRoot, 'developer/grants.yaml'))
   const paths = {
     generatedDir: '/gen',
     outputSchemaPath: 'x.json',
     outputSchema: {},
-    variables: { WORKTREE: '/wt', SCRATCH: '/scratch', BUN_INSTALL_CACHE: '/bun', GIT_COMMON_DIR: '/git' }
+    variables: { WORKTREE: '/wt', SCRATCH: '/scratch' }
   }
-  test('both vendors launch the Developer with npm_config_cache in its scratch directory', () => {
+  test('both vendors launch a role writing its scratch directory with npm_config_cache there', () => {
+    const grants = resolveRoleGrants(WRITER)
     expect(generateClaudeSettings(grants, paths).env).toEqual({
       ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
       npm_config_cache: '/scratch/npm-cache'
     })
     expect(generateCodexConfig(grants, paths).env.npm_config_cache).toBe('/scratch/npm-cache')
   })
-  test('a reviewer, which writes nowhere, gets no cache setting', () => {
-    const reviewer = loadRoleGrants(join(processRoot, 'code-reviewer/grants.yaml'))
-    expect(generateClaudeSettings(reviewer, paths).env).toEqual({ ENABLE_CLAUDEAI_MCP_SERVERS: 'false' })
-    expect(generateCodexConfig(reviewer, paths).env.npm_config_cache).toBeUndefined()
+  test('a role that writes nowhere gets no cache setting', () => {
+    const reader = resolveRoleGrants(READER)
+    expect(generateClaudeSettings(reader, paths).env).toEqual({ ENABLE_CLAUDEAI_MCP_SERVERS: 'false' })
+    expect(generateCodexConfig(reader, paths).env.npm_config_cache).toBeUndefined()
   })
 })

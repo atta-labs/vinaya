@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { grantVariables } from './variables'
 import { generateCodexConfig } from './codex/config'
 import { generateClaudeSettings } from './claude-code/settings'
-import { loadRoleGrants } from './manifest'
+import { resolveRoleGrants } from './manifest'
 
 describe('grantVariables', () => {
   test('resolves every placeholder to a real path for a git worktree', () => {
@@ -42,7 +42,7 @@ describe('grantVariables', () => {
   })
 })
 
-test('developer configs resolve the exact linked git dir only after worktree creation', () => {
+test('a role writing its git dir resolves the exact linked git dir only after worktree creation', () => {
   const repo = realpathSync(mkdtempSync(join(tmpdir(), 'grant-linked-')))
   execFileSync('git', ['init', '-q', repo])
   execFileSync('git', [
@@ -59,9 +59,31 @@ test('developer configs resolve the exact linked git dir only after worktree cre
   ])
   const worktree = join(repo, 'task')
   const runDir = join(repo, 'run')
-  const grants = loadRoleGrants(
-    join(import.meta.dir, '../../../processes/vinaya-strict/executing/developer/grants.yaml')
-  )
+  // Grants defined inline: a role that writes its worktree, the repository's common git directory and its own.
+  const grants = resolveRoleGrants({
+    role: 'developer',
+    models: { claude: 'process-supplied', codex: 'process-supplied' },
+    capabilities: {
+      read_files: 'allow',
+      run_commands: { default: 'allow', allow: [], deny: [] },
+      write_files: ['${WORKTREE}', '${SCRATCH}', '${GIT_COMMON_DIR}', '${GIT_DIR}'],
+      network: [],
+      web_fetch: 'deny',
+      web_search: 'deny',
+      subagents: 'deny',
+      plan_tool: 'deny',
+      view_image: 'deny'
+    },
+    mcp_tools: {},
+    hooks: {
+      background_shell: true,
+      force_push: true,
+      no_verify: true,
+      default_branch_commit: true,
+      write_scope: true
+    },
+    sandbox: 'enabled'
+  })
   const paths = {
     outputSchema: {},
     generatedDir: runDir,
