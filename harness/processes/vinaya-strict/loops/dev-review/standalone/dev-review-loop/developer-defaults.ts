@@ -9,6 +9,7 @@ import { firstErrorLine } from '../../actions/live-developer-context.js'
 import { WORKER_ENV_ALLOWLIST_KEYS } from '../../../../../../kernel/isolation/worker-boundary.js'
 import type { CommitWorktreeResult } from './git-defaults.js'
 import { sh } from './gate-reading.js'
+import { clearGitReadMemo } from '../../v2/git-read-memo.js'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
@@ -118,6 +119,8 @@ export function defaultBuildVendoredCliIfMissing(worktreePath: string): void {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe']
   })
+  // A child process the step started: the memo is emptied after it.
+  clearGitReadMemo('vendored CLI build')
   if (result.error || result.status !== 0) {
     const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.trim()
     throw new Error(
@@ -156,6 +159,8 @@ export function defaultInstallWorktreeDependencies(worktreePath: string): void {
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 10 * 60 * 1000
   })
+  // A child process the step started: the memo is emptied after it.
+  clearGitReadMemo('dependency install')
   if (result.error || result.status !== 0) {
     const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.trim().split('\n').slice(-20).join('\n')
     const cause = result.error?.message ?? `exit ${result.status ?? 'unknown'}`
@@ -191,6 +196,8 @@ export function defaultCommitWorktree(worktreePath: string, header: string): Com
     }
     throw err
   } finally {
+    // The commit moved the branch, and its hooks may have run anything.
+    clearGitReadMemo('git commit')
     rmSync(traceDir, { recursive: true, force: true })
   }
   return { ok: true, sha: sh('git', ['-C', worktreePath, 'rev-parse', 'HEAD']).trim() }
@@ -283,6 +290,8 @@ export function pushBranchClassified(worktreePath: string, branch: string, lease
     const detail = boundedPushOutput(output || (err instanceof Error ? err.message : String(err)), 'tail')
     throw new Error(`${exit}: ${detail || 'no captured output'}`)
   } finally {
+    // The push moved the remote-tracking ref, and its pre-push hook may have run anything.
+    clearGitReadMemo('git push')
     rmSync(traceDir, { recursive: true, force: true })
   }
 }
