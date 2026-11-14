@@ -1,28 +1,30 @@
 import { describe, expect, it } from 'bun:test'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  copyListingProbe,
+  exitStatusOutcome,
   indexRecordedTest,
-  READ_RECORD_SCHEMA,
-  type ReadRecord,
-  type RecordedTest,
-  readsOfTrace,
-  recordReach,
-  repositoryFolder,
-  type TraceOptions
-} from '@attalabs/test-selection'
-import { RECORD_FILE } from '../test-suites/read-records.js'
-import { absoluteOf, globPrefix, PROBE_LOG_ENV } from './listing-probe.js'
-import {
+  lookupFolders,
   mergeShardRecords,
+  moduleLookups,
+  type NativeGroup,
   PROBE_FILE,
   parseShard,
+  passedWhileRecorded,
   probedLaunch,
+  READ_RECORD_SCHEMA,
+  RECORD_FILE,
+  type ReadRecord,
+  type RecordedTest,
   readProbeLog,
-  lookupFolders,
-  moduleLookups,
   readShardOutputs,
+  readsOfTrace,
+  recordCommand,
+  recordedTestOf,
+  recordReach,
+  repositoryFolder,
   SHARD_FILE,
   STRACE_ARGS,
   type Shard,
@@ -30,9 +32,24 @@ import {
   scannedFolders,
   scanSources,
   shardTests,
+  type TraceOptions,
   withProbeFirst,
   workspacePackages
-} from './record-reads.js'
+} from '@attalabs/test-selection'
+import { RECORD_FILE as FETCHED_RECORD_FILE } from '../test-suites/read-records.js'
+import { GROUP_TIME_LIMIT_MS, groupOutcomeOf, runnerLaunch } from '../test-suites/schedule.js'
+import { absoluteOf, globPrefix, PROBE_LOG_ENV } from './listing-probe.js'
+import { REPOSITORY_COMMAND, REPOSITORY_RECORDER } from './record-reads.js'
+
+/**
+ * The record entries the repository's recorder built for the captured trace and probe log before the recorder moved
+ * into the selection package, as the record file writes them: every field, in its order. The moved recorder must build
+ * exactly these.
+ */
+const PINNED_RECORD =
+  '{"reads":["bun.lock#zod","fixtures/data","lib/modules"],"listed":["bin","docs","fixtures/data","fixtures/tree","fixtures/tree/deep","harness/x","lib/cache","lib/modules","packages/core/src","scripts","tmp-unknown"],"scanned":["bin","docs","fixtures/data","fixtures/tree/","harness/x","packages/core/src","scripts","tmp-unknown"]}'
+const PINNED_FALLBACK_RECORD =
+  '{"reads":["bun.lock#zod","fixtures/data","lib/modules"],"listed":["bin","docs","fixtures/data","fixtures/tree","fixtures/tree/deep","harness/x","lib/cache","lib/modules","packages/core/src","scripts","tmp-unknown"],"scanned":["bin","docs","fixtures/data","fixtures/tree/","harness/x","packages/core/src","scripts","tmp-unknown"],"fallback":"git-read","gitReaders":["git cat-file -p HEAD","git show HEAD"],"branchesOnPlatform":true}'
 
 const TESTS = [
   'apps/cli/tests/b.test.ts',
@@ -188,8 +205,9 @@ const TARGET = join(realpathSync(FIXTURES), 'target')
 /** A scratch folder outside the repository holding a copy of the probe, as the recorder makes one. */
 const probeScratch = (): { dir: string; probe: string; log: string } => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-listing-probe-')))
-  const probe = join(dir, PROBE_FILE)
-  copyFileSync(join(import.meta.dir, PROBE_FILE), probe)
+  // The shipped probe, copied as the package's recorder copies it, so every run below is a direct `bun --preload` of it.
+  const probe = copyListingProbe(dir)
+  expect(probe).toBe(join(dir, PROBE_FILE))
   return { dir, probe, log: join(dir, 'probe.jsonl') }
 }
 
@@ -508,6 +526,32 @@ describe('scanned folders', () => {
     ])
   })
 
+  it('build, from a captured trace and probe log, exactly the record entry the record file holds', () => {
+    const probe = readProbeLog(readFileSync(join(FIXTURES, 'captured.probe.jsonl'), 'utf8'))
+    const result = readsOfTrace(readFileSync(join(FIXTURES, 'captured.trace'), 'utf8'), {
+      ...options,
+      probe: { log: '/scratch/3.probe.jsonl', starts: probe.starts, wholly: probe.wholly }
+    })
+    const recorded = recordedTestOf({ result, probe, trace: options, sourceRoot: ROOT, packages: new Map() })
+    expect(JSON.stringify(recorded)).toBe(PINNED_RECORD)
+    // A read source that branches on the platform, and a git content read, add their fields in the same order.
+    const sources = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-pinned-record-')))
+    try {
+      mkdirSync(join(sources, 'fixtures'))
+      writeFileSync(join(sources, 'fixtures', 'data'), 'if (process.platform === "linux") {}\n')
+      const withFallback = recordedTestOf({
+        result: { ...result, git: true, gitReaders: new Set(['git cat-file -p HEAD', 'git show HEAD']) },
+        probe,
+        trace: options,
+        sourceRoot: sources,
+        packages: new Map()
+      })
+      expect(JSON.stringify(withFallback)).toBe(PINNED_FALLBACK_RECORD)
+    } finally {
+      rmSync(sources, { recursive: true, force: true })
+    }
+  })
+
   it('count every listing when no probe ran', () => {
     const result = readsOfTrace(readFileSync(join(FIXTURES, 'captured.trace'), 'utf8'), options)
     expect([...result.processScanned].sort()).toEqual([...result.listed].sort())
@@ -662,5 +706,95 @@ describe('scanned folders', () => {
       'new Bun.FileSystemRouter({ dir })'
     ])
       expect(moduleLookups(text).every).toBe(true)
+  })
+})
+
+// ── This repository records through the package ─────────────────────────────
+
+describe('this repository’s recorder', () => {
+  it('hands the package everything that decides its record, and keeps the record file the selection fetches', () => {
+    expect(REPOSITORY_RECORDER.launch).toBe(runnerLaunch)
+    expect(REPOSITORY_RECORDER.outcome).toBe(groupOutcomeOf)
+    expect(REPOSITORY_RECORDER.timeLimitMs).toBe(GROUP_TIME_LIMIT_MS)
+    expect(REPOSITORY_RECORDER.dependencyInput).toBe('bun.lock')
+    expect(RECORD_FILE).toBe(FETCHED_RECORD_FILE)
+    expect(REPOSITORY_COMMAND.name).toBe('vinaya record-reads')
+  })
+
+  const test = 'pkg/t/a.test.ts'
+  const group: NativeGroup = {
+    id: 'bun@default',
+    suite: 'bun',
+    owner: '@fx/x',
+    kind: 'workspace',
+    runner: 'bun',
+    cwd: 'pkg',
+    preload: null,
+    environment: {},
+    configuration: 'default',
+    scope: 'files',
+    reason: null,
+    tests: [test],
+    args: ['./t/a.test.ts'],
+    exclude: []
+  }
+  const junit = (files: string[]) =>
+    [
+      '<testsuites name="bun test" failures="0">',
+      ...files.map((file) => `<testsuite name="${file}" file="${file}" failures="0"></testsuite>`),
+      '</testsuites>'
+    ].join('\n')
+
+  it('records a run only when it exits 0 and its report says the one file passed; a missing or irregular report records nothing', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-record-outcome-')))
+    try {
+      const recorded = (status: number | null, report: string | null) =>
+        passedWhileRecorded(
+          status,
+          REPOSITORY_RECORDER.outcome(group, { status, signal: null, report }, root, [root]),
+          test
+        )
+      expect(recorded(0, junit(['t/a.test.ts']))).toBe(true)
+      expect(recorded(0, null)).toBe(false)
+      expect(recorded(0, junit(['t/a.test.ts', 't/other.test.ts']))).toBe(false)
+      expect(recorded(0, junit([]))).toBe(false)
+      expect(recorded(1, junit(['t/a.test.ts']))).toBe(false)
+      // The package's default, for a consumer with no report: the exit status alone confirms the one file.
+      const plain = (status: number | null, signal: string | null = null) =>
+        passedWhileRecorded(status, exitStatusOutcome(group, { status, signal, report: null }, root, [root]), test)
+      expect(plain(0)).toBe(true)
+      expect(plain(1)).toBe(false)
+      expect(plain(null, 'SIGKILL')).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a host that is not Linux, or has no strace, with one message, and a missing --out with its usage', async () => {
+    const out = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-record-refuse-')))
+    try {
+      const hosts = [
+        [{ platform: 'darwin' as const }, 'vinaya record-reads: the recorder runs on Linux only (strace)\n'],
+        [
+          { platform: 'linux' as const, hasTracer: () => false },
+          'vinaya record-reads: strace cannot be started: the recorder traces every test with it\n'
+        ]
+      ] as const
+      for (const [host, message] of hosts) {
+        const written: string[] = []
+        const status = await recordCommand(['--out', out], {
+          ...REPOSITORY_COMMAND,
+          ...host,
+          write: (text) => written.push(text)
+        })
+        expect(status).toBe(2)
+        expect(written).toEqual([message])
+      }
+      const written: string[] = []
+      expect(await recordCommand([], { ...REPOSITORY_COMMAND, write: (text) => written.push(text) })).toBe(2)
+      expect(written).toEqual([REPOSITORY_COMMAND.usage as string])
+    } finally {
+      rmSync(out, { recursive: true, force: true })
+    }
   })
 })

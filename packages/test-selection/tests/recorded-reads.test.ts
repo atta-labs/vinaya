@@ -1,7 +1,9 @@
 // The syscall-trace reader's own tests: hand-written `strace -f -yy -e trace=%file,getdents64` output, the shapes
-// a Bun test and the child processes it starts leave. They import only the public entrypoint.
+// a Bun test and the child processes it starts leave, and the shipped recorder that builds a record entry from them.
+// They import only the public entrypoint.
 import { describe, expect, it } from 'bun:test'
-import { posix } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { join, posix } from 'node:path'
 import {
   gitPathArguments,
   isGitContentRead,
@@ -16,7 +18,13 @@ import {
   recordReach,
   stableJson,
   startsThread,
-  type TraceOptions
+  type TraceOptions,
+  exitStatusOutcome,
+  type NativeGroup,
+  plainLaunch,
+  readProbeLog,
+  recordCommand,
+  recordedTestOf
 } from '../src/index.js'
 
 const ROOT = '/work/repo'
@@ -464,5 +472,71 @@ describe('installed packages', () => {
     expect(
       recordReach(indexRecordedTest({ reads: ['bun.lock'], listed: [] }), { path: 'bun.lock', status: 'modified' })
     ).not.toBeNull()
+  })
+})
+
+describe('the shipped recorder', () => {
+  // Copies of the repository recorder's captured trace and probe log, under this package's own fixtures.
+  const FIXTURES = join(import.meta.dir, 'fixtures')
+  const repo: TraceOptions = {
+    repoRoot: ROOT,
+    startCwd: ROOT,
+    realpath: (absolute) => absolute,
+    packageDirs: [],
+    dependencyInput: 'bun.lock'
+  }
+
+  it('builds, from a captured trace and probe log, the record entry the repository recorder built before it shipped', () => {
+    const probe = readProbeLog(readFileSync(join(FIXTURES, 'captured.probe.jsonl'), 'utf8'))
+    const result = readsOfTrace(readFileSync(join(FIXTURES, 'captured.trace'), 'utf8'), {
+      ...repo,
+      probe: { log: '/scratch/3.probe.jsonl', starts: probe.starts, wholly: probe.wholly }
+    })
+    expect(JSON.stringify(recordedTestOf({ result, probe, trace: repo, sourceRoot: ROOT, packages: new Map() }))).toBe(
+      '{"reads":["bun.lock#zod","fixtures/data","lib/modules"],"listed":["bin","docs","fixtures/data","fixtures/tree","fixtures/tree/deep","harness/x","lib/cache","lib/modules","packages/core/src","scripts","tmp-unknown"],"scanned":["bin","docs","fixtures/data","fixtures/tree/","harness/x","packages/core/src","scripts","tmp-unknown"]}'
+    )
+  })
+
+  it('refuses a host that is not Linux with one message, before reading anything', async () => {
+    const written: string[] = []
+    const status = await recordCommand(['--out', '/nonexistent/record'], {
+      name: 'test-selection-record',
+      platform: 'darwin',
+      write: (text) => written.push(text)
+    })
+    expect(status).toBe(2)
+    expect(written).toEqual(['test-selection-record: the recorder runs on Linux only (strace)\n'])
+  })
+
+  it('launches a plain runner in the suite’s folder, and confirms the one file by its exit status alone', () => {
+    const group: NativeGroup = {
+      id: 'web@default',
+      suite: 'web',
+      owner: 'web',
+      kind: 'workspace',
+      runner: 'vitest',
+      cwd: 'packages/web',
+      preload: null,
+      environment: {},
+      configuration: 'default',
+      scope: 'files',
+      reason: null,
+      tests: ['packages/web/tests/view.spec.ts'],
+      args: ['tests/view.spec.ts'],
+      exclude: ['tests/view.spec.tsx']
+    }
+    const vitest = plainLaunch(group, '/scratch/0.json', '/nowhere/packages/web')
+    expect(vitest.command).toEqual(['vitest', 'run', '--exclude', 'tests/view.spec.tsx', 'tests/view.spec.ts'])
+    const bun = plainLaunch(
+      { ...group, runner: 'bun', args: ['./tests/a.test.ts'], exclude: [] },
+      '/x/0.xml',
+      '/nowhere'
+    )
+    expect(bun).toEqual({ command: ['bun', 'test', './tests/a.test.ts'], env: {} })
+    const confirmed = (status: number | null, signal: string | null = null) =>
+      exitStatusOutcome(group, { status, signal, report: null }, ROOT, [ROOT]).confirmed
+    expect(confirmed(0)).toEqual(group.tests)
+    expect(confirmed(1)).toEqual([])
+    expect(confirmed(null, 'SIGKILL')).toEqual([])
   })
 })
