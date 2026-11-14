@@ -32,6 +32,7 @@ import {
   STALE_HEAD,
   type EngineScenarioRun
 } from '../tests/dev-review-engine-loop-adapter.js'
+import { storedEngineScenario } from '../tests/engine-corpus-store.js'
 import corpus from '../fixtures/dev-review-engine-scenarios.json'
 import engineFailures from '../fixtures/dev-review-engine-expected-failures.json'
 
@@ -192,7 +193,12 @@ beforeAll(async () => {
       }
       const inspection: { value: Inspection | null } = { value: null }
       const started = Date.now()
-      const observation = await runEngineScenario(spec.scenario, agent, sink, (run) => inspect(spec, run, inspection))
+      // A plain corpus run comes from the corpus store, its inspection reading a restored copy of its ended files; a
+      // fault run, and a run through a sink of its own, test the execution itself and always run.
+      const shared = sink === undefined && !FAULT_IDS.includes(spec.scenario)
+      const observation = shared
+        ? await storedEngineScenario(spec.scenario, agent, { inspect: (run) => inspect(spec, run, inspection) })
+        : await runEngineScenario(spec.scenario, agent, sink, (run) => inspect(spec, run, inspection))
       runs.push({
         key: spec.key,
         agent,
