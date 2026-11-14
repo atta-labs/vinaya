@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { generateClaudeSettings } from './claude-code/settings'
@@ -14,6 +14,7 @@ import {
   offeredBeyondGrants
 } from './fixtures/generated-capabilities'
 import { type RoleCapabilities, type RoleContract, READ_ONLY_COMMANDS, resolveRoleGrants } from './manifest'
+import type { GeneratedAgentConfig } from '../../isolation/policy'
 import { evaluateShellGuards } from '../../isolation/shell-eval'
 
 // Every case here builds its grants from a contract it defines inline; a process proves its own grants files
@@ -235,6 +236,102 @@ describe('role-grant vendor parity', () => {
     expect(codexEffective(codex)).toEqual(claudeEffective(claude))
     codex.files['config.toml'] = generatedFile(codex, 'config.toml').replace('shell_tool = true', 'shell_tool = false')
     expect(codexEffective(codex)).not.toEqual(claudeEffective(claude))
+  })
+
+  test('generated hooks deny a write outside scope, a symlink escape and a background subagent', () => {
+    const grants = resolveRoleGrants(WRITER)
+    const workspace = mkdtempSync(join(tmpdir(), 'generated-hook-'))
+    const paths = {
+      generatedDir: workspace,
+      outputSchemaPath: 'output.schema.json',
+      outputSchema: {},
+      variables: { WORKTREE: workspace, SCRATCH: join(workspace, 'scratch') }
+    }
+    const invoke = (config: GeneratedAgentConfig, input: unknown) => {
+      const hook = join(workspace, `${config.vendor}-pre-tool-use.mjs`)
+      writeFileSync(hook, generatedFile(config, 'hooks/pre-tool-use.mjs'))
+      return Bun.spawnSync(['node', hook], {
+        cwd: workspace,
+        stdin: Buffer.from(JSON.stringify(input))
+      }).stdout.toString()
+    }
+    const claude = generateClaudeSettings(grants, paths)
+    const codex = generateCodexConfig(grants, paths)
+    const deny = '"permissionDecision":"deny"'
+    expect(invoke(claude, { tool_name: 'Write', tool_input: { file_path: join(tmpdir(), 'outside') } })).toContain(deny)
+    expect(invoke(claude, { tool_name: 'Write', tool_input: { file_path: join(workspace, 'inside') } })).toBe('')
+    for (const tool of ['Agent', 'Task', 'Workflow'])
+      expect(invoke(claude, { tool_name: tool, tool_input: { description: 'sweep', prompt: 'edit files' } })).toContain(
+        deny
+      )
+    const patch = (path: string) => `*** Begin Patch\n*** Add File: ${path}\n+x\n*** End Patch`
+    expect(invoke(codex, { tool_name: 'apply_patch', tool_input: { command: patch(join(workspace, 'in.txt')) } })).toBe(
+      ''
+    )
+    expect(
+      invoke(codex, { tool_name: 'apply_patch', tool_input: { command: patch(join(tmpdir(), 'out.txt')) } })
+    ).toContain(deny)
+    symlinkSync(mkdtempSync(join(tmpdir(), 'generated-hook-outside-')), join(workspace, 'escape-link'))
+    expect(
+      invoke(codex, {
+        tool_name: 'apply_patch',
+        tool_input: { command: patch(join(workspace, 'escape-link', 'x.txt')) }
+      })
+    ).toContain(deny)
+  })
+
+  test('a shell defaulting to allow runs ordinary commands and names the rule or guard behind each refusal', () => {
+    const grants = resolveRoleGrants(WRITER)
+    const workspace = mkdtempSync(join(tmpdir(), 'generated-shell-'))
+    const paths = {
+      generatedDir: workspace,
+      outputSchemaPath: 'o.json',
+      outputSchema: {},
+      variables: { WORKTREE: workspace }
+    }
+    const decide = (config: GeneratedAgentConfig, command: string): string => {
+      const hook = join(workspace, `${config.vendor}-hook.mjs`)
+      writeFileSync(hook, generatedFile(config, 'hooks/pre-tool-use.mjs'))
+      const out = Bun.spawnSync(['node', hook], {
+        cwd: workspace,
+        stdin: Buffer.from(JSON.stringify({ tool_name: 'Bash', tool_input: { command } }))
+      }).stdout.toString()
+      return out === '' ? 'allow' : String(JSON.parse(out).hookSpecificOutput.permissionDecisionReason)
+    }
+    for (const config of [generateClaudeSettings(grants, paths), generateCodexConfig(grants, paths)]) {
+      for (const command of ['pwd', 'ls -la', 'git status'])
+        expect(decide(config, command), `${config.vendor} ${command}`).toBe('allow')
+      expect(decide(config, 'git push origin task-branch')).toBe('command matches a shell deny rule')
+      expect(decide(config, 'gh pr list')).toBe('command matches a shell deny rule')
+      expect(decide(config, 'git commit -n -m x')).toBe('verification bypass is denied')
+      expect(decide(config, 'sleep 100 &')).toBe('background shell is denied')
+      expect(decide(config, 'sh -c "pwd"')).toBe('shell command cannot be proven safe')
+    }
+    const listed = { ...grants, shell: { allow: grants.shell.allow, deny: grants.shell.deny } }
+    for (const config of [generateClaudeSettings(listed, paths), generateCodexConfig(listed, paths)])
+      expect(decide(config, 'pwd')).toBe('command is outside the shell allowlist')
+  })
+
+  test('the Unix-socket opt-in, the output schema hand-off and the MCP and connector switches', () => {
+    const grants = resolveRoleGrants(WRITER)
+    const outputSchema = { type: 'object' }
+    const paths = { generatedDir: '/tmp/generated/writer', outputSchemaPath: '/s.json', outputSchema, variables: {} }
+    const network = (allowUnixSockets?: boolean) =>
+      JSON.parse(generatedFile(generateClaudeSettings(grants, { ...paths, allowUnixSockets }), 'role-settings.json'))
+        .sandbox.network
+    expect(network(true).allowAllUnixSockets).toBe(true)
+    expect(network(false)).not.toHaveProperty('allowAllUnixSockets')
+    expect(network()).not.toHaveProperty('allowAllUnixSockets')
+    const claude = generateClaudeSettings(grants, paths)
+    const codex = generateCodexConfig(grants, paths)
+    expect(claude.launch[claude.launch.indexOf('--json-schema') + 1]).toBe(JSON.stringify(outputSchema))
+    expect(codex.launch[codex.launch.indexOf('--output-schema') + 1]).toBe('/s.json')
+    expect(claude.launch.indexOf('--strict-mcp-config')).toBeGreaterThan(-1)
+    expect(claude.launch.indexOf('--strict-mcp-config')).toBeLessThan(claude.launch.indexOf('--mcp-config'))
+    expect(claude.env.ENABLE_CLAUDEAI_MCP_SERVERS).toBe('false')
+    const toml = generatedFile(codex, 'config.toml')
+    const features = (Bun.TOML.parse(toml) as { features: Record<string, unknown> }).features
+    for (const key of ['apps', 'plugins', 'remote_plugin']) expect(features[key]).toBe(false)
   })
 
   test('every shell bypass spelling is denied by both generated hooks for the guard itself', () => {
