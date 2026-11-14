@@ -39,7 +39,10 @@ How many of those one-file runners run at once is one setting,
 `VINAYA_TEST_CONCURRENCY`, a positive integer that `testConcurrency` in
 `schedule.ts` reads and validates for the CI schedule, a push, a review round
 and the exact receipt command alike; any other value is refused with a message
-naming the setting, before any runner starts. Unset, the default is one: each
+naming the setting, before any runner starts. The pre-push hook and the CI
+workflow reach it through the environment. A review round's test run gets a
+fixed environment that does not carry it, so a review round runs one file at a
+time until that environment passes the setting on explicitly. Unset, the default is one: each
 file's runner starts only when the one before it ended, and its output streams
 as it comes. Above one, runners start in plan order, never more than the
 setting at once, each with its own report, its own per-file limit and its own

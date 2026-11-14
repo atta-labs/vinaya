@@ -981,7 +981,8 @@ describe('what a native run records', () => {
           cwd: dir,
           env: { ...stripVinayaEnv(process.env), VINAYA_TEST_CONCURRENCY: value },
           encoding: 'utf8',
-          timeout: 60_000
+          timeout: 60_000,
+          killSignal: 'SIGKILL'
         })
         expect(run.status).toBe(1)
         expect(`${run.stdout}${run.stderr}`).toContain(

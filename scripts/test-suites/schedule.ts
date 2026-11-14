@@ -62,6 +62,12 @@ import {
 } from '@attalabs/test-selection'
 import { testGroupEndLine, testGroupStartLine } from '../../harness/kernel/gates/ring0-hooks/pre-push/push-progress.js'
 import { JUNIT_REPORT_ENV, junitRunConfig } from '../../harness/kernel/gates/ring0-hooks/pre-push/junit-store.js'
+import {
+  createTestTempRun,
+  removeTestTempRun,
+  TEST_TEMP_ROOT_ENV,
+  type TestTempRun
+} from '../../harness/kernel/conformance/unit/test-temp.js'
 import { passEntriesOfRun } from './repository-selection.js'
 import { type InventoryView, readTestInventory, type TestIdentity } from './inventory-check.js'
 
@@ -689,6 +695,32 @@ export function testConcurrency(env: Readonly<Record<string, string | undefined>
   return value
 }
 
+/** The repository id a scheduler's own test-temp run root is filed under: the id this repository's fixtures use. */
+export const SCHEDULE_TEST_TEMP_REPO_ID = 'vinaya'
+
+/**
+ * The test-temp root a run hands its runners: the caller's own `VINAYA_TEST_TMP` when the environment sets one (kept,
+ * and never removed here), otherwise a fresh owned run directory under the test-temp module's disk-backed default
+ * base (`createTestTempRun`, which falls back to the OS temp directory when that base is read-only). Every fixture
+ * directory and abandoned-run sweep of the run's tests then lives inside it, so two runs on one machine never see
+ * each other's directories; a root left by a killed scheduler carries its owner marker, and a later sweep removes it.
+ */
+export function runTestTempRoot(
+  env: NodeJS.ProcessEnv,
+  create: () => TestTempRun = () => createTestTempRun(SCHEDULE_TEST_TEMP_REPO_ID)
+): { root: string; created: TestTempRun | null } {
+  const set = env[TEST_TEMP_ROOT_ENV]
+  if (set !== undefined && set !== '') return { root: set, created: null }
+  const created = create()
+  return { root: created.dir, created }
+}
+
+/** Removes a run root this run created, reporting each directory it could not remove. */
+function releaseTestTempRoot(run: TestTempRun, log: (line: string) => void): void {
+  for (const { dir, error } of removeTestTempRun(run).failed)
+    log(`vinaya schedule: could not remove the run's test-temp root ${dir}: ${error}`)
+}
+
 /** How one runner start ended: its exit, whether its time limit stopped it, and its output when it was captured. */
 export type RunnerExit = {
   status: number | null
@@ -709,20 +741,34 @@ export type RunnerStart = (
   options: { cwd: string; env: NodeJS.ProcessEnv; capture: boolean; timeLimitMs?: number }
 ) => Promise<RunnerExit>
 
-/** The scheduler's own {@link RunnerStart}: one child process with its own time-limit timer. */
+/**
+ * How long a captured runner's output pipes may stay open after the runner itself exited. A child the runner left
+ * behind can hold them open with no end; past this bound the scheduler stops reading them.
+ */
+export const OUTPUT_DRAIN_MS = 2_000
+
+/**
+ * The scheduler's own {@link RunnerStart}: one child process with its own time-limit timer. It ends when the runner
+ * process exits — never when its output pipes close, which a child the runner left behind can hold open — and reads
+ * captured output for at most {@link OUTPUT_DRAIN_MS} after that exit.
+ */
 export const startRunner: RunnerStart = (command, options) =>
   new Promise<RunnerExit>((resolve) => {
     const chunks: Buffer[] = []
     let timedOut = false
     let settled = false
     let timer: ReturnType<typeof setTimeout> | undefined
+    let drain: ReturnType<typeof setTimeout> | undefined
     const settle = (status: number | null, signal: string | null) => {
       if (settled) return
       settled = true
       if (timer !== undefined) clearTimeout(timer)
+      if (drain !== undefined) clearTimeout(drain)
+      child?.stdout?.destroy()
+      child?.stderr?.destroy()
       resolve({ status, signal, timedOut, output: options.capture ? Buffer.concat(chunks).toString('utf8') : null })
     }
-    let child: ChildProcess
+    let child: ChildProcess | undefined
     try {
       child = spawn(command[0] as string, command.slice(1), {
         cwd: options.cwd,
@@ -733,21 +779,35 @@ export const startRunner: RunnerStart = (command, options) =>
       settle(null, null)
       return
     }
+    const started = child
     if (options.timeLimitMs !== undefined)
       timer = setTimeout(() => {
         timedOut = true
-        child.kill('SIGKILL')
+        started.kill('SIGKILL')
       }, options.timeLimitMs)
-    child.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk))
-    child.stderr?.on('data', (chunk: Buffer) => chunks.push(chunk))
-    child.on('error', () => settle(null, null))
-    child.on('close', (code, signal) => settle(code, signal))
+    started.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk))
+    started.stderr?.on('data', (chunk: Buffer) => chunks.push(chunk))
+    started.on('error', () => settle(null, null))
+    // The runner's own exit ends it; its time limit stops with it. Captured output is read until the pipes close or
+    // the drain bound passes, whichever is first.
+    let exit: { code: number | null; signal: string | null } | null = null
+    started.on('exit', (code, signal) => {
+      exit = { code, signal }
+      if (timer !== undefined) clearTimeout(timer)
+      timer = undefined
+      if (!options.capture) return settle(code, signal)
+      drain = setTimeout(() => settle(code, signal), OUTPUT_DRAIN_MS)
+    })
+    started.on('close', (code, signal) => settle(exit?.code ?? code, exit?.signal ?? signal))
   })
 
 /**
  * Runs `groups`, each in its own working directory under its own runner, and checks every runner executed exactly
  * its files. Up to `concurrency` runners (one when absent) run at once, started in plan order; at one, each starts
- * only when the one before it ended. The environment is this process's unless `env` names one. Each runner writes its
+ * only when the one before it ended. The environment is this process's unless `env` names one. Every runner gets the
+ * run's own test-temp root ({@link runTestTempRoot}): the environment's `VINAYA_TEST_TMP` when set, otherwise one this
+ * run creates and removes once every runner has ended. If a group throws, no further group starts, and the run waits
+ * for the runners already running before it removes its folders and throws that error. Each runner writes its
  * own report (Bun's JUnit, Vitest's JSON) into a temporary folder removed when the run ends, under a file name of its
  * own, so runners running together never share a report; the report names the files it executed and the ones that
  * failed. With `announce`, each group's scheduled files are printed as it starts and its report's executed and failing
@@ -778,6 +838,8 @@ export async function runGroups(
     stopAfterFailedGroup?: boolean
     /** The most runners running at once, a positive integer ({@link testConcurrency}); one when absent. */
     concurrency?: number
+    /** Creates the run's own test-temp root when the environment sets none; the test-temp module's run by default. */
+    createTestTempRoot?: () => TestTempRun
   } = {}
 ): Promise<RunResult> {
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`))
@@ -786,7 +848,16 @@ export async function runGroups(
   if (!Number.isSafeInteger(concurrency) || concurrency < 1)
     throw new Error(`runGroups: the concurrency must be a positive integer, and it is ${concurrency}`)
   const capture = concurrency > 1
-  const dir = mkdtempSync(join(tmpdir(), 'vinaya-schedule-'))
+  const baseEnv = options.env ?? process.env
+  const testTemp = runTestTempRoot(baseEnv, options.createTestTempRoot)
+  const runnerEnv: NodeJS.ProcessEnv = { ...baseEnv, [TEST_TEMP_ROOT_ENV]: testTemp.root }
+  let dir: string
+  try {
+    dir = mkdtempSync(join(tmpdir(), 'vinaya-schedule-'))
+  } catch (error) {
+    if (testTemp.created) releaseTestTempRoot(testTemp.created, log)
+    throw error
+  }
   const roots = [...new Set([repoRoot, realpathSync(repoRoot)])]
   // Each group's facts, kept by its plan index, so the result reads the same whatever order the groups ended in.
   const executionAt = new Map<number, ExecutionFacts>()
@@ -823,7 +894,7 @@ export async function runGroups(
           ...(limit !== undefined ? { timeLimitMs: limit } : {}),
           // Bun writes the report its configuration names even when `--reporter-outfile` names another: the run's own
           // configuration names this report, or the test preload points the shared path at it (`junit-store.ts`).
-          env: { ...(options.env ?? process.env), ...reportEnv }
+          env: { ...runnerEnv, ...reportEnv }
         })
       let run = await launch()
       keep(run)
@@ -887,16 +958,31 @@ export async function runGroups(
 
   // Each worker takes the next group in plan order, so the groups started always form a prefix of the plan. Once a
   // failure stops the run no worker starts another group, and the groups already running finish and are judged.
+  // A group that throws (its runner could not be launched, or a hook threw) starts nothing further either.
+  let thrown = false
   const worker = async (): Promise<void> => {
-    while (!stopped && next < groups.length) {
+    while (!stopped && !thrown && next < groups.length) {
       const index = next++
-      await runOne(groups[index] as NativeGroup, index)
+      try {
+        await runOne(groups[index] as NativeGroup, index)
+      } catch (error) {
+        thrown = true
+        throw error
+      }
     }
   }
   try {
-    await Promise.all(Array.from({ length: Math.min(concurrency, groups.length) }, () => worker()))
+    // Every worker settles before the shared report folder and the test-temp root are removed, so a runner still
+    // running when another throws never writes into a removed folder; the first error is then thrown.
+    const settled = await Promise.allSettled(
+      Array.from({ length: Math.min(concurrency, groups.length) }, () => worker())
+    )
+    const failure = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (failure) throw failure.reason
   } finally {
     rmSync(dir, { recursive: true, force: true })
+    // Only a root this run created, and only after every runner has ended; a caller's own root stays theirs.
+    if (testTemp.created) releaseTestTempRoot(testTemp.created, log)
   }
   const inOrder = <T>(facts: Map<number, T>): [number, T][] => [...facts].sort((a, b) => a[0] - b[0])
   const executions = inOrder(executionAt).map(([, facts]) => facts)

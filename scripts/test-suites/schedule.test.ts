@@ -7,7 +7,17 @@
  * interrupted run and an unreadable report among them.
  */
 import { afterAll, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -17,6 +27,13 @@ import {
   CI_SHARD_LIST_OWNER
 } from '../../harness/processes/vinaya-strict/checks/ci-shard-membership.ts'
 import { groupNativeTests, type NativeGroup, type NativeTestRequest, type TestIdentity } from '@attalabs/test-selection'
+import {
+  createTestTempRun,
+  OWNER_MARKER_FILE,
+  removeTestTempRun,
+  TEST_TEMP_ROOT_ENV,
+  type TestTempRun
+} from '../../harness/kernel/conformance/unit/test-temp.ts'
 import { type InventoryView, readTestInventory } from './inventory-check.ts'
 import {
   assignShards,
@@ -29,10 +46,14 @@ import {
   GROUP_TIME_LIMIT_MS,
   type GroupOutcome,
   groupOutcomeOf,
+  OUTPUT_DRAIN_MS,
   type RunnerStart,
   readShardLists,
   runGroups,
   runnerCommand,
+  runTestTempRoot,
+  SCHEDULE_TEST_TEMP_REPO_ID,
+  startRunner,
   TEST_CONCURRENCY_ENV,
   testConcurrency,
   vitestJsonFiles
@@ -393,6 +414,14 @@ function runnerFixture(): { root: string; universe: TestIdentity[] } {
     // file out of its report and exits non-zero.
     'pkg/bun/tests/load-reject.test.ts':
       "import { expect, test } from 'bun:test'\nPromise.reject(new Error('load reject'))\ntest('runs', () => expect(1).toBe(1))\n",
+    // A test that leaves a child behind holding the runner's own stdout and stderr, and names its pid for cleanup.
+    'pkg/bun/tests/linger.test.ts': [
+      "import { test } from 'bun:test'",
+      "import { spawn } from 'node:child_process'",
+      "import { writeFileSync } from 'node:fs'",
+      "test('leaves a child holding the output', () => { const child = spawn('sleep', ['30'], { stdio: 'inherit', detached: true }); child.unref(); writeFileSync(`${import.meta.dir}/.linger.pid`, String(child.pid)) })",
+      ''
+    ].join('\n'),
     'pkg/bun/tests/kill.test.ts':
       "import { test } from 'bun:test'\ntest('killed', () => { process.kill(process.pid, 'SIGTERM'); return new Promise((r) => setTimeout(r, 5000)) })\n",
     // A test that changes directory, as several CLI tests do: Bun then names its file a second time, from the new folder.
@@ -454,6 +483,7 @@ function runnerFixture(): { root: string; universe: TestIdentity[] } {
       vt('pkg/vt/src/run.test.ts'),
       vt('pkg/vt/legacy/src/run.test.ts'),
       bun('pkg/bun/tests/fail.test.ts'),
+      bun('pkg/bun/tests/linger.test.ts'),
       vt('pkg/vt/src/fail.test.ts')
     ]
   }
@@ -729,10 +759,24 @@ describe('real runners execute exactly their group', () => {
     // Every group's end is heard once either way; only the order the ends arrive in may differ.
     expect([...four.heard].sort()).toEqual([...one.heard].sort())
     expect(one.result.failedRunners.length).toBeGreaterThan(0)
-    // The stopping push reaches the same verdict on its first failing file at either setting.
+    // A stopping push: one at a time it ends on its first failing file. Four at a time, the first four files start
+    // together, and a file that ends before the failure frees a runner for the next file in plan order; once the
+    // failure lands no further file starts, every started one finishes and is judged, and nothing that never started
+    // counts as missing.
     const stopOne = await runGroups(root, plan, { ...quiet, stopAfterFailedGroup: true })
     expect(stopOne.failedRunners).toEqual([plan[1]?.id])
     expect(stopOne.outcomes.map((o) => o.group)).toEqual([plan[0]?.id, plan[1]?.id])
+    const stopFour = await runGroups(root, plan, { ...quiet, stopAfterFailedGroup: true, concurrency: 4 })
+    const judged = stopFour.outcomes.map((o) => o.group)
+    // The judged files are a prefix of the plan, at least the four started together. (Which later files start depends
+    // on which runners end first; the runner-pool tests below pin the no-further-start rule with a fixed order.)
+    expect(judged).toEqual(plan.slice(0, judged.length).map((g) => g.id))
+    expect(judged.length).toBeGreaterThanOrEqual(4)
+    expect(stopFour.executions.map((e) => e.group)).toEqual(judged)
+    expect(stopFour.failedRunners).toEqual(expect.arrayContaining([plan[1]?.id, plan[3]?.id]))
+    expect(stopFour.outcomes.slice(0, 2)).toEqual(stopOne.outcomes)
+    expect(stopFour.problems.map((p) => p.code)).not.toContain('missing')
+    expect(stopFour.problems.map((p) => `${p.code} ${p.path}`)).toContain(`interrupted ${plan[3]?.id}`)
   }, 240_000)
 
   test('above one runner, each runner’s start line, output and end line reach the log as one block', async () => {
@@ -875,6 +919,74 @@ describe('the runner pool', () => {
     await expect(runGroups(root, plan, { log: () => {}, concurrency: 0 })).rejects.toThrow('positive integer')
     await expect(runGroups(root, plan, { log: () => {}, concurrency: 1.5 })).rejects.toThrow('positive integer')
   })
+
+  test('a group that throws stops further starts, and the run waits for the runners already running', async () => {
+    let running = 0
+    let endedAfterThrow = false
+    const spawn: RunnerStart = async (command) => {
+      if (fileOf(command) === 'tests/fail.test.ts') throw new Error('runner could not start')
+      running++
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      running--
+      endedAfterThrow = true
+      return { status: 0, signal: null, timedOut: false, output: '' }
+    }
+    await expect(runGroups(root, plan, { log: () => {}, spawn, concurrency: 2 })).rejects.toThrow(
+      'runner could not start'
+    )
+    // The first file's runner had finished before the run gave up, and no runner was left running.
+    expect([endedAfterThrow, running]).toEqual([true, 0])
+  })
+})
+
+describe('a real runner whose child holds its output', () => {
+  const { root, universe } = runnerFixture()
+  const pidFile = join(root, 'pkg/bun/tests/.linger.pid')
+  const killLeftover = (pid: number) => {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {}
+  }
+
+  test('ends when the runner exits, not when the leftover child releases the pipes', async () => {
+    const plan = oneFilePlan(universe, ['pkg/bun/tests/a.test.ts', 'pkg/bun/tests/linger.test.ts'])
+    const lines: string[] = []
+    const started = performance.now()
+    try {
+      const result = await runGroups(root, plan, {
+        log: (text) => lines.push(...text.split('\n')),
+        concurrency: 2,
+        groupTimeLimitMs: 20_000
+      })
+      // Well before the leftover child's thirty seconds and the per-file limit: the runner's exit ended it.
+      expect(performance.now() - started).toBeLessThan(15_000)
+      expect(lines.some((line) => line.includes('running it once more'))).toBe(false)
+      expect(result.failedRunners).toEqual([])
+      expect(result.problems).toEqual([])
+      expect(result.outcomes.map((o) => o.confirmed)).toEqual([
+        ['pkg/bun/tests/a.test.ts'],
+        ['pkg/bun/tests/linger.test.ts']
+      ])
+    } finally {
+      killLeftover(Number(readFileSync(pidFile, 'utf8')))
+    }
+  }, 60_000)
+
+  test('a runner killed at its limit ends at once even while a child of it still holds the pipes', async () => {
+    const started = performance.now()
+    const exit = await startRunner(['sh', '-c', 'sleep 30 & echo $! ; sleep 30'], {
+      cwd: root,
+      env: process.env,
+      capture: true,
+      timeLimitMs: 500
+    })
+    try {
+      expect(performance.now() - started).toBeLessThan(500 + OUTPUT_DRAIN_MS + 3_000)
+      expect([exit.timedOut, exit.signal]).toEqual([true, 'SIGKILL'])
+    } finally {
+      killLeftover(Number((exit.output ?? '').trim().split('\n')[0]))
+    }
+  }, 30_000)
 })
 
 describe('the concurrency setting', () => {
@@ -1015,5 +1127,79 @@ describe('what a runner group confirms', () => {
       { numFailedTestSuites: 1, numFailedTests: 2, success: true }
     ])
       expect(outcome(group('vitest'), 1, vitest(totals, listed))).toMatchObject({ trusted: false, obligations: ids })
+  })
+})
+
+describe("each run's own test-temp root", () => {
+  const fixture = runnerFixture()
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'schedule-test-temp-')))
+  scratch.push(base)
+  const runs = join(base, SCHEDULE_TEST_TEMP_REPO_ID)
+  const create = () => createTestTempRun(SCHEDULE_TEST_TEMP_REPO_ID, runs)
+  const group = groupNativeTests({
+    tests: [fixture.universe.find((t) => t.id === 'pkg/bun/tests/a.test.ts') as TestIdentity],
+    universe: fixture.universe
+  }).groups[0] as NativeGroup
+  /** Runs one group twice with a recording spawn: each runner's root, and whether it existed while the runner ran. */
+  const run = async (env: NodeJS.ProcessEnv, fail = false) => {
+    const seen: { root: string | undefined; existed: boolean }[] = []
+    const spawn: RunnerStart = async (_command, opts) => {
+      const root = opts.env[TEST_TEMP_ROOT_ENV]
+      seen.push({ root, existed: root !== undefined && existsSync(join(root, OWNER_MARKER_FILE)) })
+      if (fail) throw new Error('runner could not start')
+      return { status: 0, signal: null, timedOut: false, output: null }
+    }
+    const go = () => runGroups(fixture.root, [group, group], { log: () => {}, spawn, env, createTestTempRoot: create })
+    if (fail) await expect(go()).rejects.toThrow('runner could not start')
+    else await go()
+    return seen
+  }
+  const unset = { PATH: process.env.PATH }
+
+  test('two runs hand their runners two distinct roots, each removed once the run ends', async () => {
+    const first = await run(unset)
+    const second = await run(unset)
+    // Every runner of one run shares its run's root; the two runs never share one.
+    expect(new Set(first.map((s) => s.root)).size).toBe(1)
+    expect(new Set(second.map((s) => s.root)).size).toBe(1)
+    expect(first[0]?.root).not.toBe(second[0]?.root)
+    for (const { root } of [...first, ...second]) {
+      expect(dirname(root as string)).toBe(runs)
+      expect(existsSync(root as string)).toBe(false)
+    }
+    // Each root carried its owner marker while its runners ran, so a later sweep can judge one a killed run left.
+    expect([...first, ...second].every((s) => s.existed)).toBe(true)
+    expect(readdirSync(runs).filter((name) => !name.endsWith('.owner.json'))).toEqual([])
+  })
+
+  test("a caller's own root is kept and never removed", async () => {
+    const own = join(base, 'caller-root')
+    mkdirSync(own)
+    const seen = await run({ ...unset, [TEST_TEMP_ROOT_ENV]: own })
+    expect(seen.map((s) => s.root)).toEqual([own, own])
+    expect(existsSync(own)).toBe(true)
+  })
+
+  test('the root a run created is removed even when its runner fails to start', async () => {
+    const seen = await run(unset, true)
+    expect(seen).toHaveLength(1)
+    expect(existsSync(seen[0]?.root as string)).toBe(false)
+  })
+
+  test('a set root is kept without creating one; an empty setting creates one', () => {
+    let created = 0
+    const counted = () => {
+      created++
+      return create()
+    }
+    expect(runTestTempRoot({ [TEST_TEMP_ROOT_ENV]: '/disk/own' }, counted)).toEqual({
+      root: '/disk/own',
+      created: null
+    })
+    expect(created).toBe(0)
+    const fresh = runTestTempRoot({ [TEST_TEMP_ROOT_ENV]: '' }, counted)
+    expect(created).toBe(1)
+    expect(fresh.created?.dir).toBe(fresh.root)
+    expect(removeTestTempRun(fresh.created as TestTempRun).failed).toEqual([])
   })
 })
