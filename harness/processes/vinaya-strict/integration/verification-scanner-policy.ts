@@ -94,7 +94,9 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     roots: ['apps/cli/src/'],
     trigger: 'content'
   },
-  { test: 'apps/cli/tests/platform-independence.test.ts', roots: ['apps/cli/tests/'], trigger: 'content' },
+  // Lists every tracked test file with `git ls-files`, plus every `.ts` file under the CLI and process test folders,
+  // and reads each one's syntax for a host-platform read: any file anywhere in the tree can join its corpus.
+  { test: 'apps/cli/tests/platform-independence.test.ts', roots: ['.'], trigger: 'content' },
   {
     test: 'harness/processes/vinaya-strict/integration/conformance/unit/process-fixture-coverage.test.ts',
     roots: ['apps/cli/tests/', 'harness/processes/'],

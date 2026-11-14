@@ -1,0 +1,11 @@
+{
+  "real-sandbox": {
+    "harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/sandbox-conformance.test.ts": "drives each vendor's real sandbox on the host and asserts what it really confines",
+    "harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/sandbox-launch.ts": "launches a real sandbox on the real host, so the scratch directory it hands the sandbox depends on the host platform",
+    "harness/processes/vinaya-strict/integration/isolation/dispatch/linux-sandbox-probe.test.ts": "its live block runs the real Linux sandbox probe, which exists only on a Linux host",
+    "harness/processes/vinaya-strict/integration/isolation/worker-boundary.test.ts": "asserts the host's own Seatbelt boundary and bubblewrap detection against the real host facts",
+    "harness/processes/vinaya-strict/integration/adapters/agents/dispatch/unattended.test.ts": "spawns the real dispatch command, whose confinement is the host's real sandbox, so its confinement cases are per platform",
+    "harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-integration.test.ts": "spawns the real dispatch command, whose confinement is the host's real sandbox, so its cases are per platform",
+    "packages/test-selection/tests/consumer.test.ts": "runs the installed read recorder for real, which traces each test with the host's strace and refuses on any host but Linux, so its recording case is per platform"
+  }
+}

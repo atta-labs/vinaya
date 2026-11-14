@@ -586,6 +586,19 @@
       "reason": "The header parity test compares the parsed event headers its probes write with this recording, read from disk."
     },
     {
+      "id": "file-level-tests",
+      "kind": "config",
+      "paths": ["scripts/test-suites/file-level-tests.json"],
+      "format": "json",
+      "readers": [
+        {
+          "kind": "semantic",
+          "tests": ["apps/cli/tests/platform-independence.test.ts"]
+        }
+      ],
+      "reason": "The platform-independence check reads its real-sandbox list, the files allowed to read the host platform, from this file on disk."
+    },
+    {
       "id": "log-sink-factory-programs",
       "kind": "spawn",
       "paths": ["harness/processes/vinaya-strict/integration/log/", "harness/kernel/log/log-sink.ts"],
