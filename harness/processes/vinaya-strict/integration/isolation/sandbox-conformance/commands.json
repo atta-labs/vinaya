@@ -63,10 +63,8 @@
       "run": "gh pr view 1010 --json reviews,statusCheckRollup,body"
     },
     {
-      "id": "verify-dispatch-premise",
-      "forms": [
-        "bun harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts <tranche> <n> --premise <body-file>"
-      ],
+      "id": "dispatch-readiness-premise",
+      "forms": ["vinaya-check dispatch-readiness"],
       "notRun": "re-asserts a brief's Premise block — it needs the dispatched brief text as its body file, which only a real dispatch has"
     },
     {
