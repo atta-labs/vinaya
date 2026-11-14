@@ -5,15 +5,19 @@
  * serves them. It is the one place in the package that builds a git reader
  * itself; it starts no test and writes no file.
  *
- * Usage: `test-selection --base <commit> --head <commit>`.
+ * Usage: `test-selection --base <commit> --head <commit> [--record <file>] [--config <file>]`.
+ * It reads no file but the two the optional flags name.
  */
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
+import { type ConsumerConfig, ConsumerConfigError, parseConsumerConfig, withDeclaredInputs } from './consumer-config.js'
 import { groupNativeTests } from './native.js'
+import { isReadRecord, type ReadRecord } from './recorded-reads.js'
 import { gitRepository, plannedTests, selectTests } from './selector.js'
 import { workspaceInventory } from './workspace-inventory.js'
 
-const USAGE = 'usage: test-selection --base <commit> --head <commit>'
+const USAGE = 'usage: test-selection --base <commit> --head <commit> [--record <file>] [--config <file>]'
 
 class CommandError extends Error {}
 
@@ -25,12 +29,19 @@ function git(cwd: string, args: string[]): string | null {
   }
 }
 
-function argumentsOf(argv: readonly string[]): { base: string; head: string } {
-  let values: { base?: string; head?: string }
+type Arguments = { base: string; head: string; record: string | null; config: string | null }
+
+function argumentsOf(argv: readonly string[]): Arguments {
+  let values: { base?: string; head?: string; record?: string; config?: string }
   try {
     values = parseArgs({
       args: [...argv],
-      options: { base: { type: 'string' }, head: { type: 'string' } },
+      options: {
+        base: { type: 'string' },
+        head: { type: 'string' },
+        record: { type: 'string' },
+        config: { type: 'string' }
+      },
       strict: true,
       allowPositionals: false
     }).values
@@ -39,12 +50,49 @@ function argumentsOf(argv: readonly string[]): { base: string; head: string } {
   }
   if (!values.base) throw new CommandError(`--base is missing; ${USAGE}`)
   if (!values.head) throw new CommandError(`--head is missing; ${USAGE}`)
-  return { base: values.base, head: values.head }
+  if (values.record === '') throw new CommandError(`--record names no file; ${USAGE}`)
+  if (values.config === '') throw new CommandError(`--config names no file; ${USAGE}`)
+  return { base: values.base, head: values.head, record: values.record ?? null, config: values.config ?? null }
+}
+
+/** The parsed JSON document of a file a flag names, or a usage error naming the flag. */
+function jsonFile(flag: string, file: string): unknown {
+  let text: string
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch (error) {
+    throw new CommandError(`${flag} ${file} cannot be read: ${(error as NodeJS.ErrnoException).code ?? 'unreadable'}`)
+  }
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new CommandError(`${flag} ${file} is not a JSON document`)
+  }
+}
+
+/** The read record `--record` names, validated with the package's record validator. */
+function recordOf(file: string): ReadRecord {
+  const value = jsonFile('--record', file)
+  if (!isReadRecord(value)) throw new CommandError(`--record ${file} is not a read record`)
+  return value
+}
+
+/** The consumer config `--config` names; absent, a transitive walk with nothing declared. */
+function configOf(file: string | null): ConsumerConfig {
+  if (file === null) return { policy: { depth: 'transitive' }, inputs: [] }
+  try {
+    return parseConsumerConfig(jsonFile('--config', file))
+  } catch (error) {
+    if (error instanceof ConsumerConfigError) throw new CommandError(`--config ${file}: ${error.message}`)
+    throw error
+  }
 }
 
 /** The plan document for the repository around `cwd`. */
 function planDocument(cwd: string, argv: readonly string[]): unknown {
   const args = argumentsOf(argv)
+  const record = args.record === null ? null : recordOf(args.record)
+  const config = configOf(args.config)
   const root = git(cwd, ['rev-parse', '--show-toplevel'])
   if (!root) throw new CommandError(`${cwd} is not inside a git repository`)
   const commit = (revision: string): string => {
@@ -63,8 +111,12 @@ function planDocument(cwd: string, argv: readonly string[]): unknown {
     repo,
     base,
     head,
-    inventory: { base: baseInventory.view, head: headInventory.view },
-    policy: { depth: 'transitive' }
+    inventory: {
+      base: withDeclaredInputs(baseInventory.view, config.inputs),
+      head: withDeclaredInputs(headInventory.view, config.inputs)
+    },
+    policy: config.policy,
+    ...(record ? { records: { record, platform: process.platform } } : {})
   })
 
   const removed = new Set(plan.removedTests)

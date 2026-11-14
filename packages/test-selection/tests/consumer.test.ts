@@ -3,7 +3,9 @@
 // runs there — this package's README example under Node, a selection over
 // that repository's own two commits under both Node (the built `dist/`) and
 // Bun (the shipped source), and the `test-selection` command under Node in a
-// repository of one Bun package and one Vitest package.
+// repository of one Bun package and one Vitest package, then with a read
+// record (`--record`) and a consumer config (`--config`) in a second one; and
+// the `test-selection-record` command and a direct preload of the shipped probe.
 import { describe, expect, it } from 'bun:test'
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import {
@@ -223,6 +225,121 @@ describe('a fresh repository installs the packed package and selects with it', (
         expect(refused.stderr.trim().split('\n')).toHaveLength(1)
       }
 
+      // The command with a read record and a consumer config, in a fresh repository whose head commit changes only
+      // a data file one test reads without importing it, and whose next commit adds a test with its own data file.
+      const cfg = join(home, 'cfg')
+      mkdirSync(cfg)
+      const cfgFiles: Record<string, string> = {
+        'package.json': '{ "name": "cfg", "private": true, "type": "module", "workspaces": ["packages/*"] }\n',
+        'packages/app/package.json': '{ "name": "app", "scripts": { "test": "bun test" } }\n',
+        'packages/app/src/a.ts': 'export const a = 1\n',
+        'packages/app/src/b.ts': 'export const b = 1\n',
+        'packages/app/tests/a.test.ts': "import { a } from '../src/a'\n",
+        'packages/app/tests/b.test.ts': "import { b } from '../src/b'\n",
+        'packages/app/data/table.json': '{ "rows": 1 }\n',
+        'packages/lib/package.json': '{ "name": "lib", "scripts": { "test": "bun test" } }\n',
+        'packages/lib/src/l.ts': 'export const l = 1\n',
+        'packages/lib/tests/l.test.ts': "import { l } from '../src/l'\n"
+      }
+      const writeAll = (root: string, entries: Record<string, string>) => {
+        for (const [path, text] of Object.entries(entries)) {
+          mkdirSync(dirname(join(root, path)), { recursive: true })
+          writeFileSync(join(root, path), text)
+        }
+      }
+      writeAll(cfg, cfgFiles)
+      run('git', ['init', '-q', '-b', 'main'], cfg, home)
+      run('git', ['add', '-A'], cfg, home)
+      run('git', ['commit', '-q', '-m', 'base'], cfg, home)
+      const cfgBase = run('git', ['rev-parse', 'HEAD'], cfg, home).stdout.trim()
+      writeFileSync(join(cfg, 'packages/app/data/table.json'), '{ "rows": 2 }\n')
+      run('git', ['commit', '-q', '-am', 'head'], cfg, home)
+      const cfgHead = run('git', ['rev-parse', 'HEAD'], cfg, home).stdout.trim()
+      writeAll(cfg, { 'packages/app/tests/c.test.ts': 'export {}\n', 'packages/app/data/c.json': '{}\n' })
+      run('git', ['add', '-A'], cfg, home)
+      run('git', ['commit', '-q', '-m', 'adds a test and its data'], cfg, home)
+      const cfgAdded = run('git', ['rev-parse', 'HEAD'], cfg, home).stdout.trim()
+
+      // The record and the configs live outside the repository, as a CI job's downloaded files do.
+      const side = (name: string, value: unknown): string => {
+        const path = join(home, name)
+        writeFileSync(path, typeof value === 'string' ? value : JSON.stringify(value))
+        return path
+      }
+      const readRecord = side('record.json', {
+        schema: 'vinaya.read-record',
+        schemaVersion: 1,
+        commit: cfgBase,
+        platform: 'linux',
+        tests: {
+          'packages/app/tests/a.test.ts': {
+            reads: ['packages/app/tests/a.test.ts', 'packages/app/src/a.ts', 'packages/app/data/table.json'],
+            listed: []
+          },
+          'packages/app/tests/b.test.ts': {
+            reads: ['packages/app/tests/b.test.ts', 'packages/app/src/b.ts'],
+            listed: []
+          },
+          'packages/lib/tests/l.test.ts': {
+            reads: ['packages/lib/tests/l.test.ts', 'packages/lib/src/l.ts'],
+            listed: []
+          }
+        }
+      })
+      const inputs = [
+        { path: 'packages/app/data/table.json', readers: ['packages/app/tests/a.test.ts'] },
+        { path: 'packages/app/data/c.json', readers: ['packages/app/tests/c.test.ts'] }
+      ]
+      const inputsConfig = side('inputs.json', { inputs })
+      const policyConfig = side('policy.json', {
+        depth: 'transitive',
+        inputs,
+        alwaysRun: [
+          { id: 'smoke', reason: 'the smoke test runs on every change', tests: ['packages/lib/tests/*.test.ts'] }
+        ],
+        wholeSuites: [{ suite: 'app', reason: 'app tests read the whole package' }]
+      })
+      const select = (base: string, head: string, ...flags: string[]) =>
+        JSON.parse(run('node', [command, '--base', base, '--head', head, ...flags], cfg, home).stdout)
+      const everyTest = ['packages/app/tests/a.test.ts', 'packages/app/tests/b.test.ts', 'packages/lib/tests/l.test.ts']
+
+      // No flag: no import reaches the data file, so a fallback scope runs every test — the plan as before.
+      const unflagged = select(cfgBase, cfgHead)
+      expect(unflagged.tests).toEqual(everyTest)
+      expect(select(cfgBase, cfgHead, '--config', side('empty.json', {}))).toEqual(unflagged)
+      // The record: the one test that read the data file, alone.
+      const recorded = select(cfgBase, cfgHead, '--record', readRecord)
+      expect(recorded.tests).toEqual(['packages/app/tests/a.test.ts'])
+      expect(recorded.fallbacks).toEqual([])
+      // A declared input reaches its reader.
+      expect(select(cfgBase, cfgHead, '--config', inputsConfig).tests).toEqual(['packages/app/tests/a.test.ts'])
+      // An always-run obligation and a whole-suite policy add their tests, with no fallback scope behind them.
+      const policed = select(cfgBase, cfgHead, '--config', policyConfig)
+      expect(policed.tests).toEqual(everyTest)
+      expect(policed.fallbacks).toEqual([])
+      // A head adding a test with its declared input, and a head that deleted a test still named, print a plan.
+      expect(select(cfgHead, cfgAdded, '--config', inputsConfig).tests).toEqual(['packages/app/tests/c.test.ts'])
+      expect(select(cfgAdded, cfgHead, '--config', inputsConfig).tests).toEqual([])
+
+      // A bad record or a bad config: one message naming what is wrong, exit 2, nothing printed.
+      for (const [flags, message] of [
+        [['--record', join(home, 'no-such-record.json')], 'cannot be read'],
+        [['--record', side('not-a-record.json', { tests: {} })], 'is not a read record'],
+        [['--config', side('unknown-key.json', { depht: 'one' })], 'depht is not a known key'],
+        [['--config', side('wrong-shape.json', { inputs: [{ path: 'x', readers: 'y' }] })], 'inputs[0].readers'],
+        [['--config', side('bad-depth.json', { depth: 'deep' })], 'depth is not'],
+        [['--config', side('not-json.json', '{')], 'is not a JSON document']
+      ] as [string[], string][]) {
+        const refused = spawnSync('node', [command, '--base', cfgBase, '--head', cfgHead, ...flags], {
+          cwd: cfg,
+          encoding: 'utf8',
+          env: bareEnv(home)
+        })
+        expect(refused.status).toBe(2)
+        expect(refused.stdout).toBe('')
+        expect(refused.stderr.trim().split('\n')).toHaveLength(1)
+        expect(refused.stderr).toContain(message)
+      }
       // The record command, linked by npm, under Node: the built `dist/`, with the probe's source shipped beside it.
       expect(listing).toContain('package/dist/record-command.js')
       expect(listing).toContain('package/src/listing-probe.ts')
