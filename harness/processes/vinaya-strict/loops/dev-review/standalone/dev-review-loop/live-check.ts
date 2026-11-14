@@ -26,6 +26,7 @@ import type { LiveRecordEntry, LiveRecordLine } from '../../../../tools/task-con
 import { buildCheckEnv } from '../../../../../../kernel/gates/checks/runner.js'
 import { AGENT_VENDOR_NAMES, type AgentVendor } from '../../dispatch/dispatch.js'
 import { sanitizeForgeLogTail } from '../../run-control/pr-facts.js'
+import { clearGitReadMemo } from '../../v2/git-read-memo.js'
 import {
   CLAUDE_KEYCHAIN_SERVICE,
   CODEX_KEYCHAIN_SERVICE,
@@ -172,6 +173,8 @@ export const runRealLiveCommand: LiveRunner = (command, cwd, timeoutMs) =>
     const settle = (run: LiveRun): void => {
       if (settled) return
       settled = true
+      // A live line may run anything, git included: the memo is emptied once it ends.
+      clearGitReadMemo('live command')
       clearTimeout(timer)
       if (grace !== undefined) clearTimeout(grace)
       resolve(run)
@@ -227,6 +230,8 @@ function runFile(
       [...args],
       { cwd: opts.cwd, env: opts.env, timeout: opts.timeoutMs, maxBuffer: 16 * 1024 * 1024 },
       (err, _stdout, stderr) => {
+        // The worktree add and the install are child processes the step started: the memo is emptied after each.
+        clearGitReadMemo(`${file} ${args[0] ?? ''}`)
         if (err === null) resolve()
         else
           reject(
@@ -266,6 +271,7 @@ export async function prepareRealLiveCheckout(
     } catch {
       // A stale record is harmless and the next prune drops it.
     }
+    clearGitReadMemo('live checkout removed')
   }
   try {
     await runFile(
