@@ -7,11 +7,13 @@ import {
   isGitContentRead,
   bunLockIdentity,
   changedLockPackages,
+  foldersOf,
   indexRecordedTest,
   installedPackageName,
   isConventionName,
   lockKeyPackageName,
   nameStems,
+  newFolderOf,
   readsOfTrace,
   recordReach,
   stableJson,
@@ -348,6 +350,72 @@ describe('an added or deleted path, with the folders the test’s own code liste
     const everything = indexRecordedTest({ reads: [], listed: ['.', 'lib'], scanned: ['./'] })
     expect(recordReach(everything, { path: 'lib/x.ts', status: 'deleted' })).not.toBeNull()
     expect(recordReach(everything, { path: 'other/x.ts', status: 'added' })).not.toBeNull()
+  })
+
+  it('past an unlisted folder, keeps a test only when a folder between the path and the listed one is new', () => {
+    // The test's code listed the root; `.changeset` exists on both sides, so the root's listing is unchanged.
+    const root = indexRecordedTest({ reads: [], listed: ['.'], scanned: ['.'] })
+    expect(recordReach(root, { path: '.changeset/one.md', status: 'added', newFolder: null })).toBeNull()
+    expect(recordReach(root, { path: 'a/b/c.ts', status: 'deleted', newFolder: null })).toBeNull()
+    // A new top-level folder adds a name to the root's listing.
+    expect(recordReach(root, { path: 'fresh/x.ts', status: 'added', newFolder: 'fresh' })?.detail).toBe(
+      "an added path adds or removes fresh in ., which the recorded run's own code listed"
+    )
+    // Deleting a folder's last file removes it from the head.
+    expect(recordReach(root, { path: 'gone/x.ts', status: 'deleted', newFolder: 'gone' })?.detail).toBe(
+      "a deleted path adds or removes gone in ., which the recorded run's own code listed"
+    )
+    // A new folder deeper on the path still lies between the path and the listed root.
+    expect(recordReach(root, { path: 'a/new/x.ts', status: 'added', newFolder: 'a/new' })).not.toBeNull()
+    // A change without the fact keeps the walk as before.
+    expect(recordReach(root, { path: '.changeset/one.md', status: 'added' })).not.toBeNull()
+    // The same rule holds for a convention name and a shadowed stem past an unlisted folder.
+    expect(recordReach(loaded, { path: 'int/nested/package.json', status: 'added', newFolder: null })).toBeNull()
+    expect(recordReach(loaded, { path: 'int/mod/index.ts', status: 'added', newFolder: null })).toBeNull()
+    expect(recordReach(loaded, { path: 'int/mod/index.ts', status: 'added', newFolder: 'int/mod' })).not.toBeNull()
+    // The listed folder itself, or one above it, absent on the other side keeps today's walk.
+    const deep = indexRecordedTest({ reads: [], listed: ['x/y'], scanned: ['x/y'] })
+    expect(recordReach(deep, { path: 'x/y/z/f.ts', status: 'added', newFolder: 'x' })).not.toBeNull()
+    expect(recordReach(deep, { path: 'x/y/z/f.ts', status: 'added', newFolder: 'x/y' })).not.toBeNull()
+    expect(recordReach(deep, { path: 'x/y/z/f.ts', status: 'added', newFolder: null })).toBeNull()
+  })
+
+  it('deleting the whole tree a test listed still reaches it, whichever folder on it is gone', () => {
+    // The test listed and scanned `x/y`; the change deletes every file under `x/y`, so its listing call now fails.
+    const deep = indexRecordedTest({ reads: [], listed: ['x/y'], scanned: ['x/y'] })
+    const head = foldersOf(['other/keep.ts'])
+    const deletedTree = ['x/y/z/f.ts', 'x/y/z/g/h.ts'].map((path) => ({
+      path,
+      status: 'deleted' as const,
+      newFolder: newFolderOf(path, head)
+    }))
+    expect(deletedTree.map((c) => c.newFolder)).toEqual(['x', 'x'])
+    for (const change of deletedTree)
+      expect(recordReach(deep, change)?.detail).toBe(
+        "a deleted path adds or removes z in x/y, which the recorded run's own code listed"
+      )
+    // `x` survives at the head, so the shallowest absent folder is the listed folder itself.
+    const keepsX = foldersOf(['x/other.ts'])
+    expect(newFolderOf('x/y/z/f.ts', keepsX)).toBe('x/y')
+    expect(recordReach(deep, { path: 'x/y/z/f.ts', status: 'deleted', newFolder: 'x/y' })).not.toBeNull()
+  })
+
+  it('a path in a listed folder reaches the test as before, whatever its new folder', () => {
+    expect(recordReach(scanner, { path: 'int/unrelated.ts', status: 'added', newFolder: null })?.detail).toBe(
+      "an added path sits in int, which the recorded run's own code listed"
+    )
+    expect(recordReach(scanner, { path: 'int/old.ts', status: 'deleted', newFolder: 'int' })).not.toBeNull()
+    const root = indexRecordedTest({ reads: [], listed: ['.'], scanned: ['.'] })
+    expect(recordReach(root, { path: 'top.ts', status: 'added', newFolder: null })).not.toBeNull()
+  })
+
+  it('names the shallowest folder on a path that the other side lacks', () => {
+    const folders = foldersOf(['.changeset/a.md', 'a/b/c.ts', 'top.ts'])
+    expect([...folders].sort()).toEqual(['.', '.changeset', 'a', 'a/b'])
+    expect(newFolderOf('.changeset/new.md', folders)).toBeNull()
+    expect(newFolderOf('top2.ts', folders)).toBeNull()
+    expect(newFolderOf('fresh/x.ts', folders)).toBe('fresh')
+    expect(newFolderOf('a/b/new/deeper/x.ts', folders)).toBe('a/b/new')
   })
 
   it('a modified path reaches the test only through its reads, scanned or not', () => {

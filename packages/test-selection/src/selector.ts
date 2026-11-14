@@ -145,6 +145,8 @@ import {
   anyDependencyRead,
   DEPENDENCY_PACKAGE_SEPARATOR,
   dependencyRead,
+  foldersOf,
+  newFolderOf,
   type PathChange,
   type RecordIndex,
   indexRecordedTest,
@@ -2038,12 +2040,18 @@ function changesBetween(repo: RepositoryReader, from: string, to: string): PathC
   }
   const fromSet = new Set(fromFiles)
   const toSet = new Set(toFiles)
+  const added = toFiles.filter((p) => !fromSet.has(p))
+  const deleted = fromFiles.filter((p) => !toSet.has(p))
+  // Each side's folders, read once from the two listings: an added path's new folder is one `from` lacks, a deleted
+  // path's one `to` lacks.
+  const fromFolders = added.length > 0 ? foldersOf(fromFiles) : new Set<string>()
+  const toFolders = deleted.length > 0 ? foldersOf(toFiles) : new Set<string>()
   return [
     ...toFiles
       .filter((p) => fromSet.has(p) && key(from, p) !== key(to, p))
       .map((path): PathChange => ({ path, status: 'modified' })),
-    ...toFiles.filter((p) => !fromSet.has(p)).map((path): PathChange => ({ path, status: 'added' })),
-    ...fromFiles.filter((p) => !toSet.has(p)).map((path): PathChange => ({ path, status: 'deleted' }))
+    ...added.map((path): PathChange => ({ path, status: 'added', newFolder: newFolderOf(path, fromFolders) })),
+    ...deleted.map((path): PathChange => ({ path, status: 'deleted', newFolder: newFolderOf(path, toFolders) }))
   ]
 }
 
@@ -2426,14 +2434,27 @@ function selectChange(input: SelectTestsInput): ChangePlan {
       }
     }
   }
+  // Each side's folders, read once from the listings above: an added path's new folder is one the base lacks, a
+  // deleted path's one the head lacks.
+  let baseFolders: ReadonlySet<string> | null = null
+  let headFolders: ReadonlySet<string> | null = null
+  const addedChange = (path: string): PathChange => {
+    baseFolders ??= foldersOf(baseFiles)
+    return { path, status: 'added', newFolder: newFolderOf(path, baseFolders) }
+  }
+  const deletedChange = (path: string): PathChange => {
+    headFolders ??= foldersOf(headFiles)
+    return { path, status: 'deleted', newFolder: newFolderOf(path, headFolders) }
+  }
   const pathChanges: PathChange[] = withDependencyPackages(
     changes.flatMap((change): PathChange[] =>
       change.status === 'renamed'
-        ? [
-            { path: change.path, status: 'added' },
-            { path: change.from as string, status: 'deleted' }
-          ]
-        : [{ path: change.path, status: change.status }]
+        ? [addedChange(change.path), deletedChange(change.from as string)]
+        : change.status === 'added'
+          ? [addedChange(change.path)]
+          : change.status === 'deleted'
+            ? [deletedChange(change.path)]
+            : [{ path: change.path, status: change.status }]
     ),
     base,
     head

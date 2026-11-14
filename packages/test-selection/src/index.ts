@@ -77,6 +77,8 @@ export {
   isGitContentRead,
   isReadRecord,
   nameStems,
+  newFolderOf,
+  foldersOf,
   type PathChange,
   type ProbeTrace,
   READ_RECORD_SCHEMA,

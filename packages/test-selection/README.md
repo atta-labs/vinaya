@@ -126,7 +126,18 @@ is among `scanned`, when the test read a name there sharing a dot-delimited stem
 with the path's name (`mod.tsx` or `mod/` beside a read `mod.ts`, since the
 resolver decides from its cached listing), or when the name is one the loader
 reads by convention (`package.json`, `tsconfig.json`, `jsconfig.json`,
-`bunfig.toml`, a `.env` name). The reason names which. `passKeys` keeps
+`bunfig.toml`, a `.env` name). The reason names which. Past an unlisted folder
+the walk also needs a folder that changed: the selection gives each added or
+deleted path, between the base and the head and between the record's commit
+and the base alike, the shallowest folder on it absent from the other side
+(the earlier revision for an added path, the later one for a deleted one),
+read once from the two revisions' file lists. The walk goes on as above only
+when there is such a folder: below the listed folder it reached, that folder
+itself, or one above it, so deleting the whole tree a test listed still
+reaches the test. A file added inside folders that exist on both sides, such
+as a new `.changeset/` entry, leaves that listing as it was and reaches no test
+through it; a new top-level folder still reaches a test that listed the root.
+A path change without that fact walks as before. `passKeys` keeps
 covering every listed folder: `scanned` narrows the selection, never pass reuse.
 - `PassEntry` / `SelectionHistory` — earlier complete passes, each under the
   key that proves it still holds, and the tests that failed; `selectTests`

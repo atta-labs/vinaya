@@ -123,6 +123,9 @@ const workflowWithoutProducers = [
   'workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Run the suite under both sandboxes',
   'workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Record the advisory suite result',
   'workflow:ci.yml:aggregate:Every mandatory job succeeded and every job the CI plan requires succeeded',
+  'workflow:test-independence.yml:independence:Install dependencies',
+  'workflow:test-independence.yml:independence:Build the Vinaya CLI for the repository suite',
+  'workflow:test-independence.yml:independence:Run every file alone and eight at a time and compare',
   'workflow:published-lifecycle.yml:verify-published-lifecycle:Check published version',
   'workflow:published-lifecycle.yml:verify-published-lifecycle:Install dependencies',
   'workflow:published-lifecycle.yml:verify-published-lifecycle:Verify published lifecycle',
@@ -401,7 +404,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(115)
+    expect(noProducer).toHaveLength(118)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })
