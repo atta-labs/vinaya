@@ -71,6 +71,14 @@ describe('the Planner tool entries', () => {
       expect(entry.outputSchema?.type).toBe('object')
     }
   })
+
+  it('describe the Issue writers without a retired command word', () => {
+    for (const name of ['task_issue_create', 'task_issue_edit']) {
+      const description = PLANNER_TOOL_ENTRIES.find((e) => e.name === name)?.description ?? ''
+      expect(description).not.toBe('')
+      for (const word of ['issue', 'brief', 'milestone']) expect(description).not.toContain(`vinaya ${word}`)
+    }
+  })
 })
 
 describe('success returns the library’s outcome', () => {
