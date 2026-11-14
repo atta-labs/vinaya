@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
@@ -224,6 +224,64 @@ describe('fixture cleanup reporting', () => {
     const result = JSON.parse(child.stdout.trim()) as { dir: string; error: string | null }
     expect(result.error).toBeNull()
     expect(readdirSync(join(root, 'vinaya'))).toEqual([])
+  })
+
+  // Each restorer call appends a line to `$1`, so a test reads how many attempts ran; `$2` is the claimed tree.
+  const releaseWithRestorer = (root: string, restorerScript: string) => {
+    const module = resolve(import.meta.dir, 'test-temp-fixture.ts')
+    const attempts = join(root, 'restore-attempts.log')
+    const restorer = ['/bin/sh', '-c', `echo attempt >> "$1"; ${restorerScript}`, 'restore', attempts]
+    const child = spawnSyncBudgeted(
+      process.execPath,
+      [
+        '--eval',
+        `
+      import { fixtureDir, releaseFixtureRun } from ${JSON.stringify(module)};
+      import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+      import { basename, dirname, join } from 'node:path';
+      const fixture = fixtureDir('payload-');
+      mkdirSync(join(fixture, 'nested'));
+      writeFileSync(join(fixture, 'nested', 'file.txt'), 'payload');
+      const run = dirname(fixture);
+      const claimed = join(dirname(run), '.removing-' + basename(run));
+      const error = await releaseFixtureRun(['rm', '-rf'], ${JSON.stringify(restorer)});
+      console.log(JSON.stringify({ error, remaining: existsSync(claimed), receipt: existsSync(claimed + '.owner.json') }));
+    `
+      ],
+      { encoding: 'utf8', env: { ...stripVinayaEnv(), VINAYA_TEST_TMP: root } }
+    )
+    expect(child.status).toBe(0)
+    const result = JSON.parse(child.stdout.trim()) as { error: string | null; remaining: boolean; receipt: boolean }
+    const attemptCount = readFileSync(attempts, 'utf8').trim().split('\n').length
+    return { ...result, attemptCount, stderr: child.stderr }
+  }
+
+  test('a claimed tree another process removes part of during the release is released without a cleanup failure', () => {
+    const root = fixtureDir('cleanup-partial-race-')
+    // First attempt: another process deletes a subfolder after `chmod -R` listed it, so `chmod` fails on the
+    // vanished entry while the claimed tree still exists. The second attempt restores write and removes the rest.
+    const result = releaseWithRestorer(
+      root,
+      `if [ "$(wc -l < "$1")" -eq 1 ]; then rm -rf "$2"/*/nested; echo "chmod: $2/nested: No such file or directory" >&2; exit 1; fi; exec chmod -R u+w "$2"`
+    )
+    expect(result).toMatchObject({ error: null, remaining: false, receipt: false, attemptCount: 2 })
+    expect(result.stderr).not.toContain('test temp:')
+    expect(readdirSync(join(root, 'vinaya'))).toEqual([])
+  })
+
+  test('a claimed tree that stays unwritable after both attempts still records its cleanup failure', async () => {
+    const root = fixtureDir('cleanup-persistent-')
+    const result = releaseWithRestorer(root, `echo "chmod: $2: Operation not permitted" >&2; exit 1`)
+    expect(result).toMatchObject({ remaining: true, receipt: true, attemptCount: 2 })
+    expect(result.error).toContain('Operation not permitted')
+    expect(result.stderr).toContain('test temp:')
+    const report = await sweepOwnedDirs(join(root, 'vinaya'), {
+      stop: async () => ({ backend: 'registry', terminated: [], killed: [], alreadyGone: [] })
+    })
+    expect(report.failed).toEqual([
+      { dir: expect.any(String), error: expect.stringContaining('Operation not permitted') }
+    ])
+    expect(report.removed).toHaveLength(1)
   })
 })
 
