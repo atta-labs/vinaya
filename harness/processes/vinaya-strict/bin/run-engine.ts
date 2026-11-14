@@ -97,10 +97,20 @@ import {
   fetchSettledCiConclusion,
   MAX_AUTOMATIC_CONFLICT_REENTRIES,
   readWorktreeHead,
+  parentBranchOncePerRun,
   rerunFailedWorkflowJobs,
   resolveHead,
   resolveParentBranch
 } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
+import {
+  beginAgentTurn,
+  clearGitReadMemo,
+  clearingAfterEffects,
+  endAgentTurn,
+  runGit,
+  servingDeveloperToolCall,
+  withGitReadMemo
+} from '../loops/dev-review/v2/git-read-memo'
 import { postMarkedComment } from '../tools/task-contract/forge/forge-write'
 import {
   developerBranchAndTitleFor,
@@ -1307,6 +1317,93 @@ export function createTraceRecorder(
   }
 }
 
+/**
+ * The bound functions a step calls that only read the forge, a clock or the driver's own records: every other bound
+ * function may write the repository or start a child process, so the round's git read memo is emptied after it.
+ */
+export const BOUND_PURE_READS: ReadonlySet<string> = new Set([
+  'fetchSourceRevision',
+  'pullRequestView',
+  'findOpenPrForBranch',
+  'readWorktreeHead',
+  'fetchPrBody',
+  'liveVendorSignedIn',
+  'resolveSecurityScanCommand',
+  'changedPaths',
+  'fetchCiConclusion',
+  'fetchSettledCiConclusion',
+  'fetchFailingCheckRuns',
+  'fetchFailedCheckWorkflowRunIds',
+  'resolveParentHead',
+  'fetchParentFailingCheckRuns',
+  'fetchParentCiConclusion',
+  'fetchMergeableState',
+  'readComparisonBase',
+  'localGateControl',
+  'setupRetrySleep',
+  'evidenceRetrySleep'
+])
+
+/** Version 2's functions that only read the forge, a clock or the driver's own records, as `BOUND_PURE_READS`. */
+export const V2_PURE_READS: ReadonlySet<string> = new Set([
+  'stagedPullRequest',
+  'findOpenPullRequest',
+  'readyDeadlineMs',
+  'readRequiredCi',
+  'progressLine',
+  'progressEvery',
+  'now',
+  'wallNow',
+  'sleep',
+  'log',
+  'readCheckExcerpt',
+  'readPostedVerdicts'
+])
+
+/**
+ * The actions, each run as one driver step of the round with the git read memo serving (`withGitReadMemo`): emptied
+ * as the step starts and ends, and after each bound function the step calls that is not a pure read.
+ */
+export function withRoundGitReadMemo(actions: ActionRegistry, task?: TaskInput): ActionRegistry {
+  return Object.fromEntries(
+    Object.entries(actions).map(([name, action]) => [
+      name,
+      (context: Parameters<typeof action>[0]) =>
+        withGitReadMemo(async () => {
+          if (task?.bound) task.bound = clearingAfterEffects(task.bound, BOUND_PURE_READS)
+          if (task?.v2) task.v2 = clearingAfterEffects(task.v2, V2_PURE_READS)
+          return action(context)
+        })
+    ])
+  )
+}
+
+/**
+ * Every launch through `spawnFn` is an agent turn for the git read memo: no read is served from it while the launch
+ * runs, and it is emptied as the launch starts and again once it closes or fails — the agent commits in its worktree.
+ */
+export function withAgentTurnMemoBypass(spawnFn: SpawnFn): SpawnFn {
+  return (command, args, options) => {
+    beginAgentTurn()
+    let ended = false
+    const end = (): void => {
+      if (ended) return
+      ended = true
+      endAgentTurn()
+    }
+    let child: SpawnedProcessLike
+    try {
+      child = spawnFn(command, args, options)
+    } catch (error) {
+      end()
+      throw error
+    }
+    child.on('close', end)
+    child.on('error', end)
+    return child
+  }
+}
+
 /** The actions, each reporting its exit code to the trace. */
 export function tracedActions(
   actions: ActionRegistry,
@@ -1922,7 +2019,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         }
       ])
     )
-    const actions = recordingActions(tracedActions(noting, trace), translator)
+    // Outermost, so the Log lines a step's record writes read through the same memo as the step itself.
+    const actions = withRoundGitReadMemo(recordingActions(tracedActions(noting, trace), translator), options.taskInput)
     const revision = options.revision ?? checkoutRevision(options.repoRoot)
     // A checkpoint file the saver cannot open is refused like an unreadable checkpoint: no step runs.
     let refusedFile: CheckpointRefusal | null = null
@@ -2220,7 +2318,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
                 withDispatchUsage(
                   withUsageLimitWatch(
                     // Innermost of all, so each capability is bound to the very process a launch spawned.
-                    withDispatchCapabilities(reaper.spawnFn, join(runDir, 'generated'), roleDispatches),
+                    withDispatchCapabilities(
+                      withAgentTurnMemoBypass(reaper.spawnFn),
+                      join(runDir, 'generated'),
+                      roleDispatches
+                    ),
                     args.agent,
                     onUsageLimit
                   ),
@@ -2461,12 +2563,15 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
 // --- the live wiring: forge, git and Log reached only from `main` -------------
 
 function sh(command: string, args: string[], cwd?: string, maxBuffer?: number): string {
-  return execFileSync(command, args, {
-    encoding: 'utf8',
-    cwd,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    ...(maxBuffer === undefined ? {} : { maxBuffer })
-  }).trim()
+  const run = (): string =>
+    execFileSync(command, args, {
+      encoding: 'utf8',
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...(maxBuffer === undefined ? {} : { maxBuffer })
+    }).trim()
+  // Git goes through the round's read memo, keyed on the directory it runs in; anything else just runs.
+  return command === 'git' ? runGit(cwd, args, run) : run()
 }
 
 /** The output bound of the reviewer diff read: the standalone loop's bound for its own diff reads. */
@@ -2590,15 +2695,19 @@ export function engineLiveDevToolsContext(input: {
     await resolvePublicationBase(scope, state.turnPreHead)
     return merge
   }
+  // Every Developer tool call the driver serves starts from an empty git read memo and reads around it: the agent
+  // commits in the worktree beside it.
   const context: DevToolContext = {
-    ...(input.repairPlan ? { repairPlan: () => attribution.driverToolCall(input.repairPlan!) } : {}),
-    publishChanges: (header) => turn.publishChanges(header),
-    openPullRequest: (title, body) => turn.openPullRequest(title, body),
-    updatePullRequestBody: (body) => turn.updatePullRequestBody(body),
-    refreshEvidence: () => turn.refreshEvidence(),
-    readPullRequest: () => turn.readPullRequest(),
-    runChecks: () => turn.runChecks(),
-    fetchDocumentation: (request) => turn.fetchDocumentation(request)
+    ...(input.repairPlan
+      ? { repairPlan: () => servingDeveloperToolCall(() => attribution.driverToolCall(input.repairPlan!)) }
+      : {}),
+    publishChanges: (header) => servingDeveloperToolCall(() => turn.publishChanges(header)),
+    openPullRequest: (title, body) => servingDeveloperToolCall(() => turn.openPullRequest(title, body)),
+    updatePullRequestBody: (body) => servingDeveloperToolCall(() => turn.updatePullRequestBody(body)),
+    refreshEvidence: () => servingDeveloperToolCall(() => turn.refreshEvidence()),
+    readPullRequest: () => servingDeveloperToolCall(() => turn.readPullRequest()),
+    runChecks: () => servingDeveloperToolCall(() => turn.runChecks()),
+    fetchDocumentation: (request) => servingDeveloperToolCall(() => turn.fetchDocumentation(request))
   }
   return { context, beginTurn, completeTurn, state, changedProtectedPaths: () => attribution.changedPaths() }
 }
@@ -2839,6 +2948,8 @@ export async function liveTaskInput(
   }
 > {
   const forge: EngineForge = retryingForge(lookups.forge ?? liveForge, lookups.forgeRetrySleep)
+  // The default branch's name is asked of the remote once per run; its head is still read fresh at each use.
+  const parentBranch = parentBranchOncePerRun(forge.resolveParentBranch)
   // Tranche tasks live on `task/<tranche>/<n>`, backlog tasks on `task/issue-<n>`.
   // The same Issue read hands back the task's title, which `loop_started` records; absent when no title was read.
   const { branch, title: taskTitle } = developerBranchAndTitleFor(args.task, lookups.fetchTitle, lookups.fetchLabels)
@@ -3034,7 +3145,7 @@ export async function liveTaskInput(
       fetchCiConclusion: forge.fetchCiConclusion,
       fetchSettledCiConclusion: forge.fetchSettledCiConclusion,
       fetchFailingCheckRuns: forge.fetchFailingCheckRuns,
-      resolveParentHead: () => forge.resolveHead(forge.resolveParentBranch()),
+      resolveParentHead: () => forge.resolveHead(parentBranch()),
       fetchParentFailingCheckRuns: forge.fetchFailingCheckRuns,
       fetchParentCiConclusion: forge.fetchCiConclusion,
       fetchFailedCheckWorkflowRunIds: forge.fetchFailedCheckWorkflowRunIds,
@@ -3145,6 +3256,8 @@ export async function liveTaskInput(
     verdicts: (results) => {
       const verdicts = recordedVerdicts(results)
       round += 1
+      // A new round starts from an empty git read memo.
+      clearGitReadMemo('round start')
       return verdicts
     },
     remoteHead: () => forge.resolveHead(branch),
