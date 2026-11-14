@@ -1,8 +1,9 @@
 // The package as an npm consumer gets it: `npm pack` builds the tarball, a
 // fresh git repository outside this workspace installs it, and a selection
-// runs there — this package's README example under Node, and a selection over
+// runs there — this package's README example under Node, a selection over
 // that repository's own two commits under both Node (the built `dist/`) and
-// Bun (the shipped source).
+// Bun (the shipped source), and the `test-selection` command under Node in a
+// repository of one Bun package and one Vitest package.
 import { describe, expect, it } from 'bun:test'
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import {
@@ -82,7 +83,7 @@ process.stdout.write(JSON.stringify({ planned: plannedTests(plan), resolver: pla
 const TYPESCRIPT_DIR = dirname(realpathSync(createRequire(import.meta.url).resolve('typescript/package.json')))
 
 describe('a fresh repository installs the packed package and selects with it', () => {
-  it('packs, installs the tarball, and runs the README example and a git selection under Node and Bun', () => {
+  it('packs, installs the tarball, and runs the README example, a git selection and the command under Node and Bun', () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), 'test-selection-consumer-')))
     try {
       // The tarball, exactly as `npm publish` would upload it.
@@ -140,6 +141,87 @@ describe('a fresh repository installs the packed package and selects with it', (
       // Bun loads the shipped source instead of `dist/`, and reaches the same plan.
       const underBun = JSON.parse(run('bun', ['select.mjs'], repo, home).stdout)
       expect(underBun).toEqual(underNode)
+
+      // The command, in a fresh repository of one Bun package and one Vitest package, with no inventory written.
+      expect(listing).toContain('package/dist/cli.js')
+      const mono = join(home, 'mono')
+      mkdirSync(mono)
+      const monoFiles: Record<string, string> = {
+        '.gitignore': 'node_modules/\n',
+        'package.json': '{ "name": "mono", "private": true, "type": "module", "workspaces": ["packages/*"] }\n',
+        'packages/app/package.json': '{ "name": "app", "scripts": { "test": "bun test" } }\n',
+        'packages/app/src/greet.ts': 'export const greet = () => "hi"\n',
+        'packages/app/src/other.ts': 'export const other = 1\n',
+        'packages/app/tests/greet.test.ts': "import { greet } from '../src/greet'\n",
+        'packages/app/tests/other.test.ts': "import { other } from '../src/other'\n",
+        'packages/web/package.json': '{ "name": "web", "scripts": { "test": "vitest run" } }\n',
+        'packages/web/src/view.ts': 'export const view = 1\n',
+        'packages/web/src/list.ts': 'export const list = 1\n',
+        'packages/web/tests/view.spec.ts': "import { view } from '../src/view'\n",
+        'packages/web/tests/list.spec.ts': "import { list } from '../src/list'\n",
+        'packages/docs/package.json': '{ "name": "docs" }\n',
+        'packages/docs/check.test.ts': 'export {}\n'
+      }
+      for (const [path, text] of Object.entries(monoFiles)) {
+        mkdirSync(dirname(join(mono, path)), { recursive: true })
+        writeFileSync(join(mono, path), text)
+      }
+      run('git', ['init', '-q', '-b', 'main'], mono, home)
+      run('npm', ['install', '--offline', '--no-package-lock', tarball], mono, home, 300_000)
+      run('git', ['add', '-A'], mono, home)
+      run('git', ['commit', '-q', '-m', 'base'], mono, home)
+      writeFileSync(join(mono, 'packages/app/src/greet.ts'), 'export const greet = () => "hello"\n')
+      writeFileSync(join(mono, 'packages/web/src/view.ts'), 'export const view = 2\n')
+      run('git', ['commit', '-q', '-am', 'head'], mono, home)
+
+      // Started in a member's folder, under Node, through the command npm linked.
+      const command = join(mono, 'node_modules/.bin/test-selection')
+      const status = run('git', ['status', '--porcelain', '--untracked-files=all'], mono, home).stdout
+      const printed = JSON.parse(
+        run('node', [command, '--base', 'HEAD~1', '--head', 'HEAD'], join(mono, 'packages/app'), home).stdout
+      )
+      expect(run('git', ['status', '--porcelain', '--untracked-files=all'], mono, home).stdout).toBe(status)
+      expect(printed.tests).toEqual(['packages/app/tests/greet.test.ts', 'packages/web/tests/view.spec.ts'])
+      expect(
+        printed.groups.map((g: { runner: string; cwd: string; args: string[]; tests: string[] }) => ({
+          runner: g.runner,
+          cwd: g.cwd,
+          args: g.args,
+          tests: g.tests
+        }))
+      ).toEqual([
+        {
+          runner: 'bun',
+          cwd: 'packages/app',
+          args: ['./tests/greet.test.ts'],
+          tests: ['packages/app/tests/greet.test.ts']
+        },
+        {
+          runner: 'vitest',
+          cwd: 'packages/web',
+          args: ['tests/view.spec.ts'],
+          tests: ['packages/web/tests/view.spec.ts']
+        }
+      ])
+      expect(printed.fallbacks).toEqual([])
+      expect(printed.leftOut).toEqual({
+        packages: [
+          { dir: '.', name: 'mono', reason: 'no-test-script', script: null },
+          { dir: 'packages/docs', name: 'docs', reason: 'no-test-script', script: null }
+        ],
+        tests: ['packages/docs/check.test.ts']
+      })
+
+      // A missing argument or an unknown commit: one message on standard error, a non-zero exit, nothing printed.
+      for (const args of [
+        ['--base', 'HEAD~1'],
+        ['--base', 'HEAD~1', '--head', 'no-such-commit']
+      ]) {
+        const refused = spawnSync('node', [command, ...args], { cwd: mono, encoding: 'utf8', env: bareEnv(home) })
+        expect(refused.status).not.toBe(0)
+        expect(refused.stdout).toBe('')
+        expect(refused.stderr.trim().split('\n')).toHaveLength(1)
+      }
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
