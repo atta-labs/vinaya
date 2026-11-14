@@ -1,0 +1,32 @@
+100 execve("/usr/local/bin/bun", ["bun", "test", "tests/a.test.ts"], 0x7ffe /* 20 vars */) = 0
+100 openat(AT_FDCWD</work/repo>, "/scratch/3.probe.jsonl", O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC, 0666) = 5</scratch/3.probe.jsonl>
+100 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7f00, parent_tid=0x7f00, exit_signal=0, stack=0x7e00, stack_size=0x7ff000, tls=0x7f00} <unfinished ...>
+101 openat(AT_FDCWD</work/repo>, "/work/repo/lib/modules", O_RDONLY|O_LARGEFILE|O_CLOEXEC|O_DIRECTORY) = 9</work/repo/lib/modules>
+101 getdents64(9</work/repo/lib/modules>, 0x55 /* 5 entries */, 32768) = 160
+100 <... clone3 resumed> => {parent_tid=[101]}, 88) = 101
+100 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7f10, parent_tid=0x7f10, exit_signal=0, stack=0x7e10, stack_size=0x7ff000, tls=0x7f10} => {parent_tid=[103]}, 88) = 103
+103 openat(AT_FDCWD</work/repo>, "/work/repo/fixtures/data", O_RDONLY|O_LARGEFILE|O_CLOEXEC|O_DIRECTORY) = 10</work/repo/fixtures/data>
+103 getdents64(10</work/repo/fixtures/data>, 0x55 /* 3 entries */, 32768) = 96
+103 getdents64(11</work/repo/fixtures/tree>, 0x55 /* 3 entries */, 32768) = 96
+103 getdents64(12</work/repo/fixtures/tree/deep>, 0x55 /* 3 entries */, 32768) = 96
+100 vfork( <unfinished ...>
+200 execve("/usr/bin/git", ["git", "ls-files", "docs"], 0x7ffe /* 20 vars */) = 0
+100 <... vfork resumed>) = 200
+200 getdents64(3</work/repo/docs>, 0x55 /* 4 entries */, 32768) = 128
+100 clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0x7f20) = 300
+300 execve("/usr/local/bin/bun", ["bun", "run", "build.ts"], 0x7ffe /* 20 vars */) = 0
+300 getdents64(4</work/repo/packages/core/src>, 0x55 /* 4 entries */, 32768) = 128
+100 clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0x7f30) = 400
+400 execve("/usr/local/bin/bun", ["bun", "test", "tests/b.test.ts"], 0x7ffe /* 20 vars */) = 0
+400 openat(AT_FDCWD</work/repo>, "/scratch/3.probe.jsonl", O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC, 0666) = 5</scratch/3.probe.jsonl>
+400 getdents64(4</work/repo/harness/x>, 0x55 /* 4 entries */, 32768) = 128
+500 getdents64(4</work/repo/tmp-unknown>, 0x55 /* 4 entries */, 32768) = 128
+100 clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0x7f40) = 600
+600 execve("/usr/local/bin/bun", ["bun", "tests/c.ts"], 0x7ffe /* 20 vars */) = 0
+600 openat(AT_FDCWD</work/repo>, "/scratch/3.probe.jsonl", O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC, 0666) = 5</scratch/3.probe.jsonl>
+600 getdents64(4</work/repo/lib/cache>, 0x55 /* 4 entries */, 32768) = 128
+600 execve("/usr/bin/find", ["find", "scripts"], 0x7ffe /* 20 vars */) = 0
+600 getdents64(4</work/repo/scripts>, 0x55 /* 4 entries */, 32768) = 128
+100 clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0x7f50) = 800
+800 getdents64(4</work/repo/bin>, 0x55 /* 4 entries */, 32768) = 128
+100 getdents64(4</work/repo/node_modules/zod>, 0x55 /* 4 entries */, 32768) = 128

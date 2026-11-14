@@ -108,7 +108,24 @@ with its own storage implements the type itself.
   declarations)` builds a simple one from a file map.
 - `ReadRecord` / `RecordedTest` — what each test read when it ran on one
   commit (`isReadRecord` checks one); `SelectionRecords` hands a record and its
-  platform to `selectTests`.
+  platform to `selectTests`. A `RecordedTest` holds `reads` (the files and
+  folders its process tree opened or probed), `listed` (every folder listed,
+  by the test's code or by the module resolver alike) and, in a record taken
+  with a listing probe, `scanned`: the folders the test's own code listed, an
+  entry ending in `/` listed recursively (`./` for the root).
+
+On the record path a changed path reaches a recorded test through its reads
+(`recordReach`). An added or deleted path also reaches it through a listed
+folder: in a record without `scanned`, any listed folder holding the path. With
+`scanned`, the rule applies at the nearest listed folder above the path — its
+own folder, or the nearest listed one above and the first name below it — and
+keeps the test only when that folder (or a folder above it listed recursively)
+is among `scanned`, when the test read a name there sharing a dot-delimited stem
+with the path's name (`mod.tsx` or `mod/` beside a read `mod.ts`, since the
+resolver decides from its cached listing), or when the name is one the loader
+reads by convention (`package.json`, `tsconfig.json`, `jsconfig.json`,
+`bunfig.toml`, a `.env` name). The reason names which. `passKeys` keeps
+covering every listed folder: `scanned` narrows the selection, never pass reuse.
 - `PassEntry` / `SelectionHistory` — earlier complete passes, each under the
   key that proves it still holds, and the tests that failed; `selectTests`
   leaves a test that a matching pass covers out of `plannedTests`.

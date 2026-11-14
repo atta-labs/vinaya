@@ -3,9 +3,12 @@
  * the reader of the syscall trace that produces it.
  *
  * A record names, per test file, the repository paths the test's process tree
- * opened or probed (a lookup that failed included) and the folders it listed.
- * A changed path selects the test when it is among those reads, or when it was
- * added or deleted in a listed folder. The record holds no fact of one
+ * opened or probed (a lookup that failed included), the folders it listed, and
+ * which of those its own code listed (`scanned`). A changed path selects the
+ * test when it is among those reads, or when it was added or deleted in a
+ * listed folder that its code listed, beside a name it read that the new name
+ * can shadow, or under a name the loader reads by convention (a record without
+ * `scanned`: in any listed folder). The record holds no fact of one
  * repository: the caller supplies the workspace package folders and the name of
  * the input the installed dependencies derive from.
  */
@@ -21,8 +24,14 @@ export type RecordFallback = 'git-read' | 'truncated-path'
 export type RecordedTest = {
   /** Repository-relative files opened or probed. An entry ending in `/` is a folder: it matches every path beneath it. */
   reads: string[]
-  /** Repository-relative folders listed (`.` is the root). */
+  /** Repository-relative folders listed (`.` is the root), by the test's code or by the module resolver alike. */
   listed: string[]
+  /**
+   * Repository-relative folders the test's own code listed (`.` is the root); an entry ending in `/` was listed
+   * recursively and covers every folder beneath it (`./` covers the whole repository). Absent in a record taken
+   * without the listing probe: an added or deleted path then reaches the test through any folder in `listed`.
+   */
+  scanned?: string[]
   /** Set when the test read under `.git/`: the record cannot say what the repository's history changes, so static selection decides. */
   fallback?: RecordFallback
   /** For a `git-read` fallback: the commands that read repository content under `.git/` with no path to name. */
@@ -54,7 +63,10 @@ export function isReadRecord(value: unknown): value is ReadRecord {
     typeof v.tests === 'object' &&
     v.tests !== null &&
     Object.values(v.tests).every(
-      (t) => Array.isArray((t as RecordedTest).reads) && Array.isArray((t as RecordedTest).listed)
+      (t) =>
+        Array.isArray((t as RecordedTest).reads) &&
+        Array.isArray((t as RecordedTest).listed) &&
+        ((t as RecordedTest).scanned === undefined || Array.isArray((t as RecordedTest).scanned))
     )
   )
 }
@@ -67,16 +79,61 @@ export type RecordIndex = {
   exact: ReadonlySet<string>
   folders: readonly string[]
   listed: ReadonlySet<string>
+  /** The folders the test's own code listed, and (trailing `/`, `./` for the root) those it listed recursively; `null` for a record without `scanned`. */
+  scanned: ReadonlySet<string> | null
+  /** Per folder, the names the test read in it: a file or folder it opened or probed there, or one it read beneath. */
+  names: ReadonlyMap<string, ReadonlySet<string>>
   test: RecordedTest
 }
 
 export function indexRecordedTest(test: RecordedTest): RecordIndex {
+  const names = new Map<string, Set<string>>()
+  for (const read of test.reads) {
+    const segments = read.replace(/\/+$/, '').split('/')
+    for (let at = 0; at < segments.length; at++) {
+      const folder = at === 0 ? '.' : segments.slice(0, at).join('/')
+      const held = names.get(folder) ?? new Set<string>()
+      held.add(segments[at] as string)
+      names.set(folder, held)
+    }
+  }
   return {
     exact: new Set(test.reads.filter((r) => !r.endsWith('/'))),
     folders: test.reads.filter((r) => r.endsWith('/')),
     listed: new Set(test.listed),
+    scanned: test.scanned === undefined ? null : new Set(test.scanned),
+    names,
     test
   }
+}
+
+/**
+ * Names the loader reads by convention in a folder it resolves from, without a lookup the trace would show: adding
+ * one can change what an unchanged import resolves to (a `package.json` with `main`, a nested `tsconfig.json` with
+ * `paths`) or what the process loads.
+ */
+export function isConventionName(name: string): boolean {
+  return (
+    name === 'package.json' ||
+    name === 'tsconfig.json' ||
+    name === 'jsconfig.json' ||
+    name === 'bunfig.toml' ||
+    name.startsWith('.env')
+  )
+}
+
+/** Every dot-delimited stem of a name: `x.config.ts` has `x`, `x.config` and `x.config.ts`; a leading dot stays on the first. */
+export function nameStems(name: string): string[] {
+  const lead = name.startsWith('.') ? '.' : ''
+  const parts = name.slice(lead.length).split('.')
+  return parts.map((_, at) => `${lead}${parts.slice(0, at + 1).join('.')}`)
+}
+
+/** Whether `folder` is among `scanned`, or beneath a folder `scanned` holds as recursively listed. */
+function scannedCovers(scanned: ReadonlySet<string>, folder: string): boolean {
+  if (scanned.has(folder) || scanned.has('./')) return true
+  for (let at = folder; at !== '.'; at = posix.dirname(at)) if (scanned.has(`${at}/`)) return true
+  return false
 }
 
 // ── Installed dependencies ─────────────────────────────────────────────────
@@ -112,6 +169,18 @@ export function installedPackageName(path: string, depFolder = 'node_modules'): 
  * Why `change` reaches the recorded test, or `null`: the path is among its
  * reads (`exact` says the read names the very file, not a folder holding it),
  * or it was added or deleted in a folder the test listed.
+ *
+ * With `scanned`, an added or deleted path reaches the test through the
+ * nearest folder above it that the test listed — the path's own folder, or,
+ * when the run did not list that, the nearest listed folder above it and the
+ * first name below that the path adds or removes — only when that folder (or a
+ * folder above it listed recursively) is among `scanned`, when the name is one
+ * the loader reads by convention (`package.json`, `tsconfig.json`,
+ * `jsconfig.json`, `bunfig.toml`, a `.env` name), or when the test read a
+ * name there sharing a dot-delimited stem with it: the module resolver decides
+ * from its cached folder listing, so `./foo` can resolve to an added
+ * `foo.tsx` or `foo/` with no lookup of it in the trace. Without `scanned`,
+ * any listed folder holding the path is enough.
  */
 export function recordReach(
   index: RecordIndex,
@@ -126,15 +195,37 @@ export function recordReach(
         return { detail: `the recorded run read the installed package ${read}`, exact: true, via: read }
   const folder = index.folders.find((f) => change.path.startsWith(f))
   if (folder) return { detail: `the recorded run read under ${folder}`, exact: false, via: folder }
-  if (change.status !== 'modified') {
+  if (change.status === 'modified') return null
+  const what = change.status === 'added' ? 'an added' : 'a deleted'
+  if (index.scanned === null) {
     const dir = posix.dirname(change.path)
-    if (index.listed.has(dir))
+    return index.listed.has(dir)
+      ? { detail: `${what} path sits in ${dir}, which the recorded run listed`, exact: false, via: dir }
+      : null
+  }
+  // The nearest folder above the path that the run listed, and the name below it the change adds or removes there.
+  let dir = posix.dirname(change.path)
+  let name = posix.basename(change.path)
+  let walked = false
+  while (!index.listed.has(dir)) {
+    if (dir === '.') return null
+    walked = true
+    name = posix.basename(dir)
+    dir = posix.dirname(dir)
+  }
+  const at = !walked ? `${what} path sits in ${dir}` : `${what} path adds or removes ${name} in ${dir}`
+  if (scannedCovers(index.scanned, dir))
+    return { detail: `${at}, which the recorded run's own code listed`, exact: false, via: dir }
+  if (isConventionName(name))
+    return { detail: `${at}, where the loader reads ${name} by convention`, exact: false, via: dir }
+  const stems = new Set(nameStems(name))
+  for (const read of index.names.get(dir) ?? [])
+    if (nameStems(read).some((stem) => stems.has(stem)))
       return {
-        detail: `${change.status === 'added' ? 'an added' : 'a deleted'} path sits in ${dir}, which the recorded run listed`,
+        detail: `${at}, beside ${dir === '.' ? read : `${dir}/${read}`}, which the recorded run read and ${name} can shadow`,
         exact: false,
         via: dir
       }
-  }
   return null
 }
 
@@ -145,6 +236,12 @@ export type TraceReads = {
   reads: Set<string>
   /** Repository-relative folders listed. */
   listed: Set<string>
+  /**
+   * The listed folders the trace alone counts as the test's own code listing: every folder listed by a process image
+   * the listing probe did not run in (a child such as git, find or a nested `bun`), by one the probe logged as wholly
+   * scanned, or by a thread whose process the trace never named.
+   */
+  processScanned: Set<string>
   /** Whether repository content under `.git/` (an object or the index) was read by a command whose paths are unknown. */
   git: boolean
   /** The commands that made `git` true, as their argument lists, for the record to name. */
@@ -168,6 +265,18 @@ export type TraceOptions = {
   dependencyInput: string | null
   /** The folder installed dependencies live in. */
   dependencyFolder?: string
+  /** What the listing probe logged in this run; without it no process counts as probed. */
+  probe?: ProbeTrace
+}
+
+/** The listing probe's log as the trace reader uses it: which processes it ran in and which it wholly scanned. */
+export type ProbeTrace = {
+  /** The absolute path of the probe's log file: a process image that opened it is one the probe ran in. */
+  log: string
+  /** The process ids that wrote a start line. */
+  starts: ReadonlySet<string>
+  /** The process ids the probe logged as wholly scanned. */
+  wholly: ReadonlySet<string>
 }
 
 /** Syscalls whose first or second string argument is a path the process looked at. */
@@ -262,6 +371,30 @@ export function gitPathArguments(args: string): string[] | null {
   return sub === 'rev-parse' || paths.length > 0 ? paths : null
 }
 
+/**
+ * A listed folder as the record names it, or `null` when the record keeps no listing for it: the absolute path
+ * resolved through symbolic links (unless `resolved`) and made repository-relative; a path outside the repository,
+ * under `.git/` or under installed dependencies names none.
+ */
+export function repositoryFolder(absolute: string, options: TraceOptions, resolved = false): string | null {
+  const real = resolved ? absolute : options.realpath(absolute)
+  const root = options.repoRoot
+  const rel = real === root ? '.' : real.startsWith(`${root}/`) ? real.slice(root.length + 1) : null
+  if (rel === null || rel === '.git' || rel.startsWith('.git/')) return null
+  const depFolder = options.dependencyFolder ?? 'node_modules'
+  if (
+    rel === depFolder ||
+    rel.startsWith(`${depFolder}/`) ||
+    rel.includes(`/${depFolder}/`) ||
+    rel.endsWith(`/${depFolder}`)
+  )
+    return null
+  return rel
+}
+
+/** Whether a `clone`/`clone3` call's printed flags start a thread of the calling process rather than a new process. */
+export const startsThread = (args: string): boolean => /\bCLONE_THREAD\b/.test(args)
+
 const LINE = /^(?:\[pid\s+(\d+)\]\s+|(\d+)\s+)?/
 const RESUMED = /^<\.\.\. (\w+) resumed>/
 
@@ -352,7 +485,70 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
   const commands = new Map<string, string>()
   const pendingExec = new Map<string, string>()
   const gitReaders = new Set<string>()
+
+  /**
+   * A process image: one process from its start, or from its last successful `execve`, to the next. Every thread
+   * (a `clone` with `CLONE_THREAD`) folds into the image of the process that started it, so a listing is attributed
+   * by process, never by thread id. The first process the trace shows is the traced command; any other id seen
+   * before the call that started it is provisional until that call's result names it, and one never named stays
+   * a thread of an unknown process.
+   */
+  type Image = { pid: string; provisional: boolean; probed: boolean; listed: Set<string>; into?: Image }
+  const images: Image[] = []
+  const imageOf = new Map<string, Image>()
+  const pendingClone = new Map<string, string>()
+  const find = (image: Image): Image => {
+    let at = image
+    while (at.into) at = at.into
+    return at
+  }
+  const newImage = (pid: string, provisional: boolean): Image => {
+    const image: Image = { pid, provisional, probed: false, listed: new Set() }
+    images.push(image)
+    return image
+  }
+  const imageFor = (tid: string): Image => {
+    const known = imageOf.get(tid)
+    if (known) return find(known)
+    const image = newImage(tid, images.length > 0)
+    imageOf.set(tid, image)
+    return image
+  }
+  const started = (parent: string, child: string, thread: boolean): void => {
+    const owner = imageFor(parent)
+    const early = imageOf.get(child)
+    const seen = early ? find(early) : undefined
+    if (thread) {
+      if (seen?.provisional && seen !== owner) {
+        for (const folder of seen.listed) owner.listed.add(folder)
+        owner.probed ||= seen.probed
+        seen.listed.clear()
+        seen.into = owner
+      }
+      imageOf.set(child, owner)
+    } else if (seen?.provisional) seen.provisional = false
+    else imageOf.set(child, newImage(child, false))
+  }
+  const cloned = (pid: string, name: string, args: string, body: string): void => {
+    const child = /=\s*(\d+)\s*$/.exec(body)?.[1]
+    if (child === undefined || child === '0') return
+    if (!cwds.has(child)) cwds.set(child, cwdOf(pid))
+    started(pid, child, (name === 'clone' || name === 'clone3') && startsThread(args))
+  }
+  /** A successful `execve` replaces the whole process image; the process keeps its id. */
+  const replaced = (tid: string): void => {
+    const old = imageFor(tid)
+    const image = newImage(old.pid, old.provisional)
+    imageOf.set(tid, image)
+    imageOf.set(old.pid, image)
+  }
+  const probeLog = options.probe?.log
+  const opened = (path: string, pid: string): void => {
+    if (probeLog !== undefined && path === probeLog) imageFor(pid).probed = true
+  }
+
   const startProgram = (pid: string, args: string) => {
+    replaced(pid)
     const paths = gitPathArguments(args)
     if (paths) gitPathReads.set(pid, paths)
     else gitPathReads.delete(pid)
@@ -405,6 +601,8 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     if (!prefix) return
     const pid = (prefix[1] ?? prefix[2] ?? '0') as string
     const body = raw.replace(/^(?:\[pid\s+\d+\]\s+|\d+\s+)/, '')
+    if (body.trim() === '') return
+    imageFor(pid)
     const resumed = RESUMED.exec(body)
     if (resumed) {
       if (resumed[1] === 'execve') {
@@ -413,9 +611,19 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
         if (args !== undefined && /\)\s*=\s*0\s*$/.test(body)) startProgram(pid, args)
         return
       }
+      if (CLONE_CALLS.has(resumed[1] as string)) {
+        // The flags were on the unfinished half; the child's id is on this one.
+        const args = pendingClone.get(pid) ?? ''
+        pendingClone.delete(pid)
+        cloned(pid, resumed[1] as string, args, body)
+        return
+      }
       // The arguments were on the unfinished half; the result's descriptor path still names a resolved file.
       const fd = /\)\s*=\s*\d+<([^>]+)>/.exec(body)
-      if (fd && PATH_CALLS.has(resumed[1] as string)) record(fd[1] as string, true, 'read', pid)
+      if (fd && PATH_CALLS.has(resumed[1] as string)) {
+        opened(fd[1] as string, pid)
+        record(fd[1] as string, true, 'read', pid)
+      }
       return
     }
     const call = /^(\w+)\((.*)$/s.exec(body)
@@ -424,13 +632,17 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     const args = call[2] as string
 
     if (CLONE_CALLS.has(name)) {
-      const child = /=\s*(\d+)\s*$/.exec(body)
-      if (child && !cwds.has(child[1] as string)) cwds.set(child[1] as string, cwdOf(pid))
+      if (/<unfinished \.\.\.>\s*$/.test(body)) pendingClone.set(pid, args)
+      else cloned(pid, name, args, body)
       return
     }
     if (name === 'getdents64' || name === 'getdents') {
       const fd = /^\d+<([^>]+)>/.exec(args)
-      if (fd) record(fd[1] as string, true, 'list', pid)
+      if (fd) {
+        record(fd[1] as string, true, 'list', pid)
+        const folder = repositoryFolder(fd[1] as string, options, true)
+        if (folder !== null) imageFor(pid).listed.add(folder)
+      }
       return
     }
     if (!PATH_CALLS.has(name)) return
@@ -455,10 +667,31 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     // The resolved descriptor path of a successful open, else the path as the process spelled it.
     const done = /\)\s*=\s*\d+<([^>]+)>\s*$/.exec(body)
     const failed = /\)\s*=\s*-1\b/.test(body)
-    if (done && !failed && (name === 'open' || name === 'openat' || name === 'openat2' || name === 'creat'))
-      record(done[1] as string, true, 'read', pid)
+    const opens = name === 'open' || name === 'openat' || name === 'openat2' || name === 'creat'
+    if (opens && !failed) {
+      opened(target, pid)
+      if (done) opened(done[1] as string, pid)
+    }
+    if (done && !failed && opens) record(done[1] as string, true, 'read', pid)
     else record(target, false, 'read', pid)
     if (name === 'chdir' && !failed && /\)\s*=\s*0\s*$/.test(body)) cwds.set(pid, options.realpath(target))
   }
-  return { feed, result: () => ({ reads, listed, git, gitReaders, truncated }) }
+  const result = (): TraceReads => {
+    const processScanned = new Set<string>()
+    const probe = options.probe
+    for (const image of images) {
+      if (image.into) continue
+      // Probed: the image opened the probe's log and the log holds a start line from its process id. A re-executed
+      // process, or a reused id, is a new image that opened nothing, so it does not count as probed.
+      const probed =
+        image.probed &&
+        !image.provisional &&
+        probe !== undefined &&
+        probe.starts.has(image.pid) &&
+        !probe.wholly.has(image.pid)
+      if (!probed) for (const folder of image.listed) processScanned.add(folder)
+    }
+    return { reads, listed, processScanned, git, gitReaders, truncated }
+  }
+  return { feed, result }
 }

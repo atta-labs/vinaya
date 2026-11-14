@@ -1,0 +1,9 @@
+{"pid":100,"start":true}
+{"pid":100,"list":"/work/repo/fixtures/data","recursive":false}
+{"pid":100,"list":"/work/repo/fixtures/tree","recursive":true}
+{"pid":100,"list":"/outside/the/repository","recursive":false}
+{"pid":400,"start":true}
+{"pid":400,"whole":"worker_threads.Worker"}
+{"pid":600,"start":true}
+{"pid":800,"start":true}
+not a line the probe writes
