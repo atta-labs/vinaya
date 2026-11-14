@@ -138,13 +138,17 @@ covering every listed folder: `scanned` narrows the selection, never pass reuse.
 ### `workspaceInventory(repo, revision): WorkspaceInventory`
 
 One commit's inventory view, built from the repository's own manifests, for a
-repository with no inventory program of its own:
+repository with no inventory program of its own. Run from the top folder of a
+git repository with at least one commit, as an ES module (`node inventory.mjs`):
 
-```ts
+```js
+import { execFileSync } from 'node:child_process'
 import { gitRepository, workspaceInventory } from '@attalabs/test-selection'
 
-const repo = gitRepository('/path/to/repository')
-const { view, leftOut } = workspaceInventory(repo, '9a1b…') // a commit id
+const root = process.cwd()
+const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
+const { view, leftOut } = workspaceInventory(gitRepository(root), commit)
+console.log(view.suites.map((suite) => suite.id), leftOut)
 ```
 
 It reads every file through `repo`, for exactly `revision`, and nothing else.
@@ -158,13 +162,13 @@ segment, and skips a member whose manifest has no `name`.
   own `test` script. A root manifest that declares no workspaces gives the
   root suite alone. A suite's id is its package's `name` (`root` for an
   unnamed root).
-- Every test-named file (`*.test.*` or `*.spec.*`) is a test of the package
-  whose folder is the deepest one that holds it.
+- Every test-named file (`*.test.*` or `*.spec.*`) is a test of the suite
+  whose folder is the deepest one that holds it. A left-out package's tests
+  therefore belong to the root suite when there is one.
 - `leftOut.packages` lists each package with no suite, with its folder, its
   `name`, its `test` script and the reason: `no-test-script` or
   `other-runner`.
-- `leftOut.tests` lists each test-named file outside every suite: one held by
-  a left-out package, or by no package at all.
+- `leftOut.tests` lists each test-named file under no suite's folder.
 
 The view's `schemaIdentity` is `workspace-inventory@1`
 (`WORKSPACE_INVENTORY_SCHEMA`). It declares no input edge, unknown scope or

@@ -705,8 +705,11 @@ describe('workspaceInventory builds one commit’s inventory from its own manife
     expect(view.tests.map((t) => [t.id, t.suite, t.cwd])).toEqual([
       ['packages/core/plugins/extra/tests/extra.spec.ts', 'extra', 'packages/core/plugins/extra'],
       ['packages/core/tests/core.test.ts', 'core', 'packages/core'],
+      // A left-out package's tests belong to the deepest suite folder holding them: here the root.
+      ['packages/docs/docs.test.ts', 'mono', '.'],
       // A member with no `name` is no package: its tests belong to the root.
       ['packages/unnamed/unnamed.test.ts', 'mono', '.'],
+      ['packages/web/tests/web.test.ts', 'mono', '.'],
       ['scripts/root.test.ts', 'mono', '.'],
       // A `**` pattern segment is not expanded: the folder is no package.
       ['tools/deep/deep.test.ts', 'mono', '.']
@@ -716,7 +719,7 @@ describe('workspaceInventory builds one commit’s inventory from its own manife
         { dir: 'packages/docs', name: 'docs', reason: 'no-test-script', script: null },
         { dir: 'packages/web', name: 'web', reason: 'other-runner', script: 'jest' }
       ],
-      tests: ['packages/docs/docs.test.ts', 'packages/web/tests/web.test.ts']
+      tests: []
     })
     // Every read went through the reader, for the one commit.
     expect(asked.length).toBeGreaterThan(0)
@@ -735,6 +738,31 @@ describe('workspaceInventory builds one commit’s inventory from its own manife
     expect(view.suites.map((s) => [s.id, s.dir, s.runner])).toEqual([['single', '.', 'vitest']])
     expect(view.tests.map((t) => t.id)).toEqual(['nested/n.test.ts', 'tests/a.test.ts'])
     expect(leftOut).toEqual({ packages: [], tests: [] })
+  })
+
+  it('leaves out each test under no suite folder when the root has no runner', () => {
+    const noRootRunner = { ...files, 'package.json': '{ "name": "mono", "workspaces": ["packages/*"] }\n' }
+    const { view, leftOut } = workspaceInventory(memoryRepository({ c1: noRootRunner }), 'c1')
+    expect(view.suites.map((s) => s.id)).toEqual(['core'])
+    expect(view.tests.map((t) => [t.id, t.suite])).toEqual([
+      // The plugin folder is no workspace member here, so its test belongs to the suite above it.
+      ['packages/core/plugins/extra/tests/extra.spec.ts', 'core'],
+      ['packages/core/tests/core.test.ts', 'core']
+    ])
+    expect(leftOut).toEqual({
+      packages: [
+        { dir: '.', name: 'mono', reason: 'no-test-script', script: null },
+        { dir: 'packages/docs', name: 'docs', reason: 'no-test-script', script: null },
+        { dir: 'packages/web', name: 'web', reason: 'other-runner', script: 'jest' }
+      ],
+      tests: [
+        'packages/docs/docs.test.ts',
+        'packages/unnamed/unnamed.test.ts',
+        'packages/web/tests/web.test.ts',
+        'scripts/root.test.ts',
+        'tools/deep/deep.test.ts'
+      ]
+    })
   })
 
   it('leaves out every test when the root has no runner and declares no workspaces', () => {

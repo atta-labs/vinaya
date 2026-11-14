@@ -32,7 +32,7 @@ export type WorkspaceInventory = {
   view: InventoryView
   leftOut: {
     packages: LeftOutPackage[]
-    /** Test-named files that belong to no suite: under no package with a suite, or in a left-out package. */
+    /** Test-named files under no suite's folder. */
     tests: string[]
   }
 }
@@ -63,8 +63,8 @@ const holds = (dir: string, path: string): boolean => dir === '.' || path.starts
  * left out with its reason. The root package gets a suite on the same rule
  * from its own `test` script; a root manifest that declares no workspaces
  * yields the root suite alone. Every test-named file (`*.test.*`, `*.spec.*`)
- * belongs to the deepest package folder that holds it; when that package has
- * no suite, or no package holds it, the file is left out.
+ * belongs to the suite whose folder is the deepest one that holds it; a file
+ * under no suite folder is left out.
  */
 export function workspaceInventory(repo: RepositoryReader, revision: string): WorkspaceInventory {
   const files = repo.list(revision)
@@ -106,15 +106,12 @@ export function workspaceInventory(repo: RepositoryReader, revision: string): Wo
   // `inventoryViewOf` gives a test to the first suite whose folder holds it: deepest folder first, the root last.
   suites.sort((a, b) => depth(b.dir) - depth(a.dir) || a.dir.localeCompare(b.dir))
 
-  // A test-named file belongs to the deepest package folder holding it, suite or not.
-  const byDepth = [...packages].sort((a, b) => depth(b.dir) - depth(a.dir) || a.dir.localeCompare(b.dir))
-  const suiteDirs = new Set(suites.map((s) => s.dir))
+  // A test-named file belongs to the suite whose folder is the deepest one holding it; under no suite, it is left out.
   const kept: Record<string, string> = {}
   const leftOutTests: string[] = []
   for (const path of files) {
     if (!TEST_FILE_NAME.test(path)) continue
-    const owner = byDepth.find((pkg) => holds(pkg.dir, path))
-    if (owner && suiteDirs.has(owner.dir)) kept[path] = ''
+    if (suites.some((suite) => holds(suite.dir, path))) kept[path] = ''
     else leftOutTests.push(path)
   }
 
