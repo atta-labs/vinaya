@@ -18,8 +18,24 @@ calls to async spawns, which would stop testing it.
 Run the regression with `bun test scripts/test-suites/bun-runtime.test.ts`.
 The test is explicitly registered in `inventory.json` and the CI build job's
 repository-suite command. The remaining tests keep their native suite commands,
-including `--isolate` where their package declares it. The CI group watchdog in
+including `--isolate` where their package declares it. The scheduler's watchdog in
 `schedule.ts` remains an infrastructure backstop, not a substitute for this fix.
+
+Every test file the CI schedule, a local push and a review round run starts in a
+runner process of its own (`FILES_PER_RUNNER` in `schedule.ts`, which
+`LOCAL_GROUP_FILE_CAP` in `local-run.ts` names), with its suite's runner, folder,
+configuration, environment and preload. The watchdog is therefore a per-file
+limit: `GROUP_TIME_LIMIT_MS`, fifteen minutes, applies to each runner start in
+CI, on a push and in a review round alike. A runner still running at the limit
+is stopped with `SIGKILL`, its file is run once more alone, and a second stop
+fails that file alone as interrupted; no other file's result is discarded. The
+kill reaches only the runner itself, so a stopped file's own children may
+outlive it. A push still stops after its first failing runner, which is now one
+file. The failed-tests record is rewritten as each file's runner ends, so a file
+that crashes, exits early or is killed leaves every file that finished before it
+confirmed. The CI build job's literal repository-suite command in
+`.github/workflows/ci.yml` is not scheduled and still runs its files in one
+`bun test`.
 
 Sandbox controller probes write their verdict directly to the inherited stdout
 file descriptor before exiting. On Linux, newer Bun's `process.stdout.write`

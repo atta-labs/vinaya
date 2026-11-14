@@ -6,9 +6,9 @@
  * {@link buildTestSchedule} takes the validated inventory view
  * (`readTestInventory` in `inventory-check.ts`) and an explicit set of
  * selected test identities, groups them with the selection library's
- * `groupNativeTests` — one group per suite and configuration, with that
- * suite's own runner, working directory, preload and environment — and
- * places each group in one of the workflow's existing jobs
+ * `groupNativeTests` — one group per test file ({@link FILES_PER_RUNNER}),
+ * with its suite's own runner, working directory, configuration, preload and
+ * environment — and places each group in one of the workflow's existing jobs
  * (`.github/workflows/ci.yml`):
  *
  * - `build` — a root suite's test: the repository suite, which the build
@@ -32,8 +32,9 @@
  *   bun scripts/test-suites/schedule.ts --dry-run --full
  *     prints every scheduled test once, with its place, runner and working directory.
  *   bun scripts/test-suites/schedule.ts --run --placement <build|shard-N|shared> (--full [--reason <text>] | --decision <file>)
- *     runs that place's groups one after another, each under its own runner,
- *     and fails when a runner fails, is interrupted, leaves no readable report,
+ *     runs that place's files one after another, each in a runner process of
+ *     its own under a per-file time limit ({@link GROUP_TIME_LIMIT_MS}), and
+ *     fails when a runner fails, is interrupted, leaves no readable report,
  *     or reports a file it was not given or misses one it was.
  */
 import { spawnSync } from 'node:child_process'
@@ -63,6 +64,13 @@ import { passEntriesOfRun } from './repository-selection.js'
 import { type InventoryView, readTestInventory, type TestIdentity } from './inventory-check.js'
 
 export type Placement = 'build' | 'shared' | `shard-${number}`
+
+/**
+ * The most test files one scheduled runner start serves: one. The CI schedule and both local-run paths form their
+ * groups with it, so a file that crashes, hangs or is stopped costs only its own result, while each group keeps its
+ * suite's runner, working directory, configuration, environment and preload under a unique `#<k>of<n>` id.
+ */
+export const FILES_PER_RUNNER = 1
 
 /**
  * The owners whose Bun tests the shard jobs run, by package name — so a
@@ -195,7 +203,8 @@ export function buildTestSchedule(input: BuildTestScheduleInput): TestSchedule {
     const grouping = groupNativeTests({
       tests: requests.get(place) ?? [],
       wholeSuites: wholes.get(place) ?? [],
-      universe: view.tests
+      universe: view.tests,
+      maxFilesPerGroup: FILES_PER_RUNNER
     })
     problems.push(...grouping.problems)
     if (grouping.groups.length === 0) continue
@@ -656,7 +665,12 @@ function scheduledTestOf(group: NativeGroup, written: string, repoRoot: string):
  * reader counts only those files. `onGroupEnd` hears what each group proved,
  * right after its report is read.
  */
-/** The longest one CI shard's test runner may take; the slowest group seen on a shard takes about four minutes. */
+/**
+ * The longest one runner start may take before it is stopped and run once more, on CI, a local push and a review
+ * round alike. Every scheduled runner serves one file ({@link FILES_PER_RUNNER}), so this is a per-file limit: the
+ * slowest file takes about eight and a half minutes on a quiet machine and files run two to three times slower
+ * under load.
+ */
 export const GROUP_TIME_LIMIT_MS = 15 * 60_000
 
 /** Whether a runner was stopped at its time limit rather than ending by itself. */
