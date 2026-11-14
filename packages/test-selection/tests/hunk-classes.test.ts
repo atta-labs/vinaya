@@ -158,6 +158,55 @@ describe('signature and enclosing chain', () => {
     const after = 'class A {\n  @trace\n  m() {\n    return 2\n  }\n}\n'
     expect(classify(before, after).classified).toBe(false)
   })
+
+  it("leaves a body change unclassified when its own function's signature changed inside an outer body", () => {
+    const before = [
+      'function outer() {',
+      '  function inner(',
+      '    a: number',
+      '  ) {',
+      '    const b = a',
+      '    return b',
+      '  }',
+      '  return inner(1)',
+      '}',
+      ''
+    ].join('\n')
+    const after = before.replace('    a: number', '    a: number = 2').replace('    const b = a', '    const b = a + 1')
+    const result = classify(before, after)
+    expect(result.classified).toBe(false)
+    expect(result.reason).toBe('signature-or-enclosing-changed')
+    expect(result.hunks.map((h) => (h.kind === 'unclassified' ? h.reason : h.kind))).toEqual([
+      'other-hunk-unclassified',
+      'signature-or-enclosing-changed'
+    ])
+  })
+
+  it('leaves a body change unclassified when an enclosing function inside an outer body changed its signature', () => {
+    const before = [
+      'function outer() {',
+      '  function middle(',
+      '    a: number',
+      '  ) {',
+      '    return () => {',
+      '      const b = a',
+      '      return b',
+      '    }',
+      '  }',
+      '  return middle(1)',
+      '}',
+      ''
+    ].join('\n')
+    const after = before
+      .replace('    a: number', '    a: string')
+      .replace('      const b = a', '      const b = a.length')
+    const result = classify(before, after)
+    expect(result.reason).toBe('signature-or-enclosing-changed')
+    expect(result.hunks.map((h) => (h.kind === 'unclassified' ? h.reason : h.kind))).toEqual([
+      'other-hunk-unclassified',
+      'signature-or-enclosing-changed'
+    ])
+  })
 })
 
 describe('inert additions', () => {
