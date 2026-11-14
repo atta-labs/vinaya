@@ -3,6 +3,7 @@ import * as catalog from '../catalog/task-tools'
 import {
   createSeatHost,
   InvalidSeatTableError,
+  type NamedSeatTable,
   readSeatArgument,
   SEAT_ARGUMENT,
   type Seat,
@@ -100,6 +101,32 @@ describe('seatLaunchArguments — what a generated configuration appends', () =>
 
   it('refuses an undeclared seat', () => {
     expect(() => seatLaunchArguments(table(), 'gamma')).toThrow(UnknownSeatError)
+  })
+})
+
+describe('a names-only seat table — selected and launched like a full one', () => {
+  type NamedSeat = { readonly name: string; readonly serverName: string }
+  const names: NamedSeatTable<NamedSeat> = {
+    defaultSeat: 'alpha',
+    seats: [
+      { name: 'alpha', serverName: 'alpha-tools' },
+      { name: 'beta', serverName: 'beta-tools' }
+    ]
+  }
+
+  it('selectSeat returns the seat it was given, with only the fields it carries', () => {
+    const seat: NamedSeat = selectSeat(names, 'beta')
+    expect(seat).toBe(names.seats[1] as NamedSeat)
+    expect(seat).toEqual({ name: 'beta', serverName: 'beta-tools' })
+    expect(selectSeat(names, null).name).toBe('alpha')
+    expect(() => selectSeat(names, 'gamma')).toThrow('no seat named "gamma" — this process declares: alpha, beta')
+  })
+
+  it('seatLaunchArguments gives the same arguments as the full table it names', () => {
+    for (const seat of ['alpha', 'beta']) {
+      expect(seatLaunchArguments(names, seat)).toEqual(seatLaunchArguments(table(), seat))
+    }
+    expect(() => seatLaunchArguments(names, 'gamma')).toThrow(UnknownSeatError)
   })
 })
 

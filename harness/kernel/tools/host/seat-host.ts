@@ -49,6 +49,17 @@ export type SeatTable<Ctx> = {
   readonly defaultSeat: string
 }
 
+/**
+ * The least a seat table must carry for a seat to be selected or launched:
+ * seats that have a name, and the default seat's name. A full `SeatTable` is
+ * one; so is a names-only table a process keeps apart from its tool modules,
+ * so a caller that needs only the names never loads the tools.
+ */
+export type NamedSeatTable<S extends { readonly name: string }> = {
+  readonly seats: readonly S[]
+  readonly defaultSeat: string
+}
+
 /** The server program's launch argument that names its seat. */
 export const SEAT_ARGUMENT = '--seat'
 
@@ -127,7 +138,7 @@ export function validateSeatTable<Ctx>(table: SeatTable<Ctx>): SeatTable<Ctx> {
 }
 
 /** The seat a launch serves: the named one, or the default when the launch names none. An undeclared name refuses. */
-export function selectSeat<Ctx>(table: SeatTable<Ctx>, requested: string | null): Seat<Ctx> {
+export function selectSeat<S extends { readonly name: string }>(table: NamedSeatTable<S>, requested: string | null): S {
   const name = requested ?? table.defaultSeat
   const seat = table.seats.find((candidate) => candidate.name === name)
   if (!seat)
@@ -139,7 +150,10 @@ export function selectSeat<Ctx>(table: SeatTable<Ctx>, requested: string | null)
 }
 
 /** The seat arguments a generated configuration appends to the server program for one seat: none for the default seat, so its entry stays as it always was. */
-export function seatLaunchArguments<Ctx>(table: SeatTable<Ctx>, seatName: string): string[] {
+export function seatLaunchArguments<S extends { readonly name: string }>(
+  table: NamedSeatTable<S>,
+  seatName: string
+): string[] {
   const seat = selectSeat(table, seatName)
   return seat.name === table.defaultSeat ? [] : [SEAT_ARGUMENT, seat.name]
 }

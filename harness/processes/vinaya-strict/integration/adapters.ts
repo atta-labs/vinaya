@@ -37,7 +37,7 @@ import { ownVersion } from './artifacts.js'
 import type { VendoredVinaya } from '../tools/self-host.js'
 import { MCP_PROTOCOL_VERSION } from '../../../kernel/tools/mcp-protocol.js'
 import { seatLaunchArguments } from '../../../kernel/tools/host/seat-host.js'
-import { vinayaToolSeats } from './server.js'
+import { VINAYA_SEAT_NAMES } from './seat-names.js'
 import { type Program, PROGRAMS } from '../tools/programs.js'
 
 /** A launchable command: the program plus its argument vector, the shape both `.mcp.json` and Codex's TOML expect. */
@@ -66,10 +66,11 @@ export type SeatServerRegistration = { serverName: string; invocation: ServerInv
  * order: the shared server program, plus the seat's own launch argument. The
  * Operator's seat is the default, so its entry carries no seat argument and
  * keeps the server name and arguments every configuration already generated
- * registers.
+ * registers. It reads the names-only table (`seat-names.ts`), never the tool
+ * server, so generating a configuration loads no role's tools.
  */
 export function seatServerRegistrations(selfHost: VendoredVinaya | null): SeatServerRegistration[] {
-  const table = vinayaToolSeats()
+  const table = VINAYA_SEAT_NAMES
   const base = taskToolsServerInvocation(selfHost)
   return table.seats.map((seat) => ({
     serverName: seat.serverName,
