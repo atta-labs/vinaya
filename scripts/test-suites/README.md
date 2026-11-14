@@ -40,11 +40,30 @@ How many of those one-file runners run at once is one setting,
 `schedule.ts` reads and validates for the CI schedule, a push, a review round
 and the exact receipt command alike; any other value is refused with a message
 naming the setting, before any runner starts. The pre-push hook and the CI
-workflow reach it through the environment. A review round's test run gets a
-fixed environment that does not carry it, so a review round runs one file at a
-time until that environment passes the setting on explicitly. Unset, the default is one: each
-file's runner starts only when the one before it ended, and its output streams
-as it comes. Above one, runners start in plan order, never more than the
+workflow reach it through the environment. Unset, the default is four
+(`DEFAULT_TEST_CONCURRENCY`, which reads `ROUND_TEST_FILE_CONCURRENCY`, N, from
+the round-test lock in
+`harness/processes/vinaya-strict/loops/dev-review/v2/round-test-lock.ts`). To
+change it, set `VINAYA_TEST_CONCURRENCY` to another positive integer for the
+push or the CI job; set it to `1` to go back to one file at a time, where each
+file's runner starts only when the one before it ended and its output streams
+as it comes. A review round's test run gets a fixed environment that never
+carries a caller's setting, so the round sets it itself: N, capped at the
+host's logical processors, one on a host with less than 8 GiB, and never below
+one. The host's round-test slot rule counts the same N in test processes and
+budgets each round 8 GiB: rounds testing at once = max(1, min(floor(logical
+processors / N), floor(total memory / 8 GiB))), so the test processes of every
+round together stay within the host's logical processors (a 12-processor,
+36 GB machine runs three rounds of four files; a host with fewer processors
+than N runs one round, at as many files as it has processors). The 8 GiB per
+round comes from one round at four files measured whole — the summed resident
+memory of its process tree, test runners and the children they start — at
+7378 MiB, since a few tests and their child processes use 2 to 5 GiB each. The
+expected gain: a round testing alone
+ran forty files in 69.5 s instead of 216.5 s, about 3.1 times faster; when
+several rounds test at once each gets only its share of the cores (four of
+twelve with three rounds), so each is faster than before but by less.
+Above one, runners start in plan order, never more than the
 setting at once, each with its own report, its own per-file limit and its own
 single retry, and each runner's output is captured and written as one block
 when it ends, between its own group start and end lines, so concurrent runners

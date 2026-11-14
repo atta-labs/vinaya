@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
 import {
   exemptPrefixes,
+  isLogCacheReaderIndex,
   isSanctionedAppend,
   liveTaskPrefixes,
   PROCESS_START_MS,
@@ -92,6 +93,29 @@ describe('real runtime directory guard', () => {
       expect(found).toContain(join('tasks-execution', '9', 'b'))
       expect(found.some((p) => p.startsWith(join('tasks-execution', '7')))).toBe(false)
       expect(touchedSince(root, Date.now() + 60_000, [])).toEqual([])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("ignores a reader's touch of the log cache's shared-memory index, never a write to the cache itself", async () => {
+    const root = mkdtempSync(join(tmpdir(), 'real-runtime-guard-'))
+    try {
+      const cache = join(root, 'logs-cache')
+      mkdirSync(cache)
+      for (const name of ['cache.sqlite', 'cache.sqlite-shm', 'cache.sqlite-wal']) writeFileSync(join(cache, name), 'x')
+      await Bun.sleep(30)
+      const since = Date.now()
+      await Bun.sleep(30)
+      // Another process on the host only reads the cache: SQLite updates its index file.
+      writeFileSync(join(cache, 'cache.sqlite-shm'), 'y')
+      expect(touchedSince(root, since, [])).toEqual([])
+      // A write reaches the write-ahead log, which stays judged.
+      writeFileSync(join(cache, 'cache.sqlite-wal'), 'y')
+      expect(touchedSince(root, since, [])).toEqual([join('logs-cache', 'cache.sqlite-wal')])
+      expect(isLogCacheReaderIndex(join('logs-cache', 'cache.sqlite-shm'))).toBe(true)
+      expect(isLogCacheReaderIndex(join('logs-cache', 'cache.sqlite'))).toBe(false)
+      expect(isLogCacheReaderIndex(join('tasks-execution', 'logs-cache', 'cache.sqlite-shm'))).toBe(false)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

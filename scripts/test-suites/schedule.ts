@@ -34,8 +34,8 @@
  *   bun scripts/test-suites/schedule.ts --run --placement <build|shard-N|shared> (--full [--reason <text>] | --decision <file>)
  *     runs that place's files, each in a runner process of its own under a
  *     per-file time limit ({@link GROUP_TIME_LIMIT_MS}), as many at once as
- *     `VINAYA_TEST_CONCURRENCY` says ({@link testConcurrency}; one after
- *     another when it is unset), and fails when a runner fails, is
+ *     `VINAYA_TEST_CONCURRENCY` says ({@link testConcurrency}; four at a
+ *     time when it is unset, one after another at one), and fails when a runner fails, is
  *     interrupted, leaves no readable report, or reports a file it was not
  *     given or misses one it was.
  */
@@ -68,6 +68,7 @@ import {
   TEST_TEMP_ROOT_ENV,
   type TestTempRun
 } from '../../harness/kernel/conformance/unit/test-temp.js'
+import { ROUND_TEST_FILE_CONCURRENCY } from '../../harness/processes/vinaya-strict/loops/dev-review/v2/round-test-lock.js'
 import { passEntriesOfRun } from './repository-selection.js'
 import { type InventoryView, readTestInventory, type TestIdentity } from './inventory-check.js'
 
@@ -671,12 +672,16 @@ export const GROUP_TIME_LIMIT_MS = 15 * 60_000
 
 /**
  * The setting that decides how many one-file runners the scheduler keeps running at once — on CI, a local push, a
- * review round and the exact receipt command alike. A positive integer; one, one runner after another, when unset.
+ * review round and the exact receipt command alike. A positive integer; four when unset; one runs one runner after
+ * another. A review round sets it itself, to the N its round-test slot counts.
  */
 export const TEST_CONCURRENCY_ENV = 'VINAYA_TEST_CONCURRENCY'
 
-/** How many runners {@link runGroups} keeps running at once when {@link TEST_CONCURRENCY_ENV} is unset. */
-export const DEFAULT_TEST_CONCURRENCY = 1
+/**
+ * How many runners run at once when {@link TEST_CONCURRENCY_ENV} is unset: four, the same N the review round passes
+ * and its round-test slot rule counts (the round-test lock's `ROUND_TEST_FILE_CONCURRENCY`), so the two cannot drift.
+ */
+export const DEFAULT_TEST_CONCURRENCY = ROUND_TEST_FILE_CONCURRENCY
 
 /**
  * The number of runners to keep running at once, read from {@link TEST_CONCURRENCY_ENV}: its value as a positive
@@ -844,7 +849,8 @@ export async function runGroups(
 ): Promise<RunResult> {
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`))
   const start = options.spawn ?? startRunner
-  const concurrency = options.concurrency ?? DEFAULT_TEST_CONCURRENCY
+  // Absent, one: every run of the setting passes the value `testConcurrency` read, four when it is unset.
+  const concurrency = options.concurrency ?? 1
   if (!Number.isSafeInteger(concurrency) || concurrency < 1)
     throw new Error(`runGroups: the concurrency must be a positive integer, and it is ${concurrency}`)
   const capture = concurrency > 1

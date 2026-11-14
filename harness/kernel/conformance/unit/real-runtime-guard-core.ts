@@ -111,6 +111,15 @@ export function isSanctionedAppend(rel: string): boolean {
   )
 }
 
+/**
+ * Whether `rel` is the log cache's SQLite shared-memory index (`logs-cache/cache.sqlite-shm`). Any process on the host
+ * that only READS the cache — a status view, another loop's driver — updates that index, so its time says nothing
+ * about this run's tests. A test that writes rows still changes the database or its `-wal`, which stay judged.
+ */
+export function isLogCacheReaderIndex(rel: string): boolean {
+  return rel === join('logs-cache', 'cache.sqlite-shm')
+}
+
 export function exemptPrefixes(env: NodeJS.ProcessEnv): string[] {
   const task = env.VINAYA_TASK
   const controllerCache = join('tasks-execution', 'unscoped', 'output', 'test-run-cache.json')
@@ -209,6 +218,8 @@ export function touchedSince(
       } else if (st.isFile() && isSanctionedAppend(rel)) {
         // Only a regular file: the append refuses anything else, so a symlink there is judged like any path.
         sanctionedFolders.add(rel.split(sep)[1] as string)
+      } else if (st.isFile() && isLogCacheReaderIndex(rel)) {
+        // A reader's index, not a write: see `isLogCacheReaderIndex`.
       } else if (st.mtimeMs >= sinceMs || st.ctimeMs >= sinceMs) touched.push(rel)
     }
   }

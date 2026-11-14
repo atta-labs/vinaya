@@ -1173,7 +1173,15 @@ export async function runRoundTestsLive(input: {
         `round tests: took round-test slot ${lock.slot + 1} of ${lock.slots} after waiting ${formatWait(lock.waitedMs)}`
       )
     try {
-      return await runRoundTestsLocked(input, { now, log, started, deadlineAt, minutes, done })
+      return await runRoundTestsLocked(input, {
+        now,
+        log,
+        started,
+        deadlineAt,
+        minutes,
+        fileConcurrency: lock.fileConcurrency,
+        done
+      })
     } finally {
       lock.release()
     }
@@ -1197,6 +1205,8 @@ async function runRoundTestsLocked(
     started: number
     deadlineAt: number
     minutes: number
+    /** How many test files the round runs at once: the slot rule's N, capped at the host's logical processors. */
+    fileConcurrency: number
     done: (
       outcome: RoundTestsResult['outcome'],
       extra?: Omit<RoundTestsResult, 'head' | 'outcome' | 'wallMs'>
@@ -1220,7 +1230,9 @@ async function runRoundTestsLocked(
       VINAYA_TEST_TMP: join(runTemp, 'fixtures'),
       VINAYA_PROCESS_REGISTRY_DIR: join(runTemp, 'processes'),
       VINAYA_PUSH_MODE: 'ready',
-      VINAYA_PUSH_BASE: `origin/${input.defaultBranch ?? 'main'}`
+      VINAYA_PUSH_BASE: `origin/${input.defaultBranch ?? 'main'}`,
+      // The baseline drops a caller's setting, so the round names its own: the N its round-test slot was counted for.
+      VINAYA_TEST_CONCURRENCY: String(ctx.fileConcurrency)
     }
     const capture = join(runTemp, 'round-tests.log')
     const child = (argv: string[], label: string) =>
