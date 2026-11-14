@@ -379,19 +379,22 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
   /**
    * What the bundler proves, and what it does not.
    *
-   * Inside one package it is authoritative: it resolved every specifier
-   * itself, `.js` extensions included, so anything it pulled in is a real
-   * dependency the selector must not drop. ACROSS a workspace-package barrel it
-   * is an over-approximation instead — bundling a barrel parses every module
-   * the barrel re-exports, and what survives tree-shaking is not what the
-   * source map lists. Importing ONE name from a package depends on that name's
-   * resolution path, not on the barrel's other re-exports, which is the rule
-   * this selector documents and `apps/cli/specs/self-hosting.md` specifies.
+   * Over the repository's own tree it is authoritative: it resolved every
+   * specifier itself, `.js` extensions included, so anything it pulled in is a
+   * real dependency the selector must not drop — the never-miss case below
+   * asserts a strict superset for every changed-file sample. ACROSS a
+   * workspace-package barrel it is an over-approximation instead — bundling a
+   * barrel parses every module the barrel re-exports, and what survives
+   * tree-shaking is not what the source map lists. Importing ONE name from a
+   * package depends on that name's resolution path, not on the barrel's other
+   * re-exports, which is the rule this selector documents and
+   * `apps/cli/specs/self-hosting.md` specifies; the constructed-workspace case
+   * further down therefore requires every divergence to be attributable to its
+   * own barrel, never to a relative chain the selector lost.
    *
-   * So the two assertions differ in kind, and both are real: within a package,
-   * strict superset; across a package boundary, every divergence must be
-   * attributable to the barrel — the test reached the file through that
-   * package's entry, never through a relative chain the selector lost.
+   * Bundling every repository test file is the slow part, so it happens once
+   * per run of this file: `realRepoOracle()` builds the bundle on first use and
+   * every later reader shares it.
    */
   function realRepoTestFiles(): string[] {
     return discoverWorkspacePackages(REPO_ROOT)
@@ -399,9 +402,17 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
       .flatMap((p) => walkFiles(p.dir).filter(isTestFile))
   }
 
+  let realRepoBundle: { testFiles: string[]; oracle: ReturnType<typeof bundlerOracle> } | undefined
+  function realRepoOracle(): { testFiles: string[]; oracle: ReturnType<typeof bundlerOracle> } {
+    if (!realRepoBundle) {
+      const testFiles = realRepoTestFiles()
+      realRepoBundle = { testFiles, oracle: bundlerOracle(REPO_ROOT, testFiles) }
+    }
+    return realRepoBundle
+  }
+
   it('within a package — including files imported through .js specifiers — the bundler finds nothing the selector drops', () => {
-    const testFiles = realRepoTestFiles()
-    const oracle = bundlerOracle(REPO_ROOT, testFiles)
+    const { testFiles, oracle } = realRepoOracle()
     expect(oracle.unbuildable).toEqual([])
     // Every one of these is imported by its consumers through a `.js`
     // specifier — the exact class of edge that was missing outright.
@@ -411,7 +422,10 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
       'harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts',
       'harness/processes/vinaya-strict/integration/repository-verification.ts',
       'harness/kernel/connectors/git/remote-base.ts',
-      'harness/kernel/gates/checks/runner.ts'
+      'harness/kernel/gates/checks/runner.ts',
+      'harness/processes/vinaya-strict/tools/task-contract/review-input-manifest.ts',
+      'harness/kernel/gates/checks/anchored-region.ts',
+      'harness/processes/vinaya-strict/tools/task-contract/parse-registry.ts'
     ].map((f) => join(REPO_ROOT, f))
     let checkedNonEmpty = 0
     for (const changed of sample) {
@@ -425,33 +439,6 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
     }
     // Guard the guard: an oracle that found nothing would pass the assertion
     // above while proving nothing at all.
-    expect(checkedNonEmpty).toBe(sample.length)
-  }, 300_000)
-
-  it('across a package barrel, every divergence is the barrel — never a relative edge the selector lost', () => {
-    const testFiles = realRepoTestFiles()
-    const oracle = bundlerOracle(REPO_ROOT, testFiles)
-    const barrel = join(REPO_ROOT, 'packages/core/src/index.ts')
-    const sample = [
-      'harness/processes/vinaya-strict/tools/task-contract/review-input-manifest.ts',
-      'harness/kernel/gates/checks/anchored-region.ts',
-      'harness/processes/vinaya-strict/tools/task-contract/parse-registry.ts'
-    ].map((f) => join(REPO_ROOT, f))
-    let checkedNonEmpty = 0
-    for (const changed of sample) {
-      const optimized = new Set(selectAffectedTestFiles(REPO_ROOT, [changed]).selected)
-      const reached = testFiles.filter((t) => oracle.reaches(changed, t))
-      if (reached.length > 0) checkedNonEmpty++
-      // A divergence is only acceptable when the test reached the file through
-      // the package's own entry barrel. One that reached it any other way is a
-      // genuinely lost edge.
-      expect(
-        reached
-          .filter((t) => !optimized.has(t) && !oracle.reaches(barrel, t))
-          .map((t) => t.slice(REPO_ROOT.length + 1)),
-        `divergence not explained by the barrel for ${changed.slice(REPO_ROOT.length + 1)}`
-      ).toEqual([])
-    }
     expect(checkedNonEmpty).toBe(sample.length)
   }, 300_000)
 
