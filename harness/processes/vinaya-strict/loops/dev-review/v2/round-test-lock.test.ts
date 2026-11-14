@@ -6,7 +6,6 @@ import {
   acquireRoundTestLock,
   ROUND_TEST_FILE_CONCURRENCY,
   ROUND_TEST_LOCK_DIRNAME,
-  ROUND_TEST_PROCESS_MEMORY_BYTES,
   ROUND_TEST_SLOT_MEMORY_BYTES,
   roundTestFileConcurrency,
   roundTestSlotCount,
@@ -18,9 +17,9 @@ import {
 const tick = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 const GIB = 1024 ** 3
-// A 4 GiB, four-processor host: exactly one round of four test processes, the case the single-holder tests below
+// An 8 GiB, four-processor host: exactly one round of four test processes, the case the single-holder tests below
 // exercise.
-const ONE_SLOT = { totalMemory: () => 4 * GIB, processors: () => 4 }
+const ONE_SLOT = { totalMemory: () => 8 * GIB, processors: () => 4 }
 
 describe('acquireRoundTestLock', () => {
   test('two holders never overlap: the second waits until the first releases', async () => {
@@ -227,45 +226,56 @@ describe('acquireRoundTestLock', () => {
 })
 
 describe('round-test slots', () => {
-  test('N is four, each test process is budgeted 512 MiB, and a slot is sized for N of them', () => {
+  test('N is four, and a round-test slot is budgeted 8 GiB', () => {
     expect(ROUND_TEST_FILE_CONCURRENCY).toBe(4)
-    expect(ROUND_TEST_PROCESS_MEMORY_BYTES).toBe(512 * 1024 ** 2)
-    expect(ROUND_TEST_SLOT_MEMORY_BYTES).toBe(4 * 512 * 1024 ** 2)
+    expect(ROUND_TEST_SLOT_MEMORY_BYTES).toBe(8 * GIB)
   })
 
   test('a 36 GB, twelve-processor host gets three rounds of four files: the processors bind', () => {
     for (const memory of [36 * GIB, 36_000_000_000]) {
       expect(roundTestSlotCount({ totalMemoryBytes: memory, processors: 12 })).toBe(3)
+      expect(roundTestFileConcurrency({ totalMemoryBytes: memory, processors: 12 })).toBe(4)
     }
-    expect(roundTestFileConcurrency({ processors: 12 })).toBe(4)
   })
 
   test('a two-processor host gets one round of two files; a one-processor host one round of one', () => {
-    expect(roundTestSlotCount({ totalMemoryBytes: 36 * GIB, processors: 2 })).toBe(1)
-    expect(roundTestFileConcurrency({ processors: 2 })).toBe(2)
-    expect(roundTestSlotCount({ totalMemoryBytes: 36 * GIB, processors: 1 })).toBe(1)
-    expect(roundTestFileConcurrency({ processors: 1 })).toBe(1)
+    const host = (processors: number) => ({ totalMemoryBytes: 36 * GIB, processors })
+    expect(roundTestSlotCount(host(2))).toBe(1)
+    expect(roundTestFileConcurrency(host(2))).toBe(2)
+    expect(roundTestSlotCount(host(1))).toBe(1)
+    expect(roundTestFileConcurrency(host(1))).toBe(1)
   })
 
-  test('where memory is the tighter limit, a round counts N × 512 MiB', () => {
-    // Sixteen processors would allow four rounds; 4 GiB holds two rounds of four 512 MiB processes.
-    expect(roundTestSlotCount({ totalMemoryBytes: 4 * GIB, processors: 16 })).toBe(2)
-    expect(roundTestSlotCount({ totalMemoryBytes: 4 * GIB - 1, processors: 16 })).toBe(1)
-    expect(roundTestSlotCount({ totalMemoryBytes: 6 * GIB, processors: 16 })).toBe(3)
+  test('where memory is the tighter limit, a round counts 8 GiB', () => {
+    // Sixteen processors would allow four rounds; 16 GiB holds two rounds of 8 GiB.
+    expect(roundTestSlotCount({ totalMemoryBytes: 16 * GIB, processors: 16 })).toBe(2)
+    expect(roundTestSlotCount({ totalMemoryBytes: 16 * GIB - 1, processors: 16 })).toBe(1)
+    expect(roundTestSlotCount({ totalMemoryBytes: 24 * GIB, processors: 16 })).toBe(3)
+    expect(roundTestFileConcurrency({ totalMemoryBytes: 16 * GIB, processors: 16 })).toBe(4)
+  })
+
+  test('a host with less than 8 GiB runs one round of one file at a time', () => {
+    for (const memory of [0, 4 * GIB, 8 * GIB - 1]) {
+      expect(roundTestSlotCount({ totalMemoryBytes: memory, processors: 12 })).toBe(1)
+      expect(roundTestFileConcurrency({ totalMemoryBytes: memory, processors: 12 })).toBe(1)
+    }
+    expect(roundTestFileConcurrency({ totalMemoryBytes: 8 * GIB, processors: 12 })).toBe(4)
   })
 
   test('every host gets at least one round, and a round at least one file', () => {
     expect(roundTestSlotCount({ totalMemoryBytes: 0, processors: 0 })).toBe(1)
     expect(roundTestSlotCount({ totalMemoryBytes: 1, processors: 64 })).toBe(1)
-    expect(roundTestFileConcurrency({ processors: 0 })).toBe(1)
+    expect(roundTestFileConcurrency({ totalMemoryBytes: 36 * GIB, processors: 0 })).toBe(1)
   })
 
   test("the rounds' test processes together never exceed the host's logical processors", () => {
     for (let processors = 1; processors <= 64; processors++) {
       for (const gib of [1, 2, 4, 8, 16, 36, 64, 128]) {
-        const slots = roundTestSlotCount({ totalMemoryBytes: gib * GIB, processors })
-        const files = roundTestFileConcurrency({ processors })
+        const host = { totalMemoryBytes: gib * GIB, processors }
+        const slots = roundTestSlotCount(host)
+        const files = roundTestFileConcurrency(host)
         expect(slots * files).toBeLessThanOrEqual(processors)
+        expect(slots * ROUND_TEST_SLOT_MEMORY_BYTES).toBeLessThanOrEqual(Math.max(host.totalMemoryBytes, 8 * GIB))
         expect(slots).toBeGreaterThanOrEqual(1)
         expect(files).toBeGreaterThanOrEqual(1)
       }
@@ -292,11 +302,20 @@ describe('round-test slots', () => {
     if (!large.ok) throw new Error(large.detail)
     expect([large.slots, large.fileConcurrency]).toEqual([3, 4])
     large.release()
+    const lean = await acquireRoundTestLock({
+      totalMemory: () => 4 * GIB,
+      processors: () => 12,
+      rootDir: root,
+      deadlineAt: Date.now() + 5_000
+    })
+    if (!lean.ok) throw new Error(lean.detail)
+    expect([lean.slots, lean.fileConcurrency]).toEqual([1, 1])
+    lean.release()
   })
 
   test('holders run together up to the slot count, never beyond it', async () => {
     const root = fixtureDir('round-lock-slots-')
-    const host = { totalMemory: () => 12 * GIB, processors: () => 12 } // three slots: twelve processors, four each
+    const host = { totalMemory: () => 24 * GIB, processors: () => 12 } // three slots: four processors and 8 GiB each
     let inside = 0
     let peak = 0
     const holder = async () => {
@@ -342,7 +361,7 @@ describe('round-test slots', () => {
 
   test('a dead holder of a later slot is reclaimed while the earlier slots stay held', async () => {
     const root = fixtureDir('round-lock-slot-reclaim-')
-    const host = { totalMemory: () => 8 * GIB, processors: () => 8 } // two slots: eight processors, four each
+    const host = { totalMemory: () => 16 * GIB, processors: () => 8 } // two slots: four processors and 8 GiB each
     const live = await acquireRoundTestLock({ ...host, rootDir: root, deadlineAt: Date.now() + 5_000 })
     const dead = await acquireRoundTestLock({
       ...host,

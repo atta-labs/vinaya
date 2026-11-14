@@ -49,15 +49,17 @@ push or the CI job; set it to `1` to go back to one file at a time, where each
 file's runner starts only when the one before it ended and its output streams
 as it comes. A review round's test run gets a fixed environment that never
 carries a caller's setting, so the round sets it itself: N, capped at the
-host's logical processors and never below one. The host's round-test slot rule
-counts the same N in test processes: rounds testing at once = max(1,
-min(floor(logical processors / N), floor(total memory / (N × 512 MiB)))), so
-the test processes of every round together stay within the host's logical
-processors (a 12-processor, 36 GB machine runs three rounds of four files; a
-host with fewer processors than N runs one round, at as many files as it has
-processors). The 512 MiB per test process sits above the largest peaks
-measured on the default branch (219 MB for
-`dev-review-engine-shadow.test.ts`). The expected gain: a round testing alone
+host's logical processors, one on a host with less than 8 GiB, and never below
+one. The host's round-test slot rule counts the same N in test processes and
+budgets each round 8 GiB: rounds testing at once = max(1, min(floor(logical
+processors / N), floor(total memory / 8 GiB))), so the test processes of every
+round together stay within the host's logical processors (a 12-processor,
+36 GB machine runs three rounds of four files; a host with fewer processors
+than N runs one round, at as many files as it has processors). The 8 GiB per
+round comes from one round at four files measured whole — the summed resident
+memory of its process tree, test runners and the children they start — at
+7378 MiB, since a few tests and their child processes use 2 to 5 GiB each. The
+expected gain: a round testing alone
 ran forty files in 69.5 s instead of 216.5 s, about 3.1 times faster; when
 several rounds test at once each gets only its share of the cores (four of
 twelve with three rounds), so each is faster than before but by less.

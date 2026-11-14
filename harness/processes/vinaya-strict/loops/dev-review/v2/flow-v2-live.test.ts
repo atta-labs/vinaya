@@ -1451,8 +1451,8 @@ describe('live progress of the ready push and the explicit-command run', () => {
   })
 })
 
-// A 4 GiB, four-processor host: one round-test slot of four test files, whatever machine runs the tests.
-const ONE_SLOT_HOST = { totalMemory: () => 4 * 1024 ** 3, processors: () => 4 }
+// An 8 GiB, four-processor host: one round-test slot of four test files, whatever machine runs the tests.
+const ONE_SLOT_HOST = { totalMemory: () => 8 * 1024 ** 3, processors: () => 4 }
 
 describe('runRoundTestsLive', () => {
   type Adapter = {
@@ -1571,24 +1571,29 @@ process.exit(cfg.exit ?? 0)
     expect(result.wallMs).toBeGreaterThanOrEqual(0)
   })
 
-  test("the round's test run carries its explicit concurrency: N, capped at the host's processors, never the caller's", async () => {
+  test("the round's test run carries its explicit concurrency: N, capped by the host, never the caller's", async () => {
     const saved = process.env.VINAYA_TEST_CONCURRENCY
     // A caller's own setting never reaches the round: its environment is the fixed baseline plus its own variables.
     process.env.VINAYA_TEST_CONCURRENCY = '7'
     try {
       const seen: string[] = []
-      for (const processors of [12, 2]) {
+      // A large host, a two-processor host, and a host below one round's 8 GiB.
+      for (const [gib, processors] of [
+        [36, 12],
+        [36, 2],
+        [4, 12]
+      ] as const) {
         const concurrencyFile = join(fixtureDir('round-concurrency-'), 'concurrency')
         const { dir, head } = repoWith({ selected: ['a.test.ts'], concurrencyFile, result: { outcome: 'passed' } })
         const result = await runRoundTestsLive({
           ...common(dir),
           head,
-          lock: { pollMs: 20, totalMemory: () => 36 * 1024 ** 3, processors: () => processors }
+          lock: { pollMs: 20, totalMemory: () => gib * 1024 ** 3, processors: () => processors }
         })
         expect(result.outcome).toBe('passed')
         seen.push(readFileSync(concurrencyFile, 'utf8'))
       }
-      expect(seen).toEqual([String(ROUND_TEST_FILE_CONCURRENCY), '2'])
+      expect(seen).toEqual([String(ROUND_TEST_FILE_CONCURRENCY), '2', '1'])
     } finally {
       if (saved === undefined) delete process.env.VINAYA_TEST_CONCURRENCY
       else process.env.VINAYA_TEST_CONCURRENCY = saved
@@ -1793,7 +1798,7 @@ process.exit(cfg.exit ?? 0)
     const make = (name: string) =>
       repoWith({ selected: ['a.test.ts'], groups: 1, groupMs: 600, events, name, result: { outcome: 'passed' } })
     const runs = [make('A'), make('B')]
-    const twoSlots = { pollMs: 20, totalMemory: () => 8 * 1024 ** 3, processors: () => 8 }
+    const twoSlots = { pollMs: 20, totalMemory: () => 16 * 1024 ** 3, processors: () => 8 }
     const results = await Promise.all(
       runs.map((r) => runRoundTestsLive({ ...common(r.dir), lockRoot, lock: twoSlots, head: r.head }))
     )
