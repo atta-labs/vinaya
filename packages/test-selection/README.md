@@ -185,6 +185,62 @@ The view's `schemaIdentity` is `workspace-inventory@1`
 (`WORKSPACE_INVENTORY_SCHEMA`). It declares no input edge, unknown scope or
 policy, so only imports link a test to a file.
 
+### `classifyHunks(input): FileHunkClasses`
+
+Classifies each hunk of a change to one TypeScript file by its structure. It
+reads only its input, decides no selection, and changes nothing `selectTests`
+does: a caller combines its answer with what each test ran.
+
+```ts
+import { classifyHunks, loadTypeScript } from '@attalabs/test-selection'
+
+const result = classifyHunks({
+  path: 'src/total.ts',
+  status: 'modified', // 'modified' | 'added' | 'deleted' | 'renamed'
+  before, // the file's text before the change, or null
+  after, // its text after, or null
+  ts: loadTypeScript(root) // the TypeScript API, or null
+})
+result.classified // true only when every hunk is body-only or an inert addition
+result.hunks // one class per hunk of lineDiffRanges(before, after), in order
+```
+
+Each hunk carries its line range on both sides (`lineDiffRanges`' shape) and
+one of three classes:
+
+- `body-only` — the hunk lies strictly inside one function's block body on
+  both sides (never on the line of its signature, its opening brace or its
+  closing brace), and that function's signature text (parameters, defaults,
+  return type, modifiers, decorators) and every enclosing class, namespace,
+  function and declaration header are unchanged. It names the innermost such
+  function (`Store.path`, `<anonymous>` for an unnamed one) and gives, on each
+  side, its whole span, its body span and the spans of the functions written
+  directly in it, so a caller can map line coverage onto the function's own
+  lines.
+- `inert-addition` — the hunk replaces only blank lines with whole top-level
+  statements (and their leading comments and blank lines), each of them inert:
+  not exported, and either an `import type`, a type alias or interface, a
+  function declaration, a class with no heritage clause, computed member key,
+  static member, static block or decorator, or a `const` whose initializers are
+  function or arrow expressions or primitive literals (a plain string, a
+  number, a boolean, `null`). No added name may appear as an identifier
+  anywhere in the old text, since it would redeclare a name or shadow one the
+  unchanged code reads. It lists the added `names` and each added type-only
+  import's specifier (`importSpecifiers`). A hunk that only adds or removes
+  blank lines between tokens is an inert addition binding no names.
+- `unclassified` — anything else, with a `reason`. A caller treats it as
+  reaching every reader of the file.
+
+One unclassified hunk makes the whole file unclassified, and every other hunk
+is then reported `unclassified` too (`other-hunk-unclassified`). The whole
+file is unclassified when its status is not `modified`, its path does not end
+in `.ts` (a `.tsx`, `.mts` or `.d.ts` file included), it is a test file
+(`*.test.ts`, `*.spec.ts`), `ts` is `null`, or either text has a syntax error
+or one of the load-time errors the compiler's checks see on the file alone (a
+grammar error such as an `await` outside an async function, a redeclared
+name, a name used before its declaration). Equal texts give no hunks and a
+classified file.
+
 ## The plan
 
 `selectTests` reads every file through the repository reader, for exactly the
@@ -557,6 +613,7 @@ command itself with those injected.
 | `src/native.ts` | native test groups, and the check of what each runner executed |
 | `src/compiler-graph.ts` | the compiler-resolved import graph and its read-only source seam |
 | `src/changed-names.ts` | changed-name attribution and the line diff |
+| `src/hunk-classes.ts` | each hunk of a TypeScript file's change classed body-only, inert addition or unclassified |
 | `src/scanner-inputs.ts` | tests that read the tree, and their declared triggers |
 | `src/spawn-inputs.ts` | tests that start a program, and the scripts a test starts with `<binary> <script>` |
 | `src/path-pattern.ts` | the two glob grammars |
@@ -566,7 +623,7 @@ command itself with those injected.
 
 - Node.js standard library: `node:child_process`, `node:crypto`, `node:fs`, `node:module`, `node:os`, `node:path`, `node:readline`, `node:url`, `node:util`, `node:worker_threads`
 - Bun, only inside a recorded Bun run: the listing probe wraps `Bun`'s own functions and `bun:ffi` there
-- `typescript` — an optional peer, loaded at runtime through `createRequire` and imported only as types; without it the selection falls back to its text-scan graph
+- `typescript` — an optional peer, loaded at runtime through `createRequire` and imported only as types; without it the selection falls back to its text-scan graph, and `classifyHunks`, which takes the API as its `ts` input, reports every hunk unclassified
 - `git` — the executable, only for `gitRepository` and the two commands
 - `strace` — the executable, only for the read recorder, on Linux
 

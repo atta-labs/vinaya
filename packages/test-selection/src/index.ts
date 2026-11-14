@@ -20,6 +20,19 @@ export {
   parseHunkRanges
 } from './changed-names.js'
 export {
+  type BodyOnlyHunk,
+  type ChangeStatus,
+  classifyHunks,
+  type FileHunkClasses,
+  type FunctionLines,
+  type Hunk,
+  type HunkClass,
+  type HunkClassInput,
+  type InertAdditionHunk,
+  type UnclassifiedHunk,
+  type UnclassifiedReason
+} from './hunk-classes.js'
+export {
   loadLibraryTypeScript,
   loadTypeScript,
   ALL_PREFIX,
