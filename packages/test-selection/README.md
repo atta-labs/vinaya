@@ -353,7 +353,9 @@ The record comes from a recording job on the default branch, documented with
 the package's record command (see "The `test-selection-record` command"
 below); that job keeps each record as an artifact named for its commit. A
 pull-request job downloads the record of the base commit and passes it with
-`--record`; with no record found it selects without one. The workflow file
+`--record`; with no record found it selects without one. It takes only a run
+of the recording workflow that a push to the default branch started, so a
+record from another branch or event never narrows the selection. The workflow file
 name below (`record.yml`) is the one your recording job lives in; the artifact
 (`read-record-<commit>`) and file (`read-record.json`) names are the ones that
 job's example uses:
@@ -379,8 +381,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BASE: ${{ github.event.pull_request.base.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          run_id=$(gh run list --workflow record.yml --commit "$BASE" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          run_id=$(gh run list --workflow record.yml --branch "$DEFAULT_BRANCH" --event push --commit "$BASE" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
           if [ -n "$run_id" ]; then gh run download "$run_id" --name "read-record-$BASE" --dir .record; fi
       - name: Select
         env:
