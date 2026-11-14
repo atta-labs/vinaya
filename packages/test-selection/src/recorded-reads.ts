@@ -71,8 +71,31 @@ export function isReadRecord(value: unknown): value is ReadRecord {
   )
 }
 
-/** A path's change, as a record sees it. */
-export type PathChange = { path: string; status: 'added' | 'deleted' | 'modified' }
+/**
+ * A path's change, as a record sees it. An added or deleted change may carry `newFolder`: the shallowest folder on
+ * its path that does not exist on the other side (at the base for an added path, at the head for a deleted one), or
+ * `null` when every folder on it exists on both sides. A change without it (`undefined`) says nothing, and the walk
+ * past an unlisted folder keeps every test the nearest listed folder above reaches, as before.
+ */
+export type PathChange = { path: string; status: 'added' | 'deleted' | 'modified'; newFolder?: string | null }
+
+/** Every folder that holds one of `files` at any depth, the root `.` included. */
+export function foldersOf(files: Iterable<string>): Set<string> {
+  const folders = new Set<string>(['.'])
+  for (const file of files)
+    for (let dir = posix.dirname(file); dir !== '.' && !folders.has(dir); dir = posix.dirname(dir)) folders.add(dir)
+  return folders
+}
+
+/** The shallowest folder on `path` that is not among `otherSide`'s folders, or `null` when every one of them is. */
+export function newFolderOf(path: string, otherSide: ReadonlySet<string>): string | null {
+  const segments = path.split('/').slice(0, -1)
+  for (let at = 1; at <= segments.length; at++) {
+    const folder = segments.slice(0, at).join('/')
+    if (!otherSide.has(folder)) return folder
+  }
+  return null
+}
 
 /** A test's record indexed for lookups. */
 export type RecordIndex = {
@@ -181,6 +204,11 @@ export function installedPackageName(path: string, depFolder = 'node_modules'): 
  * from its cached folder listing, so `./foo` can resolve to an added
  * `foo.tsx` or `foo/` with no lookup of it in the trace. Without `scanned`,
  * any listed folder holding the path is enough.
+ *
+ * When the walk passes above the path's own folder and the change carries
+ * `newFolder`, the test is kept only when that new folder lies below the
+ * listed folder the walk reached: a path added or deleted inside folders that
+ * exist on both sides leaves that listing as it was.
  */
 export function recordReach(
   index: RecordIndex,
@@ -212,6 +240,11 @@ export function recordReach(
     walked = true
     name = posix.basename(dir)
     dir = posix.dirname(dir)
+  }
+  // Past the path's own folder, only a folder new on the path between the two can change the listed folder's listing.
+  if (walked && change.newFolder !== undefined) {
+    const fresh = change.newFolder
+    if (fresh === null || !(dir === '.' || fresh.startsWith(`${dir}/`))) return null
   }
   const at = !walked ? `${what} path sits in ${dir}` : `${what} path adds or removes ${name} in ${dir}`
   if (scannedCovers(index.scanned, dir))

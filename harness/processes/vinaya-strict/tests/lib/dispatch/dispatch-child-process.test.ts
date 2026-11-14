@@ -109,9 +109,10 @@ function collectLaunches(): void {
 /**
  * Whether a recorded launch is still running. A pid that answers no signal is
  * gone; one that answers with a different start time is a process the OS has
- * since given the same number, not this launch; a zombie has exited. The start
- * time is the identity, never the command name — a shell vendor that `exec`s
- * another program keeps its pid and start time but changes its name.
+ * since given the same number, not this launch; a zombie has exited, and so
+ * has one whose state can no longer be read. The start time is the identity,
+ * never the command name — a shell vendor that `exec`s another program keeps
+ * its pid and start time but changes its name.
  */
 function launchStillRunning(child: LaunchedChild): boolean {
   if (child.pid <= 0) return false
@@ -122,7 +123,15 @@ function launchStillRunning(child: LaunchedChild): boolean {
   }
   const live = getProcessSnapshot(child.pid)
   if (live !== null && child.childStartedAt !== null && live.startedAt !== child.childStartedAt) return false
-  return !processState(child.pid).startsWith('Z')
+  return stateIsRunning(processState(child.pid))
+}
+
+/**
+ * Whether a `ps` state names a running process: one read and not a zombie. An
+ * empty state is a process that exited between the zero signal and the read.
+ */
+function stateIsRunning(state: string): boolean {
+  return state !== '' && !state.startsWith('Z')
 }
 
 function processState(pid: number): string {
@@ -209,6 +218,17 @@ function tempDir(prefix: string): string {
   tempDirs.push(dir)
   return dir
 }
+
+describe('the survivor check', () => {
+  it('counts a launch as running only when its state is read and is not a zombie', () => {
+    expect(stateIsRunning('S')).toBe(true)
+    expect(stateIsRunning('R+')).toBe(true)
+    expect(stateIsRunning('Z')).toBe(false)
+    expect(stateIsRunning('Z+')).toBe(false)
+    // `ps` no longer finds the pid: it exited after answering the zero signal.
+    expect(stateIsRunning('')).toBe(false)
+  })
+})
 
 describe('dispatchRole — a successful dispatch', () => {
   it('starts the child with attribution on its env, hashes the prompt, and parses printed usage', () => {

@@ -415,6 +415,16 @@ describe('selectTests decided by recorded reads', () => {
     expect(modified.required.map((t) => t.test)).not.toContain('packages/app/tests/tree.test.ts')
   })
 
+  it('a path added inside an existing folder no longer selects a test that only scanned the root; a new folder does', () => {
+    const rooted = record({ 'packages/app/tests/cli.test.ts': { listed: ['.'], scanned: ['.'] } })
+    const inExisting = select({ 'scratch/later.txt': 'later\n' }, rooted)
+    expect(inExisting.required.map((t) => t.test)).not.toContain('packages/app/tests/cli.test.ts')
+    const inNew = select({ 'fresh/later.txt': 'later\n' }, rooted)
+    expect(inNew.required.map((t) => t.test)).toContain('packages/app/tests/cli.test.ts')
+    const removed = select({ 'scratch/notes.txt': null }, rooted)
+    expect(removed.required.map((t) => t.test)).toContain('packages/app/tests/cli.test.ts')
+  })
+
   it('a lookup that failed is a read: the path added later selects the test', () => {
     const plan = select(
       { 'probe/missing.json': '{}\n' },
