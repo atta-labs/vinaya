@@ -46,11 +46,16 @@ import {
   GROUP_TIME_LIMIT_MS,
   type GroupOutcome,
   groupOutcomeOf,
+  OUTPUT_DRAIN_MS,
+  type RunnerStart,
   readShardLists,
   runGroups,
   runnerCommand,
   runTestTempRoot,
   SCHEDULE_TEST_TEMP_REPO_ID,
+  startRunner,
+  TEST_CONCURRENCY_ENV,
+  testConcurrency,
   vitestJsonFiles
 } from './schedule.ts'
 
@@ -409,6 +414,14 @@ function runnerFixture(): { root: string; universe: TestIdentity[] } {
     // file out of its report and exits non-zero.
     'pkg/bun/tests/load-reject.test.ts':
       "import { expect, test } from 'bun:test'\nPromise.reject(new Error('load reject'))\ntest('runs', () => expect(1).toBe(1))\n",
+    // A test that leaves a child behind holding the runner's own stdout and stderr, and names its pid for cleanup.
+    'pkg/bun/tests/linger.test.ts': [
+      "import { test } from 'bun:test'",
+      "import { spawn } from 'node:child_process'",
+      "import { writeFileSync } from 'node:fs'",
+      "test('leaves a child holding the output', () => { const child = spawn('sleep', ['30'], { stdio: 'inherit', detached: true }); child.unref(); writeFileSync(`${import.meta.dir}/.linger.pid`, String(child.pid)) })",
+      ''
+    ].join('\n'),
     'pkg/bun/tests/kill.test.ts':
       "import { test } from 'bun:test'\ntest('killed', () => { process.kill(process.pid, 'SIGTERM'); return new Promise((r) => setTimeout(r, 5000)) })\n",
     // A test that changes directory, as several CLI tests do: Bun then names its file a second time, from the new folder.
@@ -470,9 +483,17 @@ function runnerFixture(): { root: string; universe: TestIdentity[] } {
       vt('pkg/vt/src/run.test.ts'),
       vt('pkg/vt/legacy/src/run.test.ts'),
       bun('pkg/bun/tests/fail.test.ts'),
+      bun('pkg/bun/tests/linger.test.ts'),
       vt('pkg/vt/src/fail.test.ts')
     ]
   }
+}
+
+/** One-file groups of `ids`, in the order `ids` lists them: the plan order a test wants its runners started in. */
+function oneFilePlan(universe: readonly TestIdentity[], ids: readonly string[]): NativeGroup[] {
+  const identities = ids.map((id) => universe.find((t) => t.id === id) as TestIdentity)
+  const { groups } = groupNativeTests({ tests: identities, universe, maxFilesPerGroup: FILES_PER_RUNNER })
+  return ids.map((id) => groups.find((g) => g.tests[0] === id) as NativeGroup)
 }
 
 describe('real runners execute exactly their group', () => {
@@ -484,47 +505,47 @@ describe('real runners execute exactly their group', () => {
   const bunGroup = exact.find((g) => g.runner === 'bun') as NativeGroup
   const vitestGroup = exact.find((g) => g.runner === 'vitest') as NativeGroup
 
-  test('Bun groups preserve the suite isolation flag', () => {
+  test('Bun groups preserve the suite isolation flag', async () => {
     const isolated = { ...bunGroup, environment: { ...bunGroup.environment, isolate: true } }
     expect(runnerCommand(isolated, 'r.xml')).toContain('--isolate')
     expect(runnerCommand(bunGroup, 'r.xml')).not.toContain('--isolate')
   })
 
-  test('the grouped arguments run only the scheduled files, one runner after the other', () => {
+  test('the grouped arguments run only the scheduled files, one runner after the other', async () => {
     expect(bunGroup.args).toEqual(['./tests/a.test.ts'])
     expect(vitestGroup.exclude).toEqual(['legacy/src/run.test.ts'])
     expect(runnerCommand(bunGroup, 'r.xml')).toContain('--timeout=30000')
     expect(runnerCommand(bunGroup, 'r.xml')).not.toContain('--parallel')
     // Only the installed Vitest: a folder that cannot resolve one fails rather than downloading one.
     expect(runnerCommand(vitestGroup, 'r.json').slice(0, 3)).toEqual(['bunx', '--no-install', 'vitest'])
-    const result = runGroups(root, exact, quiet)
+    const result = await runGroups(root, exact, quiet)
     expect(result.failedRunners).toEqual([])
     expect(result.problems).toEqual([])
     expect(result.executions.map((e) => e.group)).toEqual(['bun@default', 'vt@default'])
   }, 120_000)
 
-  test('a Bun path given without ./ runs its substring sibling too, and the check fails it', () => {
-    const result = runGroups(root, [{ ...bunGroup, args: ['tests/a.test.ts'] }], quiet)
+  test('a Bun path given without ./ runs its substring sibling too, and the check fails it', async () => {
+    const result = await runGroups(root, [{ ...bunGroup, args: ['tests/a.test.ts'] }], quiet)
     expect(result.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['extra pkg/bun/moved/tests/a.test.ts'])
   }, 60_000)
 
-  test('a Vitest file argument without the sibling exclusion runs the relocated sibling, and the check fails it', () => {
-    const result = runGroups(root, [{ ...vitestGroup, exclude: [] }], quiet)
+  test('a Vitest file argument without the sibling exclusion runs the relocated sibling, and the check fails it', async () => {
+    const result = await runGroups(root, [{ ...vitestGroup, exclude: [] }], quiet)
     expect(result.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['extra pkg/vt/legacy/src/run.test.ts'])
   }, 60_000)
 
-  test('a scheduled file that is not there is missing', () => {
+  test('a scheduled file that is not there is missing', async () => {
     const gone = {
       ...bunGroup,
       tests: [...bunGroup.tests, 'pkg/bun/tests/gone.test.ts'],
       args: [...bunGroup.args, './tests/gone.test.ts']
     }
-    const result = runGroups(root, [gone], quiet)
+    const result = await runGroups(root, [gone], quiet)
     expect(result.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['missing pkg/bun/tests/gone.test.ts'])
   }, 60_000)
 
-  test('the same group run twice is a duplicate, and a repeated request never groups', () => {
-    expect(runGroups(root, [bunGroup, bunGroup], quiet).problems.map((p) => `${p.code} ${p.path}`)).toEqual([
+  test('the same group run twice is a duplicate, and a repeated request never groups', async () => {
+    expect((await runGroups(root, [bunGroup, bunGroup], quiet)).problems.map((p) => `${p.code} ${p.path}`)).toEqual([
       'duplicate bun@default',
       'duplicate bun@default'
     ])
@@ -532,22 +553,22 @@ describe('real runners execute exactly their group', () => {
     expect(repeated.problems.map((p) => p.code)).toEqual(['duplicate'])
   }, 60_000)
 
-  test('an interrupted runner and an unreadable report fail', () => {
+  test('an interrupted runner and an unreadable report fail', async () => {
     const killed = groupsFor(['pkg/bun/tests/kill.test.ts'])
-    const result = runGroups(root, killed, quiet)
+    const result = await runGroups(root, killed, quiet)
     expect(result.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['interrupted bun@default'])
-    const silent = runGroups(root, [bunGroup], {
+    const silent = await runGroups(root, [bunGroup], {
       ...quiet,
-      spawn: (() => ({ status: 0, signal: null })) as unknown as typeof import('node:child_process').spawnSync
+      spawn: async () => ({ status: 0, signal: null, timedOut: false, output: null })
     })
     expect(silent.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['unreadable bun@default'])
   }, 60_000)
 
-  test('with the stop option a failing group leaves the next one unstarted; without it both run', () => {
+  test('with the stop option a failing group leaves the next one unstarted; without it both run', async () => {
     const failing = groupsFor(['pkg/bun/tests/fail.test.ts'])
     const plan = [...failing, vitestGroup]
     const heard: string[] = []
-    const stopped = runGroups(root, plan, {
+    const stopped = await runGroups(root, plan, {
       ...quiet,
       stopAfterFailedGroup: true,
       onGroupEnd: (outcome) => heard.push(outcome.group)
@@ -557,25 +578,25 @@ describe('real runners execute exactly their group', () => {
     expect(stopped.outcomes.map((o) => o.group)).toEqual(['bun@default'])
     expect(stopped.executions.map((e) => e.group)).toEqual(['bun@default'])
     expect(stopped.problems).toEqual([])
-    const whole = runGroups(root, plan, quiet)
+    const whole = await runGroups(root, plan, quiet)
     expect(whole.failedRunners).toEqual(['bun@default'])
     expect(whole.executions.map((e) => e.group)).toEqual(['bun@default', 'vt@default'])
     expect(whole.outcomes.map((o) => o.group)).toEqual(['bun@default', 'vt@default'])
   }, 120_000)
 
-  test('a killed group is reported either way; only the stop option leaves the next group unstarted', () => {
+  test('a killed group is reported either way; only the stop option leaves the next group unstarted', async () => {
     const plan = [...groupsFor(['pkg/bun/tests/kill.test.ts']), vitestGroup]
-    const whole = runGroups(root, plan, quiet)
+    const whole = await runGroups(root, plan, quiet)
     expect(whole.outcomes.map((o) => o.group)).toEqual(['bun@default', 'vt@default'])
     expect(whole.problems.map((p) => `${p.code} ${p.path}`)).toContain('interrupted bun@default')
-    const stopped = runGroups(root, plan, { ...quiet, stopAfterFailedGroup: true })
+    const stopped = await runGroups(root, plan, { ...quiet, stopAfterFailedGroup: true })
     expect(stopped.outcomes.map((o) => o.group)).toEqual(['bun@default'])
     expect(stopped.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['interrupted bun@default'])
   }, 120_000)
 
-  test('a runner frozen by a synchronous child is stopped at its limit and run once more', () => {
+  test('a runner frozen by a synchronous child is stopped at its limit and run once more', async () => {
     const lines: string[] = []
-    const result = runGroups(root, groupsFor(['pkg/bun/tests/freeze-once.test.ts']), {
+    const result = await runGroups(root, groupsFor(['pkg/bun/tests/freeze-once.test.ts']), {
       log: (line) => lines.push(line),
       groupTimeLimitMs: 4_000
     })
@@ -584,9 +605,9 @@ describe('real runners execute exactly their group', () => {
     expect(result.problems).toEqual([])
   }, 60_000)
 
-  test('a runner frozen twice fails as interrupted instead of hanging', () => {
+  test('a runner frozen twice fails as interrupted instead of hanging', async () => {
     const lines: string[] = []
-    const result = runGroups(root, groupsFor(['pkg/bun/tests/freeze.test.ts']), {
+    const result = await runGroups(root, groupsFor(['pkg/bun/tests/freeze.test.ts']), {
       log: (line) => lines.push(line),
       groupTimeLimitMs: 4_000
     })
@@ -595,7 +616,7 @@ describe('real runners execute exactly their group', () => {
     expect(result.problems.map((p) => `${p.code} ${p.path}`)).toEqual(['interrupted bun@default'])
   }, 60_000)
 
-  test('with one file per runner, a file stopped twice at the limit fails alone; the files around it stay confirmed', () => {
+  test('with one file per runner, a file stopped twice at the limit fails alone; the files around it stay confirmed', async () => {
     expect(GROUP_TIME_LIMIT_MS).toBe(15 * 60_000)
     const plan = groupNativeTests({
       tests: ['pkg/bun/tests/a.test.ts', 'pkg/bun/tests/chdir.test.ts', 'pkg/bun/tests/freeze.test.ts'].map(byId),
@@ -610,7 +631,7 @@ describe('real runners execute exactly their group', () => {
     // The frozen file runs between the two others, so a later file proves the run goes on after it.
     const ordered = [plan[0], plan[2], plan[1]] as NativeGroup[]
     const lines: string[] = []
-    const result = runGroups(root, ordered, { log: (line) => lines.push(line), groupTimeLimitMs: 4_000 })
+    const result = await runGroups(root, ordered, { log: (line) => lines.push(line), groupTimeLimitMs: 4_000 })
     const retried = lines.filter((line) => line.includes('running it once more'))
     expect(retried).toHaveLength(1)
     expect(retried[0]).toContain('bun@default#3of3')
@@ -624,26 +645,26 @@ describe('real runners execute exactly their group', () => {
     ])
   }, 60_000)
 
-  test('an isolated group keeps the passes it reported when one file errors outside its tests', () => {
+  test('an isolated group keeps the passes it reported when one file errors outside its tests', async () => {
     const [group] = groupsFor(['pkg/bun/tests/a.test.ts', 'pkg/bun/tests/load-reject.test.ts']) as [NativeGroup]
     const isolated = { ...group, environment: { ...group.environment, isolate: true } }
-    const kept = runGroups(root, [isolated], quiet).outcomes[0]
+    const kept = (await runGroups(root, [isolated], quiet)).outcomes[0]
     expect([kept?.trusted, kept?.confirmed, kept?.obligations]).toEqual([
       true,
       ['pkg/bun/tests/a.test.ts'],
       ['pkg/bun/tests/load-reject.test.ts']
     ])
     // Without isolation the error may come from any file, so every file stays an obligation.
-    const shared = runGroups(root, [group], quiet).outcomes[0]
+    const shared = (await runGroups(root, [group], quiet)).outcomes[0]
     expect([shared?.trusted, shared?.obligations]).toEqual([
       false,
       ['pkg/bun/tests/a.test.ts', 'pkg/bun/tests/load-reject.test.ts']
     ])
   }, 60_000)
 
-  test('a test that changes directory is still one execution of its own file', () => {
+  test('a test that changes directory is still one execution of its own file', async () => {
     const moving = groupsFor(['pkg/bun/tests/chdir.test.ts', 'pkg/bun/tests/a.test.ts'])
-    const result = runGroups(root, moving, quiet)
+    const result = await runGroups(root, moving, quiet)
     expect(result.failedRunners).toEqual([])
     expect(result.problems).toEqual([])
     // Bun named the moving file more than once, from different folders; the check counts it once.
@@ -651,7 +672,7 @@ describe('real runners execute exactly their group', () => {
     expect(reported.filter((f) => f.endsWith('pkg/bun/tests/chdir.test.ts'))).toHaveLength(1)
   }, 60_000)
 
-  test('a reported path is matched to a scheduled test from the group folder, the root or a climbed-out path', () => {
+  test('a reported path is matched to a scheduled test from the group folder, the root or a climbed-out path', async () => {
     const group = groupsFor(['pkg/bun/tests/a.test.ts'])[0] as NativeGroup
     expect(
       bunReportedFiles(
@@ -668,19 +689,19 @@ describe('real runners execute exactly their group', () => {
     expect(bunReportedFiles(group, null, '/r')).toBeNull()
   })
 
-  test('an empty group list starts no runner', () => {
+  test('an empty group list starts no runner', async () => {
     let started = 0
-    const result = runGroups(root, [], {
+    const result = await runGroups(root, [], {
       ...quiet,
-      spawn: (() => {
+      spawn: async () => {
         started++
-        return { status: 0, signal: null }
-      }) as unknown as typeof import('node:child_process').spawnSync
+        return { status: 0, signal: null, timedOut: false, output: null }
+      }
     })
     expect([started, result.problems]).toEqual([0, []])
   })
 
-  test('a failing file is named by both runners, and each runner, trusted, confirms the rest of its files', () => {
+  test('a failing file is named by both runners, and each runner, trusted, confirms the rest of its files', async () => {
     const groups = groupsFor([
       'pkg/bun/tests/a.test.ts',
       'pkg/bun/tests/fail.test.ts',
@@ -689,7 +710,7 @@ describe('real runners execute exactly their group', () => {
     ])
     const lines: string[] = []
     const ended: GroupOutcome[] = []
-    const result = runGroups(root, groups, {
+    const result = await runGroups(root, groups, {
       log: (line) => lines.push(line),
       announce: true,
       onGroupEnd: (outcome) => ended.push(outcome)
@@ -709,11 +730,280 @@ describe('real runners execute exactly their group', () => {
     ])
   }, 120_000)
 
-  test('without announce the runner prints no group line', () => {
+  test('without announce the runner prints no group line', async () => {
     const lines: string[] = []
-    runGroups(root, [bunGroup], { log: (line) => lines.push(line) })
+    await runGroups(root, [bunGroup], { log: (line) => lines.push(line) })
     expect(lines.some((line) => line.startsWith('vinaya-test-group-'))).toBe(false)
   }, 60_000)
+
+  test('one-file runners report the same outcomes at one and at four runners at once', async () => {
+    const plan = oneFilePlan(universe, [
+      'pkg/bun/tests/a.test.ts',
+      'pkg/bun/tests/fail.test.ts',
+      'pkg/bun/tests/chdir.test.ts',
+      'pkg/bun/tests/kill.test.ts',
+      'pkg/bun/tests/load-reject.test.ts',
+      'pkg/vt/src/run.test.ts',
+      'pkg/vt/src/fail.test.ts'
+    ])
+    expect(plan).toHaveLength(7)
+    const ended = (concurrency: number) => {
+      const heard: string[] = []
+      return runGroups(root, plan, { ...quiet, concurrency, onGroupEnd: (o) => heard.push(o.group) }).then(
+        (result) => ({ result, heard })
+      )
+    }
+    const one = await ended(1)
+    const four = await ended(4)
+    expect(four.result).toEqual(one.result)
+    // Every group's end is heard once either way; only the order the ends arrive in may differ.
+    expect([...four.heard].sort()).toEqual([...one.heard].sort())
+    expect(one.result.failedRunners.length).toBeGreaterThan(0)
+    // A stopping push: one at a time it ends on its first failing file. Four at a time, the first four files start
+    // together, and a file that ends before the failure frees a runner for the next file in plan order; once the
+    // failure lands no further file starts, every started one finishes and is judged, and nothing that never started
+    // counts as missing.
+    const stopOne = await runGroups(root, plan, { ...quiet, stopAfterFailedGroup: true })
+    expect(stopOne.failedRunners).toEqual([plan[1]?.id])
+    expect(stopOne.outcomes.map((o) => o.group)).toEqual([plan[0]?.id, plan[1]?.id])
+    const stopFour = await runGroups(root, plan, { ...quiet, stopAfterFailedGroup: true, concurrency: 4 })
+    const judged = stopFour.outcomes.map((o) => o.group)
+    // The judged files are a prefix of the plan, at least the four started together. (Which later files start depends
+    // on which runners end first; the runner-pool tests below pin the no-further-start rule with a fixed order.)
+    expect(judged).toEqual(plan.slice(0, judged.length).map((g) => g.id))
+    expect(judged.length).toBeGreaterThanOrEqual(4)
+    expect(stopFour.executions.map((e) => e.group)).toEqual(judged)
+    expect(stopFour.failedRunners).toEqual(expect.arrayContaining([plan[1]?.id, plan[3]?.id]))
+    expect(stopFour.outcomes.slice(0, 2)).toEqual(stopOne.outcomes)
+    expect(stopFour.problems.map((p) => p.code)).not.toContain('missing')
+    expect(stopFour.problems.map((p) => `${p.code} ${p.path}`)).toContain(`interrupted ${plan[3]?.id}`)
+  }, 240_000)
+
+  test('above one runner, each runner’s start line, output and end line reach the log as one block', async () => {
+    const plan = oneFilePlan(universe, [
+      'pkg/bun/tests/a.test.ts',
+      'pkg/bun/tests/fail.test.ts',
+      'pkg/bun/tests/chdir.test.ts',
+      'pkg/vt/src/run.test.ts'
+    ])
+    const writes: string[] = []
+    await runGroups(root, plan, { log: (text) => writes.push(text), announce: true, concurrency: 4 })
+    // One write per runner, each opening with its own lines and closing on its own end line.
+    expect(writes).toHaveLength(plan.length)
+    const groupsSeen = writes.map((block) => {
+      const lines = block.split('\n')
+      const start = lines.find((line) => line.startsWith('vinaya-test-group-start '))
+      const end = lines.at(-1) as string
+      expect(lines[0]?.startsWith('vinaya schedule: ')).toBe(true)
+      expect(lines[1]).toBe(start as string)
+      expect(end.startsWith('vinaya-test-group-end ')).toBe(true)
+      expect(lines.filter((line) => line.startsWith('vinaya-test-group-'))).toHaveLength(2)
+      const startGroup = JSON.parse((start as string).slice('vinaya-test-group-start '.length)).group
+      expect(JSON.parse(end.slice('vinaya-test-group-end '.length)).group).toBe(startGroup)
+      // The runner's own output sits between the two lines.
+      expect(lines.length).toBeGreaterThan(3)
+      return startGroup as string
+    })
+    expect([...groupsSeen].sort()).toEqual(plan.map((g) => g.id).sort())
+  }, 120_000)
+})
+
+describe('the runner pool', () => {
+  const { root, universe } = runnerFixture()
+  const plan = oneFilePlan(universe, [
+    'pkg/bun/tests/a.test.ts',
+    'pkg/bun/tests/fail.test.ts',
+    'pkg/bun/tests/chdir.test.ts',
+    'pkg/bun/tests/kill.test.ts',
+    'pkg/bun/tests/load-reject.test.ts',
+    'pkg/bun/tests/freeze.test.ts'
+  ])
+  const fileOf = (command: readonly string[]) => (command.at(-1) as string).replace(/^\.\//, '')
+  type Behaviour = { ms?: number; fail?: boolean; timeouts?: number; output?: string }
+  /**
+   * A runner start that writes the JUnit report a passing or failing one-file Bun run writes, after `ms`, and records
+   * how many runners run at once.
+   */
+  const fakeStart = (behaviour: Record<string, Behaviour>) => {
+    const started: string[] = []
+    const captured: boolean[] = []
+    let active = 0
+    let most = 0
+    const timedOutOnce = new Map<string, number>()
+    const spawn: RunnerStart = async (command, options) => {
+      const file = fileOf(command)
+      const how = behaviour[file] ?? {}
+      started.push(file)
+      captured.push(options.capture)
+      active++
+      most = Math.max(most, active)
+      await new Promise((resolve) => setTimeout(resolve, how.ms ?? 5))
+      active--
+      const output = options.capture ? (how.output ?? `ran ${file}\n`) : null
+      const stops = timedOutOnce.get(file) ?? 0
+      if (stops < (how.timeouts ?? 0)) {
+        timedOutOnce.set(file, stops + 1)
+        return { status: null, signal: 'SIGKILL', timedOut: true, output }
+      }
+      const report = (command.find((arg) => arg.startsWith('--reporter-outfile=')) as string).slice(
+        '--reporter-outfile='.length
+      )
+      const failures = how.fail ? 1 : 0
+      writeFileSync(
+        report,
+        `<testsuites failures="${failures}"><testsuite name="${file}" file="${file}" tests="1" failures="${failures}"></testsuite></testsuites>\n`
+      )
+      return { status: failures, signal: null, timedOut: false, output }
+    }
+    return { spawn, started, captured, most: () => most }
+  }
+
+  test('never runs more runners than the setting allows, and starts them in plan order', async () => {
+    const fake = fakeStart({ 'tests/a.test.ts': { ms: 40 }, 'tests/fail.test.ts': { ms: 5 } })
+    const result = await runGroups(root, plan, { log: () => {}, spawn: fake.spawn, concurrency: 3 })
+    expect(fake.most()).toBe(3)
+    expect(fake.started).toEqual(plan.map((g) => fileOf(g.args)))
+    expect(fake.captured.every(Boolean)).toBe(true)
+    expect(result.outcomes.map((o) => o.group)).toEqual(plan.map((g) => g.id))
+    expect(result.problems).toEqual([])
+    const serial = fakeStart({})
+    await runGroups(root, plan, { log: () => {}, spawn: serial.spawn })
+    // Unset, one runner runs at a time and its output streams as today.
+    expect(serial.most()).toBe(1)
+    expect(serial.captured.some(Boolean)).toBe(false)
+  })
+
+  test('a stop after a failure starts no further file and lets the files already running finish and be judged', async () => {
+    // The second file fails first, while the first is still running; the rest wait for a free runner.
+    const fake = fakeStart({ 'tests/a.test.ts': { ms: 120 }, 'tests/fail.test.ts': { ms: 5, fail: true } })
+    const heard: string[] = []
+    const result = await runGroups(root, plan, {
+      log: () => {},
+      spawn: fake.spawn,
+      concurrency: 2,
+      stopAfterFailedGroup: true,
+      onGroupEnd: (outcome) => heard.push(outcome.group)
+    })
+    expect(fake.started).toEqual(['tests/a.test.ts', 'tests/fail.test.ts'])
+    expect(heard).toEqual([plan[1]?.id, plan[0]?.id])
+    expect(result.failedRunners).toEqual([plan[1]?.id])
+    expect(result.outcomes.map((o) => [o.group, o.confirmed])).toEqual([
+      [plan[0]?.id, ['pkg/bun/tests/a.test.ts']],
+      [plan[1]?.id, []]
+    ])
+    expect(result.executions.map((e) => e.group)).toEqual([plan[0]?.id, plan[1]?.id])
+    // A file that never started is not a missing execution.
+    expect(result.problems).toEqual([])
+  })
+
+  test('each file keeps its own limit and its single retry when runners run together', async () => {
+    const fake = fakeStart({ 'tests/chdir.test.ts': { timeouts: 1 }, 'tests/freeze.test.ts': { timeouts: 2 } })
+    const lines: string[] = []
+    const result = await runGroups(root, plan, {
+      log: (text) => lines.push(...text.split('\n')),
+      spawn: fake.spawn,
+      concurrency: 4,
+      groupTimeLimitMs: 1_000
+    })
+    expect(fake.started.filter((f) => f === 'tests/chdir.test.ts')).toHaveLength(2)
+    expect(fake.started.filter((f) => f === 'tests/freeze.test.ts')).toHaveLength(2)
+    expect(fake.started).toHaveLength(plan.length + 2)
+    expect(lines.filter((line) => line.includes('running it once more'))).toHaveLength(2)
+    const frozen = plan.find((g) => g.tests[0] === 'pkg/bun/tests/freeze.test.ts') as NativeGroup
+    expect(result.failedRunners).toEqual([frozen.id])
+    expect(result.failedTests).toEqual({ [frozen.id]: 'all' })
+    expect(result.problems.map((p) => `${p.code} ${p.path}`)).toEqual([`interrupted ${frozen.id}`])
+  })
+
+  test('a concurrency that is not a positive integer is refused', async () => {
+    await expect(runGroups(root, plan, { log: () => {}, concurrency: 0 })).rejects.toThrow('positive integer')
+    await expect(runGroups(root, plan, { log: () => {}, concurrency: 1.5 })).rejects.toThrow('positive integer')
+  })
+
+  test('a group that throws stops further starts, and the run waits for the runners already running', async () => {
+    let running = 0
+    let endedAfterThrow = false
+    const spawn: RunnerStart = async (command) => {
+      if (fileOf(command) === 'tests/fail.test.ts') throw new Error('runner could not start')
+      running++
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      running--
+      endedAfterThrow = true
+      return { status: 0, signal: null, timedOut: false, output: '' }
+    }
+    await expect(runGroups(root, plan, { log: () => {}, spawn, concurrency: 2 })).rejects.toThrow(
+      'runner could not start'
+    )
+    // The first file's runner had finished before the run gave up, and no runner was left running.
+    expect([endedAfterThrow, running]).toEqual([true, 0])
+  })
+})
+
+describe('a real runner whose child holds its output', () => {
+  const { root, universe } = runnerFixture()
+  const pidFile = join(root, 'pkg/bun/tests/.linger.pid')
+  const killLeftover = (pid: number) => {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {}
+  }
+
+  test('ends when the runner exits, not when the leftover child releases the pipes', async () => {
+    const plan = oneFilePlan(universe, ['pkg/bun/tests/a.test.ts', 'pkg/bun/tests/linger.test.ts'])
+    const lines: string[] = []
+    const started = performance.now()
+    try {
+      const result = await runGroups(root, plan, {
+        log: (text) => lines.push(...text.split('\n')),
+        concurrency: 2,
+        groupTimeLimitMs: 20_000
+      })
+      // Well before the leftover child's thirty seconds and the per-file limit: the runner's exit ended it.
+      expect(performance.now() - started).toBeLessThan(15_000)
+      expect(lines.some((line) => line.includes('running it once more'))).toBe(false)
+      expect(result.failedRunners).toEqual([])
+      expect(result.problems).toEqual([])
+      expect(result.outcomes.map((o) => o.confirmed)).toEqual([
+        ['pkg/bun/tests/a.test.ts'],
+        ['pkg/bun/tests/linger.test.ts']
+      ])
+    } finally {
+      killLeftover(Number(readFileSync(pidFile, 'utf8')))
+    }
+  }, 60_000)
+
+  test('a runner killed at its limit ends at once even while a child of it still holds the pipes', async () => {
+    const started = performance.now()
+    const exit = await startRunner(['sh', '-c', 'sleep 30 & echo $! ; sleep 30'], {
+      cwd: root,
+      env: process.env,
+      capture: true,
+      timeLimitMs: 500
+    })
+    try {
+      expect(performance.now() - started).toBeLessThan(500 + OUTPUT_DRAIN_MS + 3_000)
+      expect([exit.timedOut, exit.signal]).toEqual([true, 'SIGKILL'])
+    } finally {
+      killLeftover(Number((exit.output ?? '').trim().split('\n')[0]))
+    }
+  }, 30_000)
+})
+
+describe('the concurrency setting', () => {
+  test('is one when unset and the positive integer it names otherwise', () => {
+    expect(TEST_CONCURRENCY_ENV).toBe('VINAYA_TEST_CONCURRENCY')
+    expect(testConcurrency({})).toBe(1)
+    expect(testConcurrency({ VINAYA_TEST_CONCURRENCY: '1' })).toBe(1)
+    expect(testConcurrency({ VINAYA_TEST_CONCURRENCY: '4' })).toBe(4)
+    expect(testConcurrency({ VINAYA_TEST_CONCURRENCY: '12' })).toBe(12)
+  })
+
+  test('anything else is refused with a message naming the setting', () => {
+    for (const value of ['', '0', '-1', '1.5', ' 2', '2 ', 'four', '04', '1e3', '99999999999999999999'])
+      expect(() => testConcurrency({ VINAYA_TEST_CONCURRENCY: value })).toThrow(
+        'VINAYA_TEST_CONCURRENCY must be a positive integer'
+      )
+  })
 })
 
 describe('what a runner group confirms', () => {
@@ -851,24 +1141,24 @@ describe("each run's own test-temp root", () => {
     universe: fixture.universe
   }).groups[0] as NativeGroup
   /** Runs one group twice with a recording spawn: each runner's root, and whether it existed while the runner ran. */
-  const run = (env: NodeJS.ProcessEnv, fail = false) => {
+  const run = async (env: NodeJS.ProcessEnv, fail = false) => {
     const seen: { root: string | undefined; existed: boolean }[] = []
-    const spawn = ((_cmd: string, _args: string[], opts: { env: NodeJS.ProcessEnv }) => {
+    const spawn: RunnerStart = async (_command, opts) => {
       const root = opts.env[TEST_TEMP_ROOT_ENV]
       seen.push({ root, existed: root !== undefined && existsSync(join(root, OWNER_MARKER_FILE)) })
       if (fail) throw new Error('runner could not start')
-      return { status: 0, signal: null }
-    }) as unknown as typeof import('node:child_process').spawnSync
+      return { status: 0, signal: null, timedOut: false, output: null }
+    }
     const go = () => runGroups(fixture.root, [group, group], { log: () => {}, spawn, env, createTestTempRoot: create })
-    if (fail) expect(go).toThrow('runner could not start')
-    else go()
+    if (fail) await expect(go()).rejects.toThrow('runner could not start')
+    else await go()
     return seen
   }
   const unset = { PATH: process.env.PATH }
 
-  test('two runs hand their runners two distinct roots, each removed once the run ends', () => {
-    const first = run(unset)
-    const second = run(unset)
+  test('two runs hand their runners two distinct roots, each removed once the run ends', async () => {
+    const first = await run(unset)
+    const second = await run(unset)
     // Every runner of one run shares its run's root; the two runs never share one.
     expect(new Set(first.map((s) => s.root)).size).toBe(1)
     expect(new Set(second.map((s) => s.root)).size).toBe(1)
@@ -882,16 +1172,16 @@ describe("each run's own test-temp root", () => {
     expect(readdirSync(runs).filter((name) => !name.endsWith('.owner.json'))).toEqual([])
   })
 
-  test("a caller's own root is kept and never removed", () => {
+  test("a caller's own root is kept and never removed", async () => {
     const own = join(base, 'caller-root')
     mkdirSync(own)
-    const seen = run({ ...unset, [TEST_TEMP_ROOT_ENV]: own })
+    const seen = await run({ ...unset, [TEST_TEMP_ROOT_ENV]: own })
     expect(seen.map((s) => s.root)).toEqual([own, own])
     expect(existsSync(own)).toBe(true)
   })
 
-  test('the root a run created is removed even when its runner fails to start', () => {
-    const seen = run(unset, true)
+  test('the root a run created is removed even when its runner fails to start', async () => {
+    const seen = await run(unset, true)
     expect(seen).toHaveLength(1)
     expect(existsSync(seen[0]?.root as string)).toBe(false)
   })
