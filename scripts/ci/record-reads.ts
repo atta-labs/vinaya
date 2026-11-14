@@ -222,7 +222,7 @@ const LOOKUPS = [
 /** A name bound to a `createRequire` result, whose own resolve is then searched for. */
 const REQUIRE_BINDING = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[A-Za-z_$][\w$]*\.)?createRequire\s*\(/g
 /** A call's first argument when it is one string literal: quoted, or a template without substitutions; no escapes. */
-const LITERAL_ARGUMENT = /^\s*\(\s*(?:'([^'\\\n]*)'|"([^"\\\n]*)"|`([^`\\$]*)`)\s*[,)]/
+const LITERAL_ARGUMENT = /^\s*\(\s*(?:'([^'\\\n]*)'|"([^"\\\n]*)"|`([^`\\$]*)`)\s*(?:,|\))/
 const MODULE_SOURCE = /\.(?:[cm]?[jt]sx?)$/
 
 /**
