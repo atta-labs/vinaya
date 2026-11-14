@@ -447,11 +447,14 @@ jobs:
 
   # Every workspace suite the shards below do not run: the Vitest packages,
   # whose native configuration, plugins and environment stay their own, and
-  # the Bun suites of the sources package and the portal. The suites run one
-  # after another, never at once: running every package's own test task at
-  # once starved shared subprocess-spawning tests of resources, five distinct
-  # tests each failing once with an identical empty-stderr signature, each
-  # passing standalone.
+  # the Bun suites of the sources package and the portal. Running every
+  # package's own test task at once, unbounded, once starved shared
+  # subprocess-spawning tests of resources, five distinct tests each failing
+  # once with an identical empty-stderr signature, each passing standalone.
+  # The scheduler now starts each file in a runner of its own, each run with
+  # its own test-temp root, and keeps at most `VINAYA_TEST_CONCURRENCY` of
+  # them running — four when unset, one per vCPU of this runner. Setting it
+  # to 1 on this job restores one runner after another.
   #
   # No docs-only skip: a documentation-only pull request runs this job too
   # (its selection decides what that costs), so `aggregate` can require it to
@@ -483,9 +486,9 @@ jobs:
       # The test schedule's `shared` place (`scripts/test-suites/schedule.ts`):
       # every Vitest suite (the log server) and every Bun suite the shards do not run (the sources
       # package, the portal), each started under its own runner from its own
-      # package folder, one after another — the ordering `--concurrency=1`
-      # gave this job before, since running suites at once starved
-      # subprocess-spawning tests. On a pull request, only the files the
+      # package folder, up to `VINAYA_TEST_CONCURRENCY` at once (four when
+      # unset, one per vCPU; the unbounded run that once starved
+      # subprocess-spawning tests is gone). On a pull request, only the files the
       # build job's CI plan requires, and the portal whole when the diff changes any
       # path under it. A plan that runs everything says why. A job given no
       # plan, or a plan for another tree, refuses. A push to `main` skips this

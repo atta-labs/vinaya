@@ -788,8 +788,9 @@ describe('real native runner starts', () => {
     }
     const abs = (...ids: string[]) => ids.map((id) => join(dir, id))
 
-    // A review round runs every file: the record is rewritten as each one ends, and every one keeps `a` confirmed.
-    const round = await runPlan(true)
+    // A review round at one file after another runs every file: the record is rewritten as each one ends, and every one
+    // keeps `a` confirmed.
+    const round = await runPlan(true, 1)
     expect(round.records).toHaveLength(4)
     expect(round.records.map((r) => r.confirmed)).toEqual([
       ['a.test.ts'],
@@ -801,15 +802,15 @@ describe('real native runner starts', () => {
     expect(round.outcome).toMatchObject({ passed: false, unconfirmed: ['b.test.ts', 'c.test.ts'] })
 
     // A push stops after its first failing runner, now one file: the crash leaves `a` confirmed and the rest owed.
-    const push = await runPlan(false)
+    const push = await runPlan(false, 1)
     expect(push.records).toHaveLength(2)
     expect(push.records.at(-1)?.confirmed).toEqual(['a.test.ts'])
     expect(push.records.at(-1)?.failed).toEqual(abs('b.test.ts', 'c.test.ts', 'd.test.ts'))
     expect(push.outcome).toMatchObject({ passed: false, stopped: { tests: 2, groups: 2 } })
 
-    // Four files at once: the record is rewritten as each file ends, in whatever order they end, and the round reaches
-    // the same verdict and the same final record as one file after another.
-    const together = await runPlan(true, 4)
+    // At the default, four files at once: the record is rewritten as each file ends, in whatever order they end, and the
+    // round reaches the same verdict and the same final record as one file after another.
+    const together = await runPlan(true)
     const verdictOf = (outcome: typeof round.outcome) => {
       const { reports, ...rest } = outcome
       return { ...rest, reports: (reports ?? []).length }
@@ -959,12 +960,12 @@ describe('what a native run records', () => {
     expect(frozenPlanRunOptions({ allGroups: false })).toEqual({
       stopAfterFailedGroup: true,
       groupTimeLimitMs: GROUP_TIME_LIMIT_MS,
-      concurrency: 1
+      concurrency: 4
     })
-    expect(frozenPlanRunOptions({ allGroups: true, concurrency: 4 })).toEqual({
+    expect(frozenPlanRunOptions({ allGroups: true, concurrency: 1 })).toEqual({
       stopAfterFailedGroup: false,
       groupTimeLimitMs: GROUP_TIME_LIMIT_MS,
-      concurrency: 4
+      concurrency: 1
     })
     expect(GROUP_TIME_LIMIT_MS).toBe(15 * 60_000)
   })
@@ -1025,8 +1026,8 @@ describe('what a native run records', () => {
     expect(seen).toEqual([true, false])
     // The push and the review round both reach the scheduler with the per-file limit.
     expect(limits).toEqual([GROUP_TIME_LIMIT_MS, GROUP_TIME_LIMIT_MS])
-    // The setting's number reaches the scheduler; without one, one runner at a time.
-    expect(concurrencies).toEqual([1, 3])
+    // The setting's number reaches the scheduler; without one, the default of four runners at once.
+    expect(concurrencies).toEqual([4, 3])
   })
 
   it('a run stopped after its first failing group credits no unrun test and names only the failing one', async () => {

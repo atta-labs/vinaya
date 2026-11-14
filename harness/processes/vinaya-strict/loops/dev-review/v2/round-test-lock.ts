@@ -5,23 +5,50 @@ import { join } from 'node:path'
 // A host-wide counted lock for round-test runs: a fixed number of slots, each a directory taken with an atomic `mkdir`
 // under the runtime root (the parent of every repository's own runtime directory), kept alive by a heartbeat file its
 // holder touches, and reclaimed from a holder whose process died and whose heartbeat stopped. The slot count comes
-// from the host's memory and processors, so a small host runs one round-test run at a time and a large one runs
-// several, whichever number of drivers and repositories are running.
+// from the host's logical processors and memory, counted in test processes: each round runs up to
+// ROUND_TEST_FILE_CONCURRENCY test files at once, each in a process of its own, so the test processes of every round
+// holding a slot together never exceed the host's logical processors, whichever number of drivers and repositories
+// are running.
 
 /** The first slot's directory name under the runtime root; slot `i > 0` is this name followed by `.<i>`. */
 export const ROUND_TEST_LOCK_DIRNAME = 'round-tests.lock'
 
-/** The memory one round-test slot is sized for. */
-export const ROUND_TEST_SLOT_MEMORY_BYTES = 4 * 1024 ** 3
+/**
+ * N: how many test files run at once, each in a test process of its own — a review round's test run, and the
+ * scheduler's default when `VINAYA_TEST_CONCURRENCY` is unset. One shared constant, so the round's file concurrency
+ * and the slot rule that counts its test processes cannot drift apart.
+ */
+export const ROUND_TEST_FILE_CONCURRENCY = 4
 
 /**
- * How many round-test runs a host runs at once: one per 4 GiB of memory and per two logical processors, whichever
- * is fewer, and never fewer than one. A host below 8 GiB keeps a single slot.
+ * The memory one test process is budgeted: 512 MiB, above the largest peaks measured on the default branch
+ * (`dev-review-engine-shadow.test.ts` 219 MB, `run-engine.test.ts` 198 MB, `flow-v2-live.test.ts` 87 MB,
+ * `tool-catalog.test.ts` 68 MB).
+ */
+export const ROUND_TEST_PROCESS_MEMORY_BYTES = 512 * 1024 ** 2
+
+/** The memory one round-test slot is sized for: N test processes at the per-process budget. */
+export const ROUND_TEST_SLOT_MEMORY_BYTES = ROUND_TEST_FILE_CONCURRENCY * ROUND_TEST_PROCESS_MEMORY_BYTES
+
+/**
+ * How many round-test runs a host runs at once, counted in test processes: one round per N logical processors
+ * (N = {@link ROUND_TEST_FILE_CONCURRENCY}), bounded second by memory at one round per N × 512 MiB, and never fewer
+ * than one — max(1, min(floor(processors / N), floor(memory / (N × 512 MiB)))). The rounds' test processes together
+ * stay within the host's logical processors; a host with fewer processors than N runs one round, whose file
+ * concurrency {@link roundTestFileConcurrency} caps at its processor count.
  */
 export function roundTestSlotCount(host: { totalMemoryBytes: number; processors: number }): number {
+  const byProcessors = Math.floor(host.processors / ROUND_TEST_FILE_CONCURRENCY)
   const byMemory = Math.floor(host.totalMemoryBytes / ROUND_TEST_SLOT_MEMORY_BYTES)
-  const byProcessors = Math.floor(host.processors / 2)
-  return Math.max(1, Math.min(byMemory, byProcessors))
+  return Math.max(1, Math.min(byProcessors, byMemory))
+}
+
+/**
+ * How many test files one round runs at once on a host: N ({@link ROUND_TEST_FILE_CONCURRENCY}) capped at the host's
+ * logical processor count, and never fewer than one.
+ */
+export function roundTestFileConcurrency(host: { processors: number }): number {
+  return Math.max(1, Math.min(ROUND_TEST_FILE_CONCURRENCY, Math.floor(host.processors)))
 }
 
 /** The directory of slot `index` under `rootDir`. */
@@ -42,7 +69,15 @@ const HEARTBEAT_ABANDONED_MS = 10 * 60_000
 export const LOCK_POLL_MS = 1_000
 
 export type RoundTestLockResult =
-  | { ok: true; release: () => void; slot: number; slots: number; waitedMs: number }
+  | {
+      ok: true
+      release: () => void
+      slot: number
+      slots: number
+      /** How many test files the holder's round runs at once, from the same processor reading as the slot count. */
+      fileConcurrency: number
+      waitedMs: number
+    }
   | { ok: false; reason: 'timeout' | 'cancel' | 'error'; detail: string }
 
 export interface RoundTestLockOptions {
@@ -146,10 +181,10 @@ export async function acquireRoundTestLock(options: RoundTestLockOptions): Promi
   const startedAt = now()
   let waiting = false
   try {
-    const slots = roundTestSlotCount({
-      totalMemoryBytes: (options.totalMemory ?? totalmem)(),
-      processors: (options.processors ?? availableParallelism)()
-    })
+    // One processor reading serves both the slot count and the round's file concurrency.
+    const processors = (options.processors ?? availableParallelism)()
+    const slots = roundTestSlotCount({ totalMemoryBytes: (options.totalMemory ?? totalmem)(), processors })
+    const fileConcurrency = roundTestFileConcurrency({ processors })
     mkdirSync(options.rootDir, { recursive: true, mode: 0o700 })
     for (;;) {
       if (options.signal?.aborted)
@@ -166,6 +201,7 @@ export async function acquireRoundTestLock(options: RoundTestLockOptions): Promi
             release: holdLock(lockDir, token, options),
             slot,
             slots,
+            fileConcurrency,
             waitedMs: waiting ? Math.max(0, now() - startedAt) : 0
           }
         } catch (error) {

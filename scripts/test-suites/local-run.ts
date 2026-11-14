@@ -5,7 +5,7 @@
  * adapter (`repository-selection.ts`) reads the push's base, record, failed
  * tests and earlier passes, the selection package holds every rule — and each
  * runs once under its own native runner, as many runner starts at once as
- * `VINAYA_TEST_CONCURRENCY` says (one after another when unset). Every
+ * `VINAYA_TEST_CONCURRENCY` says (four at a time when unset). Every
  * test file a run passes completely is kept as a pass entry the next selection
  * may reuse. This file holds no selection rule and passes no selection option.
  *
@@ -455,7 +455,7 @@ export function parseRunArgs(argv: readonly string[]): { log: string | undefined
  * The scheduler options a frozen plan runs under: a push stops after its first failing runner (one file), a review
  * round (`--all-groups`) runs every one; both stop a file's runner at the per-file limit and run it once more alone,
  * and keep as many runners running at once as `concurrency` says — the value `testConcurrency` read from
- * `VINAYA_TEST_CONCURRENCY`, one when absent. A stopped push starts no further file; files already running finish.
+ * `VINAYA_TEST_CONCURRENCY`, four when absent. A stopped push starts no further file; files already running finish.
  */
 export function frozenPlanRunOptions(input: { allGroups: boolean; concurrency?: number }): {
   stopAfterFailedGroup: boolean

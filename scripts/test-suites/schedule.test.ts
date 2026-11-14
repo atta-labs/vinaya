@@ -34,6 +34,7 @@ import {
   TEST_TEMP_ROOT_ENV,
   type TestTempRun
 } from '../../harness/kernel/conformance/unit/test-temp.ts'
+import { ROUND_TEST_FILE_CONCURRENCY } from '../../harness/processes/vinaya-strict/loops/dev-review/v2/round-test-lock.ts'
 import { type InventoryView, readTestInventory } from './inventory-check.ts'
 import {
   assignShards,
@@ -42,6 +43,7 @@ import {
   bunReportedFiles,
   checkSchedule,
   ciScheduleInput,
+  DEFAULT_TEST_CONCURRENCY,
   FILES_PER_RUNNER,
   GROUP_TIME_LIMIT_MS,
   type GroupOutcome,
@@ -866,9 +868,19 @@ describe('the runner pool', () => {
     expect(fake.captured.every(Boolean)).toBe(true)
     expect(result.outcomes.map((o) => o.group)).toEqual(plan.map((g) => g.id))
     expect(result.problems).toEqual([])
-    const serial = fakeStart({})
-    await runGroups(root, plan, { log: () => {}, spawn: serial.spawn })
-    // Unset, one runner runs at a time and its output streams as today.
+    // The setting unset: four runners at once, each one's output captured.
+    const slow = Object.fromEntries(plan.map((g) => [fileOf(g.args), { ms: 40 }]))
+    const unset = fakeStart(slow)
+    await runGroups(root, plan, { log: () => {}, spawn: unset.spawn, concurrency: testConcurrency({}) })
+    expect(unset.most()).toBe(4)
+    expect(unset.captured.every(Boolean)).toBe(true)
+    // Set to one: one runner at a time, its output streaming as it comes.
+    const serial = fakeStart(slow)
+    await runGroups(root, plan, {
+      log: () => {},
+      spawn: serial.spawn,
+      concurrency: testConcurrency({ VINAYA_TEST_CONCURRENCY: '1' })
+    })
     expect(serial.most()).toBe(1)
     expect(serial.captured.some(Boolean)).toBe(false)
   })
@@ -990,9 +1002,10 @@ describe('a real runner whose child holds its output', () => {
 })
 
 describe('the concurrency setting', () => {
-  test('is one when unset and the positive integer it names otherwise', () => {
+  test('is four when unset and the positive integer it names otherwise', () => {
     expect(TEST_CONCURRENCY_ENV).toBe('VINAYA_TEST_CONCURRENCY')
-    expect(testConcurrency({})).toBe(1)
+    expect(testConcurrency({})).toBe(4)
+    expect(DEFAULT_TEST_CONCURRENCY).toBe(ROUND_TEST_FILE_CONCURRENCY)
     expect(testConcurrency({ VINAYA_TEST_CONCURRENCY: '1' })).toBe(1)
     expect(testConcurrency({ VINAYA_TEST_CONCURRENCY: '4' })).toBe(4)
     expect(testConcurrency({ VINAYA_TEST_CONCURRENCY: '12' })).toBe(12)
