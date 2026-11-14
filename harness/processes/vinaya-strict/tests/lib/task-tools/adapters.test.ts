@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import {
+  PROCESS_FIXTURE_BUDGET_MS,
+  spawnSyncBudgeted,
+  stripVinayaEnv
+} from '../../../../../kernel/conformance/unit/process-fixture.js'
 import { SEAT_ARGUMENT } from '../../../../../kernel/tools/host/seat-host.js'
 import type { VendoredVinaya } from '../../../tools/self-host.js'
 import {
@@ -226,6 +231,168 @@ args = ["--yes", "-p", "@attalabs/vinaya@${version}", "vinaya-task-tools-serve"]
   it('lists .mcp.json in the managed-files manifest, so upgrade owns and regenerates it', () => {
     const config = JSON.parse(readFileSync(join(REPO_ROOT, 'vinaya.config.json'), 'utf8'))
     expect(config.managed.files).toContain('.mcp.json')
+  })
+})
+
+/**
+ * The whole generated `.mcp.json`, byte for byte, as the generator wrote it
+ * before the registrations read their seat names from the names-only module —
+ * this repository's source form and the published `npx` form. The text is
+ * written out, never recomputed from the code under test; only the installed
+ * version is filled in, because the published form pins it.
+ */
+describe('the generated .mcp.json is byte-identical to its pinned output', () => {
+  const CLAUDE_FILE_SELF_HOST = `{
+  "mcpServers": {
+    "vinaya-task-tools": {
+      "type": "stdio",
+      "command": "bun",
+      "args": [
+        "harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts"
+      ]
+    },
+    "vinaya-planner-tools": {
+      "type": "stdio",
+      "command": "bun",
+      "args": [
+        "harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts",
+        "--seat",
+        "planner"
+      ]
+    },
+    "vinaya-architect-tools": {
+      "type": "stdio",
+      "command": "bun",
+      "args": [
+        "harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts",
+        "--seat",
+        "architect"
+      ]
+    },
+    "vinaya-tranche-archivist-tools": {
+      "type": "stdio",
+      "command": "bun",
+      "args": [
+        "harness/processes/vinaya-strict/integration/bin/task-tools-serve.ts",
+        "--seat",
+        "tranche-archivist"
+      ]
+    }
+  }
+}
+`
+  const claudeFilePublished = (version: string) => `{
+  "mcpServers": {
+    "vinaya-task-tools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "--yes",
+        "-p",
+        "@attalabs/vinaya@${version}",
+        "vinaya-task-tools-serve"
+      ]
+    },
+    "vinaya-planner-tools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "--yes",
+        "-p",
+        "@attalabs/vinaya@${version}",
+        "vinaya-task-tools-serve",
+        "--seat",
+        "planner"
+      ]
+    },
+    "vinaya-architect-tools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "--yes",
+        "-p",
+        "@attalabs/vinaya@${version}",
+        "vinaya-task-tools-serve",
+        "--seat",
+        "architect"
+      ]
+    },
+    "vinaya-tranche-archivist-tools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "--yes",
+        "-p",
+        "@attalabs/vinaya@${version}",
+        "vinaya-task-tools-serve",
+        "--seat",
+        "tranche-archivist"
+      ]
+    }
+  }
+}
+`
+  const codexTomlPublished = (version: string) => `[mcp_servers.vinaya-task-tools]
+command = "npx"
+args = ["--yes", "-p", "@attalabs/vinaya@${version}", "vinaya-task-tools-serve"]
+
+[mcp_servers.vinaya-planner-tools]
+command = "npx"
+args = ["--yes", "-p", "@attalabs/vinaya@${version}", "vinaya-task-tools-serve", "--seat", "planner"]
+
+[mcp_servers.vinaya-architect-tools]
+command = "npx"
+args = ["--yes", "-p", "@attalabs/vinaya@${version}", "vinaya-task-tools-serve", "--seat", "architect"]
+
+[mcp_servers.vinaya-tranche-archivist-tools]
+command = "npx"
+args = ["--yes", "-p", "@attalabs/vinaya@${version}", "vinaya-task-tools-serve", "--seat", "tranche-archivist"]
+`
+
+  it("this repository's source form", () => {
+    expect(claudeMcpJsonFile(SELF_HOST)).toBe(CLAUDE_FILE_SELF_HOST)
+  })
+
+  it('the published npx form, for a repository that does not vendor the command line', () => {
+    expect(claudeMcpJsonFile(null)).toBe(claudeFilePublished(ownVersion()))
+  })
+
+  it('the published Codex tables', () => {
+    expect(codexMcpServersToml(null)).toBe(codexTomlPublished(ownVersion()))
+  })
+})
+
+/**
+ * Loading the registration builder loads only seat names, never the tool
+ * server or a role's tool module — so a change to a role's tools does not
+ * select every configuration-generating test. A fresh `bun` process imports the
+ * builder and reports every module it loaded.
+ */
+describe('the registration builder loads no tool module', () => {
+  const ADAPTERS = join(REPO_ROOT, 'harness/processes/vinaya-strict/integration/adapters.ts')
+  const FORBIDDEN = [
+    'harness/processes/vinaya-strict/integration/server.ts',
+    'harness/processes/vinaya-strict/thinking/planner/tools/planner-tools.ts',
+    'harness/processes/vinaya-strict/thinking/architect/tools/architect-tools.ts',
+    'harness/processes/vinaya-strict/tools/milestone/milestone-tools.ts'
+  ]
+
+  it('imports neither the tool server nor the Planner, Architect or milestone tools', () => {
+    const script = `await import(${JSON.stringify(ADAPTERS)}); console.log(JSON.stringify(Object.keys(require.cache)))`
+    const child = spawnSyncBudgeted(
+      process.execPath,
+      ['-e', script],
+      { cwd: REPO_ROOT, env: stripVinayaEnv(), encoding: 'utf8' },
+      PROCESS_FIXTURE_BUDGET_MS,
+      'adapters module-load probe'
+    )
+    expect({ status: child.status, stderr: child.stderr }).toEqual({ status: 0, stderr: '' })
+    const loaded: string[] = JSON.parse(child.stdout.trim().split('\n').at(-1) ?? '[]')
+    const normalized = loaded.map((path) => path.replaceAll('\\', '/'))
+    expect(normalized.some((path) => path.endsWith('harness/processes/vinaya-strict/integration/adapters.ts'))).toBe(
+      true
+    )
+    expect(normalized.filter((path) => FORBIDDEN.some((file) => path.endsWith(file)))).toEqual([])
   })
 })
 

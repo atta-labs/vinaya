@@ -90,7 +90,8 @@ describe('generated artifact sources', () => {
     const operator = byPath.get('.agents/skills/vinaya-operator/SKILL.md')
     expect(operator?.has(`${P}executing/operator/doctrine.md`)).toBe(false)
     expect(operator?.has(`${P}tools/doctrine/doctrine-map.ts`)).toBe(true)
-    expect(byPath.get('.mcp.json')?.has(`${P}integration/server.ts`)).toBe(true)
+    expect(byPath.get('.mcp.json')?.has(`${P}integration/seat-names.ts`)).toBe(true)
+    expect(byPath.get('.mcp.json')?.has(`${P}integration/server.ts`)).toBe(false)
   })
 
   it('keeps each source set narrow: the Issue gate and brief modules are no source of any generated file', () => {

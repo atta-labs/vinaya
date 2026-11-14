@@ -47,6 +47,7 @@ import {
   readSeatArgument,
   type SeatHandler,
   type SeatTable,
+  type Seat,
   selectSeat,
   validateSeatTable
 } from '../../../kernel/tools/host/seat-host.js'
@@ -68,12 +69,33 @@ import { MILESTONE_TOOL_ENTRIES, milestoneToolHandlers } from '../tools/mileston
 import { PLANNER_TOOL_ENTRIES, plannerToolHandlers } from '../thinking/planner/tools/planner-tools.js'
 import { defaultTaskResumeHandler } from '../loops/dev-review/run-control/resume.js'
 import { defaultTaskStartHandler } from '../loops/dev-review/run-control/start.js'
+import {
+  ARCHITECT_SEAT,
+  ARCHITECT_TOOLS_MCP_SERVER_NAME,
+  OPERATOR_SEAT,
+  PLANNER_SEAT,
+  PLANNER_TOOLS_MCP_SERVER_NAME,
+  TASK_TOOLS_MCP_SERVER_NAME,
+  TRANCHE_ARCHIVIST_SEAT,
+  TRANCHE_ARCHIVIST_TOOLS_MCP_SERVER_NAME,
+  VINAYA_SEAT_NAMES,
+  type VinayaSeatName
+} from './seat-names.js'
 
 /** The MCP spec revision this server implements and both adapters were verified against. */
 export { MCP_PROTOCOL_VERSION }
 
-/** The one MCP server name both adapters register — the key under `mcpServers`/`[mcp_servers.<name>]`. */
-export const TASK_TOOLS_MCP_SERVER_NAME = 'vinaya-task-tools'
+/** The seat and server names live in the names-only module; re-exported so every importer keeps its import. */
+export {
+  ARCHITECT_SEAT,
+  ARCHITECT_TOOLS_MCP_SERVER_NAME,
+  OPERATOR_SEAT,
+  PLANNER_SEAT,
+  PLANNER_TOOLS_MCP_SERVER_NAME,
+  TASK_TOOLS_MCP_SERVER_NAME,
+  TRANCHE_ARCHIVIST_SEAT,
+  TRANCHE_ARCHIVIST_TOOLS_MCP_SERVER_NAME
+}
 
 // --- caller context (authority lives in the transport, never in an argument) -
 
@@ -151,19 +173,6 @@ export async function dispatchToolCall(
 
 // --- the seat table: every seat Vinaya serves, in one place -------------------
 
-/** The Operator's seat — what `--seat` names, and the seat a launch with no seat argument serves. */
-export const OPERATOR_SEAT = 'operator'
-
-/** The Planner's seat — what `--seat planner` names. */
-export const PLANNER_SEAT = 'planner'
-export const ARCHITECT_SEAT = 'architect'
-export const TRANCHE_ARCHIVIST_SEAT = 'tranche-archivist'
-export const ARCHITECT_TOOLS_MCP_SERVER_NAME = 'vinaya-architect-tools'
-export const TRANCHE_ARCHIVIST_TOOLS_MCP_SERVER_NAME = 'vinaya-tranche-archivist-tools'
-
-/** The MCP server name the generated configurations register the Planner's seat under. */
-export const PLANNER_TOOLS_MCP_SERVER_NAME = 'vinaya-planner-tools'
-
 /**
  * Vinaya's seat table — the one place it declares which seats its tool server
  * serves and, for each, the catalog entries, the handlers and the grant. It
@@ -181,38 +190,35 @@ export function vinayaToolSeats(
   handlers: TaskToolHandlers = defaultTaskToolHandlers,
   plannerHandlers: Record<string, SeatHandler<CallerContext>> = plannerToolHandlers()
 ): SeatTable<CallerContext> {
+  const contents: Record<VinayaSeatName, Omit<Seat<CallerContext>, 'name' | 'serverName'>> = {
+    [OPERATOR_SEAT]: {
+      entries: TASK_TOOL_CATALOG.map((def) => toolListEntry(def)),
+      handlers,
+      grant: vinayaRouterPolicies().roles
+    },
+    [PLANNER_SEAT]: {
+      entries: PLANNER_TOOL_ENTRIES,
+      handlers: plannerHandlers,
+      grant: VINAYA_PLANNER_ROUTER_ROLES
+    },
+    [ARCHITECT_SEAT]: {
+      entries: [...ARCHITECT_TOOL_ENTRIES, ...MILESTONE_TOOL_ENTRIES],
+      handlers: { ...architectToolHandlers(), ...milestoneToolHandlers() },
+      grant: VINAYA_ARCHITECT_ROUTER_ROLES
+    },
+    [TRANCHE_ARCHIVIST_SEAT]: {
+      entries: MILESTONE_TOOL_ENTRIES,
+      handlers: milestoneToolHandlers(),
+      grant: VINAYA_TRANCHE_ARCHIVIST_ROUTER_ROLES
+    }
+  }
   return validateSeatTable<CallerContext>({
-    defaultSeat: OPERATOR_SEAT,
-    seats: [
-      {
-        name: OPERATOR_SEAT,
-        serverName: TASK_TOOLS_MCP_SERVER_NAME,
-        entries: TASK_TOOL_CATALOG.map((def) => toolListEntry(def)),
-        handlers,
-        grant: vinayaRouterPolicies().roles
-      },
-      {
-        name: PLANNER_SEAT,
-        serverName: PLANNER_TOOLS_MCP_SERVER_NAME,
-        entries: PLANNER_TOOL_ENTRIES,
-        handlers: plannerHandlers,
-        grant: VINAYA_PLANNER_ROUTER_ROLES
-      },
-      {
-        name: ARCHITECT_SEAT,
-        serverName: ARCHITECT_TOOLS_MCP_SERVER_NAME,
-        entries: [...ARCHITECT_TOOL_ENTRIES, ...MILESTONE_TOOL_ENTRIES],
-        handlers: { ...architectToolHandlers(), ...milestoneToolHandlers() },
-        grant: VINAYA_ARCHITECT_ROUTER_ROLES
-      },
-      {
-        name: TRANCHE_ARCHIVIST_SEAT,
-        serverName: TRANCHE_ARCHIVIST_TOOLS_MCP_SERVER_NAME,
-        entries: MILESTONE_TOOL_ENTRIES,
-        handlers: milestoneToolHandlers(),
-        grant: VINAYA_TRANCHE_ARCHIVIST_ROUTER_ROLES
-      }
-    ]
+    defaultSeat: VINAYA_SEAT_NAMES.defaultSeat,
+    seats: VINAYA_SEAT_NAMES.seats.map((seat) => ({
+      name: seat.name,
+      serverName: seat.serverName,
+      ...contents[seat.name]
+    }))
   })
 }
 
