@@ -48,8 +48,6 @@
   "harness/kernel/gates/ring2-audits/direct-main-push.ts": 1,
   "harness/kernel/gates/ring2-audits/ensure-label.ts": 1,
   "harness/kernel/isolation/isolation-probe.ts": 1,
-  "harness/kernel/isolation/probe.ts": 1,
-  "harness/kernel/isolation/shell-eval.ts": 3,
   "harness/kernel/isolation/worker-boundary.ts": 108,
   "harness/kernel/log/client/cli-operation-log.ts": 1,
   "harness/kernel/log/client/log-sync-folder-source.ts": 1,

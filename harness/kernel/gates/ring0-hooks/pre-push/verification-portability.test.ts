@@ -241,6 +241,7 @@ describe('the package agrees with this repository', () => {
     expect(owned).toEqual([
       'packages/test-selection/tests/consumer.test.ts test-selection',
       'packages/test-selection/tests/git-revisions.test.ts test-selection',
+      'packages/test-selection/tests/hunk-classes.test.ts test-selection',
       'packages/test-selection/tests/isolation.test.ts test-selection',
       'packages/test-selection/tests/native.test.ts test-selection',
       'packages/test-selection/tests/recorded-reads.test.ts test-selection',

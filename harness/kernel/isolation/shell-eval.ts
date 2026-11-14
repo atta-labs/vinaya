@@ -7,8 +7,6 @@ import { loadRoleGrants } from '../adapters/agents/manifest'
 import type { GeneratedAgentConfig } from './policy'
 import { ORDINARY_COMMANDS, SHELL_ATTACKS, type ShellGuard } from './shell-attacks'
 
-const processRoot = join(import.meta.dir, '../../../harness/processes/vinaya-strict/executing')
-
 export interface ShellDecisionRow {
   guard: ShellGuard | 'ordinary'
   command: string
@@ -35,10 +33,13 @@ function probeRepository(branch: 'task' | 'main'): string {
   return directory
 }
 
-/** Runs each command through the generated Claude hook and the generated Codex hook. */
-export function evaluateShellGuards(): ShellDecisionRow[] {
-  const grants = loadRoleGrants(join(processRoot, 'developer/grants.yaml'))
-  const outputSchema = JSON.parse(readFileSync(join(processRoot, 'developer/output.schema.json'), 'utf8'))
+/**
+ * Runs each command through the Claude hook and the Codex hook generated from the grants file at
+ * `grantsPath`, with the output schema at `outputSchemaPath`.
+ */
+export function evaluateShellGuards(grantsPath: string, outputSchemaPath: string): ShellDecisionRow[] {
+  const grants = loadRoleGrants(grantsPath)
+  const outputSchema = JSON.parse(readFileSync(outputSchemaPath, 'utf8'))
   const hooks = new Map<string, string>()
   const repositories = { task: probeRepository('task'), main: probeRepository('main') }
   const hookFor = (vendor: 'claude' | 'codex', branch: 'task' | 'main'): string => {

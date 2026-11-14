@@ -75,6 +75,21 @@ are judged. The CI build job's literal repository-suite command in
 `.github/workflows/ci.yml` is not scheduled and still runs its files in one
 `bun test`.
 
+`file-level-tests.json` is the one committed list of tests that selection must
+keep at file level. It is a JSON object whose keys are list names; each list is
+an object that maps a repository-relative path to the reason the file is on it.
+Today it holds one list, `real-sandbox`: the files allowed to read the host
+platform, because each one verifies or spawns the real confinement path of the
+host it runs on. `apps/cli/tests/platform-independence.test.ts` reads that list
+and checks every tracked test file in the repository against it. A file that
+reads the host platform and is not on the list fails the check. A listed file
+that no longer reads the platform also fails, until its entry is deleted. The
+list may not grow past the ceiling the test keeps beside its walk, so the list
+only shrinks, and every entry must give a non-empty reason. `inventory.json`
+declares the file as a `semantic` input (`file-level-tests`) of every test that
+reads it, so a change to it selects them. A test that reads it later must be
+added to that input's readers.
+
 Sandbox controller probes write their verdict directly to the inherited stdout
 file descriptor before exiting. On Linux, newer Bun's `process.stdout.write`
 loses output inside Codex's no-network reviewer sandbox, while `writeSync(1, …)`

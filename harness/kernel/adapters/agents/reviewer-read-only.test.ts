@@ -1,15 +1,33 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { generateClaudeSettings } from './claude-code/settings'
 import { generateCodexConfig } from './codex/config'
-import { loadRoleGrants } from './manifest'
+import { type RoleContract, resolveRoleGrants } from './manifest'
 import type { GeneratedAgentConfig } from '../../isolation/policy'
 
-// A reviewer's shell is read-only twice over: by its sandbox (no writable path) and by its rules (reading
-// commands only, their write-capable forms refused). These run the generated hooks, as the agents do.
-const processRoot = join(import.meta.dir, '../../../../harness/processes/vinaya-strict/executing')
+// A role that reads but runs no command and writes nothing is read-only twice over: by its sandbox (no writable
+// path) and by its rules (reading commands only, their write-capable forms refused). These run the generated
+// hooks, as the agents do, on a contract defined inline; a process proves its own grants files in its own tests.
+const READ_ONLY: RoleContract = {
+  role: 'code-reviewer',
+  models: { claude: 'process-supplied', codex: 'process-supplied' },
+  capabilities: {
+    read_files: 'allow',
+    run_commands: 'deny',
+    write_files: 'deny',
+    network: ['example.com'],
+    web_fetch: 'allow',
+    web_search: 'deny',
+    subagents: 'deny',
+    plan_tool: 'allow',
+    view_image: 'allow'
+  },
+  mcp_tools: { tools: ['read_source'] },
+  hooks: { background_shell: true, force_push: true, no_verify: true, default_branch_commit: true, write_scope: true },
+  sandbox: 'enabled'
+}
 const WRITE_FORMS = [
   'find . -name x -exec rm {} ;',
   'find . -execdir touch y ;',
@@ -57,13 +75,13 @@ const READS = [
   "grep -n '>' file"
 ]
 
-for (const role of ['code-reviewer', 'security-reviewer'] as const) {
-  const grants = loadRoleGrants(join(processRoot, role, 'grants.yaml'))
-  const workspace = mkdtempSync(join(tmpdir(), `reviewer-${role}-`))
+for (const [role, contract] of [['read-only role', READ_ONLY]] as const) {
+  const grants = resolveRoleGrants(contract)
+  const workspace = mkdtempSync(join(tmpdir(), 'read-only-role-'))
   const paths = {
     generatedDir: workspace,
-    outputSchemaPath: join(processRoot, role, 'output.schema.json'),
-    outputSchema: JSON.parse(readFileSync(join(processRoot, role, 'output.schema.json'), 'utf8')),
+    outputSchemaPath: join(workspace, 'output.schema.json'),
+    outputSchema: {},
     variables: { WORKTREE: workspace }
   }
   const configs: Record<'claude' | 'codex', GeneratedAgentConfig> = {

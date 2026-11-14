@@ -245,16 +245,6 @@
     "owner": "@attalabs/harness"
   },
   {
-    "file": "harness/kernel/isolation/probe.ts",
-    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
-    "owner": "@attalabs/harness"
-  },
-  {
-    "file": "harness/kernel/isolation/shell-eval.ts",
-    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
-    "owner": "@attalabs/harness"
-  },
-  {
     "file": "harness/kernel/isolation/worker-boundary.ts",
     "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
     "owner": "@attalabs/harness"

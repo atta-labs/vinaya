@@ -320,7 +320,9 @@ describe('the capability probe', () => {
     const run = Bun.spawnSync([
       process.execPath,
       join(import.meta.dir, '../../../../../../harness/kernel/isolation/probe.ts'),
-      '--dry-run'
+      '--dry-run',
+      // This process's own folder.
+      join(import.meta.dir, '../../..')
     ])
     expect(run.exitCode).toBe(0)
     const lines = run.stdout

@@ -3,11 +3,26 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { generateClaudeSettings } from '../adapters/agents/claude-code/settings'
 import { generateCodexConfig } from '../adapters/agents/codex/config'
-import { loadRoleGrants, ROLE_NAMES } from '../adapters/agents/manifest'
+import { loadRoleGrants } from '../adapters/agents/manifest'
+import { loadProcess } from '../dev-process-socket/loader/load-process'
 import type { GeneratedAgentConfig } from './policy'
 
-const dryRun = process.argv.includes('--dry-run')
-const processRoot = join(import.meta.dir, '../../../harness/processes/vinaya-strict/executing')
+// Usage: bun harness/kernel/isolation/probe.ts [--dry-run] <process-folder>
+// Probes every role the process declares under provides.roles with both a grants file and an output schema.
+const args = process.argv.slice(2)
+const dryRun = args.includes('--dry-run')
+const processFolder = args.find((arg) => !arg.startsWith('--'))
+if (processFolder === undefined) {
+  console.error(
+    'probe: a process folder is required — bun harness/kernel/isolation/probe.ts [--dry-run] <process-folder>'
+  )
+  process.exit(2)
+}
+const launchedRoles = Object.entries(loadProcess(processFolder).provided?.roles ?? {}).flatMap(([role, paths]) =>
+  paths.grants !== undefined && paths.outputSchema !== undefined
+    ? [{ role, grantsPath: paths.grants, outputSchemaPath: paths.outputSchema }]
+    : []
+)
 const probeRoot = dryRun ? join(tmpdir(), 'vinaya-agent-probe') : mkdtempSync(join(tmpdir(), 'vinaya-agent-probe-'))
 
 function promptFor(vendor: 'claude-code' | 'codex', grants: ReturnType<typeof loadRoleGrants>): string {
@@ -64,9 +79,8 @@ function initializeProbeRepository(directory: string): void {
     throw new Error(`failed to set probe origin HEAD: ${directory}`)
 }
 
-for (const role of ROLE_NAMES) {
-  const grants = loadRoleGrants(join(processRoot, role, 'grants.yaml'))
-  const outputSchemaPath = join(processRoot, role, 'output.schema.json')
+for (const { role, grantsPath, outputSchemaPath } of launchedRoles) {
+  const grants = loadRoleGrants(grantsPath)
   const outputSchema = JSON.parse(readFileSync(outputSchemaPath, 'utf8')) as Record<string, unknown>
   for (const vendor of ['claude-code', 'codex'] as const) {
     const generatedDir = join(probeRoot, vendor, role)
