@@ -197,6 +197,18 @@ The report also gives, for the fault-and-attack and cutover-gate kinds, the Engi
 
 <!-- VINAYA:CLAIM: harness/kernel/evals/exit-check.ts contains:export function checkOwedEngineEvidence( -->
 
+### Shared corpus runs
+
+The Engine evidence for the fault-and-attack rows, `harness/processes/vinaya-strict/evals/dev-review-engine-fault-rows.test.ts`, reads the developer-review scenario corpus, as do the architecture exit gate, the standalone and Engine Log replay and the Engine shadow suite. These four tests take each plain corpus run from one store, `harness/processes/vinaya-strict/tests/engine-corpus-store.ts`, so a scenario runs at most once per content key and every later test process of the same run reuses it.
+
+- **What an entry holds.** A scenario's observation, taken with the Log sink the caller named, and for an Engine run a copy of the scenario's whole ended folder (its repository, runtime folder and stub login), copied before the adapter's cleanup. A row whose check reads the run's files (a trace, a pause record, the Operator's reads) inspects a restored copy of those ended files, inside the same environment the adapter gives a live run's inspection.
+- **The key.** The scenario, the runner (the Engine for one agent, or the standalone loop), the sink kind, and a digest of the working-tree path and bytes of every tracked and untracked, not ignored, file under `harness/kernel`, `harness/processes/vinaya-strict` and `packages`, plus `bun.lock` and every `package.json`. The digest is computed once per process. An edit to the corpus, the expected-failure fixture, the Engine, the actions, the stub vendors or either adapter, committed or not, gives a new key.
+- **Publication.** An entry is built under a staging name and published by one atomic rename, so a reader sees no entry or a whole one. Two processes that miss together may both compute; the first rename wins.
+- **Where entries live.** Under the test-temp root, never in the repository. With `VINAYA_TEST_TMP` set, an entry carries no owner marker and ends with the run's own root. With it unset, under the shared default root, an entry carries its writer's owner marker, so the abandoned-run sweep removes it once that process has exited.
+- **What always runs.** A shadow run, an in-flight run continued by `between`, the adapter's fault-only scenarios and a run through a failing Log sink test the execution itself, so they never come from the store. The plain `ENGINE_SCENARIO_DRIVERS` entry points and every other caller of the adapters run live.
+
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tests/engine-corpus-store.ts contains:export async function storedEngineScenario( -->
+
 ## Layer G — neutral cases and generic graders
 
 Layer G grades process-neutral facts in the Development Process vocabulary — Intent, Execution, Change, Evidence, Review, Decision — so the same case and the same graders can judge any process. A grader that has to parse a brief, a verdict or a severity name is layer P. Layer G reads no Vinaya artifact: its graders' input type is a neutral case plus neutral outcomes, and nothing else.

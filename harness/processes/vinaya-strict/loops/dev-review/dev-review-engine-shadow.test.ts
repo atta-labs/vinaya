@@ -12,6 +12,7 @@ import {
   ENGINE_SCENARIO_TASK,
   runEngineScenario
 } from '../../tests/dev-review-engine-loop-adapter.js'
+import { storedEngineScenario } from '../../tests/engine-corpus-store.js'
 import corpus from '../../fixtures/dev-review-engine-scenarios.json'
 
 /**
@@ -79,7 +80,8 @@ beforeAll(async () => {
   liveFilesBefore = listing(liveRuntimeDir)
   for (const id of SCENARIOS) {
     for (const agent of AGENTS) {
-      const live = await runEngineScenario(id, agent)
+      // The live run is the corpus store's shared one; a shadow run tests the execution itself, so it always runs.
+      const live = await storedEngineScenario(id, agent)
       let inspection: ShadowInspection | null = null
       const shadow = await runEngineScenario(
         id,

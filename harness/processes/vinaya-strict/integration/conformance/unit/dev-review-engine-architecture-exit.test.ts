@@ -10,6 +10,7 @@ import { SCANNER_DECLARATIONS, underDeclaredRoot } from '../../verification-scan
 import { REFRESH_COMMAND, refreshLoopBaseline } from './refresh-loop-baseline.js'
 import { type Observation, SCENARIO_DRIVERS } from './dev-review-current-loop-adapter.js'
 import { ENGINE_SCENARIO_DRIVERS } from '../../../tests/dev-review-engine-loop-adapter.js'
+import { storedEngineScenario, storedStandaloneScenario } from '../../../tests/engine-corpus-store.js'
 import engineFailureFixture from '../../../fixtures/dev-review-engine-expected-failures.json'
 
 /**
@@ -208,7 +209,8 @@ beforeAll(async () => {
   for (const scenario of corpus.scenarios) {
     const driver = SCENARIO_DRIVERS[scenario.id]
     if (driver === undefined) continue
-    const observation = await driver()
+    // The corpus store runs each scenario once per content key and shares it with every corpus test of the run.
+    const observation = await storedStandaloneScenario(scenario.id)
     results.push({
       scenario,
       observation,
@@ -218,7 +220,7 @@ beforeAll(async () => {
     for (const agent of ENGINE_AGENTS) {
       const engineDriver = ENGINE_SCENARIO_DRIVERS[scenario.id]
       if (engineDriver === undefined) continue
-      const engineObservation = await engineDriver(agent)
+      const engineObservation = await storedEngineScenario(scenario.id, agent)
       engineResults.push({
         scenario,
         agent,
