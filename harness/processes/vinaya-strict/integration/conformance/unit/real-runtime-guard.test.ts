@@ -24,11 +24,52 @@ import {
   SANCTIONED_APPEND_STREAMS,
   touchedSince
 } from '../../../../../kernel/conformance/unit/real-runtime-guard-core'
+import { TEST_TEMP_ROOT_ENV } from '../../../../../kernel/conformance/unit/test-temp'
 import { GATE_STREAM } from '../../../../../kernel/gates/checks/runner'
+import {
+  JUNIT_CONFIGURED_ENV,
+  JUNIT_REPORT_ENV,
+  junitRunConfig
+} from '../../../../../kernel/gates/ring0-hooks/pre-push/junit-store'
 import { CLI_OPERATION_STREAM } from '../../../../../kernel/log/client/cli-operation-log'
 
 /** The CLI's own entry point, run from source as the shipped program runs it. */
 const CLI_ENTRY = join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'apps', 'cli', 'src', 'index.ts')
+
+/** The CLI package folder and the repository root: the real folders whose Bun configuration names a shared report. */
+const CLI_DIR = join(import.meta.dir, '../../../../../../apps/cli')
+const REPO_ROOT = join(import.meta.dir, '../../../../../..')
+
+/** This run's test-temp root, forwarded to every child: `stripVinayaEnv` drops it, and a child without it sweeps the shared one. */
+const FORWARDED_TEST_TEMP: NodeJS.ProcessEnv = process.env[TEST_TEMP_ROOT_ENV]
+  ? { [TEST_TEMP_ROOT_ENV]: process.env[TEST_TEMP_ROOT_ENV] }
+  : {}
+
+/**
+ * How a child `bun test` started in a real package folder (or the repository root) runs: under a per-run copy of the
+ * folder's Bun configuration whose JUnit path is `report`, in the test's own temp directory, with both JUnit variables
+ * set after the environment is stripped — the one route that keeps the child's report out of the repository's git
+ * directory and its shared report link folder. The run's test-temp root, which the stripping drops, is forwarded.
+ */
+function childTestRun(
+  cwd: string,
+  report: string,
+  env: NodeJS.ProcessEnv
+): { config: string[]; env: NodeJS.ProcessEnv } {
+  const own = junitRunConfig(cwd, report)
+  if (own === null) throw new Error(`${cwd}/bunfig.toml names no single JUnit report path`)
+  expect(own.env).toEqual({ [JUNIT_REPORT_ENV]: report, [JUNIT_CONFIGURED_ENV]: report })
+  return { config: own.args, env: { ...stripVinayaEnv(), ...FORWARDED_TEST_TEMP, ...env, ...own.env } }
+}
+
+/** Checks a child wrote its report where its own configuration named it: `report`, inside the test's temp directory. */
+function expectOwnReport(config: string[], report: string, temp: string): void {
+  expect(report.startsWith(`${temp}/`)).toBe(true)
+  const file = config[0]?.slice('--config='.length) ?? ''
+  expect(file.startsWith(`${temp}/`)).toBe(true)
+  expect(readFileSync(file, 'utf8')).toContain(`junit = ${JSON.stringify(report)}`)
+  expect(existsSync(report)).toBe(true)
+}
 
 /** Taken at module load so the test's own TITLE names the leaked paths. */
 const leakedAtLoad = touchedSince(realRuntimeDir(), PROCESS_START_MS, exemptPrefixes(process.env))
@@ -279,7 +320,11 @@ describe('real runtime directory guard', () => {
         const out = spawnSyncBudgeted(
           'bun',
           ['test', '--preload', join(import.meta.dir, '..', '..', 'test-preload.ts'), probe],
-          { cwd: work, env: { ...stripVinayaEnv(), HOME: home, VINAYA_REPO: 'o/r' }, encoding: 'utf8' }
+          {
+            cwd: work,
+            env: { ...stripVinayaEnv(), ...FORWARDED_TEST_TEMP, HOME: home, VINAYA_REPO: 'o/r' },
+            encoding: 'utf8'
+          }
         )
         return { status: out.status, output: `${out.stdout}${out.stderr}` }
       }
@@ -383,7 +428,7 @@ describe('real runtime directory guard', () => {
         Bun.sleepSync(1100)
         const out = spawnSyncBudgeted('bun', ['test', '--preload', preloadPath, probe], {
           cwd: work,
-          env: { ...stripVinayaEnv(), HOME: home, VINAYA_REPO: 'o/r' },
+          env: { ...stripVinayaEnv(), ...FORWARDED_TEST_TEMP, HOME: home, VINAYA_REPO: 'o/r' },
           encoding: 'utf8'
         })
         return { status: out.status, output: `${out.stdout}${out.stderr}` }
@@ -409,94 +454,120 @@ describe('real runtime directory guard', () => {
   // A dispatched session hands its real runtime directory down; the tests it runs must still never write there.
   it('gives a test process a private runtime directory even when one is inherited', () => {
     const inherited = mkdtempSync(join(tmpdir(), 'inherited-runtime-'))
-    const probe = join(mkdtempSync(join(tmpdir(), 'runtime-probe-')), 'probe.test.ts')
+    const temp = mkdtempSync(join(tmpdir(), 'runtime-probe-'))
+    const probe = join(temp, 'probe.test.ts')
     writeFileSync(
       probe,
       "import { it } from 'bun:test'\nit('prints', () => console.log('RUNTIME=' + process.env.VINAYA_RUNTIME_DIR))\n"
     )
+    const report = join(temp, 'report.xml')
+    const child = childTestRun(CLI_DIR, report, { VINAYA_RUNTIME_DIR: inherited })
     const out = spawnSyncBudgeted(
       'bun',
-      ['test', '--preload', '../../harness/processes/vinaya-strict/integration/test-preload.ts', probe],
-      {
-        cwd: join(import.meta.dir, '../../../../../../apps/cli'),
-        env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: inherited },
-        encoding: 'utf8'
-      }
+      [
+        ...child.config,
+        'test',
+        '--preload',
+        '../../harness/processes/vinaya-strict/integration/test-preload.ts',
+        probe
+      ],
+      { cwd: CLI_DIR, env: child.env, encoding: 'utf8' }
     )
     const line = `${out.stdout}${out.stderr}`.match(/RUNTIME=(\S+)/)?.[1]
     expect(line).toBeDefined()
     expect(line).not.toBe(inherited)
     expect(line).toContain('vinaya-test-runtime-')
+    expectOwnReport(child.config, report, temp)
     rmSync(inherited, { recursive: true, force: true })
+    rmSync(temp, { recursive: true, force: true })
   })
 
   // The pre-push hook runs the selected test files from the repository root, where only the root bunfig applies.
   it('gives a test run from the repository root the same private runtime directory', () => {
     const inherited = mkdtempSync(join(tmpdir(), 'inherited-runtime-'))
-    const probe = join(mkdtempSync(join(tmpdir(), 'runtime-probe-')), 'probe.test.ts')
+    const temp = mkdtempSync(join(tmpdir(), 'runtime-probe-'))
+    const probe = join(temp, 'probe.test.ts')
     writeFileSync(
       probe,
       "import { it } from 'bun:test'\nit('prints', () => console.log('RUNTIME=' + process.env.VINAYA_RUNTIME_DIR))\n"
     )
-    const out = spawnSyncBudgeted('bun', ['test', '--timeout=30000', '--', probe], {
-      cwd: join(import.meta.dir, '../../../../../..'),
-      env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: inherited },
+    const report = join(temp, 'report.xml')
+    const child = childTestRun(REPO_ROOT, report, { VINAYA_RUNTIME_DIR: inherited })
+    const out = spawnSyncBudgeted('bun', [...child.config, 'test', '--timeout=30000', '--', probe], {
+      cwd: REPO_ROOT,
+      env: child.env,
       encoding: 'utf8'
     })
     const line = `${out.stdout}${out.stderr}`.match(/RUNTIME=(\S+)/)?.[1]
     expect(line).toBeDefined()
     expect(line).not.toBe(inherited)
     expect(line).toContain('vinaya-test-runtime-')
+    expectOwnReport(child.config, report, temp)
     rmSync(inherited, { recursive: true, force: true })
+    rmSync(temp, { recursive: true, force: true })
   })
 
   // Bun.spawn without an env hands a child the environment the test process started with, unless the preload fixes it.
   it('gives a child a test spawns without an env the same private runtime directory', () => {
     const inherited = mkdtempSync(join(tmpdir(), 'inherited-runtime-'))
-    const probe = join(mkdtempSync(join(tmpdir(), 'runtime-probe-')), 'probe.test.ts')
+    const temp = mkdtempSync(join(tmpdir(), 'runtime-probe-'))
+    const probe = join(temp, 'probe.test.ts')
     writeFileSync(
       probe,
       "import { it } from 'bun:test'\nit('prints', () => console.log(Bun.spawnSync(['sh', '-c', 'echo CHILD=$VINAYA_RUNTIME_DIR']).stdout.toString()))\n"
     )
+    const report = join(temp, 'report.xml')
+    const child = childTestRun(CLI_DIR, report, { VINAYA_RUNTIME_DIR: inherited })
     const out = spawnSyncBudgeted(
       'bun',
-      ['test', '--preload', '../../harness/processes/vinaya-strict/integration/test-preload.ts', probe],
-      {
-        cwd: join(import.meta.dir, '../../../../../../apps/cli'),
-        env: { ...stripVinayaEnv(), VINAYA_RUNTIME_DIR: inherited },
-        encoding: 'utf8'
-      }
+      [
+        ...child.config,
+        'test',
+        '--preload',
+        '../../harness/processes/vinaya-strict/integration/test-preload.ts',
+        probe
+      ],
+      { cwd: CLI_DIR, env: child.env, encoding: 'utf8' }
     )
     const line = `${out.stdout}${out.stderr}`.match(/CHILD=(\S+)/)?.[1]
     expect(line).toBeDefined()
     expect(line).not.toBe(inherited)
     expect(line).toContain('vinaya-test-runtime-')
+    expectOwnReport(child.config, report, temp)
     rmSync(inherited, { recursive: true, force: true })
+    rmSync(temp, { recursive: true, force: true })
   })
 
   // A sandbox names a temporary directory that does not exist yet; the preload creates it, or keeps what it was handed.
   it('starts under a temporary directory that does not exist yet, and under one that cannot be made', () => {
-    const probe = join(mkdtempSync(join(tmpdir(), 'runtime-probe-')), 'probe.test.ts')
+    const temp = mkdtempSync(join(tmpdir(), 'runtime-probe-'))
+    const probe = join(temp, 'probe.test.ts')
     writeFileSync(
       probe,
       "import { it } from 'bun:test'\nit('prints', () => console.log('RUNTIME=' + process.env.VINAYA_RUNTIME_DIR))\n"
     )
     const missing = join(mkdtempSync(join(tmpdir(), 'tmp-parent-')), 'claude')
-    for (const [tmp, expected] of [
+    for (const [index, [tmp, expected]] of [
       [missing, 'vinaya-test-runtime-'],
       ['/dev/null/claude', '/inherited']
-    ] as const) {
+    ].entries()) {
+      const report = join(temp, `report-${index}.xml`)
+      const child = childTestRun(CLI_DIR, report, { TMPDIR: tmp, VINAYA_RUNTIME_DIR: '/inherited' })
       const out = spawnSyncBudgeted(
         'bun',
-        ['test', '--preload', '../../harness/processes/vinaya-strict/integration/test-preload.ts', probe],
-        {
-          cwd: join(import.meta.dir, '../../../../../../apps/cli'),
-          env: { ...stripVinayaEnv(), TMPDIR: tmp, VINAYA_RUNTIME_DIR: '/inherited' },
-          encoding: 'utf8'
-        }
+        [
+          ...child.config,
+          'test',
+          '--preload',
+          '../../harness/processes/vinaya-strict/integration/test-preload.ts',
+          probe
+        ],
+        { cwd: CLI_DIR, env: child.env, encoding: 'utf8' }
       )
-      expect(`${out.stdout}${out.stderr}`.match(/RUNTIME=(\S+)/)?.[1]).toContain(expected)
+      expect(`${out.stdout}${out.stderr}`.match(/RUNTIME=(\S+)/)?.[1]).toContain(expected as string)
+      expectOwnReport(child.config, report, temp)
     }
+    rmSync(temp, { recursive: true, force: true })
   })
 
   it('takes the repository from GITHUB_REPOSITORY without running git, once per process', () => {
