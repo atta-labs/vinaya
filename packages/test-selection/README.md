@@ -114,7 +114,22 @@ with its own storage implements the type itself.
   folders its process tree opened or probed), `listed` (every folder listed,
   by the test's code or by the module resolver alike) and, in a record taken
   with a listing probe, `scanned`: the folders the test's own code listed, an
-  entry ending in `/` listed recursively (`./` for the root).
+  entry ending in `/` listed recursively (`./` for the root). `isReadRecord`
+  accepts `schemaVersion` 1 and 2 and refuses any other. A version-2 entry may
+  also hold `opens` (per read, how many times the test's own process, its
+  threads included, opened it successfully; a read absent from it was never
+  opened by that process, only probed or opened by a child), `childOpens` (the
+  reads a child process opened) and, for a Bun run, `coverage`: per
+  repository-relative source file Bun's coverage listed, `instrumented` (every
+  line it instrumented) and `executed` (the instrumented lines the test ran),
+  each as inclusive `[first, last]` ranges (`FileCoverage`, `LineSpan`). An
+  `executed` range may span uninstrumented lines, so a line ran when it is in
+  both. A file listed with no executed line was loaded but not run; `{}` is a
+  run that covered no source file; no `coverage` (a Vitest run, a version-1
+  record) means unknown. The loader opens a module once per process, so an
+  `opens` count above 1 marks a read of the file as data. The selection reads
+  none of these fields yet: a version-1 record and a version-2 record with the
+  same reads select the same tests.
 
 On the record path a changed path reaches a recorded test through its reads
 (`recordReach`). An added or deleted path also reaches it through a listed
@@ -336,13 +351,19 @@ npx test-selection-record --out read-record
 Started in any folder of a git repository, it builds the commit's inventory
 with `workspaceInventory`, as the `test-selection` command does, and runs each
 test file in its own process under
-`strace -f -yy -qq -s 4096 -e trace=%file,getdents64,clone,clone3,fork,vfork`,
+`strace -f -yy -qq -s 4096 -e trace=%file,getdents64,chdir,fchdir,clone,clone3,fork,vfork`,
 child processes included: `bun test <file>` or `vitest run <file>` in its
 suite's folder, with the installed Vitest found through each
 `node_modules/.bin` from that folder up. Each Bun run also preloads the
 listing probe (`src/listing-probe.ts`, copied outside the repository first),
 so the record can tell a folder the test's own code listed from one the module
-resolver listed. A file whose run does not exit 0 gets no record, so its
+resolver listed, and writes Bun's line coverage
+(`--coverage --coverage-reporter=lcov --coverage-dir=<scratch folder>`), which
+the record keeps per source file. The trace takes no `status=successful`
+filter, which would drop the failed lookups the record keeps; an open counts
+as successful when its printed result, on a `<... resumed>` line too, is a
+descriptor. Each process keeps its own working folder (`chdir`, `fchdir`),
+shared by its threads. A file whose run does not exit 0 gets no record, so its
 selection stays static. A read under installed dependencies is recorded as the
 repository's lockfile joined to the package's name (`bun.lock#zod`).
 
@@ -368,14 +389,19 @@ It writes `<out>/read-record.json`, one JSON document:
 ```json
 {
   "schema": "vinaya.read-record",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "commit": "<commit id>",
   "platform": "linux",
   "tests": {
     "packages/app/tests/greet.test.ts": {
       "reads": ["bun.lock#zod", "packages/app/src/greet.ts", "packages/app/tests/greet.test.ts"],
       "listed": ["packages/app/tests"],
-      "scanned": []
+      "scanned": [],
+      "opens": { "bun.lock#zod": 1, "packages/app/src/greet.ts": 1, "packages/app/tests/greet.test.ts": 1 },
+      "childOpens": [],
+      "coverage": {
+        "packages/app/src/greet.ts": { "instrumented": [[1, 3], [6, 8]], "executed": [[1, 3]] }
+      }
     }
   }
 }
@@ -383,7 +409,8 @@ It writes `<out>/read-record.json`, one JSON document:
 
 A test entry may also hold `fallback` (`git-read`, with the `gitReaders` that
 read repository content under `.git/`, or `truncated-path`) and
-`branchesOnPlatform`. It exits 0 when it wrote a record; 2 for a missing
+`branchesOnPlatform`. A merge refuses shards whose records are of different
+versions. It exits 0 when it wrote a record; 2 for a missing
 `--out`, a malformed `--shard`, a host that is not Linux or a missing
 `strace`, each with one message on standard error; 1 when a merge is refused
 or an `--expect` read is missing.

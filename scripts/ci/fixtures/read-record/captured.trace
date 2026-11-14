@@ -1,0 +1,27 @@
+100 execve("/usr/local/bin/bun", ["bun", "test", "--coverage", "--coverage-reporter=lcov", "--coverage-dir=/scratch/0.coverage", "tests/m.test.ts"], 0x7ffe /* 20 vars */) = 0
+100 openat(AT_FDCWD</work/repo/pkg>, "/scratch/0.probe.jsonl", O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC, 0666) = 5</scratch/0.probe.jsonl>
+100 newfstatat(AT_FDCWD</work/repo/pkg>, "tests/m.test.ts", {st_mode=S_IFREG|0644, st_size=210, ...}, 0) = 0
+100 openat(AT_FDCWD</work/repo/pkg>, "tests/m.test.ts", O_RDONLY|O_CLOEXEC) = 6</work/repo/pkg/tests/m.test.ts>
+100 openat(AT_FDCWD</work/repo/pkg>, "lib", O_RDONLY|O_CLOEXEC|O_DIRECTORY) = 7</work/repo/pkg/lib>
+100 getdents64(7</work/repo/pkg/lib>, 0x55 /* 4 entries */, 32768) = 112
+100 openat(AT_FDCWD</work/repo/pkg>, "lib/idle.tsx", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+100 openat(AT_FDCWD</work/repo/pkg>, "lib/idle.ts", O_RDONLY|O_CLOEXEC) = 8</work/repo/pkg/lib/idle.ts>
+100 openat(AT_FDCWD</work/repo/pkg>, "lib/math.ts", O_RDONLY|O_CLOEXEC) = 9</work/repo/pkg/lib/math.ts>
+100 openat(AT_FDCWD</work/repo/pkg>, "/work/repo/node_modules/zod/package.json", O_RDONLY|O_CLOEXEC) = 10</work/repo/node_modules/zod/package.json>
+100 clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0x7f00, parent_tid=0x7f00, exit_signal=0, stack=0x7e00, stack_size=0x7ff000, tls=0x7f00} <unfinished ...>
+101 openat(AT_FDCWD</work/repo/pkg>, "fixtures/data.json", O_RDONLY|O_CLOEXEC <unfinished ...>
+100 <... clone3 resumed> => {parent_tid=[101]}, 88) = 101
+101 <... openat resumed>) = 11</work/repo/pkg/fixtures/data.json>
+101 openat(AT_FDCWD</work/repo/pkg>, "fixtures/data.json", O_RDONLY|O_CLOEXEC) = 12</work/repo/pkg/fixtures/data.json>
+101 openat(AT_FDCWD</work/repo/pkg>, "fixtures/absent.json", O_RDONLY|O_CLOEXEC <unfinished ...>
+100 openat(AT_FDCWD</work/repo/pkg>, "lib/math.ts", O_RDONLY|O_CLOEXEC) = 13</work/repo/pkg/lib/math.ts>
+101 <... openat resumed>) = -1 ENOENT (No such file or directory)
+100 chdir("lib") = 0
+100 open("missing.json", O_RDONLY) = -1 ENOENT (No such file or directory)
+100 clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0x7f20) = 200
+200 execve("/usr/bin/cat", ["cat", "../fixtures/other.json", "math.ts"], 0x7ffe /* 20 vars */) = 0
+200 openat(AT_FDCWD</work/repo/pkg/lib>, "../fixtures/other.json", O_RDONLY) = 3</work/repo/pkg/fixtures/other.json>
+200 openat(AT_FDCWD</work/repo/pkg/lib>, "math.ts", O_RDONLY) = 3</work/repo/pkg/lib/math.ts>
+200 open("child-missing", O_RDONLY) = -1 ENOENT (No such file or directory)
+100 chdir("/work/repo/absent-folder") = -1 ENOENT (No such file or directory)
+100 open("after-failed-chdir.json", O_RDONLY) = -1 ENOENT (No such file or directory)

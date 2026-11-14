@@ -249,7 +249,7 @@ describe('a fresh repository installs the packed package and selects with it', (
       } else {
         expect(recording.status).toBe(0)
         const record = JSON.parse(readFileSync(join(out, 'read-record.json'), 'utf8'))
-        expect(record).toMatchObject({ schema: 'vinaya.read-record', schemaVersion: 1, tests: {} })
+        expect(record).toMatchObject({ schema: 'vinaya.read-record', schemaVersion: 2, tests: {} })
       }
 
       // The shipped probe, copied from the installed package under Node and preloaded directly by Bun, logs a listing.

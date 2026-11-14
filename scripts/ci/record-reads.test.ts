@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   copyListingProbe,
+  coverageOfRun,
   exitStatusOutcome,
   indexRecordedTest,
+  isReadRecord,
   lookupFolders,
   mergeShardRecords,
   moduleLookups,
@@ -15,6 +17,7 @@ import {
   passedWhileRecorded,
   probedLaunch,
   READ_RECORD_SCHEMA,
+  READ_RECORD_VERSION,
   RECORD_FILE,
   type ReadRecord,
   type RecordedTest,
@@ -33,6 +36,7 @@ import {
   scanSources,
   shardTests,
   type TraceOptions,
+  withCoverage,
   withProbeFirst,
   workspacePackages
 } from '@attalabs/test-selection'
@@ -50,6 +54,12 @@ const PINNED_RECORD =
   '{"reads":["bun.lock#zod","fixtures/data","lib/modules"],"listed":["bin","docs","fixtures/data","fixtures/tree","fixtures/tree/deep","harness/x","lib/cache","lib/modules","packages/core/src","scripts","tmp-unknown"],"scanned":["bin","docs","fixtures/data","fixtures/tree/","harness/x","packages/core/src","scripts","tmp-unknown"]}'
 const PINNED_FALLBACK_RECORD =
   '{"reads":["bun.lock#zod","fixtures/data","lib/modules"],"listed":["bin","docs","fixtures/data","fixtures/tree","fixtures/tree/deep","harness/x","lib/cache","lib/modules","packages/core/src","scripts","tmp-unknown"],"scanned":["bin","docs","fixtures/data","fixtures/tree/","harness/x","packages/core/src","scripts","tmp-unknown"],"fallback":"git-read","gitReaders":["git cat-file -p HEAD","git show HEAD"],"branchesOnPlatform":true}'
+
+/** A record entry without the fields version 2 added, as a version-1 record holds it. */
+const version1Fields = (entry: RecordedTest): RecordedTest => {
+  const { opens: _opens, childOpens: _childOpens, coverage: _coverage, ...v1 } = entry
+  return v1
+}
 
 const TESTS = [
   'apps/cli/tests/b.test.ts',
@@ -157,6 +167,18 @@ describe('mergeShardRecords', () => {
 
   it('refuses nothing to merge', () => {
     expect(() => mergeShardRecords([])).toThrow('no shard output')
+  })
+
+  it('keeps the shards’ record version, and refuses shards that wrote records of different versions', () => {
+    const v2 = allShards(2).map((part) => ({
+      ...part,
+      record: { ...part.record, schemaVersion: READ_RECORD_VERSION }
+    }))
+    expect(mergeShardRecords(v2).record.schemaVersion).toBe(2)
+    expect(mergeShardRecords(allShards(2)).record.schemaVersion).toBe(1)
+    expect(() => mergeShardRecords([v2[0] as (typeof v2)[number], allShards(2)[1] as (typeof v2)[number]])).toThrow(
+      'shard 2 wrote a version-1 record, not version 2'
+    )
   })
 })
 
@@ -461,8 +483,12 @@ describe('the run configuration', () => {
     }
   })
 
-  it('traces the calls that start threads and processes, so each listing is attributed to its process', () => {
-    expect(STRACE_ARGS.join(' ')).toContain('trace=%file,getdents64,clone,clone3,fork,vfork')
+  it('traces the calls that start threads and processes and change folders, so each read is attributed to its process', () => {
+    expect(STRACE_ARGS.join(' ')).toContain('trace=%file,getdents64,chdir,fchdir,clone,clone3,fork,vfork')
+    // Paths stay readable, and no status filter drops the failed lookups the record keeps.
+    expect(STRACE_ARGS).toContain('-yy')
+    expect(STRACE_ARGS.join(' ')).toContain('-s 4096')
+    expect(STRACE_ARGS.join(' ')).not.toContain('status=')
   })
 })
 
@@ -533,7 +559,12 @@ describe('scanned folders', () => {
       probe: { log: '/scratch/3.probe.jsonl', starts: probe.starts, wholly: probe.wholly }
     })
     const recorded = recordedTestOf({ result, probe, trace: options, sourceRoot: ROOT, packages: new Map() })
-    expect(JSON.stringify(recorded)).toBe(PINNED_RECORD)
+    // The version-1 fields are exactly what they were; version 2 appends the open counts (two threads of the test's
+    // process opened a folder each) and no child opens.
+    expect(JSON.stringify(version1Fields(recorded))).toBe(PINNED_RECORD)
+    expect(JSON.stringify(recorded)).toBe(
+      `${PINNED_RECORD.slice(0, -1)},"opens":{"fixtures/data":1,"lib/modules":1},"childOpens":[]}`
+    )
     // A read source that branches on the platform, and a git content read, add their fields in the same order.
     const sources = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-pinned-record-')))
     try {
@@ -546,7 +577,7 @@ describe('scanned folders', () => {
         sourceRoot: sources,
         packages: new Map()
       })
-      expect(JSON.stringify(withFallback)).toBe(PINNED_FALLBACK_RECORD)
+      expect(JSON.stringify(version1Fields(withFallback))).toBe(PINNED_FALLBACK_RECORD)
     } finally {
       rmSync(sources, { recursive: true, force: true })
     }
@@ -710,6 +741,122 @@ describe('scanned folders', () => {
 })
 
 // ── This repository records through the package ─────────────────────────────
+
+// ── The version-2 record: open counts, child opens and coverage ─────────────
+
+describe('the version-2 record', () => {
+  // A hand-written trace of a Bun test run from `pkg` (its threads, a `chdir`, a child process, failed lookups and
+  // results that arrive on `<... resumed>` lines), and the lcov report Bun wrote for a real run of the same layout.
+  const RECORD_FIXTURES = join(import.meta.dir, 'fixtures', 'read-record')
+  const ROOT = '/work/repo'
+  const RUN_FOLDER = `${ROOT}/pkg`
+  const options: TraceOptions = {
+    repoRoot: ROOT,
+    startCwd: RUN_FOLDER,
+    realpath: (absolute) => absolute,
+    packageDirs: [],
+    dependencyInput: 'bun.lock'
+  }
+  /**
+   * The reads and listed folders the version-1 trace reader (the default branch's before version 2) built from this
+   * trace: failed lookups (`idle.tsx`, `absent.json`, `missing.json`, `child-missing`, the failed `chdir`'s folder)
+   * included.
+   */
+  const VERSION_1 =
+    '{"reads":["absent-folder","bun.lock#zod","pkg/fixtures/absent.json","pkg/fixtures/data.json","pkg/fixtures/other.json","pkg/lib","pkg/lib/after-failed-chdir.json","pkg/lib/child-missing","pkg/lib/idle.ts","pkg/lib/idle.tsx","pkg/lib/math.ts","pkg/lib/missing.json","pkg/tests/m.test.ts"],"listed":["pkg/lib"]}'
+  const lcov = readFileSync(join(RECORD_FIXTURES, 'captured.lcov'), 'utf8')
+  const entry = (): RecordedTest =>
+    recordedTestOf({
+      result: readsOfTrace(readFileSync(join(RECORD_FIXTURES, 'captured.trace'), 'utf8'), options),
+      probe: readProbeLog(''),
+      trace: options,
+      sourceRoot: ROOT,
+      packages: new Map(),
+      coverage: coverageOfRun(lcov, RUN_FOLDER, options)
+    })
+
+  it('holds every read, failed probe and listed folder the version-1 record held from the same trace', () => {
+    const recorded = entry()
+    expect(JSON.stringify({ reads: recorded.reads, listed: recorded.listed })).toBe(VERSION_1)
+    const v1 = JSON.parse(VERSION_1) as { reads: string[]; listed: string[] }
+    for (const read of v1.reads) expect(recorded.reads).toContain(read)
+    for (const folder of v1.listed) expect(recorded.listed).toContain(folder)
+  })
+
+  it('counts each successful open by the test’s own process, its thread included, and names what a child opened', () => {
+    const recorded = entry()
+    // `math.ts` twice by the process (a second open is a data read), `data.json` twice by its thread (once with the
+    // result on a resumed line); a failed open, a failed resumed open and a stat count nothing.
+    expect(recorded.opens).toEqual({
+      'bun.lock#zod': 1,
+      'pkg/fixtures/data.json': 2,
+      'pkg/lib': 1,
+      'pkg/lib/idle.ts': 1,
+      'pkg/lib/math.ts': 2,
+      'pkg/tests/m.test.ts': 1
+    })
+    // The child's opens never add to the process's counts.
+    expect(recorded.childOpens).toEqual(['pkg/fixtures/other.json', 'pkg/lib/math.ts'])
+  })
+
+  it('resolves relative paths through each process’s chdir, a child starting in its parent’s, a failed chdir moving nothing', () => {
+    const { reads } = entry()
+    expect(reads).toContain('pkg/lib/missing.json')
+    expect(reads).toContain('pkg/lib/child-missing')
+    expect(reads).toContain('pkg/lib/after-failed-chdir.json')
+  })
+
+  it('stores Bun’s coverage per repository-relative source file, instrumented and executed lines as ranges', () => {
+    const recorded = entry()
+    // `idle.ts` was loaded but none of its lines ran; `scale` (lines 6 to 8) never ran.
+    expect(recorded.coverage).toEqual({
+      'pkg/lib/idle.ts': { instrumented: [[1, 2]], executed: [] },
+      'pkg/lib/math.ts': {
+        instrumented: [
+          [1, 2],
+          [6, 8],
+          [11, 11]
+        ],
+        executed: [
+          [1, 2],
+          [11, 11]
+        ]
+      }
+    })
+    const record = { schema: READ_RECORD_SCHEMA, schemaVersion: READ_RECORD_VERSION, commit: 'c', platform: 'linux' }
+    expect(isReadRecord({ ...record, tests: { 'pkg/tests/m.test.ts': recorded } })).toBe(true)
+  })
+
+  it('records no coverage for a run that left no lcov report, and drops a file outside the repository or installed', () => {
+    expect(coverageOfRun(null, RUN_FOLDER, options)).toEqual({})
+    const outside = ['SF:../../elsewhere.ts', 'DA:1,1', 'end_of_record', 'SF:../node_modules/zod/index.js', 'DA:1,1']
+    expect(coverageOfRun(outside.join('\n'), RUN_FOLDER, options)).toEqual({})
+    // A Vitest run is given no coverage, and its entry carries none: unknown, not empty.
+    const vitest = recordedTestOf({
+      result: readsOfTrace('', options),
+      probe: readProbeLog(''),
+      trace: options,
+      sourceRoot: ROOT,
+      packages: new Map()
+    })
+    expect(vitest.coverage).toBeUndefined()
+  })
+
+  it('asks Bun for lcov coverage in a folder the recorder names, right after the test command word', () => {
+    expect(
+      withCoverage(['bun', '--config=/s/0.xml.bunfig.toml', 'test', '--reporter=junit', 't/a.test.ts'], '/s/0.cov')
+    ).toEqual([
+      'bun',
+      '--config=/s/0.xml.bunfig.toml',
+      'test',
+      '--coverage',
+      '--coverage-reporter=lcov',
+      '--coverage-dir=/s/0.cov',
+      '--reporter=junit',
+      't/a.test.ts'
+    ])
+  })
+})
 
 describe('this repository’s recorder', () => {
   it('hands the package everything that decides its record, and keeps the record file the selection fetches', () => {

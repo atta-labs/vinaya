@@ -26,8 +26,18 @@ import {
   plainLaunch,
   readProbeLog,
   recordCommand,
-  recordedTestOf
+  recordedTestOf,
+  coverageOfLcov,
+  fileCoverage,
+  isReadRecord,
+  lineSpans,
+  READ_RECORD_SCHEMA,
+  READ_RECORD_VERSION,
+  type ReadRecord,
+  type RecordedTest,
+  selectTests
 } from '../src/index.js'
+import { fixture, type Scenario, scenarioInput, viewOf } from './fixture-repos.js'
 
 const ROOT = '/work/repo'
 
@@ -560,8 +570,9 @@ describe('the shipped recorder', () => {
       ...repo,
       probe: { log: '/scratch/3.probe.jsonl', starts: probe.starts, wholly: probe.wholly }
     })
+    // The version-1 fields as before, then the open counts version 2 adds.
     expect(JSON.stringify(recordedTestOf({ result, probe, trace: repo, sourceRoot: ROOT, packages: new Map() }))).toBe(
-      '{"reads":["bun.lock#zod","fixtures/data","lib/modules"],"listed":["bin","docs","fixtures/data","fixtures/tree","fixtures/tree/deep","harness/x","lib/cache","lib/modules","packages/core/src","scripts","tmp-unknown"],"scanned":["bin","docs","fixtures/data","fixtures/tree/","harness/x","packages/core/src","scripts","tmp-unknown"]}'
+      '{"reads":["bun.lock#zod","fixtures/data","lib/modules"],"listed":["bin","docs","fixtures/data","fixtures/tree","fixtures/tree/deep","harness/x","lib/cache","lib/modules","packages/core/src","scripts","tmp-unknown"],"scanned":["bin","docs","fixtures/data","fixtures/tree/","harness/x","packages/core/src","scripts","tmp-unknown"],"opens":{"fixtures/data":1,"lib/modules":1},"childOpens":[]}'
     )
   })
 
@@ -606,5 +617,194 @@ describe('the shipped recorder', () => {
     expect(confirmed(0)).toEqual(group.tests)
     expect(confirmed(1)).toEqual([])
     expect(confirmed(null, 'SIGKILL')).toEqual([])
+  })
+})
+
+describe('the trace reader counts opens by process', () => {
+  const at = (cwd: string) => `AT_FDCWD<${cwd}>`
+  const pkg = `${ROOT}/apps/cli`
+
+  it('counts only opens whose result is a descriptor, a result on a resumed line included', () => {
+    const result = readsOfTrace(
+      trace(
+        `10 openat(${at(pkg)}, "a.ts", O_RDONLY) = 3<${pkg}/a.ts>`,
+        `10 openat(${at(pkg)}, "a.ts", O_RDONLY <unfinished ...>`,
+        `10 <... openat resumed>) = 4<${pkg}/a.ts>`,
+        `10 openat(${at(pkg)}, "b.ts", O_RDONLY <unfinished ...>`,
+        '10 <... openat resumed>) = -1 ENOENT (No such file or directory)',
+        `10 openat(${at(pkg)}, "c.ts", O_RDONLY) = -1 ENOENT (No such file or directory)`,
+        `10 newfstatat(${at(pkg)}, "d.ts", {st_mode=S_IFREG|0644, ...}, 0) = 0`
+      ),
+      options()
+    )
+    expect([...result.opens]).toEqual([['apps/cli/a.ts', 2]])
+    // Every lookup is still a read.
+    expect([...result.reads].sort()).toEqual(['apps/cli/a.ts', 'apps/cli/b.ts', 'apps/cli/c.ts', 'apps/cli/d.ts'])
+  })
+
+  it('folds a thread’s opens into its process, a thread that started before its clone result arrived included', () => {
+    const result = readsOfTrace(
+      trace(
+        '10 clone3({flags=CLONE_VM|CLONE_THREAD} <unfinished ...>',
+        `11 openat(${at(pkg)}, "a.ts", O_RDONLY) = 3<${pkg}/a.ts>`,
+        '10 <... clone3 resumed> => {parent_tid=[11]}, 88) = 11',
+        `11 openat(${at(pkg)}, "a.ts", O_RDONLY) = 4<${pkg}/a.ts>`,
+        '10 clone(child_stack=NULL, flags=SIGCHLD) = 20',
+        `20 openat(${at(pkg)}, "a.ts", O_RDONLY) = 3<${pkg}/a.ts>`,
+        `20 openat(${at(pkg)}, "b.ts", O_RDONLY) = 4<${pkg}/b.ts>`
+      ),
+      options()
+    )
+    expect([...result.opens]).toEqual([['apps/cli/a.ts', 2]])
+    expect([...result.childOpens].sort()).toEqual(['apps/cli/a.ts', 'apps/cli/b.ts'])
+  })
+
+  it('counts a thread of a process the trace never named as a child', () => {
+    const result = readsOfTrace(
+      trace(`10 openat(${at(pkg)}, "a.ts", O_RDONLY) = 3<${pkg}/a.ts>`, `77 open("b.ts", O_RDONLY) = 3<${pkg}/b.ts>`),
+      options()
+    )
+    expect([...result.opens]).toEqual([['apps/cli/a.ts', 1]])
+    expect([...result.childOpens]).toEqual(['apps/cli/b.ts'])
+  })
+
+  it('keeps one working folder per process: a thread’s chdir moves its process, an fchdir and a resumed chdir move too', () => {
+    const result = readsOfTrace(
+      trace(
+        '10 clone3({flags=CLONE_VM|CLONE_FS|CLONE_THREAD}, 88) = 11',
+        `11 chdir("${ROOT}/docs") = 0`,
+        '10 open("from-thread.md", O_RDONLY) = -1 ENOENT (No such file or directory)',
+        `10 fchdir(5<${ROOT}/scripts>) = 0`,
+        '10 open("from-fchdir.ts", O_RDONLY) = -1 ENOENT (No such file or directory)',
+        `10 chdir("${ROOT}/lib" <unfinished ...>`,
+        '10 <... chdir resumed>) = 0',
+        '10 open("from-resumed.ts", O_RDONLY) = -1 ENOENT (No such file or directory)',
+        `10 chdir("${ROOT}/nowhere" <unfinished ...>`,
+        '10 <... chdir resumed>) = -1 ENOENT (No such file or directory)',
+        '10 clone(child_stack=NULL, flags=SIGCHLD) = 20',
+        '20 open("from-child.ts", O_RDONLY) = -1 ENOENT (No such file or directory)'
+      ),
+      options()
+    )
+    expect([...result.reads]).toEqual(
+      expect.arrayContaining([
+        'docs/from-thread.md',
+        'scripts/from-fchdir.ts',
+        'lib/from-resumed.ts',
+        'lib/from-child.ts'
+      ])
+    )
+    expect(result.reads.has('nowhere/from-child.ts')).toBe(false)
+  })
+})
+
+describe('the record’s versions', () => {
+  const base = { schema: 'vinaya.read-record', commit: 'c', platform: 'linux' }
+  const v1Entry: RecordedTest = { reads: ['a.ts'], listed: ['.'], scanned: [] }
+  const v2Entry: RecordedTest = {
+    ...v1Entry,
+    opens: { 'a.ts': 2 },
+    childOpens: ['a.ts'],
+    coverage: { 'a.ts': { instrumented: [[1, 4]], executed: [[1, 2]] } }
+  }
+
+  it('accepts a version-1 and a version-2 record, and refuses any other version', () => {
+    expect(isReadRecord({ ...base, schemaVersion: 1, tests: { t: v1Entry } })).toBe(true)
+    expect(isReadRecord({ ...base, schemaVersion: 2, tests: { t: v2Entry } })).toBe(true)
+    // A version-2 entry may leave each new field out: a Vitest run has no coverage.
+    expect(isReadRecord({ ...base, schemaVersion: 2, tests: { t: v1Entry } })).toBe(true)
+    expect(READ_RECORD_VERSION).toBe(2)
+    for (const version of [0, 3, '2', undefined])
+      expect(isReadRecord({ ...base, schemaVersion: version, tests: { t: v1Entry } })).toBe(false)
+  })
+
+  it('refuses a version-2 entry whose open counts, child opens or coverage do not have their shapes', () => {
+    const bad: Partial<Record<keyof RecordedTest, unknown>>[] = [
+      { opens: { 'a.ts': 0 } },
+      { opens: ['a.ts'] },
+      { childOpens: 'a.ts' },
+      { coverage: { 'a.ts': { instrumented: [[4, 1]], executed: [] } } },
+      { coverage: { 'a.ts': { instrumented: [[1, 2]] } } },
+      { coverage: [] }
+    ]
+    for (const fields of bad)
+      expect(isReadRecord({ ...base, schemaVersion: 2, tests: { t: { ...v1Entry, ...fields } } })).toBe(false)
+  })
+
+  it('turns lcov line counts into ranges: every instrumented line, and runs of executed ones across uninstrumented lines', () => {
+    expect(lineSpans([5, 1, 2, 3, 9, 3])).toEqual([
+      [1, 3],
+      [5, 5],
+      [9, 9]
+    ])
+    const counts = new Map([
+      [1, 1],
+      [2, 3],
+      [5, 1],
+      [6, 0],
+      [7, 2],
+      [10, 1]
+    ])
+    expect(fileCoverage(counts)).toEqual({
+      instrumented: [
+        [1, 2],
+        [5, 7],
+        [10, 10]
+      ],
+      executed: [
+        [1, 5],
+        [7, 10]
+      ]
+    })
+    const lcov = ['TN:', 'SF:src/a.ts', 'DA:1,1', 'DA:2,0', 'end_of_record', 'SF:src/a.ts', 'DA:2,1', 'end_of_record']
+    expect(coverageOfLcov(lcov.join('\n'), (sf) => `pkg/${sf}`)).toEqual({
+      'pkg/src/a.ts': { instrumented: [[1, 2]], executed: [[1, 2]] }
+    })
+  })
+
+  // A version-1 record selects exactly as before version 2 existed, and the fields version 2 adds change no selection.
+  const fx = fixture('workspaces-repo.json')
+  const core = 'packages/core/src'
+  const reading: Record<string, Partial<RecordedTest>> = {
+    'packages/app/tests/add.test.ts': { reads: [`${core}/index.ts`, `${core}/add.ts`] },
+    'packages/app/tests/tree.test.ts': { reads: [], listed: [core] },
+    'packages/app/tests/opaque.test.ts': { reads: ['opaque/input.json', 'scratch/notes.txt'] }
+  }
+  const record = (version: 1 | 2): ReadRecord => {
+    const tests: Record<string, RecordedTest> = {}
+    for (const test of viewOf('head', fx.files, fx.inventory).tests.map((t) => t.id)) {
+      const own = reading[test] ?? {}
+      const reads = [...new Set([test, ...(own.reads ?? [])])]
+      tests[test] = {
+        reads,
+        listed: own.listed ?? [],
+        ...(version === 2
+          ? {
+              opens: Object.fromEntries(reads.map((r) => [r, 2])),
+              childOpens: reads,
+              coverage: { [`${core}/add.ts`]: { instrumented: [[1, 3]], executed: [] } }
+            }
+          : {})
+      }
+    }
+    return { schema: READ_RECORD_SCHEMA, schemaVersion: version, commit: 'base', platform: 'linux', tests }
+  }
+  const select = (change: Record<string, string | null>, version: 1 | 2) => {
+    const scenario: Scenario = { name: 'recorded', depth: 'transitive', change, required: [], fallbacks: [] }
+    const plan = selectTests({
+      ...scenarioInput(fx, scenario),
+      records: { record: record(version), platform: 'linux' }
+    })
+    return { required: plan.required.map((t) => t.test), fallbacks: plan.fallbacks.map((f) => f.id) }
+  }
+
+  it('selects from a version-1 record as before, and from the same reads in version 2 alike', () => {
+    expect(isReadRecord(record(1))).toBe(true)
+    expect(isReadRecord(record(2))).toBe(true)
+    const notes = { 'scratch/notes.txt': 'changed\n' }
+    const added = { [`${core}/extra.ts`]: 'export const extra = 1\n' }
+    expect(select(notes, 1)).toEqual({ required: ['packages/app/tests/opaque.test.ts'], fallbacks: [] })
+    expect(select(added, 1).required).toEqual(['packages/app/tests/tree.test.ts'])
+    for (const change of [notes, added]) expect(select(change, 2)).toEqual(select(change, 1))
   })
 })

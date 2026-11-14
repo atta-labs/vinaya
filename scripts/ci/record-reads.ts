@@ -8,7 +8,9 @@
  * a test is recorded only when its report says it passed) and per-run time limit (`GROUP_TIME_LIMIT_MS`), and
  * `bun.lock` as the input installed dependencies derive from.
  *
- * The record is the selection's input for later changes (`scripts/test-suites/read-records.ts` fetches it by
+ * The record (schema version 2: each test's reads and listed folders, how many times its own process opened each
+ * read and which reads a child process opened, and, for a Bun run, its line coverage per source file) is the
+ * selection's input for later changes (`scripts/test-suites/read-records.ts` fetches it by
  * commit). A test file that does not pass while it is recorded gets no record, so its selection stays static. The
  * recorder is outside the required `Vinaya CI` aggregate: a failure here never blocks a merge.
  *
