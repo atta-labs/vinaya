@@ -13,7 +13,8 @@
  *   `cp`, `rm` and `rmdir` given `recursive` — each wrapped in place on the object `require('node:fs')` returns, so
  *   named, namespace, default, `require`, `createRequire` and computed imports all reach the wrap;
  * - `{"pid":n,"whole":"<what>"}` on the first use of something whose listings the wrap cannot see: a worker (its
- *   modules load their own `fs`), Bun's Glob scan, shell or bundler, and native bindings or addons. The recorder then
+ *   modules load their own `fs`), Bun's Glob scan, shell, bundler or resolve functions (`Bun.resolve`, `Bun.resolveSync`), and native bindings, addons
+ *   or libraries (`process.dlopen`, the `dlopen` of `bun:ffi`). The recorder then
  *   counts every folder the process listed.
  *
  * Every wrap calls the original with the same receiver and arguments and returns what it returns.
@@ -157,6 +158,15 @@ export function installListingProbe(log: string | undefined = process.env[PROBE_
     if (glob?.prototype)
       for (const name of ['scan', 'scanSync']) wrap(glob.prototype, name, () => whole(`Glob.${name}`))
     wrap(bun, 'build', () => whole('Bun.build'))
+    // Bun's resolve functions find a specifier from the resolver's own folder listings, which the trace cannot tell from
+    // a module load's. Replaced in place on the global `Bun` before any test module loads, so `Bun.resolveSync(...)` and
+    // `import { resolveSync } from 'bun'` alike reach the wrap.
+    for (const name of ['resolve', 'resolveSync']) wrap(bun, name, () => whole(`Bun.${name}`))
+    // The foreign-function module's `dlopen` loads a native library out of the wrap's sight. Replaced on the one object
+    // `require('bun:ffi')` returns, which every import form of the module shares, so its other exports stay as they were.
+    try {
+      wrap(require('bun:ffi') as Holder, 'dlopen', () => whole('bun:ffi.dlopen'))
+    } catch {}
     const shell = bun.$ as AnyFunction | undefined
     if (typeof shell === 'function' && !(shell as unknown as Holder)[WRAPPED as unknown as string]) {
       // A Proxy keeps the shell's helper members (`$.cwd`, `$.escape`, `$.nothrow`, ...) working as before.

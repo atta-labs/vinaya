@@ -20,8 +20,9 @@ import {
   parseShard,
   probedLaunch,
   readProbeLog,
+  lookupFolders,
+  moduleLookups,
   readShardOutputs,
-  resolvesModules,
   SHARD_FILE,
   STRACE_ARGS,
   type Shard,
@@ -29,7 +30,8 @@ import {
   scannedFolders,
   scanSources,
   shardTests,
-  withProbeFirst
+  withProbeFirst,
+  workspacePackages
 } from './record-reads.js'
 
 const TESTS = [
@@ -273,6 +275,41 @@ describe('the listing probe', () => {
     }
   })
 
+  it('does not mark a process wholly scanned that only imports a module mentioning Bun’s resolve and bun:ffi', () => {
+    const scratch = probeScratch()
+    try {
+      expect(runFixture(['imports-mention.ts'], scratch)).toBe(runFixture(['imports-mention.ts'], null))
+      expect(logLines(scratch.log).map((line) => Object.keys(line).sort())).toEqual([['pid', 'start']])
+    } finally {
+      rmSync(scratch.dir, { recursive: true, force: true })
+    }
+  })
+
+  const CALLS: [string, string][] = [
+    ['resolveSync', 'Bun.resolveSync'],
+    ['resolve', 'Bun.resolve'],
+    ['namedResolveSync', 'Bun.resolveSync'],
+    ['dlopen', 'bun:ffi.dlopen'],
+    ['namespaceDlopen', 'bun:ffi.dlopen'],
+    ['dynamicDlopen', 'bun:ffi.dlopen'],
+    ['requireDlopen', 'bun:ffi.dlopen']
+  ]
+  for (const [form, what] of CALLS) {
+    it(`marks a process that calls ${what} through the ${form} form wholly scanned, and changes nothing it prints`, () => {
+      const scratch = probeScratch()
+      try {
+        const probed = runFixture(['resolves.ts', form], scratch)
+        expect(probed).toBe(runFixture(['resolves.ts', form], null))
+        // `bun:ffi` keeps its other exports, and every import form sees the one wrapped `dlopen`.
+        expect(JSON.parse(probed)).toMatchObject({ form, sameDlopen: true })
+        const lines = logLines(scratch.log)
+        expect(lines.filter((line) => line.whole)).toEqual([{ pid: lines[0]?.pid as number, whole: what }])
+      } finally {
+        rmSync(scratch.dir, { recursive: true, force: true })
+      }
+    })
+  }
+
   it('runs first when it heads the run configuration’s preload list, and the shell keeps its helpers', () => {
     const scratch = probeScratch()
     const project = join(scratch.dir, 'project')
@@ -468,65 +505,154 @@ describe('scanned folders', () => {
     expect([...result.processScanned].sort()).toEqual([...result.listed].sort())
   })
 
-  it('count every listing of a test whose source resolves a specifier or mocks a module', () => {
+  // Fixture sources the scan reads, never runs: a tree laid out as a repository, with `packages/pkg` a workspace package.
+  const LOOKUPS = join(import.meta.dir, 'fixtures', 'module-lookups')
+  const WORKSPACE = new Map([['@scope/pkg', 'packages/pkg']])
+  const LISTED = ['.', 'packages/pkg', 'src/widgets', 'tests']
+  const probe = readProbeLog('{"pid":1,"start":true}\n')
+  const scannedOf = (reads: string[], packages: ReadonlyMap<string, string> = WORKSPACE): string[] => {
+    const sources = scanSources(LOOKUPS, reads, packages)
+    return scannedFolders({
+      listed: LISTED,
+      processScanned: [],
+      probe,
+      resolves: sources.resolves,
+      resolved: sources.resolved,
+      folderOf
+    })
+  }
+
+  it('count only the root, and the workspace package’s folder, for a lookup of a bare literal specifier', () => {
+    expect(scanSources(LOOKUPS, ['tests/bare-lookup.ts'], WORKSPACE)).toEqual({
+      branchesOnPlatform: false,
+      resolves: false,
+      resolved: ['.', 'packages/pkg']
+    })
+    expect(scannedOf(['tests/bare-lookup.ts'])).toEqual(['.', 'packages/pkg'])
+    // Not a workspace package: only the root, where the root `baseUrl` can map it.
+    expect(scannedOf(['tests/bare-lookup.ts'], new Map())).toEqual(['.'])
+  })
+
+  it('count only the folder a relative literal module mock names, from the source’s folder', () => {
+    expect(scannedOf(['tests/relative-mock.ts'])).toEqual(['src/widgets'])
+    // An added `.tsx` the mock's extensionless specifier now finds still selects the test.
+    const index = indexRecordedTest({
+      reads: ['tests/relative-mock.ts'],
+      listed: LISTED,
+      scanned: scannedOf(['tests/relative-mock.ts'])
+    })
+    expect(recordReach(index, { path: 'src/widgets/widget.tsx', status: 'added' })?.detail).toContain('own code listed')
+    // A module added to a folder the mock cannot reach does not.
+    expect(recordReach(index, { path: 'tests/other.ts', status: 'added' })).toBeNull()
+  })
+
+  it('count every listed folder for a lookup whose specifier is computed', () => {
+    expect(scanSources(LOOKUPS, ['tests/computed-lookup.ts'], WORKSPACE).resolves).toBe(true)
+    expect(scannedOf(['tests/relative-mock.ts', 'tests/computed-lookup.ts'])).toEqual(LISTED)
+  })
+
+  it('count nothing for a source that only mentions Bun’s resolve functions or bun:ffi, which the probe wraps', () => {
+    expect(scanSources(LOOKUPS, ['tests/mentions-bun.ts'], WORKSPACE)).toEqual({
+      branchesOnPlatform: false,
+      resolves: false,
+      resolved: []
+    })
+    expect(scannedOf(['tests/mentions-bun.ts'])).toEqual([])
+  })
+
+  it('count nothing for a source that does not look a module up, or a file that is not a module source', () => {
     const repo = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-scan-sources-')))
     try {
       mkdirSync(join(repo, 'tests'))
       writeFileSync(join(repo, 'tests', 'plain.test.ts'), "import { a } from './a'\n")
-      writeFileSync(join(repo, 'tests', 'resolves.ts'), "export const where = require.resolve('./a')\n")
-      writeFileSync(
-        join(repo, 'tests', 'mocks.test.ts'),
-        "import { mock } from 'bun:test'\nmock.module('./widget', () => ({ Widget: () => null }))\n"
-      )
-      writeFileSync(join(repo, 'notes.md'), 'require.resolve is mentioned here only\n')
+      writeFileSync(join(repo, 'notes.md'), 'require.resolve(name) is mentioned here only\n')
       expect(scanSources(repo, ['tests/plain.test.ts', 'notes.md'])).toEqual({
         branchesOnPlatform: false,
-        resolves: false
+        resolves: false,
+        resolved: []
       })
-      expect(scanSources(repo, ['tests/plain.test.ts', 'tests/resolves.ts']).resolves).toBe(true)
-      const probe = readProbeLog('{"pid":1,"start":true}\n')
-      const scanned = scannedFolders({ listed: ['tests', '.'], processScanned: [], probe, resolves: true, folderOf })
-      expect(scanned).toEqual(['.', 'tests'])
-
-      // A module mock by an extensionless relative specifier opens nothing; an added `.tsx` the specifier now finds
-      // still selects the test, because its listings all count as scanned.
-      const mocks = scanSources(repo, ['tests/mocks.test.ts'])
-      expect(mocks.resolves).toBe(true)
-      const index = indexRecordedTest({
-        reads: ['tests/mocks.test.ts'],
-        listed: ['tests'],
-        scanned: scannedFolders({ listed: ['tests'], processScanned: [], probe, resolves: mocks.resolves, folderOf })
-      })
-      expect(recordReach(index, { path: 'tests/widget.tsx', status: 'added' })?.detail).toContain('own code listed')
-      const unscanned = indexRecordedTest({ reads: ['tests/mocks.test.ts'], listed: ['tests'], scanned: [] })
-      expect(recordReach(unscanned, { path: 'tests/widget.tsx', status: 'added' })).toBeNull()
     } finally {
       rmSync(repo, { recursive: true, force: true })
     }
   })
 
-  it('find a resolve through any require function, and not a path or promise resolve', () => {
+  it('name each workspace package’s folder by its package.json name', () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-workspace-packages-')))
+    try {
+      for (const [dir, name] of [
+        ['packages/a', '@scope/a'],
+        ['apps/b', 'b']
+      ] as const) {
+        mkdirSync(join(repo, dir), { recursive: true })
+        writeFileSync(join(repo, dir, 'package.json'), JSON.stringify({ name }))
+      }
+      expect([...workspacePackages(repo, ['packages/a', 'apps/b', 'missing'])]).toEqual([
+        ['@scope/a', 'packages/a'],
+        ['b', 'apps/b']
+      ])
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('resolve a literal specifier to the folders it can land in', () => {
+    const packages = new Map([
+      ['@attalabs/vinaya', 'apps/cli'],
+      ['zod-like', 'packages/zod-like']
+    ])
+    const at = (specifier: string, source = 'apps/cli/tests/a.test.ts') => lookupFolders(specifier, source, packages)
+    expect(at('./fixtures/x.json')).toEqual(['apps/cli/tests/fixtures'])
+    expect(at('../src/widget')).toEqual(['apps/cli/src'])
+    expect(at('./')).toEqual(['apps/cli/tests'])
+    expect(at('..')).toEqual(['apps/cli'])
+    expect(at('../../../../outside')).toEqual([])
+    expect(at('@attalabs/vinaya/package.json')).toEqual(['.', 'apps/cli'])
+    expect(at('@attalabs/vinaya')).toEqual(['.', 'apps/cli'])
+    expect(at('@attalabs/vinaya/src/lib/x')).toEqual(['.', 'apps/cli/src/lib'])
+    expect(at('zod-like/sub/')).toEqual(['.', 'packages/zod-like/sub'])
+    expect(at('@other/pkg/package.json')).toEqual(['.'])
+    expect(at('node:fs')).toEqual(['.'])
+    for (const unknown of ['/abs/path', 'file:///abs/path', '#internal', '']) expect(at(unknown)).toBeNull()
+  })
+
+  it('find a literal lookup through any require function or module mock, and not a path or promise resolve', () => {
     for (const text of [
       'import.meta.resolve("./a")',
       'import.meta.resolveSync("./a")',
       'import.meta.require.resolve("./a")',
-      'const req = createRequire(import.meta.url)\nreq.resolve("x")',
-      'const r = module.createRequire(here); r .resolve("x")',
-      'createRequire(import.meta.url).resolve("x")',
-      'Bun.resolveSync("./a", dir)',
-      'await Bun.resolve("./a", dir)',
-      'jest.mock("./a")',
-      'vi.doMock("./a")',
-      'new Bun.FileSystemRouter({ dir })',
-      'import { dlopen } from "bun:ffi"'
+      "const req = createRequire(import.meta.url)\nreq.resolve('./a')",
+      'const r = module.createRequire(here); r .resolve(`./a`)',
+      'createRequire(import.meta.url).resolve("./a")',
+      'jest.mock("./a", () => ({}))',
+      'vi.doMock( "./a" )',
+      "mock.module('./a', () => ({}))"
     ])
-      expect(resolvesModules(text)).toBe(true)
+      expect(moduleLookups(text)).toEqual({ every: false, specifiers: ['./a'] })
     for (const text of [
       'path.resolve(a, b)',
       'await Promise.resolve(1)',
       'const req = createRequire(import.meta.url)\nreq("x")',
-      'mockModule()'
+      'mockModule()',
+      'Bun.resolveSync("./a", dir)',
+      'await Bun.resolve(name, dir)',
+      'import { resolveSync } from "bun"',
+      'import { dlopen } from "bun:ffi"'
     ])
-      expect(resolvesModules(text)).toBe(false)
+      expect(moduleLookups(text)).toEqual({ every: false, specifiers: [] })
+  })
+
+  it('count every listed folder for a lookup with no one literal specifier, or Bun’s file-system router', () => {
+    for (const text of [
+      'import.meta.resolve(name)',
+      'import.meta.resolve(`./${name}`)',
+      "import.meta.resolve('./a' + suffix)",
+      'require.resolve("./a\\u0062")',
+      'const resolve = require.resolve',
+      'const req = createRequire(import.meta.url)\nreq.resolve(spec)',
+      'jest.mock(path)',
+      "mock.module('./a', () => ({}))\nmock.module(other, () => ({}))",
+      'new Bun.FileSystemRouter({ dir })'
+    ])
+      expect(moduleLookups(text).every).toBe(true)
   })
 })
