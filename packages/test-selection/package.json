@@ -16,6 +16,9 @@
     "./package.json": "./package.json"
   },
   "types": "./dist/index.d.ts",
+  "bin": {
+    "test-selection": "dist/cli.js"
+  },
   "files": [
     "dist",
     "src",
