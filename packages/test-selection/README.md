@@ -273,19 +273,133 @@ npx test-selection --base origin/main --head HEAD
 
 Started in any folder of a git repository, it selects for that whole
 repository. It resolves both arguments to commit ids first, builds each
-commit's view with `workspaceInventory`, and calls `selectTests` with
-`policy: { depth: 'transitive' }`. It then groups the planned tests with
-`groupNativeTests`. It starts no test and writes no file. It reads no
+commit's view with `workspaceInventory`, and calls `selectTests`. It then
+groups the planned tests with `groupNativeTests`. It starts no test and writes
+no file. It reads no file but the two its optional flags name, and no
 environment variable of its own; git's own settings still apply.
 
-It declares no input a test reads without importing it: no input edge, no
-folder-scanning test, no spawned program and no policy. A test that reads a
-file it does not import is required only through a fallback scope or its
-own imports.
+```sh
+npx test-selection --base <commit> --head <commit> [--record <file>] [--config <file>]
+```
+
+- `--record <file>` — a read record (`ReadRecord`, checked with
+  `isReadRecord`), passed to `selectTests` as its `records` with
+  `process.platform` as the platform. A test with a valid record is decided by
+  what it read; every other test, and every test when the record's commit
+  cannot be compared with the base, by static selection.
+- `--config <file>` — a consumer config: a JSON document stating the rest of
+  what a selection takes.
+
+With neither flag it calls `selectTests` with `policy: { depth: 'transitive' }`
+and declares nothing: no input edge, no folder-scanning test, no spawned
+program and no policy. A test that reads a file it does not import is then
+required only through a fallback scope or its own imports.
+
+### The consumer config
+
+Every key is optional; an unknown key, or a value of the wrong shape, is
+refused naming the key:
+
+```json
+{
+  "depth": "transitive",
+  "inputs": [{ "path": "packages/app/data/table.json", "readers": ["packages/app/tests/a.test.ts"] }],
+  "scanners": [{ "test": "packages/app/tests/files.test.ts", "roots": ["packages/app/src/"], "trigger": "tree-shape" }],
+  "spawnPrograms": [{ "binary": "node", "entrypoint": "scripts/build.mjs" }],
+  "dataFolders": ["fixtures", "data"],
+  "alwaysRun": [{ "id": "smoke", "reason": "runs on every change", "tests": ["packages/lib/tests/*.test.ts"] }],
+  "wholeSuites": [{ "suite": "app", "reason": "its tests read the whole package" }]
+}
+```
+
+- `depth` — the import walk's depth, `one` or `transitive` (`transitive` when
+  absent).
+- `inputs` — files a test reads without importing them, each with its
+  readers: test paths, repository-relative; a `path` ending in `/` is a folder
+  and covers every file beneath it. Each becomes an input edge of kind
+  `fixture`, reader kind `raw-bytes` and source `config:<index>` in both
+  commits' views, which keep only the readers that commit holds: a change that
+  adds a test together with its input, or deletes a test still named, still
+  selects.
+- `scanners` — folder-scanning tests (`ScannerDeclaration`): the test, the
+  roots it reads, and its trigger (`tree-shape`, `process-start`,
+  `listed-files` or `content`).
+- `spawnPrograms` — programs whose start by a test is followed into the
+  entrypoint's imports (`SpawnProgram`).
+- `dataFolders` — folder names whose files are data, not code (`fixtures`
+  when absent).
+- `alwaysRun` — always-run obligations: an `id`, a `reason`, and `tests`
+  (globs), `suites`, or both. Each is a `SelectionObligation` of kind
+  `policy`.
+- `wholeSuites` — suites that run whole when the change touches a path under
+  their folder (`WholeSuitePolicy`).
+
+A suite id in `alwaysRun` or `wholeSuites` is one the workspace inventory
+gives: the package's `name` (`root` for an unnamed root package), or
+`name@dir` when two packages share a name. The plan document keeps its shape,
+so an obligation or a whole-suite policy shows as the tests it adds to
+`tests`.
+
+To try it, write the example above as `selection.json` (with your own paths)
+and run, from a git repository with two commits:
+
+```sh
+npx test-selection --base HEAD~1 --head HEAD --config selection.json
+```
+
+### In a pull request's CI
+
+The record comes from a recording job on the default branch, documented with
+the package's record command (see "The `test-selection-record` command"
+below); that job keeps each record as an artifact named for its commit. A
+pull-request job downloads the record of the base commit and passes it with
+`--record`; with no record found it selects without one. It takes only a run
+of the recording workflow that a push to the default branch started, so a
+record from another branch or event never narrows the selection. The workflow file
+name below (`record.yml`) is the one your recording job lives in; the artifact
+(`read-record-<commit>`) and file (`read-record.json`) names are the ones that
+job's example uses:
+
+```yaml
+name: tests
+on: pull_request
+permissions:
+  actions: read
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the record's commit must be in history, or every test falls back to static selection
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Download the base commit's read record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          run_id=$(gh run list --workflow record.yml --branch "$DEFAULT_BRANCH" --event push --commit "$BASE" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -n "$run_id" ]; then gh run download "$run_id" --name "read-record-$BASE" --dir .record; fi
+      - name: Select
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          record=()
+          if [ -f .record/read-record.json ]; then record=(--record .record/read-record.json); fi
+          npx test-selection --base "$BASE" --head "$HEAD" "${record[@]}" --config selection.json > plan.json
+```
 
 It exits 0 when it printed a plan. A missing argument, a folder outside a git
-repository, or an argument that names no commit prints one message on
-standard error and exits 2; any other failure exits 1.
+repository, an argument that names no commit, a `--record` file that is
+missing or not a read record, or a `--config` file that is missing or not a
+valid consumer config prints one message on standard error and exits 2; any
+other failure exits 1.
 
 The document:
 
@@ -412,7 +526,8 @@ jobs:
 ```
 
 A selection for a change then downloads the artifact of its base commit and
-passes the parsed record to `selectTests`.
+passes the parsed record to `selectTests`, or the file to the `test-selection`
+command with `--record`.
 
 From code, `recordReads` records the same way and returns the record; a
 caller with its own inventory, runner launch, run-outcome check, time limit or
@@ -430,6 +545,7 @@ command itself with those injected.
 | `src/memory-inventory.ts` | an inventory view built from a file map and a small declaration |
 | `src/workspace-inventory.ts` | an inventory view built from one commit's package manifests |
 | `src/cli.ts` | the `test-selection` command, never imported by the entrypoint |
+| `src/consumer-config.ts` | the command's consumer config: its validation, and its declared inputs as edges |
 | `src/record-command.ts` | the `test-selection-record` command, never imported by the entrypoint |
 | `src/recorder.ts` | the read recorder: traced runs, the record entry each builds, shards and their merge |
 | `src/listing-probe.ts` | the listing probe a recorded Bun run preloads, never imported by the entrypoint |
@@ -463,8 +579,9 @@ outside it imports past the package name. `tests/consumer.test.ts` packs the
 package, installs the tarball into a fresh repository and runs a selection
 there — this README's example included — and runs the `test-selection`
 command under Node in a fresh repository of one Bun package and one Vitest
-package, with the `test-selection-record` command and a direct `bun --preload` of the shipped probe.
-
+package, then with a read record and a consumer config in another, and runs
+the `test-selection-record` command and a direct `bun --preload` of the
+shipped probe.
 ## License
 
 `LICENSE` beside this file is the license the package is distributed under.
