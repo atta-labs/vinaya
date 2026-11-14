@@ -102,6 +102,7 @@ import {
   handoffFindings
 } from '../loops/dev-review/standalone/dev-review-loop'
 import { loadTrustAnchorConfig } from '../integration/config/compose'
+import { runGit } from '../loops/dev-review/v2/git-read-memo'
 import {
   checkPremiseAtHead,
   describeFailingCheckRun,
@@ -749,7 +750,9 @@ function refuseThrough(
 
 /** The round's statistics at the worktree's head against its merge base with main; unknown values when git cannot say. */
 export function worktreeStats(worktreePath: string, wallMs: number): RoundStats {
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: worktreePath, encoding: 'utf8' }).trim()
+  // Through the round's git read memo: every Log line reads the head and its base, so a round asks them often.
+  const git = (...args: string[]) =>
+    runGit(worktreePath, args, () => execFileSync('git', args, { cwd: worktreePath, encoding: 'utf8' }).trim())
   try {
     const head = git('rev-parse', 'HEAD')
     const baseHead = git('merge-base', 'origin/main', head)
@@ -1252,7 +1255,8 @@ export function recordedScanOutcome(results: Results): SecurityScanOutcome | und
 
 /** The paths `worktreePath`'s head changes against its merge base with main; empty when git cannot say. */
 function worktreeChangedPaths(worktreePath: string): readonly string[] {
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: worktreePath, encoding: 'utf8' }).trim()
+  const git = (...args: string[]) =>
+    runGit(worktreePath, args, () => execFileSync('git', args, { cwd: worktreePath, encoding: 'utf8' }).trim())
   const head = git('rev-parse', 'HEAD')
   return git('diff', '--name-only', `${git('merge-base', 'origin/main', head)}...${head}`)
     .split('\n')
@@ -2344,7 +2348,8 @@ export function defaultRefreshPrEvidence(input: { worktreePath: string; prNumber
 
 function defaultComparisonBase(worktreePath: string): string | null {
   try {
-    return execFileSync('git', ['merge-base', 'origin/main', 'HEAD'], { cwd: worktreePath, encoding: 'utf8' }).trim()
+    const args = ['merge-base', 'origin/main', 'HEAD']
+    return runGit(worktreePath, args, () => execFileSync('git', args, { cwd: worktreePath, encoding: 'utf8' }).trim())
   } catch {
     return null
   }

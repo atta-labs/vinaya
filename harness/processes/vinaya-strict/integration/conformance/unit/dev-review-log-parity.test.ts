@@ -6,8 +6,7 @@ import { loadProcess } from '../../../../../kernel/dev-process-socket/loader/loa
 import corpus from '../../../fixtures/dev-review-engine-scenarios.json'
 import { currentRunId, type LogSinkDeps, type ResolvedLogDestination } from '../../../../../kernel/log/log-sink.js'
 import { RUNTIME_DIR_ENV_KEY } from '../../../../../kernel/run-paths.js'
-import { runStandaloneScenario } from './dev-review-current-loop-adapter.js'
-import { runEngineScenario } from '../../../tests/dev-review-engine-loop-adapter.js'
+import { type CorpusSink, storedEngineScenario, storedStandaloneScenario } from '../../../tests/engine-corpus-store.js'
 
 /** The shared sink, recording to the scenario's own Log folder whatever the machine's config names. */
 const recording = (env: NodeJS.ProcessEnv): ResolvedLogDestination => ({
@@ -18,6 +17,8 @@ const RECORDING_SINK: Partial<LogSinkDeps> = {
   resolveLogDestination: (_repo, env) => recording(env),
   unresolvedLogDestination: recording
 }
+/** The same sink as the corpus store names it: a recorded run is its own entry, apart from a run given no sink. */
+const STORED_RECORDING_SINK: CorpusSink = { kind: 'recording-runtime-logs', deps: RECORDING_SINK }
 
 type Line = Record<string, unknown>
 
@@ -178,14 +179,14 @@ describe('standalone and Engine Log replay', () => {
   it('replays every corpus scenario through both runners with equal Log lines', async () => {
     const all: string[] = []
     for (const scenario of corpus.scenarios as Array<{ id: string; expectedDefect?: string }>) {
-      const recorded = await runStandaloneScenario(scenario.id, RECORDING_SINK)
+      const recorded = await storedStandaloneScenario(scenario.id, { sink: STORED_RECORDING_SINK })
       const known = scenario.expectedDefect === undefined ? undefined : STANDALONE_DEFECTS[scenario.expectedDefect]
       const standalone = known ? known(recorded.logLines ?? []) : (recorded.logLines ?? [])
       // Only a defect standalone still shows is left out: once it is fixed, its mapping here is stale and fails.
       if (known && standalone.length === (recorded.logLines ?? []).length)
         all.push(`${scenario.id} ${scenario.expectedDefect}: standalone no longer shows the defect; remove its mapping`)
       for (const agent of ['claude', 'codex'] as const) {
-        const engine = (await runEngineScenario(scenario.id, agent, RECORDING_SINK)).logLines ?? []
+        const engine = (await storedEngineScenario(scenario.id, agent, { sink: STORED_RECORDING_SINK })).logLines ?? []
         if (STRUCTURAL_EXCLUSIONS[scenario.id] !== undefined) {
           if (engine.length === 0 || standalone.length === 0) all.push(`${scenario.id} (${agent}) recorded no Log`)
           continue

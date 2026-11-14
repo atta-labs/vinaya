@@ -396,15 +396,80 @@ export async function runEngineScenario(
   shadow?: EngineShadowMode,
   between?: (run: InFlightEngineRun) => Promise<void>
 ): Promise<Observation> {
+  return runScenarioInFreshRoot(id, agent, logSink, inspect, shadow, between)
+}
+
+/**
+ * One scenario run as `runEngineScenario` runs it, with no inspection, shadow or in-flight continuation, handing
+ * `ended` the scenario's whole root (its repository, runtime folder and stub login) once the run has ended, before
+ * the reviewer-isolation cleanup and the root's removal. The engine corpus store copies the ended files there.
+ */
+export function captureEngineScenario(
+  id: string,
+  agent: Agent,
+  logSink: Partial<LogSinkDeps> | undefined,
+  ended: (root: string) => void
+): Promise<Observation> {
+  return runScenarioInFreshRoot(id, agent, logSink, undefined, undefined, undefined, ended)
+}
+
+/**
+ * Runs `inspect` over an ended scenario root restored elsewhere (a copy of what `captureEngineScenario` handed out),
+ * inside the environment shape `runEngineScenario` gives its own inspection: the same stub login, runtime folder,
+ * Log identity and working directory, all restored afterwards.
+ */
+export async function inspectEndedEngineScenario(
+  id: string,
+  agent: Agent,
+  root: string,
+  logSink: Partial<LogSinkDeps> | undefined,
+  inspect: (run: EngineScenarioRun) => Promise<void> | void
+): Promise<void> {
+  const runtimeDir = join(root, 'runtime')
+  await withScenarioEnvironment(id, agent, root, async () => {
+    // A recorded run's inspection runs from the scenario's own repository, where the run itself left it.
+    if (logSink) process.chdir(join(root, 'repo'))
+    await inspect({ runtimeDir, task: TASK, pr: PR, agent })
+  })
+}
+
+async function runScenarioInFreshRoot(
+  id: string,
+  agent: Agent,
+  logSink: Partial<LogSinkDeps> | undefined,
+  inspect: ((run: EngineScenarioRun) => Promise<void> | void) | undefined,
+  shadow: EngineShadowMode | undefined,
+  between: ((run: InFlightEngineRun) => Promise<void>) | undefined,
+  ended?: (root: string) => void
+): Promise<Observation> {
   const root = mkdtempSync(join(tmpdir(), 'engine-corpus-'))
   const runtimeDir = join(root, 'runtime')
   mkdirSync(runtimeDir)
-  const savedHome = process.env.CODEX_HOME
   // A stub login prevents the real role launcher from copying an operator's credential.
-  const stubHome = join(root, 'stub-home')
-  mkdirSync(stubHome)
-  writeFileSync(join(stubHome, 'auth.json'), '{}\n')
-  process.env.CODEX_HOME = stubHome
+  mkdirSync(join(root, 'stub-home'))
+  writeFileSync(join(root, 'stub-home', 'auth.json'), '{}\n')
+  try {
+    return await withScenarioEnvironment(id, agent, root, async () => {
+      const observation = await drive(id, agent, root, runtimeDir, logSink, shadow, between)
+      ended?.(root)
+      await inspect?.({ runtimeDir, task: TASK, pr: PR, agent })
+      return observation
+    })
+  } finally {
+    cleanupAllReviewerIsolationArtifacts(runtimeDir, TASK)
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  }
+}
+
+/**
+ * Runs `body` inside a scenario's environment: its stub login, its runtime folder, a folder-only Log, its own task
+ * and repository identity and no outer one, the Engine's Log identity for `agent`, and a controller-secret run's
+ * secrets. Every variable and the working directory are restored afterwards.
+ */
+async function withScenarioEnvironment<T>(id: string, agent: Agent, root: string, body: () => Promise<T>): Promise<T> {
+  const runtimeDir = join(root, 'runtime')
+  const savedHome = process.env.CODEX_HOME
+  process.env.CODEX_HOME = join(root, 'stub-home')
   // The handoff's control-store writes land in this scenario's runtime folder, and its Log events stay local.
   const savedRuntime = process.env[RUNTIME_DIR_ENV_KEY]
   const savedFolderOnly = process.env[LOG_FOLDER_ONLY_ENV]
@@ -427,9 +492,7 @@ export async function runEngineScenario(
   const savedSecrets = Object.fromEntries(Object.keys(CONTROLLER_SECRETS).map((key) => [key, process.env[key]]))
   if (id === 'controller-secret') Object.assign(process.env, CONTROLLER_SECRETS)
   try {
-    const observation = await drive(id, agent, root, runtimeDir, logSink, shadow, between)
-    await inspect?.({ runtimeDir, task: TASK, pr: PR, agent })
-    return observation
+    return await body()
   } finally {
     process.chdir(savedCwd)
     for (const [key, value] of Object.entries(savedSecrets)) {
@@ -450,8 +513,6 @@ export async function runEngineScenario(
     resetRuntimeDirCache()
     if (savedFolderOnly === undefined) delete process.env[LOG_FOLDER_ONLY_ENV]
     else process.env[LOG_FOLDER_ONLY_ENV] = savedFolderOnly
-    cleanupAllReviewerIsolationArtifacts(runtimeDir, TASK)
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   }
 }
 
