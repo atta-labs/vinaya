@@ -5,6 +5,10 @@ const config: NextConfig = {
   transpilePackages: ['@attalabs/process-vinaya', '@attalabs/harness', '@vinaya/cms', '@vinaya/ui'],
   // The docs read their Markdown from disk with a computed path, which tracing cannot see.
   outputFileTracingIncludes: { '/docs/**': ['./src/content/docs-tree/**'] },
+  // Next.js offers an upgrade menu during `next build` by default. Builds run
+  // under turbo (and inside `bun release`), where the menu gets no input and
+  // the build hangs, so it is off; upgrades go through a normal change.
+  experimental: { agentUpgrade: false },
   images: { remotePatterns: [{ protocol: 'https', hostname: 'cdn.sanity.io' }] },
   // The old docs and the old life-cycle page land on their new homes.
   async redirects() {
