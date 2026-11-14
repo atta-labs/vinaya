@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
@@ -137,6 +137,9 @@ export function realDeps(): ReleaseDeps {
           for (const entry of readdirSync(workspace, { withFileTypes: true })) {
             if (!entry.isDirectory()) continue
             reading = join(workspace, entry.name, 'package.json')
+            // A folder with no manifest is not a workspace: a deleted package
+            // leaves its ignored `node_modules/` and `.turbo/` behind locally.
+            if (!existsSync(reading)) continue
             manifests.push(JSON.parse(readFileSync(reading, 'utf8')))
           }
         }

@@ -277,13 +277,14 @@ describe('release registry precondition', () => {
 })
 
 describe('release real I/O seams', () => {
-  it('reads all fixed groups by manifest name and reports missing members and versions', () => {
+  it('reads all fixed groups by manifest name, skips folders with no manifest, and reports missing members and versions', () => {
     const root = mkdtempSync(join(tmpdir(), 'release-packages-'))
     const previous = process.cwd()
     try {
       mkdirSync(join(root, '.changeset'))
       mkdirSync(join(root, 'apps', 'different-directory'), { recursive: true })
       mkdirSync(join(root, 'packages', 'other'), { recursive: true })
+      mkdirSync(join(root, 'packages', 'deleted-package', 'node_modules'), { recursive: true })
       const config = join(root, '.changeset/config.json')
       const manifest = join(root, 'apps/different-directory/package.json')
       writeFileSync(config, JSON.stringify({ fixed: [['@example/new'], ['@example/other', '@example/new']] }))
