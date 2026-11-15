@@ -7,7 +7,10 @@
  * interrupted run and an unreadable report among them.
  */
 import { afterAll, describe, expect, test } from 'bun:test'
+import { spawnSync } from 'node:child_process'
 import {
+  chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -15,12 +18,13 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { parse } from 'yaml'
 import {
   CI_SHARD_COUNT,
@@ -44,11 +48,14 @@ import {
   checkSchedule,
   ciScheduleInput,
   DEFAULT_TEST_CONCURRENCY,
+  FILE_LEVEL_TESTS_PATH,
   FILES_PER_RUNNER,
+  GH_GUARD_SOURCE,
   GROUP_TIME_LIMIT_MS,
   type GroupOutcome,
   groupOutcomeOf,
   OUTPUT_DRAIN_MS,
+  outsideCallTests,
   type RunnerStart,
   readShardLists,
   runGroups,
@@ -1214,5 +1221,159 @@ describe("each run's own test-temp root", () => {
     expect(created).toBe(1)
     expect(fresh.created?.dir).toBe(fresh.root)
     expect(removeTestTempRun(fresh.created as TestTempRun).failed).toEqual([])
+  })
+})
+
+describe('the gh stand-in a runner finds first on its PATH', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'schedule-gh-guard-')))
+  scratch.push(root)
+  const bunTest = (name: string, body: string) =>
+    `import { expect, test } from 'bun:test'\nimport { spawnSync } from 'node:child_process'\nimport { chmodSync, mkdirSync, writeFileSync } from 'node:fs'\ntest('${name}', () => {\n${body}\n})\n`
+  const files: Record<string, string> = {
+    'pkg/package.json': '{ "name": "@fx/gh", "scripts": { "test": "bun test" } }\n',
+    // Reaches `gh` and tolerates its failure: the test itself passes.
+    'pkg/tests/tolerant.test.ts': bunTest(
+      'tolerates a failing gh',
+      "spawnSync('gh', ['pr', 'view', '7'])\nexpect(1).toBe(1)"
+    ),
+    'pkg/tests/quiet.test.ts': bunTest('never calls gh', 'expect(1).toBe(1)'),
+    // Puts its own fake `gh` earlier on its own PATH.
+    'pkg/tests/own-fake.test.ts': bunTest(
+      'uses its own fake gh',
+      [
+        'const bin = `${import.meta.dir}/own-bin`',
+        'mkdirSync(bin, { recursive: true })',
+        "writeFileSync(`${bin}/gh`, '#!/bin/sh\\necho fake\\n')",
+        'chmodSync(`${bin}/gh`, 0o755)',
+        "const out = spawnSync('gh', ['x'], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: 'utf8' })",
+        "expect(out.stdout.trim()).toBe('fake')"
+      ].join('\n')
+    )
+  }
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true })
+    writeFileSync(join(root, path), text)
+  }
+  const identity = (id: string): TestIdentity => ({
+    id,
+    suite: 'gh',
+    owner: '@fx/gh',
+    kind: 'workspace',
+    runner: 'bun',
+    cwd: 'pkg',
+    preload: null,
+    environment: { timeoutMs: 30000 }
+  })
+  const universe = Object.keys(files)
+    .filter((path) => path.endsWith('.test.ts'))
+    .map(identity)
+  const plan = (id: string): NativeGroup[] => oneFilePlan(universe, [id])
+  const run = (id: string, outsideCall: ReadonlySet<string>) =>
+    runGroups(root, plan(id), { log: () => {}, env: { ...process.env }, outsideCall })
+
+  test('an unlisted test that tolerates a failing gh still fails, with its call named', async () => {
+    const id = 'pkg/tests/tolerant.test.ts'
+    const lines: string[] = []
+    const result = await runGroups(root, plan(id), {
+      log: (line) => lines.push(line),
+      env: { ...process.env },
+      outsideCall: new Set()
+    })
+    expect(result.failedRunners).toHaveLength(1)
+    expect(Object.values(result.failedTests)).toEqual([[id]])
+    expect(lines.join('\n')).toContain('gh pr view 7')
+    expect(lines.join('\n')).toContain('reached the real GitHub CLI')
+    // The failure is the stand-in's alone: the outcome confirms nothing.
+    const outcome = result.outcomes?.[0] as GroupOutcome
+    expect(outcome.confirmed).toEqual([])
+    expect(outcome.obligations).toEqual([id])
+  })
+
+  test('a test that never calls gh passes', async () => {
+    const result = await run('pkg/tests/quiet.test.ts', new Set())
+    expect(result.failedRunners).toEqual([])
+    expect(result.problems).toEqual([])
+  })
+
+  test('a listed test runs without the stand-in; an unlisted one gets it prepended to the starting PATH', async () => {
+    const id = 'pkg/tests/tolerant.test.ts'
+    const paths: (string | undefined)[] = []
+    const spawn: RunnerStart = async (_command, opts) => {
+      paths.push(opts.env.PATH)
+      return { status: 0, signal: null, timedOut: false, output: null }
+    }
+    await runGroups(root, plan(id), { log: () => {}, spawn, env: { PATH: '/real/bin' }, outsideCall: new Set([id]) })
+    await runGroups(root, plan(id), { log: () => {}, spawn, env: { PATH: '/real/bin' }, outsideCall: new Set() })
+    expect(paths[0]).toBe('/real/bin')
+    // Prepended, never replaced: the stand-in's directory comes first and the starting path follows it.
+    expect(paths[1]?.endsWith(`${delimiter}/real/bin`)).toBe(true)
+    // A listed test reaches the `gh` its own path holds, here a private recording one, so this case never depends on
+    // an outer stand-in or the host's real `gh`; no stand-in sits in front of it and nothing fails.
+    const bin = join(root, 'listed-bin')
+    mkdirSync(bin, { recursive: true })
+    writeFileSync(join(bin, 'gh'), `#!/bin/sh\necho "$*" >> "${join(bin, 'seen')}"\nexit 1\n`)
+    chmodSync(join(bin, 'gh'), 0o755)
+    const listed = await runGroups(root, plan(id), {
+      log: () => {},
+      env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` },
+      outsideCall: new Set([id])
+    })
+    expect(listed.failedRunners).toEqual([])
+    expect(readFileSync(join(bin, 'seen'), 'utf8')).toBe('pr view 7\n')
+  })
+
+  test('a runner mixing listed and unlisted files is refused', async () => {
+    const [a, b] = ['pkg/tests/tolerant.test.ts', 'pkg/tests/quiet.test.ts']
+    const group = { ...plan(a as string)[0], tests: [a, b] } as NativeGroup
+    await expect(
+      runGroups(root, [group], {
+        log: () => {},
+        spawn: async () => ({ status: 0, signal: null, timedOut: false, output: null }),
+        env: { PATH: '/real/bin' },
+        outsideCall: new Set([a as string])
+      })
+    ).rejects.toThrow('mixes files on the outside-call list')
+  })
+
+  test("a test's own fake gh earlier on its own PATH keeps being used", async () => {
+    const result = await run('pkg/tests/own-fake.test.ts', new Set())
+    expect(result.failedRunners).toEqual([])
+    expect(result.problems).toEqual([])
+  })
+
+  test('the stand-in is executable, records its arguments beside itself and exits non-zero', () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'schedule-gh-copy-')))
+    scratch.push(dir)
+    copyFileSync(GH_GUARD_SOURCE, join(dir, 'gh'))
+    chmodSync(join(dir, 'gh'), 0o755)
+    const out = spawnSync(join(dir, 'gh'), ['pr', 'view', '--json', 'a b'], { encoding: 'utf8', input: '' })
+    expect(out.status).not.toBe(0)
+    expect(out.stderr).toContain('GitHub CLI')
+    expect(readFileSync(join(dir, 'calls'), 'utf8')).toBe('pr view --json a b\n')
+    expect(statSync(GH_GUARD_SOURCE).mode & 0o111).not.toBe(0)
+  })
+})
+
+describe('the outside-call list', () => {
+  /** The list's size when the stand-in landed: it may only shrink. */
+  const OUTSIDE_CALL_CEILING = 46
+  const list = JSON.parse(readFileSync(join(REPO_ROOT, FILE_LEVEL_TESTS_PATH), 'utf8'))['outside-call'] as Record<
+    string,
+    string
+  >
+
+  test('names only files that exist, each with a reason', () => {
+    const missing = Object.keys(list).filter((path) => !existsSync(join(REPO_ROOT, path)))
+    expect(missing).toEqual([])
+    expect(Object.values(list).filter((reason) => reason.trim() === '')).toEqual([])
+  })
+
+  test('never grows past its ceiling', () => {
+    expect(Object.keys(list).length).toBeLessThanOrEqual(OUTSIDE_CALL_CEILING)
+  })
+
+  test('is read by the scheduler as the set of files that run with the real gh', () => {
+    expect([...outsideCallTests(REPO_ROOT)].sort()).toEqual(Object.keys(list).sort())
+    expect(outsideCallTests(join(tmpdir(), 'no-such-repository')).size).toBe(0)
   })
 })
