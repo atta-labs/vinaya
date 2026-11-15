@@ -9,6 +9,7 @@
 
 import { createHash } from 'node:crypto'
 import { buildHeader } from '../envelope'
+import { registerRole, restoreRoleRegistry, saveRoleRegistry } from '../roles'
 import type { Host, Provenance, Role } from '../schema'
 
 export const FIXTURE_SEED = 'vinaya-fixture-seed-1'
@@ -117,25 +118,33 @@ export function createRecorder(seed: string, name: string, index: number, issue:
     elapsedMs: () => clockMs - startMs,
     tick,
     build(body, options = {}) {
-      const header = buildHeader({
-        now: tick(),
-        runId,
-        seq: seq++,
-        repo: FIXTURE_REPO,
-        vinaya: FIXTURE_VINAYA_VERSION,
-        doctrine: FIXTURE_DOCTRINE,
-        host: options.host ?? 'loop',
-        hostname: FIXTURE_HOSTNAME,
-        env: {
-          ...(options.role ? { role: options.role } : {}),
-          task: String(issue),
-          ...(options.round !== undefined ? { round: String(options.round) } : {})
-        },
-        eventId: `evt-${hex(12)}`,
-        processId,
-        ...(options.provenance ? { provenance: options.provenance } : {}),
-        ...(options.sha ? { subject: { sha: options.sha } } : {})
-      })
+      // The fixture registers the one role this line names for the length of the build, then puts the registry back.
+      const saved = saveRoleRegistry()
+      if (options.role) registerRole(options.role, { reading: options.role, title: options.role, reviews: false })
+      let header: ReturnType<typeof buildHeader>
+      try {
+        header = buildHeader({
+          now: tick(),
+          runId,
+          seq: seq++,
+          repo: FIXTURE_REPO,
+          vinaya: FIXTURE_VINAYA_VERSION,
+          doctrine: FIXTURE_DOCTRINE,
+          host: options.host ?? 'loop',
+          hostname: FIXTURE_HOSTNAME,
+          env: {
+            ...(options.role ? { role: options.role } : {}),
+            task: String(issue),
+            ...(options.round !== undefined ? { round: String(options.round) } : {})
+          },
+          eventId: `evt-${hex(12)}`,
+          processId,
+          ...(options.provenance ? { provenance: options.provenance } : {}),
+          ...(options.sha ? { subject: { sha: options.sha } } : {})
+        })
+      } finally {
+        restoreRoleRegistry(saved)
+      }
       if (options.sha && (header.meta.schema === 3 || header.meta.schema === 4)) header.meta.work.revision = options.sha
       const { kind, event, ...fields } = body
       return { ...header, kind, event, payload: {}, ...fields }

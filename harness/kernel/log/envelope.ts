@@ -1,9 +1,6 @@
 import { createHash } from 'node:crypto'
-import { ROLE_VALUES, type Header, type Host, type Provenance, type Role, type Subject } from './schema'
-
-function isRole(value: string | undefined): value is Role {
-  return value !== undefined && (ROLE_VALUES as readonly string[]).includes(value)
-}
+import { isRole } from './roles'
+import type { Header, Host, Provenance, Subject } from './schema'
 
 /** `null`/`''` reads as "no claim made" — never coerced into a guessed role identifier. */
 function actorIdFromEnv(role: string | undefined): string | null {

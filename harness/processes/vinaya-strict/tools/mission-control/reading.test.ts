@@ -659,9 +659,12 @@ describe('the reading is bundlable', () => {
       const source = readFileSync(join(import.meta.dir, file), 'utf8')
       const specifiers = [...source.matchAll(/^import\s[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1])
       for (const specifier of specifiers) {
-        expect(['../../../../kernel/log/client/narration', '../../../../kernel/log/sync/row', './picture']).toContain(
-          specifier as string
-        )
+        expect([
+          '../../../../kernel/log/client/narration',
+          '../../../../kernel/log/sync/row',
+          '../../integration/log/log-roles',
+          './picture'
+        ]).toContain(specifier as string)
       }
     }
   })

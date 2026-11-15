@@ -22,6 +22,7 @@ import {
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
+import './log-roles'
 import { resolveBranchIssue } from './branch-issue.js'
 import { vinayaDoctrineIdentity } from './doctrine-version.js'
 

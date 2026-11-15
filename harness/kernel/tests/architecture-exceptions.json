@@ -70,11 +70,6 @@
     "owner": "@attalabs/vinaya"
   },
   {
-    "file": "harness/kernel/adapters/agents/agent-line.ts",
-    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
-    "owner": "@attalabs/harness"
-  },
-  {
     "file": "harness/kernel/adapters/agents/claude-code/claude-code-transcript.ts",
     "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
     "owner": "@attalabs/harness"
