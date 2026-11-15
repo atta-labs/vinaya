@@ -88,7 +88,9 @@ GitHub CLI and exits non-zero. The scheduler fails any unlisted file whose
 runner recorded a call, whatever the file's own outcome, so a test that
 tolerates a failing `gh` still fails. A test that rebuilds `PATH` from scratch
 drops the stand-in for its own children, a known gap. The list is measured, by
-running every placement with the stand-in and a dummy `GH_TOKEN`, and may only
+running every placement with the stand-in twice: once with a dummy `GH_TOKEN`
+and once with no token variable at all, because a test that resolves its token
+falls back to `gh auth token` only when no token variable is set. It may only
 shrink: `scripts/test-suites/schedule.test.ts` fails when it names a file that
 no longer exists or grows past its ceiling. A runner holds either only listed
 files or only unlisted ones; the scheduler refuses a runner that mixes them.

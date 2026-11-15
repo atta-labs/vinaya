@@ -170,16 +170,26 @@ describe('the committed inventory validates against this repository', () => {
     expect(layout.opaque).toContain('scripts/ci/config-probe.ts')
   })
 
-  test('the default Bun selection never hands a Vitest file to bun test; exposure names the runner', async () => {
+  const vitestChanged = ['apps/log-server/src/worker.test.ts']
+  const withoutVitest = (files: string[]) => {
+    const vitestIds = new Set(head.tests.filter((t) => t.runner === 'vitest').map((t) => t.id))
+    return files.map((f) => f.slice(REPO_ROOT.length + 1)).filter((f) => vitestIds.has(f))
+  }
+
+  test('the default Bun selection never hands a Vitest file to bun test', async () => {
     const { selectAffectedTestFiles } = await import(
       '../../harness/processes/vinaya-strict/integration/repository-verification.ts'
     )
-    const changed = ['apps/log-server/src/worker.test.ts']
-    const plain = selectAffectedTestFiles(REPO_ROOT, changed)
-    const vitestIds = new Set(head.tests.filter((t) => t.runner === 'vitest').map((t) => t.id))
-    expect(plain.selected.map((f) => f.slice(REPO_ROOT.length + 1)).filter((f) => vitestIds.has(f))).toEqual([])
-    const exposed = selectAffectedTestFiles(REPO_ROOT, changed, { nativeRunners: 'expose' })
-    expect(exposed.selected).toEqual(plain.selected)
+    const plain = selectAffectedTestFiles(REPO_ROOT, vitestChanged)
+    expect(withoutVitest(plain.selected)).toEqual([])
+  }, 60_000)
+
+  test('the exposed selection hands no Vitest file to bun test and names the runner of every native entry', async () => {
+    const { selectAffectedTestFiles } = await import(
+      '../../harness/processes/vinaya-strict/integration/repository-verification.ts'
+    )
+    const exposed = selectAffectedTestFiles(REPO_ROOT, vitestChanged, { nativeRunners: 'expose' })
+    expect(withoutVitest(exposed.selected)).toEqual([])
     expect(exposed.native.length).toBeGreaterThan(0)
     for (const entry of exposed.native)
       expect(byId.get(entry.test.slice(REPO_ROOT.length + 1))?.runner).toBe(entry.runner as 'vitest')

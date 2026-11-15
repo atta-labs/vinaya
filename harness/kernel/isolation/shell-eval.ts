@@ -37,7 +37,11 @@ function probeRepository(branch: 'task' | 'main'): string {
  * Runs each command through the Claude hook and the Codex hook generated from the grants file at
  * `grantsPath`, with the output schema at `outputSchemaPath`.
  */
-export function evaluateShellGuards(grantsPath: string, outputSchemaPath: string): ShellDecisionRow[] {
+export function evaluateShellGuards(
+  grantsPath: string,
+  outputSchemaPath: string,
+  slice?: { part: number; parts: number }
+): ShellDecisionRow[] {
   const grants = loadRoleGrants(grantsPath)
   const outputSchema = JSON.parse(readFileSync(outputSchemaPath, 'utf8'))
   const hooks = new Map<string, string>()
@@ -86,8 +90,12 @@ export function evaluateShellGuards(grantsPath: string, outputSchemaPath: string
       codexReason: codex.reason
     }
   }
-  return [
-    ...SHELL_ATTACKS.map(({ guard, branch, command }) => row(guard, branch, command)),
-    ...ORDINARY_COMMANDS.map((command) => row('ordinary', 'task', command))
+  const specs: Array<{ guard: ShellGuard | 'ordinary'; branch: 'task' | 'main'; command: string }> = [
+    ...SHELL_ATTACKS,
+    ...ORDINARY_COMMANDS.map((command) => ({ guard: 'ordinary' as const, branch: 'task' as const, command }))
   ]
+  // With a slice, only every `parts`-th row starting at `part` is decided; the slices together cover every row once.
+  return specs
+    .filter((_, index) => !slice || index % slice.parts === slice.part)
+    .map(({ guard, branch, command }) => row(guard, branch, command))
 }

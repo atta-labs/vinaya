@@ -460,6 +460,8 @@ describe.each(READY_GATE_RUNNERS)('%s: a supervised command under its live wrapp
       // The wrapper is killed by its own group signal, so it was still alive, leading the group, when it sent it.
       expect(await exited).toBe('SIGKILL')
       await waitFor(() => !alive(descendant as number), 3000)
+      // A killed member is reaped by another process at its own pace, so the group stays visible for a moment.
+      await waitFor(() => !alive(-(wrapper.pid as number)), 3000)
       expect(alive(-(wrapper.pid as number))).toBe(false)
     } finally {
       reap(pidFile)
