@@ -43,7 +43,7 @@ import {
 import { RECORD_FILE as FETCHED_RECORD_FILE } from '../test-suites/read-records.js'
 import { GROUP_TIME_LIMIT_MS, groupOutcomeOf, runnerLaunch } from '../test-suites/schedule.js'
 import { absoluteOf, globPrefix, PROBE_LOG_ENV } from './listing-probe.js'
-import { REPOSITORY_COMMAND, REPOSITORY_RECORDER } from './record-reads.js'
+import { REPOSITORY_COMMAND, REPOSITORY_RECORDER, tracedLaunch } from './record-reads.js'
 
 /**
  * The record entries the repository's recorder built for the captured trace and probe log before the recorder moved
@@ -860,7 +860,7 @@ describe('the version-2 record', () => {
 
 describe('this repository’s recorder', () => {
   it('hands the package everything that decides its record, and keeps the record file the selection fetches', () => {
-    expect(REPOSITORY_RECORDER.launch).toBe(runnerLaunch)
+    expect(REPOSITORY_RECORDER.launch).toBe(tracedLaunch)
     expect(REPOSITORY_RECORDER.outcome).toBe(groupOutcomeOf)
     expect(REPOSITORY_RECORDER.timeLimitMs).toBe(GROUP_TIME_LIMIT_MS)
     expect(REPOSITORY_RECORDER.dependencyInput).toBe('bun.lock')
@@ -885,6 +885,38 @@ describe('this repository’s recorder', () => {
     args: ['./t/a.test.ts'],
     exclude: []
   }
+  it('gives a traced Bun run ten times its time limit and the time scale, leaves a Vitest launch alone, and gives the scheduler’s own launch neither', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-record-launch-')))
+    try {
+      const timeoutOf = (command: string[]) => command.filter((arg) => arg.startsWith('--timeout'))
+      const limited: NativeGroup = { ...group, environment: { timeoutMs: 30_000 } }
+      const scheduled = runnerLaunch(limited, join(root, '0.xml'), root)
+      expect(timeoutOf(scheduled.command)).toEqual(['--timeout=30000'])
+      expect(scheduled.env.VINAYA_TEST_TIME_SCALE).toBeUndefined()
+      const traced = tracedLaunch(limited, join(root, '0.xml'), root)
+      expect(timeoutOf(traced.command)).toEqual(['--timeout=300000'])
+      expect(traced.env).toEqual({ ...scheduled.env, VINAYA_TEST_TIME_SCALE: '10' })
+      // Only the limit changes: the rest of the command is the scheduler's own, in its order.
+      expect(traced.command.map((arg) => (arg.startsWith('--timeout') ? '--timeout' : arg))).toEqual(
+        scheduled.command.map((arg) => (arg.startsWith('--timeout') ? '--timeout' : arg))
+      )
+
+      // No limit in the command: Bun's own 5,000 ms default, times ten, goes in right after `test`.
+      const none = runnerLaunch(group, join(root, '1.xml'), root)
+      expect(timeoutOf(none.command)).toEqual([])
+      const added = tracedLaunch(group, join(root, '1.xml'), root)
+      expect(timeoutOf(added.command)).toEqual(['--timeout=50000'])
+      expect(added.command[added.command.indexOf('test') + 1]).toBe('--timeout=50000')
+      expect(added.env.VINAYA_TEST_TIME_SCALE).toBe('10')
+      expect(none.env.VINAYA_TEST_TIME_SCALE).toBeUndefined()
+
+      const vitest: NativeGroup = { ...group, runner: 'vitest', args: ['t/a.test.ts'] }
+      expect(tracedLaunch(vitest, join(root, '2.json'), root)).toEqual(runnerLaunch(vitest, join(root, '2.json'), root))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   const junit = (files: string[]) =>
     [
       '<testsuites name="bun test" failures="0">',

@@ -20,6 +20,7 @@
 import {
   type ReadRecord,
   type RecordCommandOptions,
+  type RecorderLaunch,
   type RecorderSetup,
   type RecordSummary,
   recordCommand,
@@ -29,10 +30,37 @@ import {
 import { readTestInventory } from '../test-suites/inventory-check.js'
 import { GROUP_TIME_LIMIT_MS, groupOutcomeOf, runnerLaunch } from '../test-suites/schedule.js'
 
+/** The variable a traced run carries: how many times slower the tracer makes it than an untraced run. */
+export const TIME_SCALE_ENV = 'VINAYA_TEST_TIME_SCALE'
+/** Tracing every file call slows a test about ten times, so a traced run gets ten times the time. */
+export const TRACE_TIME_SCALE = 10
+/** Bun's own default limit per case, which a Bun command with no `--timeout` runs under. */
+const BUN_DEFAULT_TIMEOUT_MS = 5000
+
+/**
+ * The scheduler's runner launch (`runnerLaunch`, unchanged) for a run under the tracer: a Bun command's `--timeout=N`
+ * becomes ten times N, or `--timeout=` ten times Bun's default is added right after `test` when it has none, and the
+ * environment carries `VINAYA_TEST_TIME_SCALE`. A Vitest launch is left as the runner launch returns it. A limit a
+ * case passes itself overrides `--timeout` and is not scaled. Untraced runs never call this.
+ */
+export const tracedLaunch: RecorderLaunch = (group, report, cwd) => {
+  const launch = runnerLaunch(group, report, cwd)
+  if (group.runner !== 'bun') return launch
+  const command = [...launch.command]
+  const given = command.findIndex((arg) => /^--timeout=\d+$/.test(arg))
+  if (given >= 0)
+    command[given] = `--timeout=${Number((command[given] as string).slice('--timeout='.length)) * TRACE_TIME_SCALE}`
+  else if (!command.some((arg) => arg.startsWith('--timeout'))) {
+    const at = command.indexOf('test')
+    if (at >= 0) command.splice(at + 1, 0, `--timeout=${BUN_DEFAULT_TIMEOUT_MS * TRACE_TIME_SCALE}`)
+  }
+  return { command, env: { ...launch.env, [TIME_SCALE_ENV]: String(TRACE_TIME_SCALE) } }
+}
+
 /** Everything that decides this repository's record, handed to the package's recorder. */
 export const REPOSITORY_RECORDER: Required<RecorderSetup> = {
   inventory: (repoRoot, commit) => readTestInventory(repoRoot, { head: commit }).head,
-  launch: runnerLaunch,
+  launch: tracedLaunch,
   outcome: groupOutcomeOf,
   timeLimitMs: GROUP_TIME_LIMIT_MS,
   dependencyInput: 'bun.lock'

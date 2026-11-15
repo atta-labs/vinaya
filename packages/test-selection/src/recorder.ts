@@ -647,31 +647,79 @@ export function lockfileInput(repoRoot: string): string | null {
 
 // ── Recording ───────────────────────────────────────────────────────────────
 
-export type RecordedRun = { test: string; recorded: RecordedTest | null; reason: string; ms: number }
+/**
+ * One test's recording: its record or none, why, and how long it took. `output` is the end of what the run printed,
+ * set only for a test that did not pass while recorded; it is logged, never written into the record.
+ */
+export type RecordedRun = { test: string; recorded: RecordedTest | null; reason: string; ms: number; output?: string }
 
-/** Starts one traced run and resolves with how it ended; a run that cannot start ends with neither. */
+/** The most output lines a failed run's tail keeps. */
+export const OUTPUT_TAIL_LINES = 40
+/** The most characters a failed run's tail keeps, from its end. */
+export const OUTPUT_TAIL_CHARS = 4000
+
+/**
+ * The end of a run's output, held in memory only up to its limits: the newest {@link OUTPUT_TAIL_LINES} lines, then
+ * their newest {@link OUTPUT_TAIL_CHARS} characters. Each source (0 standard output, 1 standard error) holds its own
+ * unfinished line, itself cut to the character limit, so a run that prints one endless line costs no more.
+ */
+export function outputTail(): { write(chunk: string, source?: number): void; text(): string } {
+  const lines: string[] = []
+  const open: string[] = []
+  return {
+    write(chunk, source = 0) {
+      const parts = `${open[source] ?? ''}${chunk}`.split('\n')
+      open[source] = (parts.pop() as string).slice(-OUTPUT_TAIL_CHARS)
+      for (const line of parts) {
+        lines.push(line.slice(-OUTPUT_TAIL_CHARS))
+        if (lines.length > OUTPUT_TAIL_LINES) lines.shift()
+      }
+    },
+    text() {
+      const all = [...lines, ...open.filter((line) => line !== '')]
+      return all.slice(-OUTPUT_TAIL_LINES).join('\n').trimEnd().slice(-OUTPUT_TAIL_CHARS)
+    }
+  }
+}
+
+/** How long a run's output pipes may stay open after the run exited before its output is taken as it is. */
+const OUTPUT_GRACE_MS = 1000
+
+/**
+ * Starts one traced run and resolves with how it ended and the end of its output; a run that cannot start ends with
+ * neither. Both output streams are read as they come, so a full pipe never blocks the child.
+ */
 function traced(
   command: readonly string[],
   options: { cwd: string; env: NodeJS.ProcessEnv; timeLimitMs: number }
-): Promise<{ status: number | null; signal: string | null }> {
+): Promise<{ status: number | null; signal: string | null; output: string }> {
   return new Promise((resolve) => {
     let settled = false
     let timer: ReturnType<typeof setTimeout> | undefined
+    let grace: ReturnType<typeof setTimeout> | undefined
+    const tail = outputTail()
     const settle = (status: number | null, signal: string | null): void => {
       if (settled) return
       settled = true
       if (timer !== undefined) clearTimeout(timer)
-      resolve({ status, signal })
+      if (grace !== undefined) clearTimeout(grace)
+      resolve({ status, signal, output: tail.text() })
     }
     try {
       const child = spawn(command[0] as string, command.slice(1), {
         cwd: options.cwd,
         env: options.env,
-        stdio: 'ignore'
+        stdio: ['ignore', 'pipe', 'pipe']
       })
+      child.stdout.setEncoding('utf8').on('data', (chunk: string) => tail.write(chunk, 0))
+      child.stderr.setEncoding('utf8').on('data', (chunk: string) => tail.write(chunk, 1))
       timer = setTimeout(() => child.kill('SIGKILL'), options.timeLimitMs)
       child.on('error', () => settle(null, null))
-      child.on('exit', (status, signal) => settle(status, signal))
+      // The pipes close once the last output is read; a grandchild that keeps one open must not hold the run.
+      child.on('exit', (status, signal) => {
+        grace = setTimeout(() => settle(status, signal), OUTPUT_GRACE_MS)
+        child.on('close', () => settle(status, signal))
+      })
     } catch {
       settle(null, null)
     }
@@ -710,7 +758,7 @@ async function recordTest(
   // A Bun run also writes its line coverage, as lcov, to a folder of its own in the scratch folder.
   const runCommand = group.runner === 'bun' ? withCoverage(launch.command, coverageDir) : launch.command
   const command = ['strace', ...STRACE_ARGS, '-o', traceFile, '--', ...runCommand]
-  const { status, signal } = await traced(command, {
+  const { status, signal, output } = await traced(command, {
     cwd,
     env: { ...process.env, ...launch.env },
     timeLimitMs: injected.timeLimitMs
@@ -742,7 +790,13 @@ async function recordTest(
   rmSync(coverageDir, { recursive: true, force: true })
   if (!passedWhileRecorded(status, outcome, test)) {
     rmSync(traceFile, { force: true })
-    return { test, recorded: null, reason: 'the test did not pass while recorded', ms }
+    return {
+      test,
+      recorded: null,
+      reason: 'the test did not pass while recorded',
+      ms,
+      ...(output === '' ? {} : { output })
+    }
   }
   let probeText = ''
   try {
@@ -851,6 +905,8 @@ export async function recordReads(
         }
         const run = await recordTest(repoRoot, group, identity.id, trace, scratch, probeFile, at, packages, injected)
         log(`${name}: ${run.test} — ${run.reason} [${run.ms} ms]`)
+        if (run.output !== undefined)
+          log(`${name}: ${run.test} — the end of its output:\n${run.output.replace(/^/gm, '  ')}`)
         results.push(run)
       }
     }
