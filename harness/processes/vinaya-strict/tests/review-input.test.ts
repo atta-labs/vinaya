@@ -7,6 +7,7 @@ import { DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 import type { ReviewerPromptFacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import { writeHeldVerdict } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import { readReviewDiff } from '../bin/run-engine'
+import { buildVerifiedReviewerCandidate } from '../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
 import { createVinayaReviewInputStager, renderVinayaReviewerPrompt, reviewerRulings } from '../executing/review-input'
 
 function repoWithCommit(): { worktree: string; head: string } {
@@ -417,5 +418,52 @@ describe('a staged review input reused across runs in one process', () => {
     const before = stager.stage(1)
     judged = 'a-moved-head'
     expect(stager.stage(1)).not.toBe(before)
+  })
+
+  test('a head moved inside one round gives each reviewer a scratch copy of the new head; an unchanged head reuses it', () => {
+    const { worktree, head } = repoWithCommit()
+    const root = fixtureDir('review-input-root-')
+    let judged = head
+    let built = 0
+    const stager = createVinayaReviewInputStager({
+      root,
+      task: 9,
+      worktreePath: worktree,
+      judgedHead: () => judged,
+      readHead: () => judged,
+      baseOf: () => 'base-sha',
+      brief: () => 'the brief',
+      prBody: () => 'the body',
+      diff: (base, h) => `diff ${base}...${h}`,
+      priorFindings: () => 'findings',
+      buildCandidate: (...args) => {
+        built += 1
+        return buildVerifiedReviewerCandidate(...args)
+      }
+    })
+    const roles = ['reviewer', 'security'] as const
+    const first = roles.map((role) => stager.stageAttempt(3, role, 1))
+    for (const input of first) {
+      expect(readFileSync(input?.paths?.diff as string, 'utf8')).toBe(`diff base-sha...${head}`)
+      expect(readFileSync(join(input?.dir as string, 'code.ts'), 'utf8')).toBe('export const x = 1\n')
+    }
+    // The Developer commits a new head; the same round is staged again at it.
+    writeFileSync(join(worktree, 'code.ts'), 'export const x = 2\n')
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: worktree, encoding: 'utf8' }).trim()
+    git('add', '-A')
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'two')
+    const moved = git('rev-parse', 'HEAD')
+    judged = moved
+    const second = roles.map((role) => stager.stageAttempt(3, role, 1))
+    for (const input of second) {
+      expect(readFileSync(input?.paths?.diff as string, 'utf8')).toBe(`diff base-sha...${moved}`)
+      expect(readFileSync(join(input?.dir as string, 'code.ts'), 'utf8')).toBe('export const x = 2\n')
+    }
+    // At the unchanged head the same copies come back without a rebuild.
+    const buildsBefore = built
+    const again = roles.map((role) => stager.stageAttempt(3, role, 1))
+    expect(again[0]).toBe(second[0])
+    expect(again[1]).toBe(second[1])
+    expect(built).toBe(buildsBefore)
   })
 })

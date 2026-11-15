@@ -151,6 +151,9 @@ export function createVinayaReviewInputStager(deps: VinayaReviewInputDeps): Vina
         return staged.input
       // The head is read before and after the copy; a worktree that moved mid-copy yields no candidate.
       const dir = build(deps.root, deps.task, round, deps.worktreePath, head, deps.readHead)
+      // A rebuilt candidate invalidates every scratch copy cut from an earlier one: the scratch folder path does not
+      // carry the head, so a head that returns (A, B, A) must not find its old entry pointing at another head's files.
+      attempts.clear()
       let input: VinayaStagedReviewInput | null = null
       if (dir !== null) {
         let diff: string
@@ -178,7 +181,9 @@ export function createVinayaReviewInputStager(deps: VinayaReviewInputDeps): Vina
     },
     stageAttempt(round, role, attempt, repair) {
       const candidate = this.stage(round, repair)
-      const key = `${round}:${role}:${attempt}:${candidate?.dir ?? ''}:${staged?.repair ?? ''}`
+      // The candidate folder is the same path for every head of a round, so the staged head is part of the key:
+      // a copy built for an earlier head is never returned once the candidate was staged again for a later one.
+      const key = `${round}:${role}:${attempt}:${candidate?.dir ?? ''}:${staged?.head ?? ''}:${staged?.repair ?? ''}`
       const cached = attempts.get(key)
       if (cached !== undefined && present(cached)) return cached
       const dir = candidate ? buildReviewerScratch(deps.root, deps.task, round, role, attempt, candidate.dir) : null
