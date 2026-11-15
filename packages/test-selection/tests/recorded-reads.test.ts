@@ -2,7 +2,8 @@
 // a Bun test and the child processes it starts leave, and the shipped recorder that builds a record entry from them.
 // They import only the public entrypoint.
 import { describe, expect, it } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, posix } from 'node:path'
 import {
   gitPathArguments,
@@ -37,6 +38,7 @@ import {
   type RecordedTest,
   selectTests
 } from '../src/index.js'
+import { OUTPUT_TAIL_CHARS, outputTail, recordReads } from '../src/recorder.js'
 import { fixture, type Scenario, scenarioInput, viewOf } from './fixture-repos.js'
 
 const ROOT = '/work/repo'
@@ -617,6 +619,110 @@ describe('the shipped recorder', () => {
     expect(confirmed(0)).toEqual(group.tests)
     expect(confirmed(1)).toEqual([])
     expect(confirmed(null, 'SIGKILL')).toEqual([])
+  })
+})
+
+describe('a recorded run that does not pass prints the end of its output', () => {
+  const lineOf = (n: number) => `line ${String(n).padStart(3, '0')} ${'x'.repeat(190)}`
+
+  it('keeps the newest 40 lines, then the newest 4000 characters of those, across both streams', () => {
+    const tail = outputTail()
+    for (let n = 1; n <= 100; n++) tail.write(`${lineOf(n)}\n`, n % 2)
+    const text = tail.text()
+    expect(text.length).toBe(OUTPUT_TAIL_CHARS)
+    expect(text.endsWith(lineOf(100))).toBe(true)
+    // 40 lines of 197 characters (7,879 with their breaks) cut to 4,000 characters: the oldest lines go first, a line may be cut.
+    expect(text).not.toContain('line 060')
+    expect(text).toContain('line 099')
+    const few = outputTail()
+    few.write('one\ntwo\npartial', 0)
+    few.write('err\n', 1)
+    expect(few.text()).toBe('one\ntwo\nerr\npartial')
+    const lines = outputTail()
+    for (let n = 1; n <= 60; n++) lines.write(`n${n}\n`)
+    expect(lines.text().split('\n')).toEqual(Array.from({ length: 40 }, (_, at) => `n${at + 21}`))
+    const endless = outputTail()
+    for (let n = 0; n < 50; n++) endless.write('y'.repeat(1000))
+    expect(endless.text()).toBe('y'.repeat(OUTPUT_TAIL_CHARS))
+  })
+
+  const withFakeTracer = async (
+    script: string,
+    check: (lines: string[], run: Awaited<ReturnType<typeof recordReads>>) => void
+  ) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-record-output-')))
+    const bin = join(root, 'bin')
+    mkdirSync(bin)
+    mkdirSync(join(root, 'pkg'))
+    // A tracer that leaves a trace file and runs the command after `--`, as strace does.
+    writeFileSync(
+      join(bin, 'strace'),
+      '#!/bin/sh\nwhile [ "$1" != "-o" ]; do shift; done\nshift\nout="$1"\nwhile [ "$1" != "--" ]; do shift; done\nshift\necho x > "$out"\nexec "$@"\n',
+      { mode: 0o755 }
+    )
+    const path = process.env.PATH
+    process.env.PATH = `${bin}:${path ?? ''}`
+    try {
+      const lines: string[] = []
+      const identity = {
+        id: 'pkg/a.spec.ts',
+        suite: 'pkg',
+        owner: 'pkg',
+        kind: 'workspace' as const,
+        runner: 'vitest' as const,
+        cwd: 'pkg',
+        preload: null,
+        environment: {}
+      }
+      const run = await recordReads({
+        repoRoot: root,
+        commit: 'a'.repeat(40),
+        concurrency: 1,
+        inventory: () => ({ tests: [identity] }),
+        launch: () => ({ command: ['sh', '-c', script], env: {} }),
+        timeLimitMs: 30_000,
+        dependencyInput: null,
+        log: (line) => lines.push(line)
+      })
+      check(lines, run)
+    } finally {
+      process.env.PATH = path
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+
+  it('logs the last output lines under the failure line, trimmed lines first and then characters, and writes none into the record', async () => {
+    await withFakeTracer(
+      'i=1; while [ $i -le 100 ]; do printf "%s\\n" "line $i $(printf "z%.0s" $(seq 1 190))"; i=$((i+1)); done; echo "boom" >&2; exit 1',
+      (lines, { record, summary }) => {
+        expect(lines).toHaveLength(2)
+        expect(lines[0]).toMatch(
+          /^test-selection-record: pkg\/a\.spec\.ts — the test did not pass while recorded \[\d+ ms\]$/
+        )
+        const shown = (lines[1] as string).split('\n')
+        expect(shown[0]).toBe('test-selection-record: pkg/a.spec.ts — the end of its output:')
+        const body = shown.slice(1).map((line) => line.slice(2))
+        expect(body.at(-1)).toBe('boom')
+        expect(body.join('\n').length).toBeLessThanOrEqual(OUTPUT_TAIL_CHARS)
+        expect(body.join('\n')).toContain('line 100 ')
+        expect(body.join('\n')).not.toContain('line 50 ')
+        expect(summary.unrecorded).toEqual(['pkg/a.spec.ts'])
+        expect(JSON.stringify(record)).not.toContain('boom')
+      }
+    )
+  })
+
+  it('logs nothing extra for a run that passes, and nothing for a failing run that printed nothing', async () => {
+    await withFakeTracer('echo fine; exit 0', (lines, { record }) => {
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toContain('— recorded [')
+      expect(lines.join('\n')).not.toContain('fine')
+      expect(Object.keys(record.tests)).toEqual(['pkg/a.spec.ts'])
+    })
+    await withFakeTracer('exit 3', (lines) => {
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toContain('the test did not pass while recorded')
+    })
   })
 })
 

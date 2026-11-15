@@ -39,7 +39,19 @@ import { objectivesVersion } from '../../../../tools/task-contract/objectives'
 import { policyDigest } from '../../../../tools/task-contract/review-input-manifest'
 
 import { cleanupWorlds } from '../dev-review-loop-harness.js'
-import { TASK, HEAD_SHA, BASE_SHA, tempDirs as sharedTempDirs } from './driver-test-support.js'
+import {
+  TASK,
+  HEAD_SHA,
+  BASE_SHA,
+  SUBPROCESS_BUDGET_MS,
+  TIME_SCALE_ENV,
+  runDevReviewLoopArgs,
+  scaledBudgetMs,
+  tempDir,
+  tempDirs as sharedTempDirs,
+  timeScale,
+  writeFakeBinary
+} from './driver-test-support.js'
 
 const tempDirs = sharedTempDirs
 afterEach(() => {
@@ -48,6 +60,60 @@ afterEach(() => {
 // Issue #709: the in-process harness owns its own temp dirs (its world's
 // runtimeDir/repoRoot/logDir) — clean them after every test too.
 afterEach(cleanupWorlds)
+
+describe('the fixture subprocess budget follows VINAYA_TEST_TIME_SCALE', () => {
+  const withScale = <T>(value: string | undefined, body: () => T): T => {
+    const before = process.env[TIME_SCALE_ENV]
+    if (value === undefined) delete process.env[TIME_SCALE_ENV]
+    else process.env[TIME_SCALE_ENV] = value
+    try {
+      return body()
+    } finally {
+      if (before === undefined) delete process.env[TIME_SCALE_ENV]
+      else process.env[TIME_SCALE_ENV] = before
+    }
+  }
+
+  it('multiplies a budget by a whole number from 1 to 100', () => {
+    expect(withScale('10', () => scaledBudgetMs(SUBPROCESS_BUDGET_MS))).toBe(400_000)
+    expect(withScale('1', () => scaledBudgetMs(3000))).toBe(3000)
+    expect(withScale('100', () => scaledBudgetMs(3000))).toBe(300_000)
+  })
+
+  it('leaves the budget alone when the variable is absent, zero, negative, fractional, too large or not a number', () => {
+    for (const value of [undefined, '', '0', '-5', '2.5', '101', '1000', '10x', ' 10', 'ten', '1e1'])
+      expect(withScale(value, () => timeScale())).toBe(1)
+    expect(withScale(undefined, () => scaledBudgetMs(SUBPROCESS_BUDGET_MS))).toBe(SUBPROCESS_BUDGET_MS)
+  })
+
+  it('scales the default and a passed budget of the subprocess runner, and says the scaled figure when it kills', () => {
+    const bin = tempDir('vinaya-drl-bin-')
+    writeFakeBinary(bin, 'bun', '#!/bin/sh\nexec sleep 600\n')
+    const kill = (extra: Record<string, string>, budget?: number): string => {
+      // The runner starts `bun` through this process's own PATH: put the fake first for the call.
+      const before = process.env.PATH
+      process.env.PATH = `${bin}:${before ?? ''}`
+      try {
+        runDevReviewLoopArgs(
+          tempDir('vinaya-drl-home-'),
+          tempDir('vinaya-drl-cwd-'),
+          `${bin}:${before ?? ''}`,
+          ['--task', '1'],
+          extra,
+          budget
+        )
+      } catch (err) {
+        return (err as Error).message
+      } finally {
+        process.env.PATH = before
+      }
+      return ''
+    }
+    expect(withScale('3', () => kill({}, 100))).toContain('after exceeding its 300ms budget')
+    expect(withScale(undefined, () => kill({}, 100))).toContain('after exceeding its 100ms budget')
+    expect(withScale('0', () => kill({}, 100))).toContain('after exceeding its 100ms budget')
+  })
+})
 
 describe('buildReexecArgs (pure) — O7 re-exec carries the original --json intent through the restart (task-run-v1 21, #541, round 2 review MINOR)', () => {
   it('carries --json through a --task re-exec when the original invocation had it', () => {
