@@ -96,6 +96,7 @@
         "scripts/release/release.test.ts",
         "scripts/ci/record-reads.test.ts",
         "scripts/ci/mutate-changes.test.ts",
+        "scripts/ci/safety-check.test.ts",
         "scripts/test-suites/real-replay.test.ts",
         "scripts/marker-rewrite/rewrite-open-threads.test.ts",
         "harness/processes/minimal/minimal-process.test.ts"
