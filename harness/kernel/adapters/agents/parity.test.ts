@@ -16,6 +16,7 @@ import {
 import { type RoleCapabilities, type RoleContract, READ_ONLY_COMMANDS, resolveRoleGrants } from './manifest'
 import type { GeneratedAgentConfig } from '../../isolation/policy'
 import { evaluateShellGuards } from '../../isolation/shell-eval'
+import { ORDINARY_COMMANDS, SHELL_ATTACKS } from '../../isolation/shell-attacks'
 
 // Every case here builds its grants from a contract it defines inline; a process proves its own grants files
 // through these adapters in its own tests.
@@ -334,15 +335,27 @@ describe('role-grant vendor parity', () => {
     for (const key of ['apps', 'plugins', 'remote_plugin']) expect(features[key]).toBe(false)
   })
 
-  test('every shell bypass spelling is denied by both generated hooks for the guard itself', () => {
+  test('the shell bypass rows number at least 100 attacks and some ordinary commands', () => {
+    expect(SHELL_ATTACKS.length).toBeGreaterThanOrEqual(100)
+    expect(ORDINARY_COMMANDS.length).toBeGreaterThan(0)
+  })
+
+  // Each case runs the generated hooks for one eighth of the rows; together the cases cover every row once.
+  const SHELL_PARTS = 8
+  for (let part = 0; part < SHELL_PARTS; part++)
+    test(`shell bypass spellings are denied by both generated hooks for the guard itself, part ${part + 1} of ${SHELL_PARTS}`, () => {
+      checkShellRows(part)
+    }, 60_000)
+
+  function checkShellRows(part: number) {
     const directory = mkdtempSync(join(tmpdir(), 'shell-eval-grants-'))
     const grantsPath = join(directory, 'grants.yaml')
     const outputSchemaPath = join(directory, 'output.schema.json')
     writeFileSync(grantsPath, JSON.stringify(WRITER))
     writeFileSync(outputSchemaPath, '{}')
-    const rows = evaluateShellGuards(grantsPath, outputSchemaPath)
+    const rows = evaluateShellGuards(grantsPath, outputSchemaPath, { part, parts: SHELL_PARTS })
+    expect(rows.length).toBeGreaterThan(0)
     const attacks = rows.filter((row) => row.guard !== 'ordinary')
-    expect(attacks.length).toBeGreaterThanOrEqual(100)
     for (const row of attacks) {
       expect(row.claude, `Claude should deny ${JSON.stringify(row.command)}`).toBe('deny')
       expect(row.codex, `Codex should deny ${JSON.stringify(row.command)}`).toBe('deny')
@@ -355,7 +368,7 @@ describe('role-grant vendor parity', () => {
       expect(row.claude, `Claude should allow ${JSON.stringify(row.command)}`).toBe('allow')
       expect(row.codex, `Codex should allow ${JSON.stringify(row.command)}`).toBe('allow')
     }
-  }, 60_000)
+  }
 
   test('accounts for all eight known gaps', () => {
     expect(GAP_TABLE.map((gap) => gap.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
