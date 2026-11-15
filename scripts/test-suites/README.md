@@ -78,7 +78,19 @@ are judged. The CI build job's literal repository-suite command in
 `file-level-tests.json` is the one committed list of tests that selection must
 keep at file level. It is a JSON object whose keys are list names; each list is
 an object that maps a repository-relative path to the reason the file is on it.
-Today it holds one list, `real-sandbox`: the files allowed to read the host
+It holds two lists. `outside-call` names the test files that still run with the
+real GitHub CLI. Every other scheduled runner finds `gh-guard/gh` first on its
+`PATH`: the scheduler copies it into a directory of its own per runner and
+prepends that directory to the runner's starting `PATH`, never replacing it, so
+a test's own fake `gh` put earlier on its own `PATH` still wins. The stand-in
+records each call's arguments beside itself, prints that a test reached the real
+GitHub CLI and exits non-zero. The scheduler fails any unlisted file whose
+runner recorded a call, whatever the file's own outcome, so a test that
+tolerates a failing `gh` still fails. A test that rebuilds `PATH` from scratch
+drops the stand-in for its own children, a known gap. The list is measured, by
+running every placement with the stand-in and a dummy `GH_TOKEN`, and may only
+shrink: `scripts/test-suites/schedule.test.ts` fails when it names a file that
+no longer exists or grows past its ceiling. The other list is `real-sandbox`: the files allowed to read the host
 platform, because each one verifies or spawns the real confinement path of the
 host it runs on. `apps/cli/tests/platform-independence.test.ts` reads that list
 and checks every tracked test file in the repository against it. A file that

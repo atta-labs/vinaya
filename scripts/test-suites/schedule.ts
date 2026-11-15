@@ -40,9 +40,19 @@
  *     given or misses one it was.
  */
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, posix } from 'node:path'
+import { delimiter, dirname, join, posix } from 'node:path'
 import {
   CI_SHARD_COUNT,
   CI_SHARD_LIST_OWNER,
@@ -726,6 +736,49 @@ function releaseTestTempRoot(run: TestTempRun, log: (line: string) => void): voi
     log(`vinaya schedule: could not remove the run's test-temp root ${dir}: ${error}`)
 }
 
+/** The file-level data file, repository-relative: its `outside-call` list names the tests that may reach the real `gh`. */
+export const FILE_LEVEL_TESTS_PATH = posix.join('scripts', 'test-suites', 'file-level-tests.json')
+
+/** The `gh` stand-in a scheduled runner finds first on its `PATH`: the one beside this module. */
+export const GH_GUARD_SOURCE = join(import.meta.dirname, 'gh-guard', 'gh')
+
+/**
+ * The tests on the `outside-call` list of the file-level data file: the ones that still run with the real `gh`. A
+ * repository with no data file, or no such list, has none.
+ */
+export function outsideCallTests(repoRoot: string): Set<string> {
+  const file = join(repoRoot, FILE_LEVEL_TESTS_PATH)
+  if (!existsSync(file)) return new Set()
+  const lists = JSON.parse(readFileSync(file, 'utf8')) as Record<string, Record<string, string> | undefined>
+  return new Set(Object.keys(lists['outside-call'] ?? {}))
+}
+
+/**
+ * Puts a copy of the `gh` stand-in in `dir` and returns `dir`, or `null` when the repository has no stand-in. The
+ * copy records its calls in the `calls` file beside it.
+ */
+function placeGhGuard(dir: string): string | null {
+  const source = GH_GUARD_SOURCE
+  if (!existsSync(source)) return null
+  mkdirSync(dir, { recursive: true })
+  const target = join(dir, 'gh')
+  copyFileSync(source, target)
+  chmodSync(target, 0o755)
+  return dir
+}
+
+/** The calls a stand-in directory recorded, one line of arguments each; none when it recorded nothing. */
+function ghCallsOf(guardDir: string | null): string[] {
+  if (guardDir === null) return []
+  try {
+    return readFileSync(join(guardDir, 'calls'), 'utf8')
+      .split('\n')
+      .filter((line) => line !== '')
+  } catch {
+    return []
+  }
+}
+
 /** How one runner start ended: its exit, whether its time limit stopped it, and its output when it was captured. */
 export type RunnerExit = {
   status: number | null
@@ -845,6 +898,12 @@ export async function runGroups(
     concurrency?: number
     /** Creates the run's own test-temp root when the environment sets none; the test-temp module's run by default. */
     createTestTempRoot?: () => TestTempRun
+    /**
+     * The tests that run with the real `gh`; the `outside-call` list of the file-level data file when absent. Every
+     * other group's runner finds the `gh` stand-in first on its `PATH`, and a group whose runner recorded a call
+     * fails, whatever its own outcome.
+     */
+    outsideCall?: ReadonlySet<string>
   } = {}
 ): Promise<RunResult> {
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`))
@@ -864,6 +923,7 @@ export async function runGroups(
     if (testTemp.created) releaseTestTempRoot(testTemp.created, log)
     throw error
   }
+  const outsideCall = options.outsideCall ?? outsideCallTests(repoRoot)
   const roots = [...new Set([repoRoot, realpathSync(repoRoot)])]
   // Each group's facts, kept by its plan index, so the result reads the same whatever order the groups ended in.
   const executionAt = new Map<number, ExecutionFacts>()
@@ -893,6 +953,16 @@ export async function runGroups(
       )
       if (options.announce)
         emit(testGroupStartLine({ group: group.id, runner: group.runner, cwd: group.cwd, tests: group.tests }))
+      // A group with a test off the outside-call list gets the `gh` stand-in first on its `PATH`, in a directory of its
+      // own, so its calls are the group's alone. Prepended, never replacing the path: tests find `bun`, `git` and their
+      // own fakes through it, and a test's own fake `gh` put earlier still wins.
+      const guardDir = group.tests.every((test) => outsideCall.has(test))
+        ? null
+        : placeGhGuard(join(dir, 'gh-guard', String(index)))
+      const guardedPath =
+        guardDir === null
+          ? {}
+          : { PATH: [guardDir, runnerEnv.PATH].filter((p) => p !== undefined && p !== '').join(delimiter) }
       const launch = () =>
         start(command, {
           cwd: join(repoRoot, group.cwd),
@@ -900,7 +970,7 @@ export async function runGroups(
           ...(limit !== undefined ? { timeLimitMs: limit } : {}),
           // Bun writes the report its configuration names even when `--reporter-outfile` names another: the run's own
           // configuration names this report, or the test preload points the shared path at it (`junit-store.ts`).
-          env: { ...runnerEnv, ...reportEnv }
+          env: { ...runnerEnv, ...guardedPath, ...reportEnv }
         })
       let run = await launch()
       keep(run)
@@ -914,8 +984,24 @@ export async function runGroups(
         run = await launch()
         keep(run)
       }
+      // Calls the stand-in recorded, whatever the group's own outcome: a test that tolerates a failing `gh` still fails.
+      const ghCalls = ghCallsOf(guardDir)
+      if (ghCalls.length > 0)
+        emit(
+          `vinaya schedule: ${group.tests.join(', ')} reached the real GitHub CLI ${ghCalls.length} time(s) and is not on the outside-call list of ${FILE_LEVEL_TESTS_PATH}: ${ghCalls.map((call) => `gh ${call}`).join('; ')}`
+        )
       const ended = (groupRun: GroupRun) => {
-        const outcome = groupOutcomeOf(group, groupRun, repoRoot, roots)
+        const judged = groupOutcomeOf(group, groupRun, repoRoot, roots)
+        const outcome: GroupOutcome =
+          ghCalls.length === 0
+            ? judged
+            : {
+                ...judged,
+                failed: [...group.tests].sort(),
+                trusted: false,
+                confirmed: [],
+                obligations: [...group.tests]
+              }
         outcomeAt.set(index, outcome)
         if (options.announce)
           emit(testGroupEndLine({ group: group.id, executed: outcome.executed, failed: outcome.failed }))
@@ -949,6 +1035,10 @@ export async function runGroups(
           .map((entry) => scheduledTestOf(group, entry, repoRoot))
           .filter((id): id is string => id !== null)
         failedAt.set(index, named.length > 0 ? [...new Set(named)].sort() : 'all')
+        if (options.stopAfterFailedGroup) stopped = true
+      }
+      if (ghCalls.length > 0 && run.status === 0) {
+        failedAt.set(index, [...group.tests].sort())
         if (options.stopAfterFailedGroup) stopped = true
       }
       executionAt.set(
