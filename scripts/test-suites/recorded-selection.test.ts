@@ -720,4 +720,23 @@ describe('the file-level lists reach selection as policy', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('refuses a data file that does not parse or whose list is not an object, instead of passing empty lists', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'file-level-'))
+    const commit = (text: string) => {
+      mkdirSync(join(dir, 'scripts/test-suites'), { recursive: true })
+      writeFileSync(join(dir, 'scripts/test-suites/file-level-tests.json'), text)
+      execFileSync('git', ['add', '-A'], { cwd: dir })
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x'], { cwd: dir })
+    }
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: dir })
+      commit('{ not json')
+      expect(() => fileLevelLists(dir, 'HEAD')).toThrow('does not parse')
+      commit('{"real-sandbox": ["a.test.ts"]}')
+      expect(() => fileLevelLists(dir, 'HEAD')).toThrow('is not an object of paths')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })

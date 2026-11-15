@@ -389,6 +389,13 @@ describe('the file-level lists and the record version', () => {
     expect(listed.context.policy).not.toBe(none.context.policy)
   })
 
+  it('does not name a test as left out when an obligation still plans it', () => {
+    const obligations = [{ id: 'always', kind: 'policy' as const, reason: 'always runs', tests: [TEST] }]
+    const { plan } = select({ [LIB]: LIB_BODY_CHANGED }, entry, { policy: { obligations } })
+    expect(plan.obligations.map((o) => o.test)).toEqual([TEST])
+    expect(plan.records.leftOut).toEqual([])
+  })
+
   it('selects a version-1 record exactly as before: the test is kept', () => {
     const v1 = recordOf({ [TEST]: { reads: [TEST, LIB], listed: [] } }, 1)
     const { plan, tests } = select({ [LIB]: LIB_BODY_CHANGED }, v1)

@@ -2855,8 +2855,22 @@ export function selectTests(input: SelectTestsInput): SelectionPlan {
     }))
     .sort((a, b) => a.id.localeCompare(b.id))
 
+  // A test a later rule plans (an obligation, a whole suite, a failed rerun) still runs, so the plan never names it as
+  // left out by the record.
+  const stillPlanned = new Set(reached.filter((test) => !leftOut.includes(test)))
   const { identity: _changeIdentity, profile, ...changeSemantic } = change
-  const semantic = { ...changeSemantic, obligations, configurations, wholeSuites, leftOut, reused }
+  const semantic = {
+    ...changeSemantic,
+    records: {
+      ...change.records,
+      leftOut: change.records.leftOut.filter((entry) => !stillPlanned.has(entry.test))
+    },
+    obligations,
+    configurations,
+    wholeSuites,
+    leftOut,
+    reused
+  }
   return {
     ...semantic,
     identity: stableHash(semantic),
