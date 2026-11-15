@@ -225,7 +225,7 @@ function isSchedulerFailure(line: string): boolean {
   if (match === null) return false
   const rest = line.slice(match[0].length).trimStart()
   return (
-    rest.includes('failed') ||
+    rest.startsWith('the runner failed for') ||
     rest.includes('reached the real GitHub CLI') ||
     rest.startsWith('refused') ||
     SCHEDULER_PROBLEM.test(rest) ||
@@ -262,6 +262,11 @@ export function extractFailureExcerpt(raw: string, max: number = MAX_FAILURE_EXC
   const fileNames = new Set<number>()
   lines.forEach((line, index) => {
     if (!namesFailure(line)) return
+    // A scheduler failure line names its files and groups itself; its neighbours are progress lines.
+    if (isSchedulerFailure(line)) {
+      keep.add(index)
+      return
+    }
     const from = Math.max(0, index - EXCERPT_LINES_BEFORE)
     const to = Math.min(lines.length - 1, index + EXCERPT_LINES_AFTER)
     for (let at = from; at <= to; at += 1) keep.add(at)
