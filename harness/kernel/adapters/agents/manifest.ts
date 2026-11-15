@@ -8,8 +8,8 @@ import {
   codexToolDecisions
 } from './codex/capabilities'
 
-export const ROLE_NAMES = ['developer', 'code-reviewer', 'security-reviewer'] as const
-export type RoleName = (typeof ROLE_NAMES)[number]
+/** A role's name: any name a process launches. The kernel lists none. */
+export type RoleName = string
 export type Decision = 'allow' | 'deny'
 
 /** Complete built-in catalog exposed by the pinned Claude tools reference. */

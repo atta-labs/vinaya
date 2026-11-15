@@ -105,11 +105,6 @@
     "owner": "@attalabs/harness"
   },
   {
-    "file": "harness/kernel/adapters/agents/manifest.ts",
-    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
-    "owner": "@attalabs/harness"
-  },
-  {
     "file": "harness/kernel/adapters/code-host/github/gh-path.ts",
     "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
     "owner": "@attalabs/harness"

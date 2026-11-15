@@ -20,7 +20,6 @@
   "harness/kernel/adapters/agents/codex/auth.ts": 6,
   "harness/kernel/adapters/agents/codex/config.ts": 2,
   "harness/kernel/adapters/agents/codex/loop-narration-codex.ts": 1,
-  "harness/kernel/adapters/agents/manifest.ts": 3,
   "harness/kernel/adapters/code-host/github/gh-path.ts": 2,
   "harness/kernel/adapters/code-host/github/strip-code.ts": 1,
   "harness/kernel/adapters/tracker/github-issues/issue-assignment.ts": 1,
