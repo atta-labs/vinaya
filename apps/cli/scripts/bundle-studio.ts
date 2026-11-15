@@ -129,7 +129,9 @@ for (const nftPath of listNftFiles(nextDir)) {
   const trace = JSON.parse(readFileSync(nftPath, 'utf-8')) as { files?: string[] }
   for (const file of trace.files ?? []) runtimeFiles.add(resolve(dirname(nftPath), file))
 }
-const hostTrace = await nodeFileTrace([hostBundle], {
+const requireFromApp = createRequire(join(appRoot, 'package.json'))
+// The host loads `next` through a constant specifier, so the trace is seeded with Next's entry by name.
+const hostTrace = await nodeFileTrace([hostBundle, requireFromApp.resolve('next')], {
   base: monorepoRoot,
   processCwd: monorepoRoot,
   ignore: TRACE_IGNORE
@@ -137,7 +139,6 @@ const hostTrace = await nodeFileTrace([hostBundle], {
 for (const file of hostTrace.fileList) runtimeFiles.add(resolve(monorepoRoot, file))
 // The host's own declared dependencies are packed whole and by name, never left to static analysis: it resolves `ws`
 // through a package `exports` map, and a missing one would only show when Studio starts.
-const requireFromApp = createRequire(join(appRoot, 'package.json'))
 for (const name of HOST_RUNTIME_PACKAGES) {
   for (const file of listFiles(dirname(requireFromApp.resolve(`${name}/package.json`)))) runtimeFiles.add(file)
 }

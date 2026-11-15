@@ -95,8 +95,12 @@ function pathOf(req: IncomingMessage): string {
   return q === -1 ? raw : raw.slice(0, q)
 }
 
+// Held in a constant so a bundler (the test selector's, the host bundle's) does not follow Next's server internals;
+// the packed bundle traces `next` explicitly instead.
+const NEXT_SPECIFIER = 'next'
+
 async function loadNext(): Promise<NextFactory> {
-  const mod = (await import('next')) as unknown as { default: NextFactory }
+  const mod = (await import(NEXT_SPECIFIER)) as { default: NextFactory }
   return mod.default
 }
 
