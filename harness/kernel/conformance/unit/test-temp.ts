@@ -26,6 +26,10 @@ import { type ProcessIdentity, type StopOptions, type StopReport, stopRegistered
 //
 // Removal first renames a directory to a `.removing-` name, so a removal interrupted half-way (a killed process,
 // a read-only subtree) is recognisable as released. A sibling receipt preserves ownership during partial deletion.
+// A released directory belongs to no one, so another process's startup sweep may delete entries under a release
+// that is still restoring write and removing. Restoring write is best effort and the removal always runs after it;
+// whether the tree is gone decides each attempt. A tree still there gets one more attempt within the same budget,
+// and only a tree still there after the second attempt records a failure.
 
 /** The environment variable that sets the test-temp root; CI sets it explicitly to a disk path. */
 export const TEST_TEMP_ROOT_ENV = 'VINAYA_TEST_TMP'
