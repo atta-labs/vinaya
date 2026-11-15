@@ -147,11 +147,28 @@ export function missEvidence(input: {
  * otherwise nothing, so another test's failure text is never attributed to this one.
  */
 export function junitSuiteOf(xml: string, test: string, alone: boolean): string {
-  const suites = xml.split(/(?=<testsuite\b)/).filter((chunk) => chunk.startsWith('<testsuite'))
-  const own = suites.filter((chunk) => {
-    const tag = chunk.slice(0, chunk.indexOf('>') + 1)
-    return tag.includes(`"${test}"`) || tag.includes(`/${test}"`) || tag.includes(`${test}"`)
-  })
+  const own: string[] = []
+  let depth = 0
+  let start = -1
+  let keep = false
+  for (const tag of xml.matchAll(/<(\/?)(testsuites|testsuite)\b([^>]*?)(\/?)>/g)) {
+    const [whole, closing, name, attrs, selfClosing] = tag as unknown as [string, string, string, string, string]
+    if (name === 'testsuites') continue
+    const at = tag.index as number
+    if (closing) {
+      depth--
+      if (depth === 0 && keep) own.push(xml.slice(start, at + whole.length))
+      continue
+    }
+    if (depth === 0) {
+      const file = /\bfile="([^"]*)"/.exec(attrs)?.[1] ?? /\bname="([^"]*)"/.exec(attrs)?.[1] ?? ''
+      const path = xmlText(file)
+      keep = path === test || path.endsWith(`/${test}`)
+      start = at
+      if (keep && selfClosing) own.push(whole)
+    }
+    if (!selfClosing) depth++
+  }
   if (own.length > 0) return own.join('\n')
   return alone ? xml : ''
 }
@@ -205,6 +222,13 @@ function run(cwd: string, command: string, args: string[]): string {
   return result.stdout
 }
 
+function runnerEnv(): NodeJS.ProcessEnv {
+  const out = cleanEnv()
+  delete out.GH_TOKEN
+  delete out.GITHUB_TOKEN
+  return out
+}
+
 const say = (line: string) => process.stderr.write(`safety-check: ${line}\n`)
 
 /** The tree's schedule groups for `tests` (every test of the view that is not skipped when absent). */
@@ -228,7 +252,8 @@ type Failures = { failed: string[]; messages: Map<string, string> }
 async function runAndCollect(root: string, groups: NativeGroup[], concurrency: number): Promise<Failures> {
   const messages = new Map<string, string>()
   const result = await runGroups(root, groups, {
-    env: cleanEnv(),
+    // The runners execute merged-commit code: they get no forge token, which only the record fetch needs.
+    env: runnerEnv(),
     log: () => {},
     groupTimeLimitMs: GROUP_TIME_LIMIT_MS,
     concurrency,

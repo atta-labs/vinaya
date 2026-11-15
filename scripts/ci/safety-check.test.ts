@@ -148,6 +148,13 @@ describe('junitSuiteOf', () => {
     expect(mutationTexts(junitSuiteOf(xml, 'b.test.ts', false))).toEqual(['src/b.ts:2 g'])
   })
 
+  it('keeps failures inside nested describe suites and matches on a path boundary', () => {
+    const nested =
+      '<testsuites><testsuite name="a" file="/r/ab.test.ts"><testsuite name="d"><failure message="mutate-changes: x.ts:1 f"/></testsuite></testsuite>' +
+      '<testsuite name="b" file="/r/b.test.ts"><testsuite name="d"><failure message="mutate-changes: y.ts:2 g"/></testsuite></testsuite></testsuites>'
+    expect(mutationTexts(junitSuiteOf(nested, 'b.test.ts', false))).toEqual(['y.ts:2 g'])
+  })
+
   it('gives nothing for a file with no suite unless the group holds only that file', () => {
     expect(junitSuiteOf(xml, 'c.test.ts', false)).toBe('')
     expect(junitSuiteOf(xml, 'c.test.ts', true)).toBe(xml)
