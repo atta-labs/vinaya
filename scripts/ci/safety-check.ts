@@ -141,6 +141,21 @@ export function missEvidence(input: {
 
 // ── Reports ────────────────────────────────────────────────────────────────
 
+/**
+ * The part of a Bun JUnit report that belongs to one test file: each top-level `<testsuite>` whose opening tag names
+ * the file. A report with no such suite gives the whole text only when `alone` (the group holds just that file),
+ * otherwise nothing, so another test's failure text is never attributed to this one.
+ */
+export function junitSuiteOf(xml: string, test: string, alone: boolean): string {
+  const suites = xml.split(/(?=<testsuite\b)/).filter((chunk) => chunk.startsWith('<testsuite'))
+  const own = suites.filter((chunk) => {
+    const tag = chunk.slice(0, chunk.indexOf('>') + 1)
+    return tag.includes(`"${test}"`) || tag.includes(`/${test}"`) || tag.includes(`${test}"`)
+  })
+  if (own.length > 0) return own.join('\n')
+  return alone ? xml : ''
+}
+
 /** The failure text each file's Vitest JSON report carries, by file path relative to `root`. */
 export function vitestFailureTexts(json: string, root: string): Map<string, string> {
   const out = new Map<string, string>()
@@ -171,6 +186,8 @@ export type ChangeResult = {
   misses: { test: string; evidence: string }[]
   /** Failures outside the selection that were not misses, with why. */
   notMisses: Judgement[]
+  /** Set when the check itself failed (checkout, install, build, runner): nothing was measured, and the run fails. */
+  crashed?: boolean
 }
 
 function cleanEnv(): NodeJS.ProcessEnv {
@@ -191,7 +208,7 @@ function run(cwd: string, command: string, args: string[]): string {
 const say = (line: string) => process.stderr.write(`safety-check: ${line}\n`)
 
 /** The tree's schedule groups for `tests` (every test of the view that is not skipped when absent). */
-function groupsFor(root: string, view: InventoryView, tests?: readonly string[]): NativeGroupLike[] {
+function groupsFor(root: string, view: InventoryView, tests?: readonly string[]): NativeGroup[] {
   const pool = view.tests.filter((t) => t.kind !== SKIPPED_KIND && (tests === undefined || tests.includes(t.id)))
   const input = ciScheduleInput(
     { ...view, tests: pool } as InventoryView,
@@ -208,7 +225,7 @@ function groupsFor(root: string, view: InventoryView, tests?: readonly string[])
 type Failures = { failed: string[]; messages: Map<string, string> }
 
 /** Runs `groups` in `root`, keeping each failing test and the report text that names why. */
-async function runAndCollect(root: string, groups: NativeGroupLike[], concurrency: number): Promise<Failures> {
+async function runAndCollect(root: string, groups: NativeGroup[], concurrency: number): Promise<Failures> {
   const messages = new Map<string, string>()
   const result = await runGroups(root, groups, {
     env: cleanEnv(),
@@ -216,7 +233,10 @@ async function runAndCollect(root: string, groups: NativeGroupLike[], concurrenc
     groupTimeLimitMs: GROUP_TIME_LIMIT_MS,
     concurrency,
     onReport: (group, xml) => {
-      for (const test of group.tests) messages.set(test, `${messages.get(test) ?? ''}\n${xml}`)
+      for (const test of group.tests) {
+        const own = junitSuiteOf(xml, test, group.tests.length === 1)
+        if (own) messages.set(test, `${messages.get(test) ?? ''}\n${own}`)
+      }
     },
     // A Vitest report is JSON in a file the command names; it is read when the runner has exited, before the
     // scheduler removes it.
@@ -328,6 +348,7 @@ export async function measureChange(repoRoot: string, head: string): Promise<Cha
     }
     return result
   } catch (error) {
+    result.crashed = true
     result.unmeasured = `the check itself failed: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`
     return result
   } finally {
@@ -384,7 +405,7 @@ async function main(argv: readonly string[]): Promise<number> {
     const lines = reportLines(result)
     for (const line of lines) process.stdout.write(`${line}\n`)
     if (options.summary) appendFileSync(options.summary, `${lines.map((l) => `- ${l}`).join('\n')}\n`)
-    if (result.misses.length > 0) missed = true
+    if (result.misses.length > 0 || result.crashed === true) missed = true
   }
   return missed ? 1 : 0
 }

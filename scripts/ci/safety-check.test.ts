@@ -3,6 +3,7 @@ import type { ReadRecord } from '@attalabs/test-selection'
 import {
   type ChangeResult,
   judgeMisses,
+  junitSuiteOf,
   missEvidence,
   mutationTexts,
   reportLines,
@@ -135,6 +136,21 @@ describe('mutation evidence', () => {
     const text = missEvidence({ messages: undefined, reads: undefined, mutation })
     expect(text).toContain('src/a.ts:4 f')
     expect(text).toContain('src/b.ts:9 g')
+  })
+})
+
+describe('junitSuiteOf', () => {
+  const xml =
+    '<testsuites><testsuite name="a.test.ts" tests="1"><failure message="mutate-changes: src/a.ts:1 f"/></testsuite>' +
+    '<testsuite name="b.test.ts" tests="1"><failure message="mutate-changes: src/b.ts:2 g"/></testsuite></testsuites>'
+
+  it('keeps only the suite of the named file', () => {
+    expect(mutationTexts(junitSuiteOf(xml, 'b.test.ts', false))).toEqual(['src/b.ts:2 g'])
+  })
+
+  it('gives nothing for a file with no suite unless the group holds only that file', () => {
+    expect(junitSuiteOf(xml, 'c.test.ts', false)).toBe('')
+    expect(junitSuiteOf(xml, 'c.test.ts', true)).toBe(xml)
   })
 })
 
