@@ -178,7 +178,9 @@ export function createVinayaReviewInputStager(deps: VinayaReviewInputDeps): Vina
     },
     stageAttempt(round, role, attempt, repair) {
       const candidate = this.stage(round, repair)
-      const key = `${round}:${role}:${attempt}:${candidate?.dir ?? ''}:${staged?.repair ?? ''}`
+      // The candidate folder is the same path for every head of a round, so the staged head is part of the key:
+      // a copy built for an earlier head is never returned once the candidate was staged again for a later one.
+      const key = `${round}:${role}:${attempt}:${candidate?.dir ?? ''}:${staged?.head ?? ''}:${staged?.repair ?? ''}`
       const cached = attempts.get(key)
       if (cached !== undefined && present(cached)) return cached
       const dir = candidate ? buildReviewerScratch(deps.root, deps.task, round, role, attempt, candidate.dir) : null
