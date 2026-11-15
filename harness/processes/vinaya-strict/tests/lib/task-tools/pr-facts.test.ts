@@ -119,6 +119,34 @@ describe('extractFailureExcerpt names the failing file', () => {
     expect(excerpt).toContain('the runner failed for group-3')
   })
 
+  test('keeps refused, inventory and retry lines and leaves progress lines out', () => {
+    const log = [
+      ...pad(20),
+      stamp('vinaya schedule: group-1 — vinaya, bun in ., 4 file(s)'),
+      ...pad(20),
+      stamp('vinaya schedule: refused — the inventory holds no such test'),
+      ...pad(20),
+      stamp('vinaya schedule: missing tests/a.test.ts: expected but not scheduled'),
+      ...pad(20),
+      stamp('vinaya schedule: duplicate tests/b.test.ts: scheduled 2 times'),
+      ...pad(20),
+      stamp('vinaya schedule: extra tests/c.test.ts: scheduled but not expected'),
+      ...pad(20),
+      stamp('vinaya schedule: group-2 stopped after 10 min with no end; running it once more'),
+      ...pad(20),
+      stamp('vinaya schedule: kept 3 pass entr(ies) in passes.json'),
+      ...pad(20)
+    ].join('\n')
+    const excerpt = extractFailureExcerpt(log, 20_000)
+    expect(excerpt).toContain('refused — the inventory holds no such test')
+    expect(excerpt).toContain('missing tests/a.test.ts')
+    expect(excerpt).toContain('duplicate tests/b.test.ts')
+    expect(excerpt).toContain('extra tests/c.test.ts')
+    expect(excerpt).toContain('group-2 stopped after 10 min')
+    expect(excerpt).not.toContain('group-1 — vinaya')
+    expect(excerpt).not.toContain('kept 3 pass')
+  })
+
   test('an unnamed failure keeps the nearest group line above it', () => {
     const excerpt = extractFailureExcerpt([...pad(5), ...unnamedLog(), ...pad(5)].join('\n'))
     expect(excerpt).toContain('##[group]harness/processes/vinaya-strict/tests/lib/before-all.test.ts:')

@@ -218,8 +218,19 @@ const SOURCE_LOCATION_LINE = /^\s*at\s.*[^\s():]+:\d+(?::\d+)?\)?\s*$/
 const FOREIGN_LOCATION = /node_modules|\bnode:|\[native code\]|\(native\)/
 /** A line the test scheduler writes that reports a failure — it names the failing groups or files. */
 const SCHEDULER_LINE = /^\s*(?:vinaya|bun apps\/cli\/src\/index\.ts) schedule:/
+/** An inventory or schedule problem line: `<code> <path>: <detail>`. */
+const SCHEDULER_PROBLEM = /^(?:duplicate|extra|missing|unmodeled|schema) \S/
 function isSchedulerFailure(line: string): boolean {
-  return SCHEDULER_LINE.test(line) && (line.includes('failed') || line.includes('reached the real GitHub CLI'))
+  const match = SCHEDULER_LINE.exec(line)
+  if (match === null) return false
+  const rest = line.slice(match[0].length).trimStart()
+  return (
+    rest.includes('failed') ||
+    rest.includes('reached the real GitHub CLI') ||
+    rest.startsWith('refused') ||
+    SCHEDULER_PROBLEM.test(rest) ||
+    /\bstopped after \d+ min with no end; running it once more/.test(rest)
+  )
 }
 /** The line that opens a test file's log group, `##[group]<path>:`. */
 const GROUP_LINE = /^##\[group\].+:/
