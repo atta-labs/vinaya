@@ -50,6 +50,8 @@ let savedRoles: RoleRegistrySnapshot
 beforeAll(() => {
   savedRoles = saveRoleRegistry()
   registerRole('developer', { reading: 'developer', title: 'Developer', reviews: false })
+  registerRole('code-reviewer', { reading: 'code reviewer', title: 'Code review', reviews: true })
+  registerRole('security', { reading: 'security reviewer', title: 'Security', reviews: true })
 })
 afterAll(() => restoreRoleRegistry(savedRoles))
 

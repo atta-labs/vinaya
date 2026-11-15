@@ -174,7 +174,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
-        "sha256": "8088bd79ef91ae5beb5cf066066e52466530c662c79240d3d3327a63f4c600cf"
+        "sha256": "315a954de271d8cf37e84febdc5899054e78baf2cb3176b657893468494b4ee7"
       },
       {
         "path": "harness/processes/vinaya-strict/tools/dev-review-policy/fakes.ts",
