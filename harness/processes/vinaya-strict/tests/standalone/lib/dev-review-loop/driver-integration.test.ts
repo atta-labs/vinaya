@@ -87,6 +87,7 @@ import {
   runResume,
   runCancel,
   runDevReviewLoopArgs,
+  scaledBudgetMs,
   postedCommentFiles,
   outboxLines,
   setUp,
@@ -2112,7 +2113,7 @@ describe('runDevReviewLoopArgs fixture isolation (Issue #660, O3)', () => {
     const home = tempDir('vinaya-drl-home-')
     const cwd = tempDir('vinaya-drl-cwd-')
     const binDir = tempDir('vinaya-drl-bin-')
-    writeFakeBinary(binDir, 'claude', '#!/bin/sh\necho "stuck on purpose"\nsleep 30\n')
+    writeFakeBinary(binDir, 'claude', '#!/bin/sh\necho "stuck on purpose"\nexec sleep 600\n')
     writeFakeGh(binDir)
     writeFakeGit(binDir)
     const path = `${binDir}:${pathWithoutRealVendors()}`
@@ -2126,7 +2127,8 @@ describe('runDevReviewLoopArgs fixture isolation (Issue #660, O3)', () => {
     expect(thrown).toBeInstanceOf(Error)
     const message = (thrown as Error).message
     expect(message).toContain('killed by')
-    expect(message).toContain('3000ms budget')
+    // A traced run (`VINAYA_TEST_TIME_SCALE`) gets the budget times its scale.
+    expect(message).toContain(`${scaledBudgetMs(3000)}ms budget`)
     // The child's own output is really captured, not just an empty
     // "timed out" line — the exact gap a bare test-framework timeout leaves.
     expect(message).toContain('--- stdout ---')
