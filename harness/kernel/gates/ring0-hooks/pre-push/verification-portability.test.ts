@@ -245,6 +245,7 @@ describe('the package agrees with this repository', () => {
       'packages/test-selection/tests/isolation.test.ts test-selection',
       'packages/test-selection/tests/native.test.ts test-selection',
       'packages/test-selection/tests/recorded-reads.test.ts test-selection',
+      'packages/test-selection/tests/refined-selection.test.ts test-selection',
       'packages/test-selection/tests/selection.test.ts test-selection'
     ])
     const fixtures = view.edges.find((e) => e.input === 'packages/test-selection/tests/fixtures/')

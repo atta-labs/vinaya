@@ -224,6 +224,36 @@ function wholeSuitesOf(view: InventoryView): WholeSuitePolicy[] {
     )
 }
 
+/** The file-level data file, repository-relative: the tests selection keeps at file level, one named list each. */
+export const FILE_LEVEL_TESTS_PATH = 'scripts/test-suites/file-level-tests.json'
+
+/**
+ * The two lists of the head commit's file-level data file that selection keeps whole — the tests the host's real
+ * sandbox decides and the tests that may reach the real GitHub CLI — each as the paths it names. A commit without
+ * the file has empty lists. A file that exists but does not parse, or whose lists are not objects of paths, throws:
+ * silently empty lists would let the safe rule leave out tests meant to stay at file level.
+ */
+export function fileLevelLists(repoRoot: string, head: string): NonNullable<SelectionPolicy['fileLevel']> {
+  const text = revisionReader(repoRoot, head).read(FILE_LEVEL_TESTS_PATH)
+  if (text === null) return { realSandbox: [], outsideCall: [] }
+  let data: unknown
+  try {
+    data = JSON.parse(text)
+  } catch (error) {
+    throw new Error(`${FILE_LEVEL_TESTS_PATH} at ${head} does not parse: ${(error as Error).message}`)
+  }
+  const isObject = (value: unknown): value is Record<string, unknown> =>
+    typeof value === 'object' && value !== null && !Array.isArray(value)
+  if (!isObject(data)) throw new Error(`${FILE_LEVEL_TESTS_PATH} at ${head} is not an object of lists`)
+  const keys = (name: string): string[] => {
+    const list = data[name]
+    if (list === undefined) return []
+    if (!isObject(list)) throw new Error(`${FILE_LEVEL_TESTS_PATH} at ${head}: "${name}" is not an object of paths`)
+    return Object.keys(list).sort()
+  }
+  return { realSandbox: keys('real-sandbox'), outsideCall: keys('outside-call') }
+}
+
 /** This repository's selection policy, read from the head commit: the same for every caller. */
 export function repositoryPolicy(repoRoot: string, head: string, view: InventoryView): SelectionPolicy {
   return {
@@ -236,6 +266,7 @@ export function repositoryPolicy(repoRoot: string, head: string, view: Inventory
     ],
     obligations: obligationsOf(repoRoot, head, view),
     wholeSuites: wholeSuitesOf(view),
+    fileLevel: fileLevelLists(repoRoot, head),
     parsers: { toml: (text) => Bun.TOML.parse(text), 'bun-lock': bunLockParser }
   }
 }

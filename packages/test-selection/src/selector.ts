@@ -150,8 +150,11 @@ import {
   type PathChange,
   type RecordIndex,
   indexRecordedTest,
+  neverEnteredFunctions,
+  type OwnBodyLines,
   recordReach
 } from './recorded-reads.js'
+import { classifyHunks, type FunctionLines } from './hunk-classes.js'
 import { passKeys } from './pass-entries.js'
 import { type ScannerDeclaration, scannedRootsOf, scannerTriggered } from './scanner-inputs.js'
 import { type SpawnProgram, spawnEdgeOf, startedScriptsOf } from './spawn-inputs.js'
@@ -164,6 +167,8 @@ import type {
   PlanReason,
   PlanRecords,
   RecordFallbackScope,
+  RecordLeftOut,
+  RecordLeftOutRule,
   RepositoryReader,
   SelectionPlan,
   SelectionPolicy,
@@ -2482,6 +2487,58 @@ function selectChange(input: SelectTestsInput): ChangePlan {
     }
     return judged > 0
   }
+  // ── The safe rule: a changed file whose every hunk is body-only or an inert addition, and whose changed functions a
+  // test's recorded coverage shows it never entered, does not select that test. Coverage is control flow, which may
+  // differ by platform, so it applies only on the record's own platform; the file-level lists never use it.
+  const fileLevel = new Set([...(policy.fileLevel?.realSandbox ?? []), ...(policy.fileLevel?.outsideCall ?? [])])
+  const onRecordPlatform = records !== null && records.platform === records.record.platform
+  const testIds = new Set(headTests.keys())
+  if (baseReliable) for (const t of (baseView as InventoryView).tests) testIds.add(t.id)
+  type ChangedBodies = { functions: OwnBodyLines[]; names: string[] }
+  const changedBodies = new Map<string, ChangedBodies | null>()
+  /** The functions a modified non-test file's hunks change, when every hunk is body-only or an inert addition; `null` on any doubt. */
+  const bodiesOf = (path: string): ChangedBodies | null => {
+    if (changedBodies.has(path)) return changedBodies.get(path) ?? null
+    let found: ChangedBodies | null = null
+    const before = repo.read(base, path)
+    const after = repo.read(head, path)
+    if (typescript && before !== null && after !== null && before !== after && !testIds.has(path)) {
+      const classes = classifyHunks({ path, status: 'modified', before, after, ts: typescript })
+      if (classes.classified && classes.hunks.length > 0) {
+        found = { functions: [], names: [] }
+        for (const hunk of classes.hunks)
+          if (hunk.kind === 'body-only') {
+            found.functions.push(ownBodyLines(hunk.function.before))
+            found.names.push(hunk.function.name)
+          }
+      }
+    }
+    changedBodies.set(path, found)
+    return found
+  }
+  const fileLevelTests = new Map<string, boolean>()
+  const keptAtFileLevel = (test: string, index: RecordIndex): boolean => {
+    let kept = fileLevelTests.get(test)
+    if (kept === undefined) {
+      kept = fileLevel.has(test) || [...index.exact].some((read) => fileLevel.has(read))
+      fileLevelTests.set(test, kept)
+    }
+    return kept
+  }
+  /** Why the safe rule lets `path` go by `test`, or `null` when the rule keeps the test. */
+  const safeRule = (test: string, index: RecordIndex, path: string): string | null => {
+    if (!onRecordPlatform || test === path || !index.exact.has(path) || keptAtFileLevel(test, index)) return null
+    const bodies = bodiesOf(path)
+    if (!bodies || !neverEnteredFunctions(index.test, path, bodies.functions)) return null
+    const what =
+      bodies.names.length === 0
+        ? 'only adds declarations that do nothing when the module loads'
+        : `only changes the bodies of ${[...new Set(bodies.names)].sort().join(', ')}`
+    return `the change to ${path} ${what}, and the recorded run opened it once and never entered what changed`
+  }
+  const leftOutFiles = new Map<string, { path: string; rule: RecordLeftOutRule; detail: string }[]>()
+  const leaveOut = (test: string, path: string, rule: RecordLeftOutRule, detail: string) =>
+    leftOutFiles.set(test, [...(leftOutFiles.get(test) ?? []), { path, rule, detail }])
   const recordRead = new Set<string>()
   if (decided.size > 0) {
     for (const test of decided.keys()) reasons.delete(test)
@@ -2490,8 +2547,22 @@ function selectChange(input: SelectTestsInput): ChangePlan {
         const reach = recordReach(index, change)
         if (!reach) continue
         recordRead.add(change.path.split(DEPENDENCY_PACKAGE_SEPARATOR)[0] as string)
-        if (test !== change.path && reach.exact && change.status === 'modified' && narrowable(test, change.path))
-          continue
+        if (test !== change.path && reach.exact && change.status === 'modified') {
+          if (narrowable(test, change.path)) {
+            leaveOut(
+              test,
+              change.path,
+              'unreached-names',
+              `only exported names the test's imports never reach changed in ${change.path}`
+            )
+            continue
+          }
+          const safe = safeRule(test, index, change.path)
+          if (safe !== null) {
+            leaveOut(test, change.path, 'unentered-bodies', safe)
+            continue
+          }
+        }
         addReason(test, { kind: 'recorded-read', detail: reach.detail, via: reach.via, revision: 'head' })
       }
     }
@@ -2540,7 +2611,8 @@ function selectChange(input: SelectTestsInput): ChangePlan {
     recorded: [...decided.keys()].sort(),
     fallbacks: [...recordFallbacks.values()]
       .map((scope) => ({ ...scope, tests: scope.tests.sort() }))
-      .sort((a, b) => a.id.localeCompare(b.id))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    leftOut: leftOutOf(leftOutFiles, reasons, obligations)
   }
   const required: PlannedTest[] = [...reasons]
     .map(([test, list]) => {
@@ -2592,6 +2664,10 @@ function selectChange(input: SelectTestsInput): ChangePlan {
         dataFolders,
         obligations: policy.obligations ?? [],
         wholeSuites: policy.wholeSuites ?? [],
+        fileLevel: {
+          realSandbox: [...(policy.fileLevel?.realSandbox ?? [])].sort(),
+          outsideCall: [...(policy.fileLevel?.outsideCall ?? [])].sort()
+        },
         parsers: Object.keys(policy.parsers ?? {}).sort(),
         resolver: policy.resolver ?? null
       }),
@@ -2620,6 +2696,31 @@ function selectChange(input: SelectTestsInput): ChangePlan {
 
 /** The plan of the change alone: what {@link selectTests} decides before its whole-suite, merge and history rules. */
 type ChangePlan = Omit<SelectionPlan, 'wholeSuites' | 'leftOut' | 'reused'>
+
+/**
+ * A function's own body lines on the side the record's coverage numbers: the lines between the one that opens the
+ * body (the binding line, run at load) and the one that closes it, less every line of a nested function; the closing
+ * line is kept apart. A body that opens and closes on one line has no own line.
+ */
+function ownBodyLines(fn: FunctionLines): OwnBodyLines {
+  const inner: number[] = []
+  for (let line = fn.body.start + 1; line < fn.body.end; line++)
+    if (!fn.nested.some((n) => line >= n.start && line <= n.end)) inner.push(line)
+  return { inner, closing: fn.body.end > fn.body.start ? fn.body.end : null }
+}
+
+/** The tests a record left out, each with a reason per changed file, less any a reason or an obligation still plans. */
+function leftOutOf(
+  files: ReadonlyMap<string, RecordLeftOut['files']>,
+  reasons: ReadonlyMap<string, readonly PlanReason[]>,
+  obligations: readonly PlannedObligation[]
+): RecordLeftOut[] {
+  const obliged = new Set(obligations.map((o) => o.test))
+  return [...files]
+    .filter(([test]) => !reasons.has(test) && !obliged.has(test))
+    .map(([test, list]) => ({ test, files: [...list].sort((a, b) => a.path.localeCompare(b.path)) }))
+    .sort((a, b) => a.test.localeCompare(b.test))
+}
 
 /** The obligation a failed or unconfirmed test of the last refused run carries. */
 export const FAILED_RERUN_OBLIGATION = 'failed-test-rerun'
@@ -2754,8 +2855,22 @@ export function selectTests(input: SelectTestsInput): SelectionPlan {
     }))
     .sort((a, b) => a.id.localeCompare(b.id))
 
+  // A test a later rule plans (an obligation, a whole suite, a failed rerun) still runs, so the plan never names it as
+  // left out by the record.
+  const stillPlanned = new Set(reached.filter((test) => !leftOut.includes(test)))
   const { identity: _changeIdentity, profile, ...changeSemantic } = change
-  const semantic = { ...changeSemantic, obligations, configurations, wholeSuites, leftOut, reused }
+  const semantic = {
+    ...changeSemantic,
+    records: {
+      ...change.records,
+      leftOut: change.records.leftOut.filter((entry) => !stillPlanned.has(entry.test))
+    },
+    obligations,
+    configurations,
+    wholeSuites,
+    leftOut,
+    reused
+  }
   return {
     ...semantic,
     identity: stableHash(semantic),

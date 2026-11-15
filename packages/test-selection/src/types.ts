@@ -214,6 +214,13 @@ export type SelectionPolicy = {
    * every input such a suite reads. Only the suite's tests with no valid record run whole; a record decides the rest.
    */
   wholeSuites?: readonly WholeSuitePolicy[]
+  /**
+   * Tests that stay at file level — a change to a file they read always selects them, whatever the recorded
+   * coverage says — because the host's real confinement decides what they do (`realSandbox`) or they may reach a
+   * live service (`outsideCall`). An entry that is a helper rather than a test keeps every test whose record read it.
+   * Both are part of the plan's identity. Absent, both are empty.
+   */
+  fileLevel?: { realSandbox?: readonly string[]; outsideCall?: readonly string[] }
   /** Parsers for input formats beyond JSON and text. */
   parsers?: FormatParsers
   /** Force the text-scan graph. */
@@ -300,6 +307,17 @@ export type PlanRecords = {
   recorded: string[]
   /** Every test the static selection decided instead, grouped by reason. */
   fallbacks: RecordFallbackScope[]
+  /** Every test a record left out although it read a changed file, with the reason for each such file. */
+  leftOut: RecordLeftOut[]
+}
+
+/** Why a record let a changed file go by one test: the changed names its imports never reach, or the safe rule. */
+export type RecordLeftOutRule = 'unreached-names' | 'unentered-bodies'
+
+/** A test the recorded reads left out, with one reason per changed file it read. */
+export type RecordLeftOut = {
+  test: string
+  files: { path: string; rule: RecordLeftOutRule; detail: string }[]
 }
 
 // ── The plan ───────────────────────────────────────────────────────────────

@@ -130,9 +130,36 @@ with its own storage implements the type itself.
   many files (`bun.lock#zod`, a package's source folder for a read under its
   `dist/`) carries the count of its most-opened file. The loader opens a module
   once per process, so an `opens` count above 1 means one file was read as
-  data. The selection reads
-  none of these fields yet: a version-1 record and a version-2 record with the
-  same reads select the same tests.
+  data. A version-1 record, and a version-2 entry lacking any of these facts,
+  selects as it always did.
+
+On the record path a test whose reads include a changed file is left out, with
+a reason in the plan, in two independent ways; neither applies to the test file
+itself, to an added, deleted or renamed path, or to a file read only through a
+folder.
+
+- *Unreached names* — only the exported names the test's imports never reach
+  changed (`unreached-names`).
+- *Unentered bodies* (`unentered-bodies`) — the safe rule. Every changed file
+  the test opened must pass every condition, and any fact the record lacks
+  keeps the test. The file: it is a modified, non-test `.ts` file, both texts
+  parse, and `classifyHunks` calls every hunk body-only or an inert addition
+  (type-only imports, no exported additions), the code outside function bodies
+  being otherwise byte-identical. The test: its coverage holds the file (it
+  loaded it); its own process opened it exactly once and no child process
+  opened it; and for every changed function, whose own body lines are those
+  between the line that opens the body (the binding line, run at load) and the
+  one that closes it, less the lines of nested functions, at least one is
+  instrumented and none was executed, nor the closing line. A function with no
+  own line counts as entered. Reach is decided by coverage and opens only,
+  never by matching changed names, and the rule applies only when the caller's
+  platform is the record's, because coverage is control flow and may differ by
+  platform.
+
+`SelectionPolicy.fileLevel` (`realSandbox`, `outsideCall`) lists tests the
+second rule never leaves out: a listed test, or a test whose record read a
+listed helper, always runs when a file it read changes. Both lists are part of
+the policy's identity hash.
 
 On the record path a changed path reaches a recorded test through its reads
 (`recordReach`). An added or deleted path also reaches it through a listed
@@ -161,8 +188,8 @@ covering every listed folder: `scanned` narrows the selection, never pass reuse.
   key that proves it still holds, and the tests that failed; `selectTests`
   leaves a test that a matching pass covers out of `plannedTests`.
 - `SelectionPolicy` — the caller's rules as data: the graph depth, scanner and
-  spawned-program declarations, obligations, and the suites whose whole change
-  runs the whole suite.
+  spawned-program declarations, obligations, the suites whose whole change
+  runs the whole suite, and the `fileLevel` lists of tests the safe rule keeps.
 
 ### `workspaceInventory(repo, revision): WorkspaceInventory`
 
@@ -275,6 +302,9 @@ remote, runs no test and writes nothing. The plan states:
   inventory;
 - `obligations` — what the caller's policy adds on top, never mixed into
   `required`;
+- `records.leftOut` — every test a record left out although it read a changed
+  file, with one entry per such file naming its `rule` and why, so a reviewer
+  sees why it did not run;
 - `policies` — mandatory and security duties the changed inputs engage;
 - `removedTests`, `renamedTests`, `configurations` and the `context` that
   reproduces the plan. `profile` holds timings and is not part of `identity`.

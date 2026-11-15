@@ -11,7 +11,8 @@
  * `scanned`: in any listed folder). A version-2 record also holds, per test,
  * how many times its own process opened each file it read, which files a child
  * process opened, and, for a Bun run, its line coverage per source file; the
- * selection does not read those yet. The record holds no fact of one
+ * selection reads those to leave a test out when a change confined to function
+ * bodies the test never entered reached a file it read. The record holds no fact of one
  * repository: the caller supplies the workspace package folders and the name of
  * the input the installed dependencies derive from.
  */
@@ -205,6 +206,35 @@ export function coverageOfLcov(text: string, pathOf: (sf: string) => string | nu
   const coverage: Record<string, FileCoverage> = {}
   for (const path of [...files.keys()].sort()) coverage[path] = fileCoverage(files.get(path) as Map<number, number>)
   return coverage
+}
+
+/**
+ * One changed function's own body lines at the base, where the recorded coverage's line numbers are: `inner` holds
+ * the lines between the one that opens the body (the binding line, which runs at load) and the one that closes it,
+ * less every line of a function nested in it; `closing` is the closing line, or `null` for a body that opens and
+ * closes on one line.
+ */
+export type OwnBodyLines = { inner: readonly number[]; closing: number | null }
+
+const inSpans = (spans: readonly LineSpan[], line: number): boolean => spans.some(([a, b]) => line >= a && line <= b)
+
+/**
+ * Whether a version-2 entry shows its run left `path` out of every way a change confined to `functions` could reach
+ * it: the test's own process opened `path` exactly once (the loader's open; a second is a data read) and loaded it
+ * (its coverage holds the file), no child process opened it, and each function's own body has an instrumented line
+ * and no executed one. A function counts as entered on anything else (no own line, nothing instrumented, a line
+ * executed), and any fact the entry lacks keeps the test: `false` is the answer whenever the entry cannot say.
+ */
+export function neverEnteredFunctions(entry: RecordedTest, path: string, functions: readonly OwnBodyLines[]): boolean {
+  if (entry.opens === undefined || entry.childOpens === undefined || entry.coverage === undefined) return false
+  if (entry.opens[path] !== 1 || entry.childOpens.includes(path)) return false
+  const coverage = entry.coverage[path]
+  if (coverage === undefined) return false
+  const instrumented = (line: number): boolean => inSpans(coverage.instrumented, line)
+  const executed = (line: number): boolean => instrumented(line) && inSpans(coverage.executed, line)
+  return functions.every(
+    (fn) => fn.inner.some(instrumented) && !fn.inner.some(executed) && (fn.closing === null || !executed(fn.closing))
+  )
 }
 
 /**

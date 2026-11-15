@@ -32,7 +32,13 @@ import {
 import { junitFileResults, marksOnly } from '../../harness/kernel/gates/ring0-hooks/pre-push/junit-store.js'
 import { buildCiPlan } from '../ci/impact-plan.ts'
 import { freezeLocalPlan, localNativePlan } from './local-run.js'
-import { loadSelectionInputs, passEntriesOfRun, storePassEntries, trustedPassProducer } from './repository-selection.js'
+import {
+  fileLevelLists,
+  loadSelectionInputs,
+  passEntriesOfRun,
+  storePassEntries,
+  trustedPassProducer
+} from './repository-selection.js'
 
 const DECLARATIONS: FixtureDeclarations = {
   suites: [{ id: 'all', dir: '.', runner: 'bun', preload: null }],
@@ -685,5 +691,51 @@ describe('the push gate and CI run exactly the one entry point’s planned tests
     expect(marksOnly("test.only('a', () => {})")).toBe(true)
     expect(marksOnly("describe . only ('a', () => {})")).toBe(true)
     expect(marksOnly("test('only the start', () => {})")).toBe(false)
+  })
+})
+
+describe('the file-level lists reach selection as policy', () => {
+  const root = join(import.meta.dir, '../..')
+
+  it('passes the real-sandbox and outside-call lists of the committed data file', () => {
+    const data = JSON.parse(
+      execFileSync('git', ['show', 'HEAD:scripts/test-suites/file-level-tests.json'], { cwd: root, encoding: 'utf8' })
+    ) as Record<string, Record<string, string>>
+    const lists = fileLevelLists(root, 'HEAD')
+    expect(lists.realSandbox).toEqual(Object.keys(data['real-sandbox'] ?? {}).sort())
+    expect(lists.outsideCall).toEqual(Object.keys(data['outside-call'] ?? {}).sort())
+    expect(lists.realSandbox).toContain('packages/test-selection/tests/consumer.test.ts')
+  })
+
+  it('has empty lists for a commit that holds no data file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'file-level-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: dir })
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x'], {
+        cwd: dir
+      })
+      expect(fileLevelLists(dir, 'HEAD')).toEqual({ realSandbox: [], outsideCall: [] })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a data file that does not parse or whose list is not an object, instead of passing empty lists', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'file-level-'))
+    const commit = (text: string) => {
+      mkdirSync(join(dir, 'scripts/test-suites'), { recursive: true })
+      writeFileSync(join(dir, 'scripts/test-suites/file-level-tests.json'), text)
+      execFileSync('git', ['add', '-A'], { cwd: dir })
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'x'], { cwd: dir })
+    }
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: dir })
+      commit('{ not json')
+      expect(() => fileLevelLists(dir, 'HEAD')).toThrow('does not parse')
+      commit('{"real-sandbox": ["a.test.ts"]}')
+      expect(() => fileLevelLists(dir, 'HEAD')).toThrow('is not an object of paths')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
