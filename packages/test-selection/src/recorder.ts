@@ -1,9 +1,10 @@
 /**
  * The read recorder: runs each test file of a repository's inventory as its own process on Linux under
- * `strace -f -yy -e trace=%file,getdents64,clone,clone3,fork,vfork` (child processes included) and stores, per test
- * file, the repository paths it opened or probed and the folders it listed (`recorded-reads.ts` turns the trace into
- * repository-relative real paths). The record it writes (`read-record.json`) is what `selectTests` takes as
- * `records`.
+ * `strace -f -yy -e trace=%file,getdents64,chdir,fchdir,clone,clone3,fork,vfork` (child processes included) and stores,
+ * per test file, the repository paths it opened or probed and the folders it listed (`recorded-reads.ts` turns the
+ * trace into repository-relative real paths), how many times its own process opened each and which a child process
+ * opened, and, for a Bun run, the line coverage Bun's own lcov report gives per source file. The record it writes
+ * (`read-record.json`, schema version 2) is what `selectTests` takes as `records`.
  *
  * A trace cannot tell a folder the test's code listed from one Bun's module resolver listed to find a module. So each
  * Bun run also loads the listing probe (`listing-probe.ts`), copied into the recorder's scratch folder and put first
@@ -46,10 +47,13 @@ import { fileURLToPath } from 'node:url'
 import { PROBE_LOG_ENV } from './listing-probe-paths.js'
 import { DEFAULT_CONFIGURATION, groupNativeTests, type NativeGroup } from './native.js'
 import {
+  coverageOfLcov,
   createTraceReader,
+  type FileCoverage,
   indexRecordedTest,
   isReadRecord,
   READ_RECORD_SCHEMA,
+  READ_RECORD_VERSION,
   type ReadRecord,
   type RecordedTest,
   recordReach,
@@ -64,7 +68,10 @@ import { workspaceInventory } from './workspace-inventory.js'
 /** The file the recorder writes the read record to, in its output folder. */
 export const RECORD_FILE = 'read-record.json'
 
-/** The syscall filter the trace is taken with. */
+/**
+ * The syscall filter the trace is taken with. No `status=successful` filter: it would drop the failed lookups a record
+ * keeps as reads; the trace reader tells a successful open from its printed result instead.
+ */
 export const STRACE_ARGS = [
   '-f',
   '-yy',
@@ -72,8 +79,39 @@ export const STRACE_ARGS = [
   '-s',
   '4096',
   '-e',
-  'trace=%file,getdents64,clone,clone3,fork,vfork'
+  'trace=%file,getdents64,chdir,fchdir,clone,clone3,fork,vfork'
 ] as const
+
+/** The file Bun's lcov coverage reporter writes in the folder `--coverage-dir` names. */
+export const LCOV_FILE = 'lcov.info'
+
+/**
+ * A Bun test command that also writes Bun's line coverage, as lcov, to `dir`: the flags go right after the `test`
+ * command word (at the end when there is none). The lcov reporter alone, so no coverage threshold fails the run.
+ */
+export function withCoverage(command: readonly string[], dir: string): string[] {
+  const flags = ['--coverage', '--coverage-reporter=lcov', `--coverage-dir=${dir}`]
+  const at = command.indexOf('test')
+  return at < 0 ? [...command, ...flags] : [...command.slice(0, at + 1), ...flags, ...command.slice(at + 1)]
+}
+
+/**
+ * The coverage a Bun run's lcov report holds, per repository-relative source file: each `SF:` path is taken from the
+ * folder the run started in (`runFolder`, absolute) and resolved through symbolic links; a file outside the
+ * repository, under `.git/` or under installed dependencies is dropped. No report (`null`) is a run that covered no
+ * source file.
+ */
+export function coverageOfRun(
+  lcov: string | null,
+  runFolder: string,
+  trace: TraceOptions
+): Record<string, FileCoverage> {
+  if (lcov === null) return {}
+  return coverageOfLcov(lcov, (sf) => {
+    const rel = repositoryFolder(posix.resolve(runFolder, sf), trace)
+    return rel === null || rel === '.' ? null : rel
+  })
+}
 
 /** The file a shard writes beside its partial record, naming the slice it recorded. */
 export const SHARD_FILE = 'shard.json'
@@ -114,6 +152,7 @@ export function mergeShardRecords(parts: readonly { shard: ShardManifest; record
   const first = parts[0]
   if (!first) throw new Error('no shard output to merge')
   const { count } = first.shard
+  const version = first.record.schemaVersion
   const indices = parts.map((p) => p.shard.index).sort((a, b) => a - b)
   const expected = Array.from({ length: count }, (_, at) => at + 1)
   if (parts.some((p) => p.shard.count !== count) || indices.join(',') !== expected.join(','))
@@ -124,6 +163,8 @@ export function mergeShardRecords(parts: readonly { shard: ShardManifest; record
   for (const { shard, record } of parts) {
     if (record.commit !== first.record.commit || shard.commit !== first.record.commit)
       throw new Error(`shard ${shard.index} was recorded at another commit (${record.commit})`)
+    if (record.schemaVersion !== version)
+      throw new Error(`shard ${shard.index} wrote a version-${record.schemaVersion} record, not version ${version}`)
     if (record.platform !== first.record.platform)
       throw new Error(`shard ${shard.index} was recorded on ${record.platform}, not ${first.record.platform}`)
     for (const test of shard.tests) {
@@ -141,7 +182,7 @@ export function mergeShardRecords(parts: readonly { shard: ShardManifest; record
   return {
     record: {
       schema: READ_RECORD_SCHEMA,
-      schemaVersion: 1,
+      schemaVersion: version,
       commit: first.record.commit,
       platform: first.record.platform,
       tests: sorted
@@ -458,8 +499,9 @@ export function copyListingProbe(dir: string): string {
 }
 
 /**
- * One test's record from what its traced run left: the trace reader's result, the probe's log, and the scan of the
- * sources it read under `sourceRoot` (`scanSources`). Every field in the order the record file writes it.
+ * One test's record from what its traced run left: the trace reader's result, the probe's log, the scan of the
+ * sources it read under `sourceRoot` (`scanSources`) and, for a Bun run, its coverage (`coverageOfRun`; left out for a
+ * Vitest run, whose coverage is unknown). Every field in the order the record file writes it.
  */
 export function recordedTestOf(input: {
   result: TraceReads
@@ -467,9 +509,10 @@ export function recordedTestOf(input: {
   trace: TraceOptions
   sourceRoot: string
   packages: ReadonlyMap<string, string>
+  coverage?: Record<string, FileCoverage>
 }): RecordedTest {
   const { probe, trace, packages } = input
-  const { reads, listed, processScanned, git: touchedGit, gitReaders, truncated } = input.result
+  const { reads, listed, processScanned, git: touchedGit, gitReaders, truncated, opens, childOpens } = input.result
   const sources = scanSources(input.sourceRoot, reads, packages)
   return {
     reads: [...reads].sort(),
@@ -491,7 +534,10 @@ export function recordedTestOf(input: {
       : truncated
         ? { fallback: 'truncated-path' as const }
         : {}),
-    ...(sources.branchesOnPlatform ? { branchesOnPlatform: true } : {})
+    ...(sources.branchesOnPlatform ? { branchesOnPlatform: true } : {}),
+    opens: Object.fromEntries([...opens].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+    childOpens: [...childOpens].sort(),
+    ...(input.coverage ? { coverage: input.coverage } : {})
   }
 }
 
@@ -654,13 +700,16 @@ async function recordTest(
   const report = join(scratch, `${index}.${group.runner === 'bun' ? 'xml' : 'json'}`)
   const traceFile = join(scratch, `${index}.trace`)
   const probeLog = join(scratch, `${index}.probe.jsonl`)
+  const coverageDir = join(scratch, `${index}.coverage`)
   const cwd = join(repoRoot, group.cwd)
   // Runs go in parallel in one folder: each gets its own configuration naming its own report, never the folder's
   // shared report path, or a run ending first would write its report into a sibling's file. A Bun run's configuration
   // also loads the listing probe first; a Vitest run has none, so every folder it lists counts as scanned.
   const named = injected.launch(group, report, cwd)
   const launch = group.runner === 'bun' ? probedLaunch(named, { cwd, report, probe: probeFile, log: probeLog }) : named
-  const command = ['strace', ...STRACE_ARGS, '-o', traceFile, '--', ...launch.command]
+  // A Bun run also writes its line coverage, as lcov, to a folder of its own in the scratch folder.
+  const runCommand = group.runner === 'bun' ? withCoverage(launch.command, coverageDir) : launch.command
+  const command = ['strace', ...STRACE_ARGS, '-o', traceFile, '--', ...runCommand]
   const { status, signal } = await traced(command, {
     cwd,
     env: { ...process.env, ...launch.env },
@@ -686,6 +735,11 @@ async function recordTest(
       ms
     }
   }
+  let lcov: string | null = null
+  try {
+    lcov = readFileSync(join(coverageDir, LCOV_FILE), 'utf8')
+  } catch {}
+  rmSync(coverageDir, { recursive: true, force: true })
   if (!passedWhileRecorded(status, outcome, test)) {
     rmSync(traceFile, { force: true })
     return { test, recorded: null, reason: 'the test did not pass while recorded', ms }
@@ -707,7 +761,15 @@ async function recordTest(
   })
   for await (const line of lines) reader.feed(line)
   rmSync(traceFile, { force: true })
-  const recorded = recordedTestOf({ result: reader.result(), probe, trace, sourceRoot: repoRoot, packages })
+  const recorded = recordedTestOf({
+    result: reader.result(),
+    probe,
+    trace,
+    sourceRoot: repoRoot,
+    packages,
+    // A Bun run that left no lcov report covered no source file; a Vitest run's coverage stays unknown.
+    ...(group.runner === 'bun' ? { coverage: coverageOfRun(lcov, realpathSync(cwd), trace) } : {})
+  })
   return { test, recorded, reason: 'recorded', ms }
 }
 
@@ -801,7 +863,7 @@ export async function recordReads(
     if (run.recorded) recordedTests[run.test] = run.recorded
   const record: ReadRecord = {
     schema: READ_RECORD_SCHEMA,
-    schemaVersion: 1,
+    schemaVersion: READ_RECORD_VERSION,
     commit,
     platform: process.platform,
     tests: recordedTests

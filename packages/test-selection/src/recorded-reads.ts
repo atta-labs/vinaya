@@ -8,7 +8,10 @@
  * test when it is among those reads, or when it was added or deleted in a
  * listed folder that its code listed, beside a name it read that the new name
  * can shadow, or under a name the loader reads by convention (a record without
- * `scanned`: in any listed folder). The record holds no fact of one
+ * `scanned`: in any listed folder). A version-2 record also holds, per test,
+ * how many times its own process opened each file it read, which files a child
+ * process opened, and, for a Bun run, its line coverage per source file; the
+ * selection does not read those yet. The record holds no fact of one
  * repository: the caller supplies the workspace package folders and the name of
  * the input the installed dependencies derive from.
  */
@@ -38,12 +41,44 @@ export type RecordedTest = {
   gitReaders?: string[]
   /** Set when a source file the test read branches on `process.platform`: a record taken on Linux says nothing about another platform. */
   branchesOnPlatform?: boolean
+  /**
+   * Version 2: per read, how many times the test's own process (its threads included) successfully opened it; a read
+   * it never opened (a probe, a failed lookup, a file only a child opened) is absent, which is 0. Counted per file: a
+   * read that stands for many files (`bun.lock#zod`, a package's source folder for a read under its `dist/`) carries
+   * the count of its most-opened file. The loader opens each module once per process, so a count above 1 means one
+   * file was read as data.
+   */
+  opens?: Record<string, number>
+  /** Version 2: the reads a child process the test started successfully opened (a thread of no known process counts as one). */
+  childOpens?: string[]
+  /**
+   * Version 2, Bun runs only: per repository-relative source file Bun's coverage listed, the lines it instrumented and
+   * the lines the test executed. `{}` when the run left no coverage (it covered no source file). Absent for a Vitest
+   * run or a version-1 record: the coverage is unknown.
+   */
+  coverage?: Record<string, FileCoverage>
 }
+
+/** Inclusive line numbers, first and last. */
+export type LineSpan = [number, number]
+
+/**
+ * One source file's coverage. `instrumented` holds every line Bun's coverage names (executed or not) as runs of
+ * consecutive line numbers. `executed` holds runs of the instrumented lines the test executed: a run may span lines
+ * that are not instrumented, so a line was executed when it is both instrumented and inside an `executed` range.
+ */
+export type FileCoverage = { instrumented: LineSpan[]; executed: LineSpan[] }
+
+/** The record versions a reader accepts: 1, without open counts or coverage, and 2. */
+export type ReadRecordVersion = 1 | 2
+
+/** The version the recorder writes. */
+export const READ_RECORD_VERSION = 2 as const
 
 /** A commit's record: one entry per test file that ran to success while it was recorded. */
 export type ReadRecord = {
   schema: typeof READ_RECORD_SCHEMA
-  schemaVersion: 1
+  schemaVersion: ReadRecordVersion
   /** The exact commit the record was taken at. */
   commit: string
   /** The platform the tests ran on. */
@@ -51,13 +86,48 @@ export type ReadRecord = {
   tests: Record<string, RecordedTest>
 }
 
+const isRanges = (value: unknown): boolean =>
+  Array.isArray(value) &&
+  value.every(
+    (r) =>
+      Array.isArray(r) &&
+      r.length === 2 &&
+      Number.isInteger(r[0]) &&
+      Number.isInteger(r[1]) &&
+      (r[0] as number) >= 1 &&
+      (r[0] as number) <= (r[1] as number)
+  )
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/** Whether a version-2 entry's own fields, when present, have their shapes. */
+function isVersion2Entry(t: RecordedTest): boolean {
+  const opens: unknown = t.opens
+  const childOpens: unknown = t.childOpens
+  const coverage: unknown = t.coverage
+  return (
+    (opens === undefined ||
+      (isPlainObject(opens) && Object.values(opens).every((n) => Number.isInteger(n) && (n as number) > 0))) &&
+    (childOpens === undefined || (Array.isArray(childOpens) && childOpens.every((p) => typeof p === 'string'))) &&
+    (coverage === undefined ||
+      (isPlainObject(coverage) &&
+        Object.values(coverage).every((c) => isPlainObject(c) && isRanges(c.instrumented) && isRanges(c.executed))))
+  )
+}
+
+/**
+ * Whether `value` is a read record of a version this reader knows, 1 or 2; a record of any other version is refused,
+ * never read loosely. A version-1 entry is checked exactly as before version 2 existed; a version-2 entry's open
+ * counts, child opens and coverage must also have their shapes when present.
+ */
 export function isReadRecord(value: unknown): value is ReadRecord {
   const v = value as Partial<ReadRecord> | null
   return (
     typeof v === 'object' &&
     v !== null &&
     v.schema === READ_RECORD_SCHEMA &&
-    v.schemaVersion === 1 &&
+    (v.schemaVersion === 1 || v.schemaVersion === 2) &&
     typeof v.commit === 'string' &&
     typeof v.platform === 'string' &&
     typeof v.tests === 'object' &&
@@ -66,9 +136,75 @@ export function isReadRecord(value: unknown): value is ReadRecord {
       (t) =>
         Array.isArray((t as RecordedTest).reads) &&
         Array.isArray((t as RecordedTest).listed) &&
-        ((t as RecordedTest).scanned === undefined || Array.isArray((t as RecordedTest).scanned))
+        ((t as RecordedTest).scanned === undefined || Array.isArray((t as RecordedTest).scanned)) &&
+        (v.schemaVersion === 1 || isVersion2Entry(t as RecordedTest))
     )
   )
+}
+
+// ── Line coverage ──────────────────────────────────────────────────────────
+
+/** Runs of consecutive numbers in `lines` as inclusive ranges, ascending. */
+export function lineSpans(lines: Iterable<number>): LineSpan[] {
+  const sorted = [...new Set(lines)].sort((a, b) => a - b)
+  const ranges: LineSpan[] = []
+  for (const line of sorted) {
+    const last = ranges[ranges.length - 1]
+    if (last && line === last[1] + 1) last[1] = line
+    else ranges.push([line, line])
+  }
+  return ranges
+}
+
+/**
+ * One file's coverage from its lcov `DA` entries (line to execution count): every entry is instrumented, count 0
+ * included, and a run of instrumented lines all executed is one `executed` range, spanning the lines between them
+ * that are not instrumented.
+ */
+export function fileCoverage(counts: ReadonlyMap<number, number>): FileCoverage {
+  const lines = [...counts.keys()].sort((a, b) => a - b)
+  const executed: LineSpan[] = []
+  let run: LineSpan | null = null
+  for (const line of lines) {
+    if ((counts.get(line) as number) > 0) {
+      if (run) run[1] = line
+      else {
+        run = [line, line]
+        executed.push(run)
+      }
+    } else run = null
+  }
+  return { instrumented: lineSpans(lines), executed }
+}
+
+/**
+ * The coverage an lcov report holds, per source file, keys sorted: `pathOf` maps each `SF:` path (as Bun writes it,
+ * relative to the folder the run started in) to its repository-relative path, or `null` to drop it. A file listed
+ * twice has its counts added up.
+ */
+export function coverageOfLcov(text: string, pathOf: (sf: string) => string | null): Record<string, FileCoverage> {
+  const files = new Map<string, Map<number, number>>()
+  let current: Map<number, number> | null = null
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (line.startsWith('SF:')) {
+      const path = pathOf(line.slice(3))
+      current = null
+      if (path !== null) {
+        current = files.get(path) ?? new Map<number, number>()
+        files.set(path, current)
+      }
+    } else if (line === 'end_of_record') current = null
+    else if (current && line.startsWith('DA:')) {
+      const [at, count] = line.slice(3).split(',')
+      const n = Number(at)
+      const c = Number(count)
+      if (Number.isInteger(n) && n >= 1 && Number.isFinite(c)) current.set(n, (current.get(n) ?? 0) + Math.max(0, c))
+    }
+  }
+  const coverage: Record<string, FileCoverage> = {}
+  for (const path of [...files.keys()].sort()) coverage[path] = fileCoverage(files.get(path) as Map<number, number>)
+  return coverage
 }
 
 /**
@@ -280,6 +416,15 @@ export type TraceReads = {
   gitReaders: Set<string>
   /** Whether a path argument was cut short by the tracer, so a read went unrecorded. */
   truncated: boolean
+  /**
+   * Per read, how many times the traced command's own process — every image of the first process the trace shows,
+   * its threads folded in — opened it with a call whose result shows it succeeded (`open`, `openat`, `openat2`,
+   * `creat`, a result on a `<... resumed>` line included). Counted per file: a read that stands for many files (an
+   * installed package's `<input>#<package>`, a package's source folder for its `dist/`) carries its most-opened file's count.
+   */
+  opens: Map<string, number>
+  /** The reads any other process opened successfully: a child, or a thread of a process the trace never named. */
+  childOpens: Set<string>
 }
 
 export type TraceOptions = {
@@ -347,6 +492,8 @@ const AT_CALLS = new Set([
   'execveat'
 ])
 const CLONE_CALLS = new Set(['clone', 'clone3', 'fork', 'vfork'])
+/** Calls that open a file and return its descriptor. */
+const OPEN_CALLS = new Set(['open', 'openat', 'openat2', 'creat'])
 
 /**
  * Whether a path under `.git/` is a read of repository content: an object or the index. Git touches the rest on every
@@ -478,8 +625,8 @@ function leadingDirectory(text: string): { dir: string | 'cwd' | null; rest: str
  * The paths a `strace -f -yy -e trace=%file,getdents64` trace shows the traced
  * process tree reading, as repository-relative paths.
  *
- * Each process keeps its own working directory (`chdir`; a child starts in its
- * parent's). A path is made absolute against its directory argument or its
+ * Each process keeps its own working directory (`chdir`, `fchdir`; its threads
+ * share it, a child starts in its parent's). A path is made absolute against its directory argument or its
  * process's working directory, then resolved through symbolic links — the
  * resolved path `-yy` prints for a successful open is used as is, and a lookup
  * that failed resolves through its deepest existing parent — so a workspace
@@ -500,8 +647,6 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
   const listed = new Set<string>()
   let git = false
   let truncated = false
-  const cwds = new Map<string, string>()
-  const cwdOf = (pid: string) => cwds.get(pid) ?? options.startCwd
   const root = options.repoRoot
   const depFolder = options.dependencyFolder ?? 'node_modules'
   const sourceFolder = options.sourceFolder ?? ((dir: string) => `${dir}/src/`)
@@ -523,29 +668,44 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
    * (a `clone` with `CLONE_THREAD`) folds into the image of the process that started it, so a listing is attributed
    * by process, never by thread id. The first process the trace shows is the traced command; any other id seen
    * before the call that started it is provisional until that call's result names it, and one never named stays
-   * a thread of an unknown process.
+   * a thread of an unknown process. An image carries its process's working directory, which its threads share and a
+   * child or a re-executed image starts from, and the reads it opened successfully, counted.
    */
-  type Image = { pid: string; provisional: boolean; probed: boolean; listed: Set<string>; into?: Image }
+  type Image = {
+    pid: string
+    provisional: boolean
+    probed: boolean
+    listed: Set<string>
+    cwd: string
+    /** Whether the image changed its working directory itself, so a later-named parent's does not replace it. */
+    moved: boolean
+    /** Per opened file (its absolute real path): the read it is recorded as, and how many times it was opened. */
+    opens: Map<string, { read: string; count: number }>
+    into?: Image
+  }
   const images: Image[] = []
   const imageOf = new Map<string, Image>()
   const pendingClone = new Map<string, string>()
+  /** A path call printed in two halves: its name and the path the unfinished half named, until the result arrives. */
+  const pendingCall = new Map<string, { name: string; target: string | null }>()
   const find = (image: Image): Image => {
     let at = image
     while (at.into) at = at.into
     return at
   }
-  const newImage = (pid: string, provisional: boolean): Image => {
-    const image: Image = { pid, provisional, probed: false, listed: new Set() }
+  const newImage = (pid: string, provisional: boolean, cwd: string): Image => {
+    const image: Image = { pid, provisional, probed: false, listed: new Set(), cwd, moved: false, opens: new Map() }
     images.push(image)
     return image
   }
   const imageFor = (tid: string): Image => {
     const known = imageOf.get(tid)
     if (known) return find(known)
-    const image = newImage(tid, images.length > 0)
+    const image = newImage(tid, images.length > 0, options.startCwd)
     imageOf.set(tid, image)
     return image
   }
+  const cwdOf = (tid: string): string => imageFor(tid).cwd
   const started = (parent: string, child: string, thread: boolean): void => {
     const owner = imageFor(parent)
     const early = imageOf.get(child)
@@ -554,25 +714,51 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
       if (seen?.provisional && seen !== owner) {
         for (const folder of seen.listed) owner.listed.add(folder)
         owner.probed ||= seen.probed
+        for (const [file, { read, count }] of seen.opens)
+          owner.opens.set(file, { read, count: (owner.opens.get(file)?.count ?? 0) + count })
+        // A thread shares its process's working directory: a change it made before its start arrived is the process's.
+        if (seen.moved) {
+          owner.cwd = seen.cwd
+          owner.moved = true
+        }
         seen.listed.clear()
+        seen.opens.clear()
         seen.into = owner
       }
       imageOf.set(child, owner)
-    } else if (seen?.provisional) seen.provisional = false
-    else imageOf.set(child, newImage(child, false))
+    } else if (seen?.provisional) {
+      seen.provisional = false
+      if (!seen.moved) seen.cwd = owner.cwd
+    } else imageOf.set(child, newImage(child, false, owner.cwd))
   }
   const cloned = (pid: string, name: string, args: string, body: string): void => {
     const child = /=\s*(\d+)\s*$/.exec(body)?.[1]
     if (child === undefined || child === '0') return
-    if (!cwds.has(child)) cwds.set(child, cwdOf(pid))
     started(pid, child, (name === 'clone' || name === 'clone3') && startsThread(args))
   }
-  /** A successful `execve` replaces the whole process image; the process keeps its id. */
+  /** A successful `execve` replaces the whole process image; the process keeps its id and working directory. */
   const replaced = (tid: string): void => {
     const old = imageFor(tid)
-    const image = newImage(old.pid, old.provisional)
+    const image = newImage(old.pid, old.provisional, old.cwd)
+    image.moved = old.moved
     imageOf.set(tid, image)
     imageOf.set(old.pid, image)
+  }
+  const changedDirectory = (tid: string, absolute: string): void => {
+    const image = imageFor(tid)
+    image.cwd = options.realpath(absolute)
+    image.moved = true
+  }
+  /**
+   * One successful open of `absolute` (resolved through symbolic links unless `resolved`), recorded as `read`, by the
+   * image the thread `tid` belongs to. Counted per file, not per read: one read can stand for many files (every file
+   * of an installed package is `<input>#<package>`, every file under a package's `dist/` its source folder).
+   */
+  const countOpen = (tid: string, read: string | null, absolute: string, resolved: boolean): void => {
+    if (read === null) return
+    const file = resolved ? absolute : options.realpath(absolute)
+    const image = imageFor(tid)
+    image.opens.set(file, { read, count: (image.opens.get(file)?.count ?? 0) + 1 })
   }
   const probeLog = options.probe?.log
   const opened = (path: string, pid: string): void => {
@@ -587,10 +773,11 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     const argv = execArguments(args)
     commands.set(pid, argv ? argv.join(' ') : 'an unreadable command')
   }
-  const record = (absolute: string, resolved: boolean, kind: 'read' | 'list', pid = '0') => {
+  /** Records one path; returns the read it was recorded as, or `null` when it names none (a listing, outside, git). */
+  const record = (absolute: string, resolved: boolean, kind: 'read' | 'list', pid = '0'): string | null => {
     const real = resolved ? absolute : options.realpath(absolute)
     const rel = relativeOf(real)
-    if (rel === null) return
+    if (rel === null) return null
     if (rel === '.git' || rel.startsWith('.git/')) {
       if (isGitContentRead(rel)) {
         const mapped = gitPathReads.get(pid)
@@ -601,7 +788,7 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
           gitReaders.add(commands.get(pid) ?? 'the test process')
         }
       }
-      if (rel !== '.git') return
+      if (rel !== '.git') return null
     }
     if (
       rel === depFolder ||
@@ -611,16 +798,22 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     ) {
       if (options.dependencyInput !== null) {
         const name = installedPackageName(rel, depFolder)
-        if (name) reads.add(dependencyRead(options.dependencyInput, name))
+        if (name) {
+          const read = dependencyRead(options.dependencyInput, name)
+          reads.add(read)
+          return read
+        }
       }
-      return
+      return null
     }
     if (kind === 'list') {
       listed.add(rel)
-      return
+      return null
     }
     const pkg = packageDirs.find((d) => rel === `${d}/dist` || rel.startsWith(`${d}/dist/`))
-    reads.add(pkg ? sourceFolder(pkg) : rel)
+    const read = pkg ? sourceFolder(pkg) : rel
+    reads.add(read)
+    return read
   }
   const absolute = (path: string, dir: string | 'cwd' | null, pid: string): string | null => {
     if (path.startsWith('/')) return posix.normalize(path)
@@ -650,11 +843,22 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
         cloned(pid, resumed[1] as string, args, body)
         return
       }
+      const callName = resumed[1] as string
+      const half = pendingCall.get(pid)
+      pendingCall.delete(pid)
+      const pending = half?.name === callName ? half.target : null
+      if ((callName === 'chdir' || callName === 'fchdir') && pending !== null && /\)\s*=\s*0\s*$/.test(body))
+        changedDirectory(pid, pending)
       // The arguments were on the unfinished half; the result's descriptor path still names a resolved file.
       const fd = /\)\s*=\s*\d+<([^>]+)>/.exec(body)
-      if (fd && PATH_CALLS.has(resumed[1] as string)) {
+      if (fd && PATH_CALLS.has(callName)) {
         opened(fd[1] as string, pid)
-        record(fd[1] as string, true, 'read', pid)
+        const read = record(fd[1] as string, true, 'read', pid)
+        if (OPEN_CALLS.has(callName)) countOpen(pid, read, fd[1] as string, true)
+      } else if (OPEN_CALLS.has(callName) && pending !== null && /\)\s*=\s*\d+\s*$/.test(body)) {
+        // A descriptor printed without its path: the unfinished half's path, already recorded, is what it opened.
+        opened(pending, pid)
+        countOpen(pid, record(pending, false, 'read', pid), pending, false)
       }
       return
     }
@@ -675,6 +879,13 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
         const folder = repositoryFolder(fd[1] as string, options, true)
         if (folder !== null) imageFor(pid).listed.add(folder)
       }
+      return
+    }
+    if (name === 'fchdir') {
+      // `-yy` prints the folder the descriptor names.
+      const fd = /^-?\d+<([^>]+)>/.exec(args)?.[1] ?? null
+      if (/<unfinished \.\.\.>\s*$/.test(body)) pendingCall.set(pid, { name, target: fd })
+      else if (fd !== null && /\)\s*=\s*0\s*$/.test(body)) changedDirectory(pid, fd)
       return
     }
     if (!PATH_CALLS.has(name)) return
@@ -699,14 +910,21 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
     // The resolved descriptor path of a successful open, else the path as the process spelled it.
     const done = /\)\s*=\s*\d+<([^>]+)>\s*$/.exec(body)
     const failed = /\)\s*=\s*-1\b/.test(body)
-    const opens = name === 'open' || name === 'openat' || name === 'openat2' || name === 'creat'
+    const unfinished = /<unfinished \.\.\.>\s*$/.test(body)
+    // Its result arrives on a `<... resumed>` line: what the call opened, or the folder it moved to, is decided there.
+    if (unfinished) pendingCall.set(pid, { name, target })
+    const opens = OPEN_CALLS.has(name)
     if (opens && !failed) {
       opened(target, pid)
       if (done) opened(done[1] as string, pid)
     }
-    if (done && !failed && opens) record(done[1] as string, true, 'read', pid)
-    else record(target, false, 'read', pid)
-    if (name === 'chdir' && !failed && /\)\s*=\s*0\s*$/.test(body)) cwds.set(pid, options.realpath(target))
+    // An open counts only when its result is a descriptor: a failed one, or one still unfinished, is a probe here.
+    if (done && !failed && opens) countOpen(pid, record(done[1] as string, true, 'read', pid), done[1] as string, true)
+    else {
+      const read = record(target, false, 'read', pid)
+      if (opens && /\)\s*=\s*\d+\s*$/.test(body)) countOpen(pid, read, target, false)
+    }
+    if (name === 'chdir' && /\)\s*=\s*0\s*$/.test(body)) changedDirectory(pid, target)
   }
   const result = (): TraceReads => {
     const processScanned = new Set<string>()
@@ -723,7 +941,23 @@ export function createTraceReader(options: TraceOptions): { feed(line: string): 
         !probe.wholly.has(image.pid)
       if (!probed) for (const folder of image.listed) processScanned.add(folder)
     }
-    return { reads, listed, processScanned, git, gitReaders, truncated }
+    // The traced command's own process: every image of the first process id, its threads folded in. Any other image
+    // is a child, or a thread of a process the trace never named, and counts as one.
+    const own = images[0]?.pid
+    const perFile = new Map<string, { read: string; count: number }>()
+    const childOpens = new Set<string>()
+    for (const image of images) {
+      if (image.into) continue
+      const mine = image.pid === own && !image.provisional
+      for (const [file, { read, count }] of image.opens)
+        if (mine) perFile.set(file, { read, count: (perFile.get(file)?.count ?? 0) + count })
+        else childOpens.add(read)
+    }
+    // A read that stands for many files carries the count of its most-opened file: above 1 still means one file opened
+    // more than once, never several files opened once each.
+    const opens = new Map<string, number>()
+    for (const { read, count } of perFile.values()) opens.set(read, Math.max(opens.get(read) ?? 0, count))
+    return { reads, listed, processScanned, git, gitReaders, truncated, opens, childOpens }
   }
   return { feed, result }
 }
