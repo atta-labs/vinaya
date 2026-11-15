@@ -219,7 +219,7 @@ const FOREIGN_LOCATION = /node_modules|\bnode:|\[native code\]|\(native\)/
 /** A line the test scheduler writes that reports a failure — it names the failing groups or files. */
 const SCHEDULER_LINE = /^\s*(?:vinaya|bun apps\/cli\/src\/index\.ts) schedule:/
 /** An inventory or schedule problem line: `<code> <path>: <detail>`. */
-const SCHEDULER_PROBLEM = /^(?:duplicate|extra|missing|unmodeled|schema) \S/
+const SCHEDULER_PROBLEM = /^(?:duplicate|extra|missing) \S+[/.]\S*(?: \([^)]*\))?:/
 function isSchedulerFailure(line: string): boolean {
   const match = SCHEDULER_LINE.exec(line)
   if (match === null) return false
