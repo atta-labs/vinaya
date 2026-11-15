@@ -224,6 +224,27 @@ function wholeSuitesOf(view: InventoryView): WholeSuitePolicy[] {
     )
 }
 
+/** The file-level data file, repository-relative: the tests selection keeps at file level, one named list each. */
+export const FILE_LEVEL_TESTS_PATH = 'scripts/test-suites/file-level-tests.json'
+
+/**
+ * The two lists of the head commit's file-level data file that selection keeps whole — the tests the host's real
+ * sandbox decides and the tests that may reach the real GitHub CLI — each as the paths it names. A commit without
+ * the file, or a list that is not an object of paths, has an empty list.
+ */
+export function fileLevelLists(repoRoot: string, head: string): NonNullable<SelectionPolicy['fileLevel']> {
+  const text = revisionReader(repoRoot, head).read(FILE_LEVEL_TESTS_PATH)
+  let data: Record<string, unknown> = {}
+  try {
+    if (text !== null) data = JSON.parse(text) as Record<string, unknown>
+  } catch {
+    data = {}
+  }
+  const keys = (list: unknown): string[] =>
+    typeof list === 'object' && list !== null && !Array.isArray(list) ? Object.keys(list).sort() : []
+  return { realSandbox: keys(data['real-sandbox']), outsideCall: keys(data['outside-call']) }
+}
+
 /** This repository's selection policy, read from the head commit: the same for every caller. */
 export function repositoryPolicy(repoRoot: string, head: string, view: InventoryView): SelectionPolicy {
   return {
@@ -236,6 +257,7 @@ export function repositoryPolicy(repoRoot: string, head: string, view: Inventory
     ],
     obligations: obligationsOf(repoRoot, head, view),
     wholeSuites: wholeSuitesOf(view),
+    fileLevel: fileLevelLists(repoRoot, head),
     parsers: { toml: (text) => Bun.TOML.parse(text), 'bun-lock': bunLockParser }
   }
 }
