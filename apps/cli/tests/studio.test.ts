@@ -50,7 +50,7 @@ function fakeInstall(withBundle: boolean): { root: string; moduleUrl: string; bu
     mkdirSync(join(bundleRoot, STUDIO_NODE_MODULES_PACKED_DIRNAME, 'next'), { recursive: true })
     writeFileSync(
       join(serverDir, STUDIO_ENTRY_FILENAME),
-      `require('node:http').createServer((req, res) => res.end(process.env.HOSTNAME)).listen(Number(process.env.PORT), process.env.HOSTNAME)\n`
+      `import http from 'node:http'\nhttp.createServer((req, res) => res.end(process.env.HOSTNAME)).listen(Number(process.env.PORT), process.env.HOSTNAME)\n`
     )
   }
   return { root, moduleUrl: pathToFileURL(join(root, 'dist', 'index.js')).href, bundleRoot }
@@ -126,8 +126,14 @@ describe('studio host, port and launch plan', () => {
     const plan = planLaunch({ kind: 'checkout', appDir: '/repo/apps/vinaya-studio' }, '/repo', 3108, {
       HOSTNAME: '0.0.0.0'
     })
-    expect(plan.command).toBe('bun')
-    expect(plan.args).toEqual(['run', join('src', 'server', 'entry.ts'), '--dir', '/repo/apps/vinaya-studio', '--dev'])
+    expect(plan.command).toBe('node')
+    expect(plan.args).toEqual([
+      '--experimental-strip-types',
+      join('src', 'server', 'entry.ts'),
+      '--dir',
+      '/repo/apps/vinaya-studio',
+      '--dev'
+    ])
     expect(plan.cwd).toBe('/repo/apps/vinaya-studio')
     expect(plan.env).toMatchObject({ HOSTNAME: '127.0.0.1', PORT: '3108' })
   })

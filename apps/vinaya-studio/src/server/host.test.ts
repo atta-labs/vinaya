@@ -84,6 +84,24 @@ describe('createStudioHost', () => {
     expect(await (await fetch(`http://127.0.0.1:${port}/api/now`)).text()).toBe('42')
   })
 
+  test('an application upgrade from another origin, or to another host name, is refused', async () => {
+    const { port } = await start()
+    const foreign = new WebSocket(`ws://127.0.0.1:${port}${LIVE_ROUTE}`, { origin: 'http://evil.example' })
+    await new Promise((resolve) => foreign.once('error', resolve))
+    const rebound = new WebSocket(`ws://127.0.0.1:${port}${LIVE_ROUTE}`, { headers: { host: `evil.example:${port}` } })
+    await new Promise((resolve) => rebound.once('error', resolve))
+    const same = await opened(`ws://127.0.0.1:${port}${LIVE_ROUTE}`)
+    expect(same.first).toBe(LIVE_HELLO)
+    same.ws.close()
+  })
+
+  test('an application HTTP route refuses a foreign origin and a non-loopback host name', async () => {
+    const { port } = await start()
+    const url = `http://127.0.0.1:${port}${TASK_LIST_ROUTE}`
+    expect((await fetch(url, { headers: { origin: 'http://evil.example' } })).status).toBe(403)
+    expect((await fetch(url, { headers: { origin: `http://127.0.0.1:${port}` } })).status).toBe(200)
+  })
+
   test('close ends open sockets and the listener within the grace', async () => {
     const { host, port } = await start()
     const { ws } = await opened(`ws://127.0.0.1:${port}${LIVE_ROUTE}`)

@@ -1,4 +1,4 @@
-import { createStudioHost } from './host'
+import { createStudioHost } from './host.ts'
 
 /**
  * The normal way Studio starts: `entry --dir <next project> [--dev]`, listening on the loopback address named by
@@ -16,6 +16,11 @@ const dir = flag('--dir') ?? process.cwd()
 const dev = process.argv.includes('--dev')
 const hostname = process.env.HOSTNAME ?? '127.0.0.1'
 const port = Number(process.env.PORT ?? '3008')
+
+if (!['127.0.0.1', 'localhost', '::1'].includes(hostname)) {
+  console.error(`Studio listens only on the loopback address, not "${hostname}".`)
+  process.exit(1)
+}
 
 const host = createStudioHost({ dir, dev, hostname, port })
 

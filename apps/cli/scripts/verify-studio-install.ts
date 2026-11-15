@@ -14,13 +14,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { delimiter, join, relative, sep } from 'node:path'
+// The route and frame come from the host itself, so the proof cannot drift from what Studio serves.
+import { LIVE_HELLO, LIVE_ROUTE } from '../../vinaya-studio/src/server/live-protocol'
 
 const CLI_PKG_DIR = join(import.meta.dir, '..')
 const REPO_ROOT = join(CLI_PKG_DIR, '..', '..')
-
-/** The application WebSocket route and the frame it answers with — kept equal to `apps/vinaya-studio/src/server/host.ts`. */
-const LIVE_ROUTE = '/api/mission-control/live'
-const LIVE_HELLO = '{"type":"hello"}'
 
 const ANSWER_DEADLINE_MS = 120_000
 const STOP_GRACE_MS = 10_000

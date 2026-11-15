@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { type WebSocket, WebSocketServer } from 'ws'
+import { LIVE_HELLO, LIVE_ROUTE } from './live-protocol.ts'
 
 /**
  * Studio's one local application server. It owns the HTTP listener, answers WebSocket upgrades on the application
@@ -9,14 +10,10 @@ import { type WebSocket, WebSocketServer } from 'ws'
  * shipped, so it imports no Bun API. Importing it starts nothing: a listener exists only after `listen()`.
  */
 
-/** The one application WebSocket route of Mission Control. */
-export const LIVE_ROUTE = '/api/mission-control/live'
+export { LIVE_HELLO, LIVE_ROUTE }
 
 /** The minimal live task-list endpoint of this tranche. It carries no repository data. */
 export const TASK_LIST_ROUTE = '/api/mission-control/tasks'
-
-/** The greeting the application upgrade smoke handler sends: a fixed frame, no repository data. */
-export const LIVE_HELLO = JSON.stringify({ type: 'hello' })
 
 /** How long `close()` waits for connections to end before it destroys them. */
 export const CLOSE_GRACE_MS = 3_000
@@ -69,6 +66,29 @@ export type StudioHost = {
   close(): Promise<void>
 }
 
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+
+function hostnameOf(value: string): string {
+  return value.startsWith('[') ? value.slice(0, value.indexOf(']') + 1) : (value.split(':')[0]?.toLowerCase() ?? '')
+}
+
+/**
+ * True when a request is addressed to this loopback server and, when a browser names an Origin, comes from a page
+ * served by it. A page on another site, or a rebinding name that resolves to loopback, is refused before any
+ * application handler runs.
+ */
+export function isLocalRequest(req: IncomingMessage): boolean {
+  const host = req.headers.host
+  if (!host || !LOOPBACK_HOSTS.has(hostnameOf(host))) return false
+  const origin = req.headers.origin
+  if (origin === undefined) return true
+  try {
+    return new URL(origin).host === host
+  } catch {
+    return false
+  }
+}
+
 function pathOf(req: IncomingMessage): string {
   const raw = req.url ?? '/'
   const q = raw.indexOf('?')
@@ -106,6 +126,11 @@ export function createStudioHost(options: StudioHostOptions): StudioHost {
 
   const server = createServer((req, res) => {
     const route = routes.get(pathOf(req))
+    if (route && !isLocalRequest(req)) {
+      res.statusCode = 403
+      res.end()
+      return
+    }
     const run = route ? route(req, res) : handle?.(req, res)
     Promise.resolve(run).catch(() => {
       if (!res.headersSent) res.statusCode = 500
@@ -116,6 +141,10 @@ export function createStudioHost(options: StudioHostOptions): StudioHost {
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const handler = sockets.get(pathOf(req))
     if (handler) {
+      if (!isLocalRequest(req)) {
+        socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
+        return
+      }
       wss.handleUpgrade(req, socket, head, (ws) => handler(ws, req))
       return
     }

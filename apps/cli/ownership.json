@@ -49,6 +49,7 @@
       "scripts/bundle-doctrine.ts",
       "scripts/bundle-studio.ts",
       "scripts/verify-published-lifecycle.ts",
+      "scripts/verify-studio-install.ts",
       "templates/"
     ],
     "package-metadata": [
