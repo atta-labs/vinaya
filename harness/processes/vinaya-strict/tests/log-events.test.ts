@@ -25,7 +25,8 @@ import {
   type LogEventInput,
   type LogTranslator
 } from '../../../../harness/kernel/log/client/translate'
-import { loadRoleGrants, ROLE_NAMES } from '../../../../harness/kernel/adapters/agents/manifest'
+import { loadRoleGrants } from '../../../../harness/kernel/adapters/agents/manifest'
+import { VINAYA_LAUNCHED_ROLES } from '../integration/policies/launched-roles'
 import {
   ACTION_BINDINGS,
   createActions,
@@ -441,7 +442,7 @@ describe('the Engine path writes the review loop events from the run', () => {
     for (const launcher of Object.values(roles)) {
       expect(Object.keys(launcher).sort()).toEqual(['allowedPermissions', 'buildArgs', 'command', 'env'])
     }
-    for (const role of ROLE_NAMES) {
+    for (const role of VINAYA_LAUNCHED_ROLES) {
       const grants = loadRoleGrants(resolve(import.meta.dir, '..', 'executing', role, 'grants.yaml'))
       const allowed = [
         ...Object.entries(grants.tools.claude).flatMap(([tool, decision]) => (decision === 'allow' ? [tool] : [])),

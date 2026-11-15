@@ -62,7 +62,7 @@ import {
   spawnSyncBudgeted,
   stripVinayaEnv
 } from '../../../../../kernel/conformance/unit/process-fixture.js'
-import { ROLE_NAMES } from '../../../../../kernel/adapters/agents/manifest.js'
+import { VINAYA_LAUNCHED_ROLES } from '../../policies/launched-roles.js'
 import { createRoleLaunchers, sandboxProbePlanFor } from '../../../executing/actions.js'
 import { commandsTheTextsName, DOCTRINE_SOURCES, isSuiteInput, REPO_ROOT } from './command-sources.js'
 import {
@@ -556,7 +556,7 @@ describe('Engine credential-confinement probes — the command and deny-rule che
       ] as const) {
         const generatedRoot = join(root, agent)
         const launchers = createRoleLaunchers({ vendor, generatedRoot })
-        for (const role of ROLE_NAMES) {
+        for (const role of VINAYA_LAUNCHED_ROLES) {
           // The probe's environment is the Engine's allowlisted launch env, so no API-key variable flows into it.
           const plan = sandboxProbePlanFor(
             vendor,
@@ -860,11 +860,11 @@ describe('Engine containment probes — the command, canary, deny-rule and launc
     try {
       const homes = (run: string): Record<string, string | undefined> => {
         const launchers = createRoleLaunchers({ vendor: 'codex', generatedRoot: join(root, run) })
-        return Object.fromEntries(ROLE_NAMES.map((role) => [role, launchers[role]?.env?.CODEX_HOME]))
+        return Object.fromEntries(VINAYA_LAUNCHED_ROLES.map((role) => [role, launchers[role]?.env?.CODEX_HOME]))
       }
       const first = homes('run-1')
       const second = homes('run-2')
-      for (const role of ROLE_NAMES) {
+      for (const role of VINAYA_LAUNCHED_ROLES) {
         expect(first[role], `${role} run 1`).toBe(join(root, 'run-1', role))
         expect(second[role], `${role} run 2`).toBe(join(root, 'run-2', role))
         expect(first[role]).not.toBe(second[role])
@@ -1256,7 +1256,7 @@ async function openControllerTargets(session: SandboxSession): Promise<{
 // where the socket answered, the server named the expected refusal; a `residual` or `owed` row is printed, never
 // asserted.
 for (const agent of AGENTS) {
-  for (const role of ROLE_NAMES) {
+  for (const role of VINAYA_LAUNCHED_ROLES) {
     const files = GENERATED_FOR_LIVE[agent][role] as Record<string, string>
     describe.skipIf(!LIVE)(`Engine controller-boundary probes — ${agent}/${role}'s generated launch shape`, () => {
       if (!roleHasShell(files)) {
@@ -1356,7 +1356,7 @@ for (const agent of AGENTS) {
 // pasted, is the ambient-environment row, whose evidence entry names this file:
 //   fault-attack:40-ambient-credential-inherited-by-a-role-environment
 for (const agent of AGENTS) {
-  for (const role of ROLE_NAMES) {
+  for (const role of VINAYA_LAUNCHED_ROLES) {
     const files = GENERATED_FOR_LIVE[agent][role] as Record<string, string>
     if (!roleHasShell(files)) {
       describe(`Engine credential-confinement probes — ${agent}/${role} is granted no shell`, () => {
@@ -1477,7 +1477,7 @@ async function openContainmentTargets(session: SandboxSession): Promise<{
 }
 
 for (const agent of AGENTS) {
-  for (const role of ROLE_NAMES) {
+  for (const role of VINAYA_LAUNCHED_ROLES) {
     const files = GENERATED_FOR_LIVE[agent][role] as Record<string, string>
     describe.skipIf(!LIVE)(`Engine containment probes — ${agent}/${role}'s generated launch shape`, () => {
       const probes = CONTAINMENT_PROBES.filter((probe) => probe.roles.includes(role))

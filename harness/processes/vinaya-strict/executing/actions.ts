@@ -20,7 +20,8 @@ import type { PostedVerdictBodies } from '../tools/review-gate'
 import type { RoleBinaryConfig, StepNodeResult } from '@atta/executor-agent-spawn'
 import { generateClaudeSettings } from '../../../../harness/kernel/adapters/agents/claude-code/settings'
 import { generateCodexConfig } from '../../../../harness/kernel/adapters/agents/codex/config'
-import { loadRoleGrants, ROLE_NAMES, withModel } from '../../../../harness/kernel/adapters/agents/manifest'
+import { loadRoleGrants, withModel } from '../../../../harness/kernel/adapters/agents/manifest'
+import { VINAYA_LAUNCHED_ROLES } from '../integration/policies/launched-roles'
 import { sessionIdOf, structuredResult } from '../../../../harness/kernel/adapters/agents/structured-result'
 import { pullRequestCheckEnv, type PullRequestView } from './pull-request-env'
 import type { Handoff, InputVersions, PauseRequest } from './handoff'
@@ -2985,7 +2986,7 @@ export function createRoleLaunchers(options: {
   variables?: Record<string, string>
   mcpCommand?: string
   /** A role-specific bridge command; takes precedence over the shared command. */
-  mcpCommands?: Readonly<Record<string, string>>
+  mcpCommands?: Readonly<Partial<Record<string, string>>>
   /** Replaces a `process-supplied` model in every role's grants for this run. */
   model?: string
   /** Claude's sandbox may use Unix sockets (the Linux host opt-in); the Codex adapter has no such filter. */
@@ -2998,7 +2999,7 @@ export function createRoleLaunchers(options: {
   timeouts?: Readonly<Record<string, number>>
 }): RoleLauncher {
   const launchers: Record<string, ReturnType<typeof createRoleLauncher>> = {}
-  for (const role of ROLE_NAMES) {
+  for (const role of VINAYA_LAUNCHED_ROLES) {
     const grants = withModel(loadRoleGrants(join(executing, role, 'grants.yaml')), options.model)
     const outputSchemaPath = join(executing, role, 'output.schema.json')
     const generatedDir = join(options.generatedRoot, role)

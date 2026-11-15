@@ -28,9 +28,9 @@ import {
   loadRoleGrants,
   type RoleCapabilities,
   type RoleContract,
-  resolveRoleGrants,
-  ROLE_NAMES
+  resolveRoleGrants
 } from '../../../../../kernel/adapters/agents/manifest'
+import { VINAYA_LAUNCHED_ROLES } from '../../policies/launched-roles'
 import type { GeneratedAgentConfig } from '../../../../../kernel/isolation/policy'
 
 const NONE: RoleCapabilities = {
@@ -179,7 +179,7 @@ describe('the developer before and after the capability contract', () => {
     expect(embeddedPolicy(codex)).toBe(embeddedPolicy(before.codex))
   })
 
-  for (const role of ROLE_NAMES)
+  for (const role of VINAYA_LAUNCHED_ROLES)
     test(`Codex ${role} requires its dev-tools server at startup`, () => {
       const roleGrants = loadRoleGrants(join(processRoot, role, 'grants.yaml'))
       const generated = generateCodexConfig(roleGrants, paths)
