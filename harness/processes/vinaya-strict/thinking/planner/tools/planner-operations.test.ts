@@ -193,7 +193,11 @@ describe('printIssueSurface', () => {
 
 describe('renderBrief', () => {
   it('returns the missing facts as a refusal for a task that does not exist', async () => {
-    const out = await renderBrief({ trancheSlug: 'no-such-tranche-planner-ops', taskId: '1' })
+    const assemble = (async (trancheSlug: string) => ({
+      ok: false,
+      missing: [`tranche ${trancheSlug} does not exist on the forge`]
+    })) as never
+    const out = await renderBrief({ trancheSlug: 'no-such-tranche-planner-ops', taskId: '1' }, assemble)
     expect(out.ok).toBe(false)
     if (!out.ok) expect(out.missing.length).toBeGreaterThan(0)
   })
