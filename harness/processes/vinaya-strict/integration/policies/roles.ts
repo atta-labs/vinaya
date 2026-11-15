@@ -6,7 +6,7 @@
  */
 
 import type { TaskToolName } from '../../../../kernel/tools/catalog/task-tools'
-import { ROLE_VALUES } from '../../../../kernel/log/schema'
+import { VINAYA_LOG_ROLE_NAMES } from '../log/log-roles'
 import type { BrokerRolePolicy } from '../../../../kernel/tools/host/broker.js'
 import type { ToolGrantPolicy } from '../../../../kernel/tools/role-grants.js'
 import type { RouterRolePolicy } from '../../../../kernel/tools/host/router.js'
@@ -46,7 +46,7 @@ export const VINAYA_TOOL_GRANTS: ToolGrantPolicy = { roles: GRANTED_ROLES, grant
 // --- the broker ---------------------------------------------------------------
 
 /**
- * The broker recognizes exactly the Log's role vocabulary (`ROLE_VALUES`), and
+ * The broker recognizes exactly Vinaya's Log roles (`log/log-roles.ts`), and
  * maps only the Developer — `isolation.md` §1's "Worker" row — to the Worker
  * grant. `code-reviewer` and `security` are real dispatched roles that hold no
  * Worker grant; `principal`, `planner`, `archivist` and `architect` are never
@@ -54,7 +54,7 @@ export const VINAYA_TOOL_GRANTS: ToolGrantPolicy = { roles: GRANTED_ROLES, grant
  * the Planner, who owns the task's Surface.
  */
 export const VINAYA_BROKER_ROLES: BrokerRolePolicy = {
-  recognizedRoles: ROLE_VALUES,
+  recognizedRoles: VINAYA_LOG_ROLE_NAMES,
   workerRoles: ['developer'],
   surfaceOwner: 'the Planner'
 }

@@ -1,23 +1,11 @@
+import { lookupTitle } from '../../log/roles'
 import type { Role } from '../../log/schema'
 import type { ActionKind, NarratedAction, NarratedUpdate } from './claude-code/loop-narration-claude.js'
 
 export type AgentLineMark = 'working' | 'done' | 'failed' | 'waiting' | 'round'
 
-const roleLabels: Record<Role, string> = {
-  planner: 'Planner',
-  developer: 'Developer',
-  'code-reviewer': 'Code review',
-  security: 'Security',
-  principal: 'Principal',
-  archivist: 'Archivist',
-  architect: 'Architect'
-}
-
 function roleLabel(role: Role | string): string {
-  if (role in roleLabels) return roleLabels[role as Role]
-  if (role === 'dev-review-loop') return 'Loop'
-  if (role === 'operator') return 'Operator'
-  return role.replace(/-/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+  return lookupTitle(role) ?? role.replace(/-/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
 const unicodeMarks: Record<AgentLineMark, string> = { working: '▸', done: '✓', failed: '✕', waiting: '◌', round: '◆' }

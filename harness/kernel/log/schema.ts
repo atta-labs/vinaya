@@ -26,12 +26,10 @@
  * to fill in later; this module ships the typed slot, honestly empty until
  * then.
  *
- * `subject.role` keeps its EXISTING closed-`Role`-or-`'unattributed'`
- * meaning unchanged — it is relied on outside this module (`dispatch.ts`,
- * `commands/dispatch.ts`'s argv validation) and this task does not touch
- * it. The new `meta.actor_id` (v2 only) is the opaque, unvalidated
+ * `subject.role` is an open role name or `'unattributed'`: any well-formed
+ * name a process registered. The new `meta.actor_id` (v2 only) is the opaque, unvalidated
  * identifier O1 asks for: whatever the environment claims, never checked
- * against `ROLE_VALUES` — the two are deliberately different fields with
+ * against the registered roles — the two are deliberately different fields with
  * different trust levels, not a replacement of one by the other.
  *
  * One deviation from the spec, decided in a prior task's brief: the spec's
@@ -66,18 +64,10 @@ export const CONFIDENCE_REASON_MAX_LENGTH = 280
 /** Maximum retained reviewer wording for one finding; capture adds `…` when it trims. */
 export const REVIEW_FINDING_DESCRIPTION_MAX_LENGTH = 1_000
 
-/** Every dispatchable doctrine role, spelled exactly as the spec's Role union (§5.1) — the doctrine-facing name (`code-reviewer`), not the `reviewer.md` filename `resolveDoctrineRootInfo` resolves it to. */
-export const ROLE_VALUES = [
-  'planner',
-  'developer',
-  'code-reviewer',
-  'security',
-  'principal',
-  'archivist',
-  'architect'
-] as const
+/** A role name a process uses: lower-case letters, digits and dashes. Which names a process attributes is its own registry (`roles.ts`), never this schema. */
+export const ROLE_NAME_PATTERN = /^[a-z0-9-]+$/
 
-export const RoleSchema = z.enum(ROLE_VALUES)
+export const RoleSchema = z.string().regex(ROLE_NAME_PATTERN)
 export type Role = z.infer<typeof RoleSchema>
 
 export const HOST_VALUES = ['hook', 'ci', 'cli', 'loop'] as const

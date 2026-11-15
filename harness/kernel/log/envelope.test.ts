@@ -1,6 +1,14 @@
-import { describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { buildHeader, type HeaderInput } from './envelope'
+import { registerRole, restoreRoleRegistry, saveRoleRegistry, type RoleRegistrySnapshot } from './roles'
 import { HeaderSchema } from './schema'
+
+let savedRoles: RoleRegistrySnapshot
+beforeAll(() => {
+  savedRoles = saveRoleRegistry()
+  registerRole('developer', { reading: 'developer', title: 'Developer', reviews: false })
+})
+afterAll(() => restoreRoleRegistry(savedRoles))
 
 const baseInput: HeaderInput = {
   now: new Date('2026-09-05T00:00:00.000Z'),
@@ -125,7 +133,7 @@ describe('buildHeader', () => {
     expect(meta.lineage.attempt).toBeNull()
   })
 
-  it('fills actor_id from VINAYA_ROLE even when the role is NOT a known doctrine role — opaque, never validated against ROLE_VALUES', () => {
+  it('fills actor_id from VINAYA_ROLE even when the role is NOT a known doctrine role — opaque, never validated against the registered roles', () => {
     const { meta } = buildHeader({ ...baseInput, env: { role: 'ci-gate' } })
     if (meta.schema !== 4) throw new Error('expected schema 4')
     expect(meta.actor_id).toBe('ci-gate')

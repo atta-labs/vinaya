@@ -1109,9 +1109,16 @@ describe('LogEventSchema — defeat cases', () => {
     expect(LogEventSchema.safeParse(line).success).toBe(true)
   })
 
-  it('refuses subject.role outside the Role union or "unattributed"', () => {
-    const line = { ...validDispatched, subject: { ...subject, role: 'admin' } }
-    expect(LogEventSchema.safeParse(line).success).toBe(false)
+  it('accepts any lower-case role name of letters, digits and dashes in every role field', () => {
+    const line = { ...validDispatched, subject: { ...subject, role: 'admin-2' }, target_role: 'some-new-role' }
+    expect(LogEventSchema.safeParse(line).success).toBe(true)
+  })
+
+  it('refuses an empty role name or one with other characters', () => {
+    for (const role of ['', 'Admin', 'a b', 'a_b', 'a/b', 'a.b']) {
+      expect(LogEventSchema.safeParse({ ...validDispatched, subject: { ...subject, role } }).success).toBe(false)
+      expect(LogEventSchema.safeParse({ ...validDispatched, target_role: role }).success).toBe(false)
+    }
   })
 
   it('accepts subject.role: unattributed', () => {

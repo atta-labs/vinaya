@@ -66,7 +66,8 @@
  * there and nowhere else"), built on the reused map.
  */
 
-import { CODE_TOKEN_PATTERN, ROLE_VALUES, type Role } from '@attalabs/harness/log/schema'
+import { CODE_TOKEN_PATTERN, type Role } from '@attalabs/harness/log/schema'
+import { VINAYA_LOG_ROLE_NAMES } from '../../integration/log/log-roles'
 import { groupRounds, type Round, type VerdictComment } from '../task-contract/review-status'
 import { isActiveBudgetPhase, taskPhaseLabel } from '../task-phase-history'
 import {
@@ -201,7 +202,7 @@ function reviewerEntries(
   verdicts: VerdictObservation[]
 ): NonNullable<Extract<DevReviewLoopEventInput, { event: 'verdicts_read' }>['reviewers']> {
   const held = new Map(verdicts.map((v) => [verdictLogRole(v.role), v]))
-  const isRole = (value: string): value is Role => (ROLE_VALUES as readonly string[]).includes(value)
+  const isRole = (value: string): value is Role => VINAYA_LOG_ROLE_NAMES.includes(value)
   const roles = [...new Set([...state.config.reviewers.filter(isRole), ...held.keys()])]
   return roles.map((role) => {
     const v = held.get(role)

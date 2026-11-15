@@ -4,7 +4,8 @@
  * adds its own time and styling.
  */
 
-import { CODE_TOKEN_PATTERN, ROLE_VALUES } from '../schema'
+import { lookupRole } from '../roles'
+import { CODE_TOKEN_PATTERN } from '../schema'
 
 export const NARRATION_KINDS = [
   'starting',
@@ -67,10 +68,8 @@ function code(value: unknown): string | null {
 
 /** The role as the record carries it, spaced for reading and ready to start a sentence; a role the Log does not know reads as "A role". */
 function roleSubject(value: unknown, sentenceStart = true): string {
-  const name =
-    typeof value === 'string' && (ROLE_VALUES as readonly string[]).includes(value)
-      ? `the ${value === 'security' ? 'security reviewer' : value.replace(/-/g, ' ')}`
-      : 'a role'
+  const known = typeof value === 'string' ? lookupRole(value) : undefined
+  const name = known ? `the ${known.reading}` : 'a role'
   return sentenceStart ? `${name[0]?.toUpperCase()}${name.slice(1)}` : name
 }
 
@@ -224,7 +223,7 @@ function conflictReentry(record: Fields): NarrationLine {
 function dispatched(record: Fields): NarrationLine {
   const role = text(record.target_role)
   const who = roleSubject(role)
-  const reviewing = role === 'code-reviewer' || role === 'security'
+  const reviewing = role !== null && (lookupRole(role)?.reviews ?? false)
   const round = whole(record.round)
   return {
     kind: 'working',

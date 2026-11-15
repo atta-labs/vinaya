@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { ROLE_VALUES } from '../../../../../kernel/log/schema'
+import { VINAYA_LOG_ROLE_NAMES } from '../../../integration/log/log-roles'
 import { DEV_TOOL_NAMES } from '../../../../../kernel/tools/dev-tools-server.js'
 import { isToolGranted } from '../../../../../kernel/tools/role-grants.js'
 import { AGENT_TOOL_CATALOG } from '../../../../../kernel/tools/tool-catalog.js'
@@ -66,7 +66,7 @@ describe('ROLE_TOOL_GRANTS — the one grant table', () => {
 
 describe("the broker's role facts", () => {
   it('recognizes exactly the Log role vocabulary', () => {
-    expect([...VINAYA_BROKER_ROLES.recognizedRoles]).toEqual([...ROLE_VALUES])
+    expect([...VINAYA_BROKER_ROLES.recognizedRoles]).toEqual([...VINAYA_LOG_ROLE_NAMES])
   })
   it('maps only the Developer to the Worker grant', () => {
     expect([...VINAYA_BROKER_ROLES.workerRoles]).toEqual(['developer'])
