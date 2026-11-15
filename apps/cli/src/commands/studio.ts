@@ -129,8 +129,9 @@ export type SpawnPlan = { command: string; args: string[]; cwd: string; env: Nod
 /**
  * How each shape starts: the same Studio host (`apps/vinaya-studio/src/server`), which reads `HOSTNAME` and `PORT` from
  * its environment, never the app's `dev` script (it fixes host and port and would never let the fallback port apply).
- * A checkout runs the host from source in development mode, under Node with type stripping, as Next's own dev server runs; the installed package runs the host bundled for
- * Node from the shipped folder.
+ * A checkout runs the host from source in development mode, under Node with type stripping (available from the
+ * published minimum Node, 22.13, behind the flag), as Next's own dev server runs; the installed package runs the host
+ * bundled for Node from the shipped folder.
  */
 export function planLaunch(
   target: Exclude<StudioTarget, { kind: 'missing' }>,
