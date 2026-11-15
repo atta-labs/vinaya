@@ -819,14 +819,34 @@ export const FIXTURE_GITHUB_REPOSITORY = 'vinaya-fixture-owner/vinaya-fixture-re
 // `dispatch/worker-boundary.test.ts`, and these scenarios run on Linux CI.
 export const SUBPROCESS_BUDGET_MS = 40_000
 
+/** The variable the read recorder sets on a traced run: how many times slower than an untraced run the tracer makes it. */
+export const TIME_SCALE_ENV = 'VINAYA_TEST_TIME_SCALE'
+
+/**
+ * The factor a traced run multiplies this fixture's time limits by: the whole number from 1 to 100 that
+ * `VINAYA_TEST_TIME_SCALE` holds, else 1. Read at each call, never once at import, so a test can set it.
+ */
+export function timeScale(): number {
+  const text = process.env[TIME_SCALE_ENV]
+  if (text === undefined || !/^[1-9]\d{0,2}$/.test(text)) return 1
+  const scale = Number(text)
+  return scale <= 100 ? scale : 1
+}
+
+/** A time limit in milliseconds, times the run's time scale. */
+export function scaledBudgetMs(budgetMs: number): number {
+  return budgetMs * timeScale()
+}
+
 export function runDevReviewLoopArgs(
   home: string,
   cwd: string,
   path: string,
   args: string[],
   extraEnv: Record<string, string> = {},
-  budgetMs: number = SUBPROCESS_BUDGET_MS
+  requestedBudgetMs: number = SUBPROCESS_BUDGET_MS
 ): CliResult {
+  const budgetMs = scaledBudgetMs(requestedBudgetMs)
   // `spawnSync` (never `execFileSync`) — it hands back stdout AND stderr on
   // BOTH the success and the non-zero-exit path; `execFileSync` only
   // surfaces piped stderr via the thrown error, so a passing run's own

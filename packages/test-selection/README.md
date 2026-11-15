@@ -567,7 +567,11 @@ filter, which would drop the failed lookups the record keeps; an open counts
 as successful when its printed result, on a `<... resumed>` line too, is a
 descriptor. Each process keeps its own working folder (`chdir`, `fchdir`),
 shared by its threads. A file whose run does not exit 0 gets no record, so its
-selection stays static. A read under installed dependencies is recorded as the
+selection stays static, and the recorder logs the end of what that run printed
+right after the file's failure line: it reads the run's standard output and
+standard error as they come, keeps only the newest 40 lines, and cuts those to
+their newest 4,000 characters. A file that passes logs no output, and the
+output is never written into the record. A read under installed dependencies is recorded as the
 repository's lockfile joined to the package's name (`bun.lock#zod`).
 
 Flags:
