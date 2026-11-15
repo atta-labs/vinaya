@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { join, resolve } from 'node:path'
 import { generateCodexConfig } from '../../../../../harness/kernel/adapters/agents/codex/config'
-import { loadRoleGrants, ROLE_NAMES } from '../../../../../harness/kernel/adapters/agents/manifest'
+import { loadRoleGrants } from '../../../../../harness/kernel/adapters/agents/manifest'
+import { VINAYA_LAUNCHED_ROLES } from '../../integration/policies/launched-roles'
 import { readEffects } from '../../../../kernel/connectors/checkpoint/control-store/index'
 import { createTestTempRun, makeFixtureDir, sweepAbandoned } from '../../../../kernel/conformance/unit/test-temp'
 import { fixtureDir } from '../../../../kernel/conformance/unit/test-temp-fixture'
@@ -27,7 +28,7 @@ const EXECUTING = join(import.meta.dir, '../../executing')
 
 describe.each(ENGINE_RUNNERS)('%s', (runner) => {
   // A Codex role whose dev-tools bridge cannot start must fail its own start, not run without publish or checks.
-  for (const role of ROLE_NAMES)
+  for (const role of VINAYA_LAUNCHED_ROLES)
     test(`a Codex ${role} launch requires its dev-tools server`, () => {
       const generated = generateCodexConfig(loadRoleGrants(join(EXECUTING, role, 'grants.yaml')), {
         generatedDir: `/gen/${role}`,

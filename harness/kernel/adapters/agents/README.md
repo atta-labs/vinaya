@@ -7,7 +7,7 @@ Adapters for coding agents. Belongs to the "Any Process, One Harness" project.
 A role's `grants.yaml` declares what the role may do. It never names a vendor's tools; each adapter maps the declaration to its own built-ins. The schema is `RoleContract` in `manifest.ts`:
 
 ```yaml
-role: developer | code-reviewer | security-reviewer
+role: <role name>                         # any role name a process launches
 models: { claude: <id>, codex: <id> }     # the one per-vendor field: a model id names one vendor's model
 capabilities:
   read_files: allow | deny

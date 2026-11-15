@@ -103,7 +103,7 @@ import {
   ENGINE_FORGE_RETRY_MAX_ATTEMPTS,
   ENGINE_FORGE_RETRY_WAIT_MS
 } from '../loops/dev-review/standalone/dev-review-loop/stop-decision'
-import { ROLE_NAMES } from '../../../../harness/kernel/adapters/agents/manifest'
+import { VINAYA_LAUNCHED_ROLES } from '../integration/policies/launched-roles'
 import { createDispatchCapabilityTable } from '../../../kernel/tools/host/dev-tools-host'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
@@ -1797,7 +1797,7 @@ describe('launch usage model attribution', () => {
 describe('tool-host bridges reach their own role launcher', () => {
   test('every tool-host role files its bridge under a manifest role name; the security host under security-reviewer', () => {
     const hostRoles = ['developer', 'code-reviewer', 'security'] as const
-    for (const role of hostRoles) expect(ROLE_NAMES).toContain(launcherRoleOf(role))
+    for (const role of hostRoles) expect(VINAYA_LAUNCHED_ROLES).toContain(launcherRoleOf(role))
     expect(launcherRoleOf('security')).toBe('security-reviewer')
     expect(new Set(hostRoles.map(launcherRoleOf)).size).toBe(hostRoles.length)
   })

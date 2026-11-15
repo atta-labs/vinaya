@@ -33,7 +33,8 @@ import {
   generateClaudeSettings
 } from '../../../../../kernel/adapters/agents/claude-code/settings'
 import { CREDENTIAL_ENV_EXCLUDES, generateCodexConfig } from '../../../../../kernel/adapters/agents/codex/config'
-import { loadRoleGrants, ROLE_NAMES } from '../../../../../kernel/adapters/agents/manifest'
+import { loadRoleGrants } from '../../../../../kernel/adapters/agents/manifest'
+import { VINAYA_LAUNCHED_ROLES } from '../../policies/launched-roles'
 import type { GeneratedAgentConfig } from '../../../../../kernel/isolation/policy'
 import { createRoleLaunchers } from '../../../executing/actions'
 import { AGENTS, type Agent, ENGINE_PROBE_CANARY } from './sandbox-launch.js'
@@ -475,7 +476,7 @@ export function generatedRoleFiles(): Record<Agent, Record<string, Record<string
     ] as const) {
       const generatedRoot = join(root, agent)
       createRoleLaunchers({ vendor, generatedRoot })
-      for (const role of ROLE_NAMES) out[agent][role] = filesOf(join(generatedRoot, role))
+      for (const role of VINAYA_LAUNCHED_ROLES) out[agent][role] = filesOf(join(generatedRoot, role))
     }
     return out
   } finally {
@@ -755,7 +756,7 @@ export function branchConfigurationIgnored(
 export function generatedRoleConfigs(): Record<Agent, Record<string, { config: GeneratedAgentConfig; dir: string }>> {
   const processRoot = join(import.meta.dir, '../../../executing')
   const out = { claude: {}, codex: {} } as Record<Agent, Record<string, { config: GeneratedAgentConfig; dir: string }>>
-  for (const role of ROLE_NAMES) {
+  for (const role of VINAYA_LAUNCHED_ROLES) {
     const grants = loadRoleGrants(join(processRoot, role, 'grants.yaml'))
     const outputSchemaPath = join(processRoot, role, 'output.schema.json')
     const paths = (dir: string) => ({
