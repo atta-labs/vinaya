@@ -216,9 +216,17 @@ const LOG_LINE_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z ?/
 const SOURCE_LOCATION_LINE = /^\s*at\s.*[^\s():]+:\d+(?::\d+)?\)?\s*$/
 /** A source location outside the repository: a dependency or the runtime's own frames. */
 const FOREIGN_LOCATION = /node_modules|\bnode:|\[native code\]|\(native\)/
+/** A line the test scheduler writes that reports a failure — it names the failing groups or files. */
+const SCHEDULER_LINE = /^\s*(?:vinaya|bun apps\/cli\/src\/index\.ts) schedule:/
+function isSchedulerFailure(line: string): boolean {
+  return SCHEDULER_LINE.test(line) && (line.includes('failed') || line.includes('reached the real GitHub CLI'))
+}
+/** The line that opens a test file's log group, `##[group]<path>:`. */
+const GROUP_LINE = /^##\[group\].+:/
 /** The lines of a job log that name a failure; each is kept with its neighbours. */
 function namesFailure(line: string): boolean {
   if (line.includes('(fail)')) return true
+  if (isSchedulerFailure(line)) return true
   if (/(?:^|[\s:])error:/i.test(line)) return true
   if (/^\s*(?:Expected|Received)\b/.test(line)) return true
   if (/"succeeded"\s*:\s*true/.test(line)) return true
@@ -240,11 +248,22 @@ export function extractFailureExcerpt(raw: string, max: number = MAX_FAILURE_EXC
     .split('\n')
     .map((line) => line.replace(LOG_LINE_TIMESTAMP, '').trimEnd())
   const keep = new Set<number>()
+  const fileNames = new Set<number>()
   lines.forEach((line, index) => {
     if (!namesFailure(line)) return
     const from = Math.max(0, index - EXCERPT_LINES_BEFORE)
     const to = Math.min(lines.length - 1, index + EXCERPT_LINES_AFTER)
     for (let at = from; at <= to; at += 1) keep.add(at)
+    if (line.includes('(fail)')) {
+      // The nearest group line above names the test file even for `(fail) (unnamed)`.
+      for (let at = index - 1; at >= 0; at -= 1) {
+        if (GROUP_LINE.test(lines[at] ?? '')) {
+          keep.add(at)
+          fileNames.add(at)
+          break
+        }
+      }
+    }
   })
   // A dependency's or the runtime's own frame is noise even as a neighbour of a real failure line.
   for (const index of [...keep]) {
@@ -270,7 +289,7 @@ export function extractFailureExcerpt(raw: string, max: number = MAX_FAILURE_EXC
   const tiers: number[][] = [[], [], []]
   for (const index of [...keep].sort((a, b) => a - b)) {
     const line = lines[index] ?? ''
-    if (line.includes('(fail)')) tiers[0]?.push(index)
+    if (line.includes('(fail)') || isSchedulerFailure(line) || fileNames.has(index)) tiers[0]?.push(index)
     else if (namesFailure(line)) tiers[1]?.push(index)
     else tiers[2]?.push(index)
   }

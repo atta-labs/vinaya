@@ -95,6 +95,47 @@ describe('extractFailureExcerpt', () => {
   })
 })
 
+describe('extractFailureExcerpt names the failing file', () => {
+  const pad = (n: number) => Array.from({ length: n }, (_, i) => stamp(`(pass) suite > case ${i} ${'x'.repeat(60)}`))
+  const schedulerLog = (): string[] => [
+    stamp('##[group]harness/processes/vinaya-strict/tests/lib/reaches-gh.test.ts:'),
+    stamp('(pass) reaches gh > case [0.4ms]'),
+    stamp('##[endgroup]'),
+    stamp('vinaya schedule: group-3 — vinaya, bun in ., 12 file(s)'),
+    stamp('vinaya schedule: harness/processes/vinaya-strict/tests/lib/reaches-gh.test.ts reached the real GitHub CLI'),
+    stamp('vinaya schedule: the runner failed for group-3')
+  ]
+  const unnamedLog = (): string[] => [
+    stamp('##[group]harness/processes/vinaya-strict/tests/lib/before-all.test.ts:'),
+    ...pad(8),
+    stamp('error: beforeAll failed'),
+    stamp('(fail) (unnamed) [3.1ms]'),
+    stamp('##[endgroup]')
+  ]
+
+  test('a scheduler-failed group names its file', () => {
+    const excerpt = extractFailureExcerpt([...pad(30), ...schedulerLog(), ...pad(30)].join('\n'))
+    expect(excerpt).toContain('reaches-gh.test.ts reached the real GitHub CLI')
+    expect(excerpt).toContain('the runner failed for group-3')
+  })
+
+  test('an unnamed failure keeps the nearest group line above it', () => {
+    const excerpt = extractFailureExcerpt([...pad(5), ...unnamedLog(), ...pad(5)].join('\n'))
+    expect(excerpt).toContain('##[group]harness/processes/vinaya-strict/tests/lib/before-all.test.ts:')
+    expect(excerpt).toContain('(fail) (unnamed)')
+  })
+
+  test('a log over the limit still names both files', () => {
+    const noise = Array.from({ length: 60 }, (_, i) => stamp(`error: earlier diagnostic ${i} ${'x'.repeat(100)}`))
+    const log = [...noise, ...unnamedLog(), ...noise, ...schedulerLog()].join('\n')
+    const excerpt = extractFailureExcerpt(log, 1000)
+    expect(excerpt).toContain('before-all.test.ts:')
+    expect(excerpt).toContain('(fail) (unnamed)')
+    expect(excerpt).toContain('reaches-gh.test.ts reached the real GitHub CLI')
+    expect(excerpt.length).toBeLessThanOrEqual(1001)
+  })
+})
+
 describe('readFailedCheckExcerpt', () => {
   test('reads the full job log through the job-log endpoint', () => {
     const calls: string[][] = []
