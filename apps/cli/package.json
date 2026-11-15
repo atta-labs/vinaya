@@ -101,6 +101,7 @@
     "@atta/typescript-config": "workspace:*",
     "@types/bun": "latest",
     "@types/react": "^19.0.0",
+    "@vercel/nft": "^1.11.2",
     "typescript": "^5.5.0"
   },
   "overrides": {
