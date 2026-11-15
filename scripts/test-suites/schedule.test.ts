@@ -1307,9 +1307,32 @@ describe('the gh stand-in a runner finds first on its PATH', () => {
     expect(paths[0]).toBe('/real/bin')
     // Prepended, never replaced: the stand-in's directory comes first and the starting path follows it.
     expect(paths[1]?.endsWith(`${delimiter}/real/bin`)).toBe(true)
-    // A listed test reaches whatever `gh` the host has, so the stand-in records nothing and fails nothing.
-    const listed = await run(id, new Set([id]))
+    // A listed test reaches the `gh` its own path holds, here a private recording one, so this case never depends on
+    // an outer stand-in or the host's real `gh`; no stand-in sits in front of it and nothing fails.
+    const bin = join(root, 'listed-bin')
+    mkdirSync(bin, { recursive: true })
+    writeFileSync(join(bin, 'gh'), `#!/bin/sh\necho "$*" >> "${join(bin, 'seen')}"\nexit 1\n`)
+    chmodSync(join(bin, 'gh'), 0o755)
+    const listed = await runGroups(root, plan(id), {
+      log: () => {},
+      env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` },
+      outsideCall: new Set([id])
+    })
     expect(listed.failedRunners).toEqual([])
+    expect(readFileSync(join(bin, 'seen'), 'utf8')).toBe('pr view 7\n')
+  })
+
+  test('a runner mixing listed and unlisted files is refused', async () => {
+    const [a, b] = ['pkg/tests/tolerant.test.ts', 'pkg/tests/quiet.test.ts']
+    const group = { ...plan(a as string)[0], tests: [a, b] } as NativeGroup
+    await expect(
+      runGroups(root, [group], {
+        log: () => {},
+        spawn: async () => ({ status: 0, signal: null, timedOut: false, output: null }),
+        env: { PATH: '/real/bin' },
+        outsideCall: new Set([a as string])
+      })
+    ).rejects.toThrow('mixes files on the outside-call list')
   })
 
   test("a test's own fake gh earlier on its own PATH keeps being used", async () => {

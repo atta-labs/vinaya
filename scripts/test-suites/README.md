@@ -90,7 +90,10 @@ tolerates a failing `gh` still fails. A test that rebuilds `PATH` from scratch
 drops the stand-in for its own children, a known gap. The list is measured, by
 running every placement with the stand-in and a dummy `GH_TOKEN`, and may only
 shrink: `scripts/test-suites/schedule.test.ts` fails when it names a file that
-no longer exists or grows past its ceiling. The other list is `real-sandbox`: the files allowed to read the host
+no longer exists or grows past its ceiling. A runner holds either only listed
+files or only unlisted ones; the scheduler refuses a runner that mixes them.
+
+The other list is `real-sandbox`: the files allowed to read the host
 platform, because each one verifies or spawns the real confinement path of the
 host it runs on. `apps/cli/tests/platform-independence.test.ts` reads that list
 and checks every tracked test file in the repository against it. A file that

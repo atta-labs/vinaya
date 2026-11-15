@@ -956,9 +956,12 @@ export async function runGroups(
       // A group with a test off the outside-call list gets the `gh` stand-in first on its `PATH`, in a directory of its
       // own, so its calls are the group's alone. Prepended, never replacing the path: tests find `bun`, `git` and their
       // own fakes through it, and a test's own fake `gh` put earlier still wins.
-      const guardDir = group.tests.every((test) => outsideCall.has(test))
-        ? null
-        : placeGhGuard(join(dir, 'gh-guard', String(index)))
+      const listedCount = group.tests.filter((test) => outsideCall.has(test)).length
+      if (listedCount > 0 && listedCount < group.tests.length)
+        throw new Error(
+          `runGroups: ${group.id} mixes files on the outside-call list with files off it; a runner holds one kind`
+        )
+      const guardDir = listedCount === group.tests.length ? null : placeGhGuard(join(dir, 'gh-guard', String(index)))
       const guardedPath =
         guardDir === null
           ? {}
