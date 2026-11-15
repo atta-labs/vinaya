@@ -151,6 +151,9 @@ export function createVinayaReviewInputStager(deps: VinayaReviewInputDeps): Vina
         return staged.input
       // The head is read before and after the copy; a worktree that moved mid-copy yields no candidate.
       const dir = build(deps.root, deps.task, round, deps.worktreePath, head, deps.readHead)
+      // A rebuilt candidate invalidates every scratch copy cut from an earlier one: the scratch folder path does not
+      // carry the head, so a head that returns (A, B, A) must not find its old entry pointing at another head's files.
+      attempts.clear()
       let input: VinayaStagedReviewInput | null = null
       if (dir !== null) {
         let diff: string
