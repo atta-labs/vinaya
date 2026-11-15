@@ -13,6 +13,7 @@
  */
 
 import { narrate, reasonWaitsOn } from '../../../../kernel/log/client/narration'
+import '../../integration/log/log-roles'
 import type { DatasetRow } from '../../../../kernel/log/sync/row'
 import {
   AMBER_AFTER_MS,

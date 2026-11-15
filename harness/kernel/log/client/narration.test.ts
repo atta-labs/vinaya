@@ -1,6 +1,19 @@
-import { describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { buildExecution } from '../fixtures/executions'
+import { registerRole, restoreRoleRegistry, saveRoleRegistry, type RoleRegistrySnapshot } from '../roles'
 import { NARRATION_KINDS, narrate, reasonWaitsOn } from './narration'
+
+let savedRoles: RoleRegistrySnapshot
+beforeAll(() => {
+  savedRoles = saveRoleRegistry()
+  for (const [name, reading, title, reviews] of [
+    ['developer', 'developer', 'Developer', false],
+    ['code-reviewer', 'code reviewer', 'Code review', true],
+    ['security', 'security reviewer', 'Security', true]
+  ] as const)
+    registerRole(name, { reading, title, reviews })
+})
+afterAll(() => restoreRoleRegistry(savedRoles))
 
 type Parsed = Record<string, any>
 

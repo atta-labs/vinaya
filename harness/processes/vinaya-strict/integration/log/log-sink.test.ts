@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import {
+  registerRole,
+  restoreRoleRegistry,
+  saveRoleRegistry,
+  type RoleRegistrySnapshot
+} from '../../../../kernel/log/roles'
 import { LogEventSchema } from '../../../../kernel/log/schema'
 import { spawnSync } from 'node:child_process'
 import {
@@ -38,6 +44,16 @@ import {
 } from '../../../../kernel/log/log-sink.js'
 import { registerDeferredLogSinkFactory } from '../../../../kernel/log/deferred-sink-factory.js'
 import { vinayaProcessIntegration } from '../process/process-integration.js'
+
+// The sink attributes only a registered role; this file registers the one it uses and puts the registry back.
+let savedRoles: RoleRegistrySnapshot
+beforeAll(() => {
+  savedRoles = saveRoleRegistry()
+  registerRole('developer', { reading: 'developer', title: 'Developer', reviews: false })
+  registerRole('code-reviewer', { reading: 'code reviewer', title: 'Code review', reviews: true })
+  registerRole('security', { reading: 'security reviewer', title: 'Security', reviews: true })
+})
+afterAll(() => restoreRoleRegistry(savedRoles))
 
 // `resolveDoctrine`'s `git` calls run inside `log()`'s `.then()` chain; in a
 // non-repo temp dir the first call fails (fast, but not instant), and a

@@ -11,7 +11,8 @@
 
 import { isEntryPoint } from '../../../../../../kernel/gates/checks/entry-point.js'
 import { readFileSync } from 'node:fs'
-import { ROLE_VALUES, type Role } from '../../../../../../kernel/log/schema'
+import type { Role } from '../../../../../../kernel/log/schema'
+import { VINAYA_LOG_ROLE_NAMES } from '../../../../integration/log/log-roles'
 import {
   AGENT_VENDOR_NAMES,
   dispatchRole,
@@ -102,9 +103,9 @@ export async function dispatchCommand(args: string[]): Promise<void> {
     process.exit(1)
   }
 
-  if (!parsed.role || !(ROLE_VALUES as readonly string[]).includes(parsed.role)) {
+  if (!parsed.role || !VINAYA_LOG_ROLE_NAMES.includes(parsed.role)) {
     process.stderr.write(
-      `vinaya dispatch: invalid role '${parsed.role ?? '(none)'}' — expected one of ${ROLE_VALUES.join(', ')}\n`
+      `vinaya dispatch: invalid role '${parsed.role ?? '(none)'}' — expected one of ${VINAYA_LOG_ROLE_NAMES.join(', ')}\n`
     )
     process.exit(1)
   }

@@ -1,0 +1,56 @@
+# The selection safety check (`scripts/ci/safety-check.ts`): every night, each of the
+# last ten changes merged to the default branch is broken on purpose (the mutation tool,
+# `scripts/ci/mutate-changes.ts`), the whole suite runs on the broken tree, and the job
+# fails when a test the CI selection of that change left out fails on it and passes on
+# the change's unmutated head. It is a measurement of the selection rules, not a merge
+# gate: it has no pull-request trigger and nothing requires it.
+#
+# One job per change, so the ten full runs proceed in parallel. Each job runs a whole
+# suite on a mutated tree plus the reruns of every failure outside the selection, so its
+# timeout is 180 minutes: on 2026-11-14 one CI run's build and test jobs added up to about
+# 37 minutes, the longest single job about 8.
+name: Selection safety
+
+on:
+  schedule:
+    # Nightly, on the default branch.
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    name: Measure change ${{ matrix.change }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      # The read record of a change's base is fetched with `gh run download`.
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # The position of the change among the last ten first-parent commits; 0 is the newest.
+        change: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the last ten changes and their bases must exist.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      - name: Restore Bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Break the change on purpose and look for a selection miss
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun scripts/ci/safety-check.ts --count 10 --only ${{ matrix.change }} --summary "$GITHUB_STEP_SUMMARY"
