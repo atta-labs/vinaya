@@ -204,7 +204,9 @@ const workflowWithoutProducers = [
   'workflow:vinaya-review.yml:vinaya-evidence-fresh:Read the pull request over REST',
   'workflow:vinaya-review.yml:vinaya-evidence-fresh:Fetch the pull request head as git objects',
   'workflow:vinaya-review.yml:vinaya-evidence-fresh:Record the GraphQL budget at job end',
-  "workflow:vinaya-review.yml:vinaya-evidence-fresh:Report this job's GitHub token budget"
+  "workflow:vinaya-review.yml:vinaya-evidence-fresh:Report this job's GitHub token budget",
+  'workflow:selection-safety.yml:measure:Install dependencies',
+  'workflow:selection-safety.yml:measure:Break the change on purpose and look for a selection miss'
 ] as const
 
 const checkNames = [
@@ -404,7 +406,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(118)
+    expect(noProducer).toHaveLength(120)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })
