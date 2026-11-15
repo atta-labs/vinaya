@@ -24,6 +24,7 @@
     "harness/processes/vinaya-strict/checks/standalone/verify-coherence.test.ts": "runs gh api against the real GitHub CLI",
     "harness/processes/vinaya-strict/checks/surface-scope.test.ts": "runs gh api against the real GitHub CLI",
     "harness/processes/vinaya-strict/evals/dev-review-engine-fault-rows.test.ts": "runs gh api against the real GitHub CLI",
+    "harness/processes/vinaya-strict/integration/config/config.test.ts": "on a task branch runs gh issue list --label vinaya/tranche:… against the real GitHub CLI",
     "harness/processes/vinaya-strict/integration/conformance/unit/dev-review-backend-selection.test.ts": "runs gh api against the real GitHub CLI",
     "harness/processes/vinaya-strict/integration/conformance/unit/dev-review-engine-architecture-exit.test.ts": "runs gh api against the real GitHub CLI",
     "harness/processes/vinaya-strict/integration/gates/checks/no-privileged-api.test.ts": "runs gh issue list against the real GitHub CLI",

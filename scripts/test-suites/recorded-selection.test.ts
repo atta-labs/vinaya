@@ -698,10 +698,9 @@ describe('the file-level lists reach selection as policy', () => {
   const root = join(import.meta.dir, '../..')
 
   it('passes the real-sandbox and outside-call lists of the committed data file', () => {
-    const data = JSON.parse(readFileSync(join(root, 'scripts/test-suites/file-level-tests.json'), 'utf8')) as Record<
-      string,
-      Record<string, string>
-    >
+    const data = JSON.parse(
+      execFileSync('git', ['show', 'HEAD:scripts/test-suites/file-level-tests.json'], { cwd: root, encoding: 'utf8' })
+    ) as Record<string, Record<string, string>>
     const lists = fileLevelLists(root, 'HEAD')
     expect(lists.realSandbox).toEqual(Object.keys(data['real-sandbox'] ?? {}).sort())
     expect(lists.outsideCall).toEqual(Object.keys(data['outside-call'] ?? {}).sort())
