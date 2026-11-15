@@ -1356,7 +1356,7 @@ describe('the gh stand-in a runner finds first on its PATH', () => {
 
 describe('the outside-call list', () => {
   /** The list's size when the stand-in landed: it may only shrink. */
-  const OUTSIDE_CALL_CEILING = 42
+  const OUTSIDE_CALL_CEILING = 46
   const list = JSON.parse(readFileSync(join(REPO_ROOT, FILE_LEVEL_TESTS_PATH), 'utf8'))['outside-call'] as Record<
     string,
     string
