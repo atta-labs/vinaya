@@ -595,10 +595,22 @@
       "readers": [
         {
           "kind": "semantic",
-          "tests": ["apps/cli/tests/platform-independence.test.ts"]
+          "tests": ["apps/cli/tests/platform-independence.test.ts", "scripts/test-suites/schedule.test.ts"]
         }
       ],
-      "reason": "The platform-independence check reads its real-sandbox list, the files allowed to read the host platform, from this file on disk."
+      "reason": "The platform-independence check reads its real-sandbox list, the files allowed to read the host platform, and the scheduler's test reads its outside-call list, the files that run with the real GitHub CLI, from this file on disk."
+    },
+    {
+      "id": "gh-guard-standin",
+      "kind": "spawn",
+      "paths": ["scripts/test-suites/gh-guard/gh"],
+      "readers": [
+        {
+          "kind": "code",
+          "tests": ["scripts/test-suites/schedule.test.ts"]
+        }
+      ],
+      "reason": "The scheduler copies the stand-in into each runner's directory and puts it first on that runner's PATH, so the scheduled suites start it as a program of their own, outside any import."
     },
     {
       "id": "log-sink-factory-programs",

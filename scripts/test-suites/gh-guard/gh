@@ -1,0 +1,16 @@
+#!/bin/sh
+# A scheduled test reached the real GitHub CLI.
+#
+# The scheduler (`schedule.ts`, `runGroups`) copies this file into a directory of its own per runner and puts that
+# directory first on the runner's `PATH`, unless the test file is on the `outside-call` list of
+# `file-level-tests.json`. Each call is appended, as one line of its arguments, to the `calls` file beside this copy,
+# found from this file's own location, so a child started from a fixed baseline environment still records its call.
+# The scheduler then fails the test file whatever its own outcome, so a test that tolerates a failing `gh` still fails.
+#
+# Known gap: a test that rebuilds `PATH` from scratch (for example through `pathWithoutRealVendors()`) drops this
+# directory for its own children, and a call from such a child is not recorded. A test that puts its own fake `gh`
+# earlier on its own `PATH` keeps using that fake.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+printf '%s\n' "$*" >>"$here/calls"
+echo "gh: a test reached the real GitHub CLI; fake the forge, or list the test file under outside-call in scripts/test-suites/file-level-tests.json" >&2
+exit 1
