@@ -105,13 +105,15 @@ describe("Studio's screens", () => {
     expect(renderToStaticMarkup(createElement(TasksPage))).toContain('Tasks is not built yet.')
   })
 
-  it("lands on Mission Control's empty board frame", () => {
+  it("lands on Mission Control's live list, connecting until the page hears from Studio", () => {
     const html = renderToStaticMarkup(createElement(MissionControlPage))
     expect(html).toContain('Mission Control')
     expect(html).toContain('data-board-field="repository"')
     expect(html).toContain('data-board-field="branch"')
-    expect(html).toContain('data-board-part="counts"')
+    expect(html).toContain('data-board-part="status"')
     expect(html).toContain('data-board-part="list"')
-    expect(html).toContain('No tasks yet.')
+    expect(html).toContain('data-board-status="connecting"')
+    expect(html).toContain('Connecting; no tasks received yet.')
+    expect(html).not.toContain('No tasks in this Log')
   })
 })

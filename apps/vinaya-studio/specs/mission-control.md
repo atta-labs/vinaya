@@ -107,6 +107,24 @@ One server-owned service holds one shared picture per selected repository. It ow
 - **Bounds.** 200 feed entries per task, 100000 remembered event identities, 10000 tasks, 1000 rounds per task and 64 MiB read while opening. When one runs out the source stops advancing at the last applied position, the picture is kept, and coverage is declared capacity-limited, never live or complete.
 - **Status.** The service reports connection state, coverage limits and counts. A refused credential, an unreachable source or an unreadable record is shown as such; an empty or stale picture is never presented as live. Closing stops the clock, every watcher and every socket.
 
+## The live list
+
+The landing screen is a minimal live list: one row per task, built from the picture the live WebSocket carries. A row shows the repository's name (so the same task number in two repositories stays two rows), the task number and recorded title (or "Title not recorded"), the state's label, the one line saying what is happening, who acts and the model, the pull request number, and how long ago the task last said anything. A value the Log does not carry reads "unknown", never zero or blank. The branch reads "unknown": the Log carries none and Studio never takes one from the folder it was launched in.
+
+Rows follow the board's state order, then the repository's launch order, then the task number. The page never works a state out from events: the state, the quiet flag and the now-line come from the server, which moves silence on its own clock. Ages are the one thing the page advances itself, once a second, from its own clock.
+
+The page always says which of these it is, and a connected socket alone never means the Log is live:
+
+- **Connecting** — before the first picture arrives.
+- **Catching up** — the Log is still being read; the rows shown are not yet the whole picture.
+- **Live** — the follower is live and no limit is declared.
+- **Disconnected** — the browser's socket dropped, or the Log source reconnecting, stopped or unreachable. The last rows stay, labelled; they are never replaced by an empty board.
+- **Source-limited** — live, but the Log source declares a limit (for example a folder's rotated slots, or a server opening that began mid-history). The limits are named, and no claim is made that the list is whole.
+- **Credential refused** — the Log source reported a missing or refused read credential. The protocol carries the source's own words, so this reads them for "credential", "unauthorized", "forbidden", 401 or 403.
+- **Live, no tasks** — only when the Log has been read in full, is live, declares no limit and holds no tasks.
+
+When several repositories disagree, the worst standing is the headline, and each repository's own standing is listed under it.
+
 ## The live endpoints
 
 - **`/api/mission-control/live`** — the WebSocket above, open only to a page holding the launch session. A host with no picture service answers one fixed greeting frame, `{"type":"hello"}`, and carries no repository data; Studio's own start registers the live endpoint below in its place.
