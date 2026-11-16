@@ -96,6 +96,17 @@ Each task has its own page with its full event log.
 3. **A thirty-second clock** reads the picture again, so silence becomes amber and then presumed dead even when no event arrives.
 4. **One WebSocket** carries the picture to the page: the whole picture when the page connects, then only the tasks that changed. It lives on `/api/mission-control/live`. The Studio server answers that upgrade itself; Next's hot-reload socket stays Next's, and the two never share a handler. A WebSocket is chosen over server-sent events because the page also sends over the same connection, and the host already owns the listener.
 
+## The repository picture service
+
+One server-owned service holds one shared picture per selected repository. It owns the repository's Log source and follower and the one clock; every browser reads the same picture, so a second browser never starts a second follower. It knows nothing of HTTP or React.
+
+- **Opening a log server.** The service asks the source what it retains, starts at the stated head minus a stretch (5000 events by default, never below the beginning), reads forward in pages of the source's own bound until a page brings nothing, presents the caught-up picture with the position it started from, and follows from exactly the last position it read. If the head is unknown, the source's own reason is the status and nothing starts. A start above the beginning is declared opening-limited: a task whose start record or early rounds come before it keeps what its recorded events show, and the rest is unknown.
+- **Opening a log folder.** The service reads everything the folder's live files hold, keeps every machine's file in its own order, and orders across files by recorded time. A loop start comes before a same-time record. Missing, backwards or equal-time cross-machine records are declared source-limited, not authoritative. Rotated slots are not read on opening, so coverage is declared incomplete.
+- **Time.** History keeps its recorded age; a line read live takes the local receipt time. After a reconnect no line is read as newer than its recorded time. An unreadable recorded time is unknown freshness, never a sign of life. Only the thirty-second clock moves silence.
+- **After opening.** A folder record older than the newest one applied for its task is held back: the task keeps its last reliable standing and is marked chronology-limited.
+- **Bounds.** 200 feed entries per task, 100000 remembered event identities, 10000 tasks, 1000 rounds per task and 64 MiB read while opening. When one runs out the source stops advancing at the last applied position, the picture is kept, and coverage is declared capacity-limited, never live or complete.
+- **Status.** The service reports connection state, coverage limits and counts. A refused credential, an unreachable source or an unreadable record is shown as such; an empty or stale picture is never presented as live. Closing stops the clock, every watcher and every socket.
+
 ## The live endpoints
 
 - **`/api/mission-control/live`** — the WebSocket above. Until the picture is wired in, a connection receives one fixed greeting frame, `{"type":"hello"}`, and carries no repository data.

@@ -1,4 +1,5 @@
 import { createStudioHost } from './host.ts'
+import { createPictureService, type PictureService } from './picture-service.ts'
 import { type LaunchContext, parseLaunchContext, resolveStudioRepositories } from './repositories.ts'
 import { isWellFormedSecret } from './session.ts'
 
@@ -49,7 +50,20 @@ for (const repository of repositories) {
   if (!repository.source.ok) console.error(`Studio: ${repository.root}: ${repository.source.message}`)
 }
 
-const host = createStudioHost({ dir, dev, hostname, port, repositories, session: { secret: context.secret } })
+// One picture service for the whole launch: one source and follower per repository, shared by every browser.
+let pictures: PictureService | null = null
+const host = createStudioHost({
+  dir,
+  dev,
+  hostname,
+  port,
+  repositories,
+  session: { secret: context.secret },
+  compose: (composition) => {
+    pictures = createPictureService({ repositories: composition.repositories, clock: composition.clock })
+    void pictures.start()
+  }
+})
 
 let stopping = false
 function stop(): void {
@@ -57,7 +71,7 @@ function stop(): void {
   stopping = true
   const force = setTimeout(() => process.exit(1), FORCE_EXIT_MS)
   force.unref()
-  host.close().then(
+  Promise.all([pictures?.close(), host.close()]).then(
     () => process.exit(0),
     () => process.exit(1)
   )
