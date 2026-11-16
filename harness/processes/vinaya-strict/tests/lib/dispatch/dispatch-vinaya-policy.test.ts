@@ -522,6 +522,33 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
   })
 })
 
+/**
+ * A real, throwaway git checkout — self-referential `origin` remote (the
+ * same trick `check-review-gate-true-head.test.ts` uses), so
+ * `refs/remotes/origin/HEAD` resolves locally with no network. Omitting
+ * `defaultBranch` leaves `origin/HEAD` unset entirely (the
+ * "undetermined" fixture); `detach` checks out with no branch at all
+ * (the "nothing to compare" fixture).
+ */
+function makeGitCheckout(opts: { checkoutBranch: string; defaultBranch?: string; detach?: boolean }): string {
+  const dir = tempDir('vinaya-default-branch-')
+  const g = (args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+  g(['init', '-q', '-b', opts.checkoutBranch])
+  g(['config', 'user.email', 't@example.com'])
+  g(['config', 'user.name', 'test'])
+  writeFileSync(join(dir, 'a.txt'), 'x\n')
+  g(['add', '-A'])
+  g(['commit', '-qm', 'init'])
+  if (opts.defaultBranch) {
+    if (opts.defaultBranch !== opts.checkoutBranch) g(['branch', opts.defaultBranch])
+    g(['remote', 'add', 'origin', dir])
+    g(['fetch', '-q', 'origin', opts.defaultBranch])
+    g(['remote', 'set-head', 'origin', opts.defaultBranch])
+  }
+  if (opts.detach) g(['checkout', '-q', '--detach'])
+  return dir
+}
+
 describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
   it('wires --settings into a claude dispatch, whose hook denies a Bash call with run_in_background:true and is silent otherwise', () => {
     const home = tempDir('vinaya-dispatch-home-')
@@ -582,7 +609,8 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
       [scriptPath],
       {
         input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'sleep 100', run_in_background: true } }),
-        encoding: 'utf8'
+        encoding: 'utf8',
+        cwd
       },
       'PreToolUse hook'
     )
@@ -598,7 +626,8 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
       [scriptPath],
       {
         input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo hi', run_in_background: false } }),
-        encoding: 'utf8'
+        encoding: 'utf8',
+        cwd
       },
       'PreToolUse hook'
     )
@@ -609,7 +638,8 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
       [scriptPath],
       {
         input: JSON.stringify({ tool_name: 'Read', tool_input: { file_path: '/tmp/x' } }),
-        encoding: 'utf8'
+        encoding: 'utf8',
+        cwd
       },
       'PreToolUse hook'
     )
@@ -646,13 +676,15 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     }
     const hookCommand = settings.hooks.PreToolUse[0]?.hooks[0]?.command as string
     const scriptPath = hookCommand.slice('bun "'.length, -1)
+    const hookCwd = cwd
 
     const run = (command: string) => {
       const result = spawnBudgeted(
         [scriptPath],
         {
           input: JSON.stringify({ tool_name: 'Bash', tool_input: { command, run_in_background: false } }),
-          encoding: 'utf8'
+          encoding: 'utf8',
+          cwd: hookCwd
         },
         'PreToolUse hook'
       )
@@ -712,13 +744,17 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     }
     const hookCommand = settings.hooks.PreToolUse[0]?.hooks[0]?.command as string
     const scriptPath = hookCommand.slice('bun "'.length, -1)
+    // A fixture checkout on a non-default branch: the default-branch guard
+    // never fires, whichever branch the checkout running the tests is on.
+    const hookCwd = makeGitCheckout({ checkoutBranch: 'feature', defaultBranch: 'main' })
 
     const run = (command: string) => {
       const result = spawnBudgeted(
         [scriptPath],
         {
           input: JSON.stringify({ tool_name: 'Bash', tool_input: { command, run_in_background: false } }),
-          encoding: 'utf8'
+          encoding: 'utf8',
+          cwd: hookCwd
         },
         'PreToolUse hook'
       )
@@ -803,7 +839,7 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
       for (const toolInput of [{ run_in_background: true }, { run_in_background: false }, { prompt: 'edit files' }]) {
         const denied = spawnBudgeted(
           [scriptPath],
-          { input: JSON.stringify({ tool_name: toolName, tool_input: toolInput }), encoding: 'utf8' },
+          { input: JSON.stringify({ tool_name: toolName, tool_input: toolInput }), encoding: 'utf8', cwd },
           'PreToolUse hook'
         )
         expect(denied.status).toBe(0)
@@ -845,13 +881,15 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     }
     const hookCommand = settings.hooks.PreToolUse[0]?.hooks[0]?.command as string
     const scriptPath = hookCommand.slice('bun "'.length, -1)
+    const hookCwd = cwd
 
     const run = (command: string) => {
       const result = spawnBudgeted(
         [scriptPath],
         {
           input: JSON.stringify({ tool_name: 'Bash', tool_input: { command, run_in_background: false } }),
-          encoding: 'utf8'
+          encoding: 'utf8',
+          cwd: hookCwd
         },
         'PreToolUse hook'
       )
@@ -902,33 +940,6 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
 })
 
 describe('dispatchRole — O4 (#680): default-branch commit/push deny rule', () => {
-  /**
-   * A real, throwaway git checkout — self-referential `origin` remote (the
-   * same trick `check-review-gate-true-head.test.ts` uses), so
-   * `refs/remotes/origin/HEAD` resolves locally with no network. Omitting
-   * `defaultBranch` leaves `origin/HEAD` unset entirely (the
-   * "undetermined" fixture); `detach` checks out with no branch at all
-   * (the "nothing to compare" fixture).
-   */
-  function makeGitCheckout(opts: { checkoutBranch: string; defaultBranch?: string; detach?: boolean }): string {
-    const dir = tempDir('vinaya-default-branch-')
-    const g = (args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
-    g(['init', '-q', '-b', opts.checkoutBranch])
-    g(['config', 'user.email', 't@example.com'])
-    g(['config', 'user.name', 'test'])
-    writeFileSync(join(dir, 'a.txt'), 'x\n')
-    g(['add', '-A'])
-    g(['commit', '-qm', 'init'])
-    if (opts.defaultBranch) {
-      if (opts.defaultBranch !== opts.checkoutBranch) g(['branch', opts.defaultBranch])
-      g(['remote', 'add', 'origin', dir])
-      g(['fetch', '-q', 'origin', opts.defaultBranch])
-      g(['remote', 'set-head', 'origin', opts.defaultBranch])
-    }
-    if (opts.detach) g(['checkout', '-q', '--detach'])
-    return dir
-  }
-
   /**
    * The `Bash|Agent|Task`-matched hook's own script — generated content
    * never depends on the cwd the dispatch that produced it happened to use
