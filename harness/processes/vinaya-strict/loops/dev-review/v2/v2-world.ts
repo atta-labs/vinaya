@@ -106,7 +106,8 @@ export interface Scenario {
   /** A run that finds the pull request already open, at this review round. */
   attachAtRound?: number
   /** End one driver after this checkpointed step, then construct a fresh task input and resume it. */
-  restartAfter?: { step: string; beforeResume: () => void }
+  /** `rulingResume`: a ruling resumes the run between the two legs, so the second leg's driver owes a round-test re-run. */
+  restartAfter?: { step: string; beforeResume: () => void; rulingResume?: boolean }
   /** Runs once the world is built, before the driver starts: commits on the task branch, a moved default branch. */
   setUp?: (world: World) => void
   /**
@@ -592,6 +593,8 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     }
   })
   let record: FailedTestsRecord | null = null
+  // The round-test re-run a ruling resume owes, the way the driver's ruling-resume hook sets it.
+  let rulingResumeOwed = false
   const makeTask = async () => {
     const fresh = await liveTaskInput({ task: TASK, agent, dryRun: false, flow: 'v2' }, repo, runtimeDir, 'v2-world', {
       fetchLabels: () => [],
@@ -682,6 +685,11 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
             }
           }
         : {}),
+      takeRulingResume: () => {
+        const owed = rulingResumeOwed
+        rulingResumeOwed = false
+        return owed
+      },
       runReadyGate: ({ head, signal, deferTests }) => {
         world.readySignals.push(signal !== undefined)
         world.readyDeferrals.push(deferTests === true)
@@ -893,6 +901,7 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
   if (scenario.restartAfter) {
     if (!interrupted || result.exitCode !== 2) throw new Error('the first driver did not stop at its checkpoint')
     scenario.restartAfter.beforeResume()
+    if (scenario.restartAfter.rulingResume === true) rulingResumeOwed = true
     task = await makeTask()
     control = createRunControl()
     driverLegs += 1

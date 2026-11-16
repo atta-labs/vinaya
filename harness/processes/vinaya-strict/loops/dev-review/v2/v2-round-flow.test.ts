@@ -1918,6 +1918,27 @@ describe('the round runs its selected tests beside both reviewers', () => {
     expect(observed.world.roundTestRuns).toHaveLength(1)
   })
 
+  test('a ruling resume runs the round tests again for the same round and head instead of reusing the earlier result', async () => {
+    const observed = await runV2('claude', {
+      roundTests: (_call, head) => red(head),
+      reviewer: (role, attempt) =>
+        role === 'code-reviewer' && attempt === 1 ? { output: { reviewResult: { malformed: true } } } : 'approve',
+      restartAfter: { step: 'validate-reviewer-outputs', beforeResume: () => {}, rulingResume: true }
+    })
+    expect(observed.driverLegs).toBe(2)
+    const [first, second] = records(observed, 'run-round-tests')
+    expect(first?.result.outcome).toBe('failed')
+    expect(second?.round).toBe(first?.round)
+    expect(second?.head).toBe(first?.head)
+    expect(observed.world.roundTestRuns.length).toBeGreaterThanOrEqual(2)
+    expect(observed.world.roundTestRuns[1]).toBe(observed.world.roundTestRuns[0])
+    const lines = observed.world.evidenceLogs.filter((line) => line.startsWith('round tests: '))
+    expect(lines.some((line) => line.includes('reusing'))).toBe(false)
+    expect(lines.filter((line) => /^round tests: (failed|passed) for round /.test(line)).length).toBeGreaterThanOrEqual(
+      2
+    )
+  })
+
   test('an escalation from a reviewer pauses before the red test is considered', async () => {
     const observed = await runV2('claude', {
       roundTests: (_call, head) => red(head),
