@@ -595,6 +595,16 @@ export const EXEMPTIONS: Record<string, string> = {
     "`vinaya-dev-bridge` connects an agent's sandbox to the review loop's driver-run tool host over that driver's " +
     'socket; a credential-free fixture runs no driver. Its logic is proven in harness/kernel/tools/host/ and ' +
     'harness/processes/vinaya-strict/integration/tools/host/role-grants-bridge.test.ts.',
+  'vinaya-run-engine':
+    '`vinaya-run-engine` is the Engine runner `task run` starts with `bun` for a task Issue: a live run reads that ' +
+    'Issue and its frozen brief from the FORGE and launches coding agents, which a credential-free fixture has ' +
+    'neither of. Its built program, dry-run from an assembled package in another repository, is proven by ' +
+    'tests/engine-runner-install.test.ts.',
+  'vinaya-supervised-command':
+    '`vinaya-supervised-command` is the wrapper the Engine runner starts each supervised ready-push command under, ' +
+    'with a control pipe and a result channel on descriptors 3 and 4 that only that runner opens; a credential-free ' +
+    'fixture runs no runner. Its built file is asserted by tests/engine-runner-install.test.ts and its logic by ' +
+    'harness/processes/vinaya-strict/tests/recovery/ready-gate.test.ts.',
   'vinaya-audit':
     '`vinaya-audit` reads branches and pushes from the FORGE and writes findings there — a FORGE READ and WRITE. ' +
     'Its logic is proven in harness/processes/vinaya-strict/gates/ring2-audits/.'

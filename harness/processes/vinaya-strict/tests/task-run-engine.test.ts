@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { programFile } from '../tools/programs.js'
 import { flowForFlags, parseFlags, runnerForFlags } from '../../../../apps/cli/src/commands/task-run.js'
 import { resolveTaskRunner, VinayaConfigSchema } from '../integration/config/compose.js'
 import { runTask, type RunTaskDeps } from '../loops/dev-review/run-control/task-run.js'
-import { ENGINE_FALLBACK_NOTICE, runTaskEngine } from '../loops/dev-review/run-control/task-run-engine.js'
+import {
+  defaultEngineRunnerDeps,
+  ENGINE_FALLBACK_NOTICE,
+  engineContinuationArgv,
+  engineRunnerScriptPath,
+  runTaskEngine
+} from '../loops/dev-review/run-control/task-run-engine.js'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture.js'
 
 function fixture(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
@@ -150,6 +157,26 @@ describe('task runner selection', () => {
       }
     ])
     expect(result).toMatchObject({ exitCode: 17, task: 42, branch: 'task/sample/2' })
+  })
+
+  it("starts the Engine runner at the program table's file for its row: the source file in a checkout", () => {
+    expect(engineRunnerScriptPath()).toBe(programFile('run-engine'))
+    expect(engineRunnerScriptPath()).toBe(join(import.meta.dir, '..', 'bin', 'run-engine.ts'))
+    expect(defaultEngineRunnerDeps.scriptPath()).toBe(engineRunnerScriptPath())
+    const continuation = engineContinuationArgv({ issue: 9, pr: null, agent: 'claude' })
+    expect(continuation[0]).toBe(programFile('run-engine'))
+  })
+
+  it('in an installed package the runner path is the built program the package carries', () => {
+    const pkg = mkdtempSync(join(tmpdir(), 'runner-install-'))
+    try {
+      writeFileSync(join(pkg, 'package.json'), '{}')
+      mkdirSync(join(pkg, 'dist', 'programs'), { recursive: true })
+      writeFileSync(join(pkg, 'dist', 'programs', 'run-engine.js'), '')
+      expect(programFile('run-engine', pkg, false)).toBe(join(pkg, 'dist', 'programs', 'run-engine.js'))
+    } finally {
+      rmSync(pkg, { recursive: true, force: true })
+    }
   })
 
   it('passes the chosen flow to the Engine script as --flow', async () => {
