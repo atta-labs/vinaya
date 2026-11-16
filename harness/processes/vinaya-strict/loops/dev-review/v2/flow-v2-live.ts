@@ -1770,6 +1770,9 @@ export async function readyGateEvidence(input: {
     return replaceEvidenceBlock(input.body, report.blockInner)
   }
   const none = gate.localTests === 'none' || gate.selection?.selected.length === 0
+  // A push that ran local tests with no selection note ran the repository's declared test runner, whole and with no
+  // arguments: that runner is the Test Plan's test line and its Group C heading.
+  const adopter = !none && !gate.selection
   // A native run's entry is the receipt its hook recorded for its aggregate command at this head, tree and context —
   // the same recorded result `vinaya pr report` composes from — and a missing one refuses rather than re-running.
   const nativeCommand = none ? null : (gate.selection?.native?.command ?? null)
@@ -1786,7 +1789,7 @@ export async function readyGateEvidence(input: {
       ? 'no local tests'
       : gate.selection
         ? readyTestPlanCommand(gate.selection.selected, input.worktreePath)
-        : 'repository pre-push hook',
+        : ADOPTER_TEST_RUNNER,
     // The same tail every other Test Plan command keeps: a whole run's output would overflow the body.
     output: truncateAgentOutput(none ? `No local tests ran.\n${gate.output}` : gate.output),
     exitCode: 0,
@@ -1795,19 +1798,22 @@ export async function readyGateEvidence(input: {
     // The head sits in a code span: the note renders as prose, where the body gate refuses a bare digit.
     reusedFrom: `persisted ready-gate result at \`${input.head}\``
   }
-  // A push whose selected tests ran locally writes its own command as the Test Plan's automatic line, so the Test
-  // Plan and the Group C heading name the same run even when the pull request was already open and its body still
-  // carries an earlier push's selection.
-  const body =
-    none || !gate.selection
-      ? input.body
-      : withReadyTestCommand(
-          input.body,
-          hookEntry.command,
-          nativeEntry ? 'every selected test passes under its own native runner' : 'every selected test file passes'
-        )
+  // A push whose tests ran locally writes its own command as the Test Plan's automatic line, so the Test Plan and the
+  // Group C heading name the same run even when the pull request was already open and its body still carries an
+  // earlier push's selection.
+  const body = none
+    ? input.body
+    : withReadyTestCommand(
+        input.body,
+        hookEntry.command,
+        adopter
+          ? 'every test passes'
+          : nativeEntry
+            ? 'every selected test passes under its own native runner'
+            : 'every selected test file passes'
+      )
   const commands: GroupCCommandResult[] = []
-  if (none || !gate.selection) commands.push(hookEntry)
+  if (none) commands.push(hookEntry)
   else {
     // One entry per Test Plan line, in order: the hook run for the selected suite, the driver's receipt for the rest.
     const cache = input.cache ?? defaultTestRunCache()
