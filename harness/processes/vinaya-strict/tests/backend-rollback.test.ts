@@ -73,7 +73,7 @@ function fixtureDeps(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
     devReviewLoop: async () => ({ task: TASK, prNumber: 7, finalDecision: { type: 'publish' } }),
     resolveRepo: async () => null,
     assignIssue: () => {},
-    runnerConfig: () => null,
+    runnerConfig: () => ({ runner: 'standalone' }),
     ...overrides
   }
 }
@@ -148,7 +148,7 @@ describe('the configured runner switch', () => {
             started.push('atta-engine')
             return 0
           },
-          notice: () => {}
+          findBun: () => '/usr/local/bin/bun'
         }
       })
     await runTask({ issue: TASK, agent: 'claude' }, deps({ runner: 'atta-engine' } as VinayaConfig))
@@ -209,7 +209,7 @@ describe('the typed cross-runner refusal', () => {
               starts += 1
               return 0
             },
-            notice: () => {}
+            findBun: () => '/usr/local/bin/bun'
           }
         })
       ).catch((error: unknown) => error)

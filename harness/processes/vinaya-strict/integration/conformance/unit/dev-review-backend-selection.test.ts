@@ -130,7 +130,7 @@ async function switchRunner(run: InFlightEngineRun): Promise<void> {
             engineStarts += 1
             return 0
           },
-          notice: () => {}
+          findBun: () => '/usr/local/bin/bun'
         }
       })
     )

@@ -262,13 +262,16 @@ export function renderPauseComment(
  * forge call and cannot disagree with the branch the run is actually on. A
  * branch that parses as neither falls back to the Issue form, the only address
  * derivable from a task number alone.
+ *
+ * It always names the runner the run recorded, since the runner a start resolves by default is not necessarily the
+ * one that paused: an absent `runner` is the standalone runner.
  */
 export function noPushResumeArgv(
   task: number,
   branch: string,
   agent?: string,
   model?: string,
-  runner?: 'atta-engine'
+  runner?: 'standalone' | 'atta-engine'
 ): string[] {
   const identity = parseTaskBranchIdentity(branch)
   const address =
@@ -279,7 +282,8 @@ export function noPushResumeArgv(
     ...address,
     ...(agent ? ['--agent', agent] : []),
     ...(model ? ['--model', model] : []),
-    ...(runner ? ['--runner', runner] : [])
+    '--runner',
+    runner ?? 'standalone'
   ]
 }
 
@@ -312,7 +316,7 @@ export function noPushResumeCommandFor(
   branch: string,
   agent?: string,
   model?: string,
-  runner?: 'atta-engine'
+  runner?: 'standalone' | 'atta-engine'
 ): string {
   return `vinaya ${noPushResumeArgv(task, branch, agent, model, runner).map(shellQuote).join(' ')}`
 }

@@ -323,7 +323,7 @@ describe('task_resume handler', () => {
       expect(result.error.kind).toBe('precondition')
       expect(result.error.message).toContain('no durable record')
       expect(result.error.message).toContain('no ruling is needed')
-      expect(result.error.message).toContain('Continue it with `vinaya task run x 1`')
+      expect(result.error.message).toContain('Continue it with `vinaya task run x 1 --runner standalone`')
     }
     expect(launches).toHaveLength(0)
   })
@@ -836,7 +836,9 @@ describe('defaultResumeLaunch — the argv each pause shape continues through', 
       '--issue',
       String(ISSUE),
       '--agent',
-      'claude'
+      'claude',
+      '--runner',
+      'standalone'
     ])
     // A tranche task: `--issue <n>` is refused for a `vinaya/tranche:*`-labeled
     // Issue, so the launch must address it by tranche and ordinal or the child
@@ -847,7 +849,9 @@ describe('defaultResumeLaunch — the argv each pause shape continues through', 
       'unattended-run-v1',
       '22',
       '--agent',
-      'claude'
+      'claude',
+      '--runner',
+      'standalone'
     ])
     expect(await argvOf({ pr: PR, agent: 'codex', branch: `task/issue-${ISSUE}` }, 'with-pr')).toEqual([
       programFile('dev-review-loop'),
@@ -864,7 +868,18 @@ describe('defaultResumeLaunch — the argv each pause shape continues through', 
         { pr: null, agent: 'codex', branch: 'task/unattended-run-v1/22', model: 'gpt-5.6-terra' },
         'no-pr-model'
       )
-    ).toEqual(['task', 'run', 'unattended-run-v1', '22', '--agent', 'codex', '--model', 'gpt-5.6-terra'])
+    ).toEqual([
+      'task',
+      'run',
+      'unattended-run-v1',
+      '22',
+      '--agent',
+      'codex',
+      '--model',
+      'gpt-5.6-terra',
+      '--runner',
+      'standalone'
+    ])
   })
 })
 
@@ -906,7 +921,7 @@ describe('task_resume handler — a widen-surface escalation is the Planner’s'
     if (!result.ok) {
       expect(result.error.kind).toBe('authority')
       expect(result.error.message).toBe(
-        `task ${ISSUE}'s escalation '${ISSUE}-1-headsha1' asks for \`widen_surface\` — widening a Surface is the Planner's act, not the Operator's, so task_resume does not continue it. The Planner continues it with \`vinaya task run x 1 --widen-surface harness/processes/vinaya-strict/integration --reason '<why the Surface widens>' --agent codex\`.`
+        `task ${ISSUE}'s escalation '${ISSUE}-1-headsha1' asks for \`widen_surface\` — widening a Surface is the Planner's act, not the Operator's, so task_resume does not continue it. The Planner continues it with \`vinaya task run x 1 --runner standalone --widen-surface harness/processes/vinaya-strict/integration --reason '<why the Surface widens>' --agent codex\`.`
       )
     }
     expect(launches).toHaveLength(0)
@@ -923,7 +938,7 @@ describe('task_resume handler — a widen-surface escalation is the Planner’s'
     writeWidenRequest()
     const packet = readEscalationPacket(outbox, ISSUE)
     expect(packet?.permittedNextActions).toContain(
-      "To widen the Surface the Developer asked for (Planner): vinaya task run x 1 --widen-surface harness/processes/vinaya-strict/integration --reason '<why the Surface widens>' --agent codex"
+      "To widen the Surface the Developer asked for (Planner): vinaya task run x 1 --runner standalone --widen-surface harness/processes/vinaya-strict/integration --reason '<why the Surface widens>' --agent codex"
     )
   })
 

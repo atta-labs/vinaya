@@ -238,7 +238,10 @@ export function resumeContinuation(
 ): { command: string; argv: string[] } {
   if (runner === 'atta-engine') return { command: 'bun', argv: engineContinuationArgv(target) }
   if (target.pr === null)
-    return { command: program, argv: noPushResumeArgv(target.issue, target.branch, target.agent, target.model) }
+    return {
+      command: program,
+      argv: noPushResumeArgv(target.issue, target.branch, target.agent, target.model, 'standalone')
+    }
   const invocation = programInvocation('dev-review-loop', ['--resume', String(target.pr), '--agent', target.agent])
   return { command: launcher ?? invocation.command, argv: invocation.argv }
 }

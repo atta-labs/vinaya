@@ -64,6 +64,7 @@ import {
   type TaskRunner
 } from '../../../../harness/processes/vinaya-strict/integration/config/compose.js'
 import {
+  engineStartRefusal,
   runTask,
   type RunTaskResult,
   type RunTaskOutcome
@@ -298,6 +299,27 @@ function flowOrExit(parsed: ParsedFlags, runner: TaskRunner): { flow?: string } 
   }
 }
 
+/**
+ * The command's own Engine check, made before it prepares the run or launches a background run, so a
+ * `--background` start refuses in the terminal that ran it rather than in the detached child's log. `runTask` makes
+ * the same check for every start path; a `--rollback` start, which restarts on the standalone runner, makes none.
+ * Null when the run may start, otherwise the refusal text `engineStartRefusal` answers.
+ */
+export function engineStartRefusalForStart(
+  start: { runner: TaskRunner; flow?: string; rollback?: boolean },
+  engine: { script?: string; exists?: (path: string) => boolean; findBun?: () => string | null } = {}
+): string | null {
+  if (start.rollback || start.runner !== 'atta-engine') return null
+  return engineStartRefusal(start.flow, engine.script, engine.exists, engine.findBun)
+}
+
+function engineStartOrExit(start: Parameters<typeof engineStartRefusalForStart>[0]): void {
+  const refusal = engineStartRefusalForStart(start)
+  if (refusal === null) return
+  process.stderr.write(`Error: ${refusal}\n`)
+  process.exit(TASK_RUN_FAILURE_EXIT_CODE)
+}
+
 function runnerOrExit(parsed: ParsedFlags): TaskRunner {
   try {
     return runnerForFlags(parsed)
@@ -412,7 +434,8 @@ export function attachedRunNotice(input: Parameters<typeof runTask>[0], stdinIsT
   if (!stdinIsTty) return null
   const address = 'tranche' in input ? `${input.tranche} ${input.n}` : `--issue ${input.issue}`
   const model = input.model ? ` --model ${input.model}` : ''
-  return `vinaya task run: this run is attached to this terminal and stops when the terminal closes. To keep it running after the terminal closes, use: vinaya task run ${address} --agent ${input.agent}${model} --background`
+  const runner = input.runner ? ` --runner ${input.runner}` : ''
+  return `vinaya task run: this run is attached to this terminal and stops when the terminal closes. To keep it running after the terminal closes, use: vinaya task run ${address} --agent ${input.agent}${model}${runner} --background`
 }
 
 async function runAndReport(input: Parameters<typeof runTask>[0]): Promise<void> {
@@ -495,6 +518,7 @@ export async function taskRunCommand(args: string[]): Promise<void> {
     const runner = runnerOrExit(parsed)
     const flow = flowOrExit(parsed, runner)
     const widen = widenSurfaceOrExit(parsed)
+    engineStartOrExit({ runner, ...flow, ...rollback })
     applyQuiet(parsed)
     if (parsed.background) {
       await runBackgroundAndReport({ issue: issueN, agent, model: parsed.model, runner, ...flow, ...widen })
@@ -530,6 +554,7 @@ export async function taskRunCommand(args: string[]): Promise<void> {
   const runner = runnerOrExit(parsed)
   const flow = flowOrExit(parsed, runner)
   const widen = widenSurfaceOrExit(parsed)
+  engineStartOrExit({ runner, ...flow, ...rollback })
   applyQuiet(parsed)
   if (parsed.background) {
     await runBackgroundAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, runner, ...flow, ...widen })
@@ -541,5 +566,5 @@ export async function taskRunCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'task run': { date: '2026-09-30', callsToday: 7, retiresVia: 'sharedCommandShell' }
+  'task run': { date: '2026-09-30', callsToday: 8, retiresVia: 'sharedCommandShell' }
 }

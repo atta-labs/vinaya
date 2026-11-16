@@ -95,8 +95,11 @@ describe('the kernel configuration resolvers', () => {
     expect(resolveLogsHeaderValues(undefined, {})).toBeUndefined()
   })
 
-  test('the runner defaults to standalone and refuses an unknown name', () => {
-    expect(resolveTaskRunner(undefined, null)).toBe('standalone')
+  test('the runner defaults to the Atta Engine, keeps standalone selectable, and refuses an unknown name', () => {
+    expect(resolveTaskRunner(undefined, null)).toBe('atta-engine')
+    expect(resolveTaskRunner(undefined, {})).toBe('atta-engine')
+    expect(resolveTaskRunner(undefined, { runner: 'standalone' })).toBe('standalone')
+    expect(resolveTaskRunner('standalone', null)).toBe('standalone')
     expect(resolveTaskRunner(undefined, { runner: 'atta-engine' })).toBe('atta-engine')
     expect(() => resolveTaskRunner('other', null)).toThrow('runner: expected standalone or atta-engine')
   })

@@ -242,19 +242,19 @@ describe('vinaya task run — pauseResumeCommand (#785, O1)', () => {
 
   it('names `task run --issue <n>` for a before-any-push pause on a backlog branch (prNumber 0), never `--resume 0`', () => {
     const command = pauseResumeCommand({ prNumber: 0, task: 785, branch: 'task/issue-785' }, { agent: 'claude' })
-    expect(command).toBe('vinaya task run --issue 785 --agent claude')
+    expect(command).toBe('vinaya task run --issue 785 --agent claude --runner standalone')
     expect(command).not.toContain('--resume')
   })
 
   it('names `task run --issue <n>` for a before-any-push pause on a backlog branch (prNumber -1), never `--resume -1`', () => {
     const command = pauseResumeCommand({ prNumber: -1, task: 785, branch: 'task/issue-785' }, { agent: 'codex' })
-    expect(command).toBe('vinaya task run --issue 785 --agent codex')
+    expect(command).toBe('vinaya task run --issue 785 --agent codex --runner standalone')
     expect(command).not.toContain('--resume')
   })
 
   it('names `task run <tranche> <n>` — never the refused `--issue` form — for a before-any-push pause on a tranche branch (round 2)', () => {
     const command = pauseResumeCommand({ prNumber: 0, task: 512, branch: 'task/task-run-v1/3' }, { agent: 'claude' })
-    expect(command).toBe('vinaya task run task-run-v1 3 --agent claude')
+    expect(command).toBe('vinaya task run task-run-v1 3 --agent claude --runner standalone')
     expect(command).not.toContain('--issue')
     expect(command).not.toContain('--resume')
   })
@@ -262,7 +262,7 @@ describe('vinaya task run — pauseResumeCommand (#785, O1)', () => {
   it('carries --model through the backlog --issue form too, and keeps the task Issue number', () => {
     expect(
       pauseResumeCommand({ prNumber: 0, task: 512, branch: 'task/issue-512' }, { agent: 'claude', model: 'opus' })
-    ).toBe('vinaya task run --issue 512 --agent claude --model opus')
+    ).toBe('vinaya task run --issue 512 --agent claude --model opus --runner standalone')
   })
 
   it('carries --model through the tranche form too', () => {
@@ -271,12 +271,12 @@ describe('vinaya task run — pauseResumeCommand (#785, O1)', () => {
         { prNumber: 0, task: 512, branch: 'task/task-run-v1/3' },
         { agent: 'codex', model: 'gpt-5.6-terra' }
       )
-    ).toBe('vinaya task run task-run-v1 3 --agent codex --model gpt-5.6-terra')
+    ).toBe('vinaya task run task-run-v1 3 --agent codex --model gpt-5.6-terra --runner standalone')
   })
 
   it('omits --model when the run named none', () => {
     expect(pauseResumeCommand({ prNumber: 0, task: 512, branch: 'task/issue-512' }, { agent: 'claude' })).toBe(
-      'vinaya task run --issue 512 --agent claude'
+      'vinaya task run --issue 512 --agent claude --runner standalone'
     )
   })
 })

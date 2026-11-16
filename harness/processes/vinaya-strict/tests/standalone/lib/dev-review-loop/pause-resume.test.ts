@@ -103,7 +103,9 @@ describe('automatic-recovery missing-escalation guidance', () => {
 
   it('offers task run for a stale driver within its retry budget', () => {
     expect(pauseGrantsBareResume(staleDriverPause)).toBe(true)
-    expect(missingEscalationNextStep(staleDriverPause)).toContain('Continue it with `vinaya task run x 1`')
+    expect(missingEscalationNextStep(staleDriverPause)).toContain(
+      'Continue it with `vinaya task run x 1 --runner standalone`'
+    )
   })
 
   it('requires a Principal decision for a stale driver past its retry budget', () => {
@@ -288,9 +290,9 @@ describe('renderNoPushStopComment (pure) — the no-PR-yet variant carries detai
     const printed = body.split('\n').find((l) => l.startsWith('vinaya task run')) ?? ''
     // The payload survives as DATA — one shell-quoted argument — never as a
     // command separator and a pipe the reader's shell would act on.
-    expect(printed).toBe("vinaya task run '; echo pwned | sh' 22")
+    expect(printed).toBe("vinaya task run '; echo pwned | sh' 22 --runner standalone")
     // And it is exactly the argv the launcher spawns, not a weaker rendering.
-    expect(noPushResumeArgv(781, hostile)).toEqual(['task', 'run', '; echo pwned | sh', '22'])
+    expect(noPushResumeArgv(781, hostile)).toEqual(['task', 'run', '; echo pwned | sh', '22', '--runner', 'standalone'])
   })
 })
 
@@ -348,9 +350,9 @@ describe('noPushResumeCommandFor / noPushResumeArgv — the address form comes f
     // runs for any tranche carrying whitespace — the same single-builder claim
     // the module documents, broken by the rendering step rather than the argv.
     const argv = noPushResumeArgv(781, 'task/two words/22', 'claude')
-    expect(argv).toEqual(['task', 'run', 'two words', '22', '--agent', 'claude'])
+    expect(argv).toEqual(['task', 'run', 'two words', '22', '--agent', 'claude', '--runner', 'standalone'])
     expect(noPushResumeCommandFor(781, 'task/two words/22', 'claude')).toBe(
-      "vinaya task run 'two words' 22 --agent claude"
+      "vinaya task run 'two words' 22 --agent claude --runner standalone"
     )
   })
 
@@ -359,24 +361,28 @@ describe('noPushResumeCommandFor / noPushResumeArgv — the address form comes f
   })
 
   it('addresses a backlog task by its Issue number', () => {
-    expect(noPushResumeCommandFor(781, 'task/issue-781')).toBe('vinaya task run --issue 781')
-    expect(noPushResumeCommandFor(781, 'task/issue-781', 'claude')).toBe('vinaya task run --issue 781 --agent claude')
+    expect(noPushResumeCommandFor(781, 'task/issue-781')).toBe('vinaya task run --issue 781 --runner standalone')
+    expect(noPushResumeCommandFor(781, 'task/issue-781', 'claude')).toBe(
+      'vinaya task run --issue 781 --agent claude --runner standalone'
+    )
     expect(noPushResumeCommandFor(781, 'task/issue-781', 'codex', 'gpt-5.6-terra')).toBe(
-      'vinaya task run --issue 781 --agent codex --model gpt-5.6-terra'
+      'vinaya task run --issue 781 --agent codex --model gpt-5.6-terra --runner standalone'
     )
   })
 
   it('addresses a tranche task by tranche and ordinal, never by `--issue`', () => {
-    expect(noPushResumeCommandFor(781, 'task/unattended-run-v1/22')).toBe('vinaya task run unattended-run-v1 22')
+    expect(noPushResumeCommandFor(781, 'task/unattended-run-v1/22')).toBe(
+      'vinaya task run unattended-run-v1 22 --runner standalone'
+    )
     expect(noPushResumeCommandFor(781, 'task/unattended-run-v1/22', 'claude', 'opus')).toBe(
-      'vinaya task run unattended-run-v1 22 --agent claude --model opus'
+      'vinaya task run unattended-run-v1 22 --agent claude --model opus --runner standalone'
     )
   })
 
   it('falls back to the Issue form for a branch that parses as neither shape', () => {
     // The only address derivable from a task number alone — better than
     // emitting a malformed tranche pair from an unrecognized branch.
-    expect(noPushResumeCommandFor(781, 'not-a-task-branch')).toBe('vinaya task run --issue 781')
+    expect(noPushResumeCommandFor(781, 'not-a-task-branch')).toBe('vinaya task run --issue 781 --runner standalone')
   })
 
   it('renders exactly the argv the launcher spawns, so the printed command and the launch cannot diverge', () => {
@@ -386,7 +392,9 @@ describe('noPushResumeCommandFor / noPushResumeArgv — the address form comes f
       'unattended-run-v1',
       '22',
       '--agent',
-      'claude'
+      'claude',
+      '--runner',
+      'standalone'
     ])
     expect(`vinaya ${noPushResumeArgv(781, 'task/unattended-run-v1/22', 'claude').join(' ')}`).toBe(
       noPushResumeCommandFor(781, 'task/unattended-run-v1/22', 'claude')
@@ -883,7 +891,7 @@ describe('a sandbox capability refusal pauses once for the Operator and is never
       resolveRepo: async () => null,
       assignIssue: () => {},
       // The standalone runner, whatever runner the repository's own config names.
-      runnerConfig: () => null
+      runnerConfig: () => ({ runner: 'standalone' })
     }
 
     const result = await withWorldEnv(world, () => runTask({ issue: world.task, agent: 'claude' }, runTaskDeps))
