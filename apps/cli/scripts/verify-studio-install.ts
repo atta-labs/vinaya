@@ -15,7 +15,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { delimiter, join, relative, sep } from 'node:path'
 // The route and frame come from the host itself, so the proof cannot drift from what Studio serves.
-import { LIVE_HELLO, LIVE_ROUTE } from '../../vinaya-studio/src/server/live-protocol'
+import { LIVE_ROUTE } from '../../vinaya-studio/src/server/live-protocol'
 import { BOOTSTRAP_ROUTE } from '../src/commands/studio'
 
 // The task list route the host registers (`TASK_LIST_ROUTE` in the host, which this script does not import: it pulls in `ws`).
@@ -206,11 +206,31 @@ export async function proveInstalledStudio(options: {
     } catch (error) {
       return { ok: false, detail: `${(error as Error).message} — ${output.trim().slice(-300)}` }
     }
-    if (frame !== LIVE_HELLO) return { ok: false, detail: `the application upgrade answered "${frame}"` }
+    let first: { v?: unknown; type?: unknown; repositories?: unknown } = {}
+    try {
+      first = JSON.parse(frame)
+    } catch {
+      // reported below
+    }
+    if (first.v !== 1 || first.type !== 'snapshot' || !Array.isArray(first.repositories)) {
+      return {
+        ok: false,
+        detail: `the application upgrade did not open with a version-1 snapshot: "${frame.slice(0, 120)}"`
+      }
+    }
+    // The page the browser opens is the live list, still connecting when the server renders it; no secret is in it.
+    const html = await page.text()
+    if (!html.includes('data-board-status="connecting"')) {
+      return { ok: false, detail: 'the protected page is not the live task list in its connecting state' }
+    }
+    const secret = link.searchParams.get('token') ?? ''
+    if (html.includes(secret) || frame.includes(secret)) {
+      return { ok: false, detail: 'the launch secret reached the page or the application socket' }
+    }
 
     return {
       ok: true,
-      detail: `packed Studio, started from a nested folder of a git checkout, refused every request without a session, exchanged its single-use link once (reuse and a forged link refused), then served its protected page and application WebSocket on 127.0.0.1:${port}`
+      detail: `packed Studio, started from a nested folder of a git checkout, refused every request without a session, exchanged its single-use link once (reuse and a forged link refused), then served its protected live-list page and an application WebSocket that opens with a snapshot on 127.0.0.1:${port}`
     }
   } finally {
     rmSync(repoDir, { recursive: true, force: true })
@@ -227,7 +247,8 @@ export async function proveInstalledStudio(options: {
   }
 }
 
-async function main(): Promise<number> {
+/** Packs this working tree, installs it into a scratch directory and runs the installed-Studio proof there. */
+export async function runInstalledStudioProof(): Promise<number> {
   const root = mkdtempSync(join(tmpdir(), 'vinaya-studio-install-'))
   try {
     const installDir = join(root, 'install')
@@ -260,4 +281,4 @@ async function main(): Promise<number> {
   }
 }
 
-if (import.meta.main) process.exit(await main())
+if (import.meta.main) process.exit(await runInstalledStudioProof())

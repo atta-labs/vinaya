@@ -136,10 +136,12 @@
         "ws": "^8.18.0",
       },
       "devDependencies": {
+        "@types/jsdom": "^30.0.0",
         "@types/node": "^26.0.0",
         "@types/react": "^19.0.0",
         "@types/react-dom": "^19.0.0",
         "@types/ws": "^8.18.2",
+        "jsdom": "^26.1.0",
         "typescript": "^5.7.0",
       },
     },
