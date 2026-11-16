@@ -552,6 +552,9 @@ export async function resolveIssueForRunTask(
   }
 }
 
+/** The Engine check `runTask` makes, re-exported so the `task run` command makes the same one before it prepares. */
+export { engineStartRefusal }
+
 export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRunTaskDeps): Promise<RunTaskOutcome> {
   // Round 2 review (MAJOR) / security review (MEDIUM): a driver runs with no
   // human watching, so it must resolve `runtimeDir` through the

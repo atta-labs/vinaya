@@ -64,11 +64,11 @@ import {
   type TaskRunner
 } from '../../../../harness/processes/vinaya-strict/integration/config/compose.js'
 import {
+  engineStartRefusal,
   runTask,
   type RunTaskResult,
   type RunTaskOutcome
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run.js'
-import { engineStartRefusal } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-engine.js'
 import { startBackgroundRun } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-background.js'
 import { resumeCommandFor } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-status.js'
 import { noPushResumeCommandFor } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
@@ -300,7 +300,7 @@ function flowOrExit(parsed: ParsedFlags, runner: TaskRunner): { flow?: string } 
 }
 
 /**
- * The command's own Engine check, made before it prepares the run or launches a background controller, so a
+ * The command's own Engine check, made before it prepares the run or launches a background run, so a
  * `--background` start refuses in the terminal that ran it rather than in the detached child's log. `runTask` makes
  * the same check for every start path; a `--rollback` start, which restarts on the standalone runner, makes none.
  * Null when the run may start, otherwise the refusal text `engineStartRefusal` answers.
@@ -566,5 +566,5 @@ export async function taskRunCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'task run': { date: '2026-09-30', callsToday: 7, retiresVia: 'sharedCommandShell' }
+  'task run': { date: '2026-09-30', callsToday: 8, retiresVia: 'sharedCommandShell' }
 }
