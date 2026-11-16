@@ -94,4 +94,11 @@ Each task has its own page with its full event log.
 1. **One follower per repository** reads the repository's Log as it grows.
 2. **One pure reading** turns the events into a picture of every task. Every page shares that one picture.
 3. **A thirty-second clock** reads the picture again, so silence becomes amber and then presumed dead even when no event arrives.
-4. **One server-sent event stream** carries the picture to the page: the whole picture when the page connects, then only the tasks that changed.
+4. **One WebSocket** carries the picture to the page: the whole picture when the page connects, then only the tasks that changed. It lives on `/api/mission-control/live`. The Studio server answers that upgrade itself; Next's hot-reload socket stays Next's, and the two never share a handler. A WebSocket is chosen over server-sent events because the page also sends over the same connection, and the host already owns the listener.
+
+## The live endpoints
+
+- **`/api/mission-control/live`** — the WebSocket above. Until the picture is wired in, a connection receives one fixed greeting frame, `{"type":"hello"}`, and carries no repository data.
+- **`/api/mission-control/tasks`** — the minimum live task list, an HTTP `GET` answering `{"tasks":[]}` until the picture is wired in.
+
+Neither endpoint stores or describes task topology: which task depends on which, and in what order they run, stay with the repository's Issues.

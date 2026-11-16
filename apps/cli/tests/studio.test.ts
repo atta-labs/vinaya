@@ -19,6 +19,7 @@ import {
   packStudioNodeModules,
   repairStudioNodeModules,
   STUDIO_APP_RELPATH,
+  STUDIO_ENTRY_FILENAME,
   STUDIO_NODE_MODULES_PACKED_DIRNAME,
   studioServerDir
 } from '../src/lib/studio-bundle'
@@ -48,8 +49,8 @@ function fakeInstall(withBundle: boolean): { root: string; moduleUrl: string; bu
     mkdirSync(serverDir, { recursive: true })
     mkdirSync(join(bundleRoot, STUDIO_NODE_MODULES_PACKED_DIRNAME, 'next'), { recursive: true })
     writeFileSync(
-      join(serverDir, 'server.js'),
-      `require('node:http').createServer((req, res) => res.end(process.env.HOSTNAME)).listen(Number(process.env.PORT), process.env.HOSTNAME)\n`
+      join(serverDir, STUDIO_ENTRY_FILENAME),
+      `import http from 'node:http'\nhttp.createServer((req, res) => res.end(process.env.HOSTNAME)).listen(Number(process.env.PORT), process.env.HOSTNAME)\n`
     )
   }
   return { root, moduleUrl: pathToFileURL(join(root, 'dist', 'index.js')).href, bundleRoot }
@@ -121,13 +122,28 @@ describe('studio host, port and launch plan', () => {
     expect(env).toMatchObject({ HOSTNAME: '127.0.0.1', PORT: '3108', KEEP: 'yes' })
   })
 
-  test('a checkout runs the app dev server with host and port on the command line, not the dev script', () => {
+  test('a checkout runs the Studio host from source in development mode, host and port from the environment', () => {
     const plan = planLaunch({ kind: 'checkout', appDir: '/repo/apps/vinaya-studio' }, '/repo', 3108, {
       HOSTNAME: '0.0.0.0'
     })
-    expect(plan.args).toEqual(['run', 'next', 'dev', '--hostname', '127.0.0.1', '--port', '3108'])
+    expect(plan.command).toBe('node')
+    expect(plan.args).toEqual([
+      '--experimental-strip-types',
+      join('src', 'server', 'entry.ts'),
+      '--dir',
+      '/repo/apps/vinaya-studio',
+      '--dev'
+    ])
     expect(plan.cwd).toBe('/repo/apps/vinaya-studio')
-    expect(plan.env.HOSTNAME).toBe('127.0.0.1')
+    expect(plan.env).toMatchObject({ HOSTNAME: '127.0.0.1', PORT: '3108' })
+  })
+
+  test('the installed package runs the bundled Studio host under node, from its own folder', () => {
+    const serverDir = studioServerDir('/pkg/studio-standalone')
+    const plan = planLaunch({ kind: 'shipped', bundleRoot: '/pkg/studio-standalone', serverDir }, '/work', 3008, {})
+    expect(plan.command).toBe('node')
+    expect(plan.args).toEqual([join(serverDir, STUDIO_ENTRY_FILENAME), '--dir', serverDir])
+    expect(plan.cwd).toBe('/work')
   })
 
   test('the primary port is 3008 and the fallback 3108', async () => {

@@ -2,7 +2,12 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import net from 'node:net'
 import { dirname, join } from 'node:path'
-import { prepareShippedStudio, STUDIO_APP_RELPATH, STUDIO_PACKAGE_NAME } from '../lib/studio-bundle.js'
+import {
+  prepareShippedStudio,
+  STUDIO_APP_RELPATH,
+  STUDIO_ENTRY_FILENAME,
+  STUDIO_PACKAGE_NAME
+} from '../lib/studio-bundle.js'
 
 /** Studio listens on the user's own machine only. */
 export const STUDIO_HOST = '127.0.0.1'
@@ -21,7 +26,7 @@ export type StudioTarget =
  * The one resolution seam, in this order:
  *   1. checkout — walk up from `cwd` for `apps/vinaya-studio/package.json` named `@vinaya/studio`; Studio runs from
  *      its source, for development.
- *   2. shipped — this installed package's own `studio-standalone/` folder, assembled at pack time by
+ *   2. shipped — this installed package's own `studio-standalone/` deployment bundle, assembled at pack time by
  *      `scripts/bundle-studio.ts`. `moduleUrl` is a parameter so a test can hand in a fake install root.
  *   3. missing — neither found.
  */
@@ -122,9 +127,11 @@ export function studioEnv(base: NodeJS.ProcessEnv, port: number): NodeJS.Process
 export type SpawnPlan = { command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }
 
 /**
- * How each shape starts. A checkout runs the app's own dev server with host and port on the command line — not the
- * app's `dev` script, which fixes both and would never let the fallback port apply. The shipped server reads
- * `HOSTNAME` and `PORT` from its environment.
+ * How each shape starts: the same Studio host (`apps/vinaya-studio/src/server`), which reads `HOSTNAME` and `PORT` from
+ * its environment, never the app's `dev` script (it fixes host and port and would never let the fallback port apply).
+ * A checkout runs the host from source in development mode, under Node with type stripping (available from the
+ * published minimum Node, 22.13, behind the flag), as Next's own dev server runs; the installed package runs the host
+ * bundled for Node from the shipped folder.
  */
 export function planLaunch(
   target: Exclude<StudioTarget, { kind: 'missing' }>,
@@ -135,13 +142,18 @@ export function planLaunch(
   const env = studioEnv(base, port)
   if (target.kind === 'checkout') {
     return {
-      command: 'bun',
-      args: ['run', 'next', 'dev', '--hostname', STUDIO_HOST, '--port', String(port)],
+      command: 'node',
+      args: ['--experimental-strip-types', join('src', 'server', 'entry.ts'), '--dir', target.appDir, '--dev'],
       cwd: target.appDir,
       env
     }
   }
-  return { command: 'node', args: [join(target.serverDir, 'server.js')], cwd, env }
+  return {
+    command: 'node',
+    args: [join(target.serverDir, STUDIO_ENTRY_FILENAME), '--dir', target.serverDir],
+    cwd,
+    env
+  }
 }
 
 /** Opens `url` in the user's browser with the platform's own opener; resolves false when it cannot. */

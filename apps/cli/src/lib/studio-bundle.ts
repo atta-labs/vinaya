@@ -13,8 +13,11 @@ export const STUDIO_PACKAGE_NAME = '@vinaya/studio'
 /** The Studio app's folder, relative to the repository root. */
 export const STUDIO_APP_RELPATH = 'apps/vinaya-studio'
 
-/** The folder inside the CLI package that holds the assembled standalone server. */
+/** The folder inside the CLI package that holds the assembled Studio deployment bundle. */
 export const STUDIO_BUNDLE_DIRNAME = 'studio-standalone'
+
+/** The Studio host, bundled for Node, inside the app's folder in the bundle; running it starts Studio. */
+export const STUDIO_ENTRY_FILENAME = 'studio-server.mjs'
 
 /**
  * npm and bun's packer strip every folder literally named `node_modules` from a tarball, unconditionally, and the
@@ -30,7 +33,7 @@ export function studioServerSegments(): string[] {
   return STUDIO_APP_RELPATH.split('/')
 }
 
-/** The standalone server's folder inside a bundle root; its `server.js` starts Studio. */
+/** The Studio app's folder inside a bundle root; its `studio-server.mjs` starts Studio. */
 export function studioServerDir(bundleRoot: string): string {
   return join(bundleRoot, ...studioServerSegments())
 }
@@ -49,12 +52,12 @@ function renameAll(dir: string, from: string, to: string): void {
 
 /**
  * Run time: the shipped Studio inside the installed package whose module is `moduleUrl`, with its packed dependencies
- * folders already restored; null when the package carries no standalone server.
+ * folders already restored; null when the package carries no Studio host.
  */
 export function prepareShippedStudio(moduleUrl: string): { bundleRoot: string; serverDir: string } | null {
   const bundleRoot = join(packageRoot(moduleUrl), STUDIO_BUNDLE_DIRNAME)
   const serverDir = studioServerDir(bundleRoot)
-  if (!existsSync(join(serverDir, 'server.js'))) return null
+  if (!existsSync(join(serverDir, STUDIO_ENTRY_FILENAME))) return null
   repairStudioNodeModules(bundleRoot)
   return { bundleRoot, serverDir }
 }
