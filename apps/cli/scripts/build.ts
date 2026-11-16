@@ -60,7 +60,13 @@ const external = Object.entries(pkg.dependencies ?? {})
 function normalizeExecutable(outFile: string): void {
   const bundled = readFileSync(outFile, 'utf-8')
   const shebang = '#!/usr/bin/env node'
-  const body = bundled.startsWith('#!') ? bundled.slice(bundled.indexOf('\n') + 1) : bundled
+  const afterShebang = bundled.startsWith('#!') ? bundled.slice(bundled.indexOf('\n') + 1) : bundled
+  // Bun's bundler writes a `// @bun` pragma line; Bun 1.4.4 reads a file carrying it without decoding UTF-8,
+  // which misreads every non-ASCII character. Drop every such line.
+  const body = afterShebang
+    .split('\n')
+    .filter((line) => !line.startsWith('// @bun'))
+    .join('\n')
   writeFileSync(outFile, `${shebang}\n${body}`)
   chmodSync(outFile, 0o755)
 }
