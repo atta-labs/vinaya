@@ -1,5 +1,12 @@
 # @attalabs/vinaya
 
+## 0.42.3
+
+### Patch Changes
+
+- 53f97c5: The index-outage test is on the outside-call list. It reads its token with `gh auth token` when neither `GITHUB_TOKEN` nor `GH_TOKEN` is set, so a review round with no token variable ran it against the stand-in and failed it; the list had been measured with a token variable set.
+- fc9ddd0: The ready-gate wrapper case waits, within three seconds, for the wrapper's process group to be gone instead of reading it once, so it no longer fails while a killed child is still waiting to be reaped.
+
 ## 0.42.2
 
 ### Patch Changes
