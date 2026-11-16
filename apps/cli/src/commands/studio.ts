@@ -21,6 +21,22 @@ export const BOOTSTRAP_ROUTE = '/__studio/bootstrap'
 /** Where a checkout's Studio host is bundled for Node before it starts, beside Next's own output. */
 const CHECKOUT_HOST_RELPATH = join('.next', 'studio-host', 'entry.mjs')
 
+/**
+ * The Log follower and the folder source the Studio server loads at run time, each built for Node beside the host (a
+ * checkout's host folder, the packed bundle's server folder). `entry` is relative to the repository root; `out` is the
+ * file name the server (`picture-service.ts`) loads from its own folder.
+ */
+export const STUDIO_LOG_RUNTIME_FILES = [
+  { entry: 'harness/kernel/log/client/log-follow.ts', out: 'log-follow.mjs' },
+  { entry: 'harness/kernel/log/client/log-sync-folder-source.ts', out: 'log-sync-folder-source.mjs' }
+] as const
+
+/** The `bun build` arguments that bundle one TypeScript entry for Node, leaving the named packages external. */
+export function studioBuildArgs(entry: string, outfile: string, externals: readonly string[] = []): string[] {
+  const flags = externals.map((name) => `--external=${name}`)
+  return ['build', entry, '--target=node', '--format=esm', ...flags, `--outfile=${outfile}`]
+}
+
 const GIT_TIMEOUT_MS = 5_000
 const WAIT_FOR_PORT_MS = 120_000
 const POLL_MS = 150
@@ -219,6 +235,8 @@ export type SpawnPlan = {
   env: NodeJS.ProcessEnv
   /** Runs once before `command`, to bundle a checkout's host for Node. */
   prepare?: { command: string; args: string[] }
+  /** Runs after `prepare`: builds the follower and the folder source the host loads from its own folder. */
+  prepareRuntime?: { command: string; args: string[] }[]
 }
 
 /**
@@ -242,16 +260,15 @@ export function planLaunch(
       env,
       prepare: {
         command: 'bun',
-        args: [
-          'build',
-          join('src', 'server', 'entry.ts'),
-          '--target=node',
-          '--format=esm',
-          '--external=next',
-          '--external=ws',
-          `--outfile=${CHECKOUT_HOST_RELPATH}`
-        ]
-      }
+        args: studioBuildArgs(join('src', 'server', 'entry.ts'), CHECKOUT_HOST_RELPATH, ['next', 'ws'])
+      },
+      prepareRuntime: STUDIO_LOG_RUNTIME_FILES.map(({ entry, out }) => ({
+        command: 'bun',
+        args: studioBuildArgs(
+          join(target.appDir, '..', '..', ...entry.split('/')),
+          join(dirname(CHECKOUT_HOST_RELPATH), out)
+        )
+      }))
     }
   }
   return {
@@ -348,8 +365,8 @@ export async function launchStudio(
   }
 
   const plan = planLaunch(target, cwd, port, deps.env ?? process.env)
-  if (plan.prepare) {
-    const prepared = spawnSync(plan.prepare.command, plan.prepare.args, {
+  for (const step of [...(plan.prepare ? [plan.prepare] : []), ...(plan.prepareRuntime ?? [])]) {
+    const prepared = spawnSync(step.command, step.args, {
       cwd: plan.cwd,
       env: plan.env,
       stdio: 'inherit'

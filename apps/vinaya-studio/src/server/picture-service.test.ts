@@ -1,11 +1,18 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { buildExecution } from '../../../../harness/kernel/log/fixtures/executions.ts'
 import type { LogSource, SourceCursor, SourceLine } from '../../../../harness/kernel/log/sync/contracts.ts'
 import { known, unknownBecause } from '../../../../harness/kernel/log/sync/measured.ts'
 import type { RetentionStatement } from '../../../../harness/kernel/log/client/log-sync-server-source.ts'
 import {
   createPictureService,
+  createRealSourceFrom,
   FEED_CAP,
+  FOLDER_SOURCE_FILENAME,
+  LOG_FOLLOW_FILENAME,
   type FollowHandle,
   type FollowSink,
   type LogFollower,
@@ -679,5 +686,51 @@ describe('shutdown', () => {
     await service.close()
     await opening
     expect(s.calls).toHaveLength(0)
+  })
+})
+
+describe('the real source loads the host runtime files from its own folder', () => {
+  const withRuntime = async (files: Record<string, string>, run: (dir: URL) => Promise<void>) => {
+    const dir = mkdtempSync(join(tmpdir(), 'studio-runtime-'))
+    try {
+      for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body)
+      await run(pathToFileURL(`${dir}/`))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  test('a folder spec takes the follower and the folder source from the runtime files', async () => {
+    await withRuntime(
+      {
+        [LOG_FOLLOW_FILENAME]: `export const createFolderLogFollower = (d) => ({ id: 'follower:' + d.folderRoot })\nexport const createServerLogFollower = () => ({ id: 'server' })\n`,
+        [FOLDER_SOURCE_FILENAME]: `export const createFolderLogSource = (d) => ({ id: 'source:' + d.folderRoot })\n`
+      },
+      async (dir) => {
+        const handle = await createRealSourceFrom(dir)(
+          { kind: 'folder', folderRoot: '/logs', repoDir: '/logs/x' },
+          folderRepo()
+        )
+        expect(handle.follower.id).toBe('follower:/logs')
+        expect((handle.source as unknown as { id: string }).id).toBe('source:/logs')
+      }
+    )
+  })
+
+  test('a missing runtime file rejects, and the service shows the repository disconnected with the reason', async () => {
+    await withRuntime({}, async (dir) => {
+      const service = createPictureService({
+        repositories: [folderRepo()],
+        createSource: createRealSourceFrom(dir),
+        clock: clockAt(T0).now,
+        timers: fakeTimers().timers
+      })
+      await service.start()
+      const snapshot = service.snapshots()[0] as RepositorySnapshot
+      expect(snapshot.status.connection).toBe('unavailable')
+      expect(snapshot.status.live).toBe(false)
+      expect(snapshot.status.reason).toContain(LOG_FOLLOW_FILENAME)
+      await service.close()
+    })
   })
 })

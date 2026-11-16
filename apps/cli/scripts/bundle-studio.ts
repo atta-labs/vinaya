@@ -28,6 +28,7 @@ import { createRequire } from 'node:module'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { nodeFileTrace } from '@vercel/nft'
+import { STUDIO_LOG_RUNTIME_FILES, studioBuildArgs } from '../src/commands/studio.js'
 import {
   packStudioNodeModules,
   STUDIO_APP_RELPATH,
@@ -126,6 +127,21 @@ if (hostBuild.status !== 0 || !existsSync(hostBundle)) {
   fail(`bundling the Studio host failed (${hostBuild.error ? hostBuild.error.message : `exit ${hostBuild.status}`}).`)
 }
 
+// The Log follower and the folder source, built for Node by the same step beside the host. The host loads them from
+// its own folder by a path, so neither the host bundle nor the trace below follows them; they import only `node:`
+// modules (the kernel Log writer module is inside, unused by the read path).
+for (const { entry, out } of STUDIO_LOG_RUNTIME_FILES) {
+  const outfile = join(nextDir, 'studio-host', out)
+  const built = spawnSync('bun', studioBuildArgs(join(monorepoRoot, ...entry.split('/')), outfile), {
+    cwd: appRoot,
+    stdio: 'inherit',
+    env
+  })
+  if (built.status !== 0 || !existsSync(outfile)) {
+    fail(`bundling ${entry} failed (${built.error ? built.error.message : `exit ${built.status}`}).`)
+  }
+}
+
 // Every runtime file: Next's documented traces first, then the host's own graph.
 const runtimeFiles = new Set<string>()
 for (const nftPath of listNftFiles(nextDir)) {
@@ -174,6 +190,7 @@ cpSync(nextDir, join(targetServerDir, '.next'), {
   filter: (source) => !(dirname(source) === nextDir && BUILD_ONLY.has(source.slice(nextDir.length + 1)))
 })
 cpSync(hostBundle, join(targetServerDir, STUDIO_ENTRY_FILENAME))
+for (const { out } of STUDIO_LOG_RUNTIME_FILES) cpSync(join(nextDir, 'studio-host', out), join(targetServerDir, out))
 rmSync(join(targetServerDir, '.next', 'studio-host'), { recursive: true, force: true })
 
 const publicDir = join(appRoot, 'public')
@@ -185,6 +202,9 @@ cpSync(join(appRoot, 'package.json'), join(targetServerDir, 'package.json'))
 writeFileSync(join(targetServerDir, 'next.config.mjs'), `export default { distDir: '.next' }\n`)
 
 if (!existsSync(join(targetServerDir, STUDIO_ENTRY_FILENAME))) fail(`the bundle has no ${STUDIO_ENTRY_FILENAME}.`)
+for (const { out } of STUDIO_LOG_RUNTIME_FILES) {
+  if (!existsSync(join(targetServerDir, out))) fail(`the bundle has no ${out}.`)
+}
 for (const required of ['next', 'ws', 'react', 'react-dom']) {
   if (!existsSync(join(targetRoot, 'node_modules', required, 'package.json'))) {
     fail(`the bundle carries no runtime dependency "${required}" under ${join(targetRoot, 'node_modules')}.`)

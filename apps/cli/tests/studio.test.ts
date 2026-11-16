@@ -161,6 +161,23 @@ describe('studio host, port and launch plan', () => {
     ])
     expect(plan.prepare?.command).toBe('bun')
     expect(plan.prepare?.args).toContain(`--outfile=${join('.next', 'studio-host', 'entry.mjs')}`)
+    // The follower and the folder source are built beside the host, from the repository's kernel sources.
+    expect(plan.prepareRuntime?.map((step) => step.args)).toEqual([
+      [
+        'build',
+        join('/repo/apps/vinaya-studio', '..', '..', 'harness', 'kernel', 'log', 'client', 'log-follow.ts'),
+        '--target=node',
+        '--format=esm',
+        `--outfile=${join('.next', 'studio-host', 'log-follow.mjs')}`
+      ],
+      [
+        'build',
+        join('/repo/apps/vinaya-studio', '..', '..', 'harness', 'kernel', 'log', 'client', 'log-sync-folder-source.ts'),
+        '--target=node',
+        '--format=esm',
+        `--outfile=${join('.next', 'studio-host', 'log-sync-folder-source.mjs')}`
+      ]
+    ])
     expect(plan.cwd).toBe('/repo/apps/vinaya-studio')
     expect(plan.env).toMatchObject({ HOSTNAME: '127.0.0.1', PORT: '3108' })
   })
