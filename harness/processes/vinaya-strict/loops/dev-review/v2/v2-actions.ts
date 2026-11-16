@@ -194,6 +194,12 @@ export interface V2Functions {
   }) => Promise<ReadyGateResult> | ReadyGateResult
   /** Runs the repository's selected tests on `head` as a supervised job, one at a time on a host; never throws. */
   runRoundTests?: (input: { head: string; signal?: AbortSignal }) => Promise<RoundTestsResult> | RoundTestsResult
+  /**
+   * Whether a ruling resumed the paused run since the round-test step last read this, cleared by the read: the
+   * round-test step consumes it, and runs the tests again instead of reusing the result recorded before the pause.
+   * The driver's ruling-resume hook sets it, and so does a driver started to continue after a ruling. Absent: never.
+   */
+  takeRulingResume?: () => boolean
   /** The default branch's ready-tests policy; throws when the trusted read fails. Absent: local tests. */
   readyTestsPolicy?: () => ReadyTestsPolicy
   /**
@@ -317,7 +323,8 @@ export async function runLocalChecks(
  * The round's selected tests, run beside both reviewers on the head the round's reviewers were dispatched against.
  * The step records one result per round and head and exits zero for every outcome, so a red test never fails the
  * fan-out: the round's verdicts carry it (`recordedVerdicts`) and the Developer's prompt names it. A step re-entered
- * for the same round and head (a reviewer retry) reuses its own earlier `passed` or `failed` result. The failing
+ * for the same round and head (a reviewer retry) reuses its own earlier `passed` or `failed` result, unless a ruling
+ * resumed the run since: a ruling says a recorded result should not stand, so the step runs the tests again. The failing
  * test's name, location and output are untrusted pull-request output, sanitized before they are recorded.
  */
 export async function runRoundTestsStep(
@@ -337,7 +344,10 @@ export async function runRoundTestsStep(
   if (head === null)
     return record({ outcome: 'unavailable', detail: 'the head the round judges could not be read' }, '')
   const previous = recordedRoundTests(context.results)
+  // Read on every step, so the first round-test step after a ruling resume consumes the signal.
+  const rulingResumed = fns.takeRulingResume?.() === true
   if (
+    !rulingResumed &&
     previous !== null &&
     previous.round === round &&
     previous.head === head &&

@@ -3454,6 +3454,9 @@ async function runLive(
 ): Promise<number> {
   // The first Developer turn after a resume from a ruling carries the rulings' text, once.
   const rulings = { owed: opts.rulingsOwed === true }
+  // The next round-test step after a ruling resume runs the tests again. It reads its own signal, because the
+  // Developer turn consumes `rulings.owed`; a driver started to continue after a ruling owes the same re-run.
+  const roundTestsRerun = { owed: opts.rulingsOwed === true }
   refuseAnotherRunnersPause(runtimeDir, args.task)
   recordRunFlow(runtimeDir, args.task, loaded.flowKey)
   configureEngineLogEnvironment()
@@ -3499,50 +3502,57 @@ async function runLive(
     // tests run: a locally tested head owes it exactly as a deferred one does.
     const requiredCiPolicy = () => readTrustedRequiredCiPolicy()
     const readyRemoteUrl = repo ? `https://github.com/${repo.owner}/${repo.repo}.git` : null
-    taskInput.v2 = liveV2Functions({
-      runId: loopId,
-      readyTestsPolicy,
-      requiredCiPolicy,
-      worktreePath: taskInput.worktreePath,
-      branch: taskInput.branch,
-      store,
-      findOpenPullRequest,
-      remoteHead: () => taskInput.remoteHead?.() ?? null,
-      // The ready push's test-run limit comes from the review policy, read the way the round cap is.
-      readyPushDeadlineMs: () =>
-        (taskInput.reviewPolicy?.().readyPushTimeoutMinutes ?? DEFAULT_READY_PUSH_TIMEOUT_MINUTES) * 60_000,
-      // A conflict's repair is proven against the default branch's tip the driver fetches from here.
-      remoteUrl: readyRemoteUrl,
-      openWithDeveloperTool: (title, body) => liveContext.context.openPullRequest(title, body),
-      // The loop writes the Evidence block once the pull request is open; the Developer's v2 turn runs no tests.
-      writeEvidence: async ({ pr, head }) => {
-        try {
-          // One freshly verified tip, read once: the report and its receipts use this hash even if the remote moves on.
-          const evidenceBase = readFetchedMainTip(taskInput.worktreePath, readyRemoteUrl)
-          if (readyRemoteUrl !== null && evidenceBase === null)
-            throw new Error('could not obtain a fresh default-branch tip for the Evidence comparison')
-          const body = await readyGateEvidence({
-            ...(evidenceBase ? { base: evidenceBase } : {}),
-            body: liveForge.prBody(pr),
-            head,
-            resultPath: store.gateResultPath,
-            worktreePath: taskInput.worktreePath
-          })
-          const updated = await liveContext.context.updatePullRequestBody(body)
-          if (!updated.ok)
-            return {
-              ok: false,
-              reason: JSON.stringify(updated.error),
-              retryable: updated.error.errorClass === 'internal'
-            }
-          return { ok: true }
-        } catch (error) {
-          return { ok: false, reason: error instanceof Error ? error.message : String(error), retryable: true }
-        }
-      },
-      log: (line) => process.stderr.write(`${new Date().toISOString()}  ${line}\n`),
-      onExplicitCommandsStart: () => focusedChecks()
-    })
+    taskInput.v2 = {
+      ...liveV2Functions({
+        runId: loopId,
+        readyTestsPolicy,
+        requiredCiPolicy,
+        worktreePath: taskInput.worktreePath,
+        branch: taskInput.branch,
+        store,
+        findOpenPullRequest,
+        remoteHead: () => taskInput.remoteHead?.() ?? null,
+        // The ready push's test-run limit comes from the review policy, read the way the round cap is.
+        readyPushDeadlineMs: () =>
+          (taskInput.reviewPolicy?.().readyPushTimeoutMinutes ?? DEFAULT_READY_PUSH_TIMEOUT_MINUTES) * 60_000,
+        // A conflict's repair is proven against the default branch's tip the driver fetches from here.
+        remoteUrl: readyRemoteUrl,
+        openWithDeveloperTool: (title, body) => liveContext.context.openPullRequest(title, body),
+        // The loop writes the Evidence block once the pull request is open; the Developer's v2 turn runs no tests.
+        writeEvidence: async ({ pr, head }) => {
+          try {
+            // One freshly verified tip, read once: the report and its receipts use this hash even if the remote moves on.
+            const evidenceBase = readFetchedMainTip(taskInput.worktreePath, readyRemoteUrl)
+            if (readyRemoteUrl !== null && evidenceBase === null)
+              throw new Error('could not obtain a fresh default-branch tip for the Evidence comparison')
+            const body = await readyGateEvidence({
+              ...(evidenceBase ? { base: evidenceBase } : {}),
+              body: liveForge.prBody(pr),
+              head,
+              resultPath: store.gateResultPath,
+              worktreePath: taskInput.worktreePath
+            })
+            const updated = await liveContext.context.updatePullRequestBody(body)
+            if (!updated.ok)
+              return {
+                ok: false,
+                reason: JSON.stringify(updated.error),
+                retryable: updated.error.errorClass === 'internal'
+              }
+            return { ok: true }
+          } catch (error) {
+            return { ok: false, reason: error instanceof Error ? error.message : String(error), retryable: true }
+          }
+        },
+        log: (line) => process.stderr.write(`${new Date().toISOString()}  ${line}\n`),
+        onExplicitCommandsStart: () => focusedChecks()
+      }),
+      takeRulingResume: () => {
+        const owed = roundTestsRerun.owed
+        roundTestsRerun.owed = false
+        return owed
+      }
+    }
     devToolsContext = withV2DevTools(liveContext.context, {
       worktreePath: taskInput.worktreePath,
       runId: loopId,
@@ -3633,6 +3643,7 @@ async function runLive(
     devToolsContext,
     onRulingResume: () => {
       rulings.owed = true
+      roundTestsRerun.owed = true
     },
     registerFocusedChecks: (notify) => {
       focusedChecks = notify
