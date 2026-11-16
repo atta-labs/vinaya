@@ -114,7 +114,11 @@ export const PROGRAMS: ReadonlyMap<string, Program> = new Map([
   program('log-selftest', `${P}/integration/bin/log-selftest.ts`, 'dist/programs/log-selftest.js', [
     words('log', 'selftest')
   ]),
-  program('sync', `${P}/integration/bin/sync.ts`, 'dist/programs/sync.js', [words('sync')])
+  program('sync', `${P}/integration/bin/sync.ts`, 'dist/programs/sync.js', [words('sync')]),
+  // The Engine runner `task run` starts with `bun`, and the wrapper each supervised command of its ready push runs
+  // under. Neither replaced a command, so neither has command words.
+  program('run-engine', `${P}/bin/run-engine.ts`, 'dist/programs/run-engine.js'),
+  program('supervised-command', `${P}/loops/dev-review/v2/supervised-command.ts`, 'dist/programs/supervised-command.js')
 ])
 
 /** The repository root, found from this file's own place in the source tree. */
@@ -132,12 +136,41 @@ function lookup(name: string): Program {
  * bundle), the built file under the command line's package root; from source,
  * the program's source file in this tree when it is there — so a source
  * checkout never runs a stale build of its own code — else the built file.
+ * `packageRoot` and `fromSource` default to this module's own package root and
+ * whether it runs from source; a caller names them to ask about another install.
  */
-export function programFile(name: string): string {
+export function programFile(name: string, packageRoot: string = cliPackageRoot(), fromSource = FROM_SOURCE): string {
   const entry = lookup(name)
-  const built = join(cliPackageRoot(), entry.built)
-  const source = join(SOURCE_ROOT, entry.source)
-  if (FROM_SOURCE && existsSync(source)) return source
+  return pickFile(join(packageRoot, entry.built), join(SOURCE_ROOT, entry.source), fromSource)
+}
+
+/** Where a published package carries the process folder, relative to its package root. */
+export const BUILT_PROCESS_FOLDER = 'dist/vinaya-strict'
+
+/**
+ * The process folder the process declaration and the role files are read from, by `programFile`'s rule: from source,
+ * this checkout's process folder, even when a packed copy sits under the package root; from a bundle, the copy the
+ * package carries under `dist/vinaya-strict`.
+ */
+export function processFolderFor(packageRoot: string = cliPackageRoot(), fromSource = FROM_SOURCE): string {
+  return pickFile(join(packageRoot, BUILT_PROCESS_FOLDER), join(SOURCE_ROOT, P), fromSource)
+}
+
+/**
+ * The command line's entry: from source, this checkout's `apps/cli/src/index.ts`; from a bundle, the package's
+ * `dist/index.js`.
+ */
+export function cliEntryFor(packageRoot: string = cliPackageRoot(), fromSource = FROM_SOURCE): string {
+  return pickFile(
+    join(packageRoot, 'dist', 'index.js'),
+    join(SOURCE_ROOT, 'apps', 'cli', 'src', 'index.ts'),
+    fromSource
+  )
+}
+
+/** The source path when running from source and it is there; else the built path when it is there; else the source. */
+function pickFile(built: string, source: string, fromSource: boolean): string {
+  if (fromSource && existsSync(source)) return source
   return existsSync(built) ? built : source
 }
 

@@ -29,13 +29,25 @@
  *   (`dist/checks/bin/`), mirroring their source layout exactly, so
  *   `registry.ts`'s `packageRoot()`-relative resolution needs no special
  *   casing between the two.
+ * - Every program-table row is a built program, the Engine runner among them:
+ *   it imports Bun's SQLite and is started with `bun`, as `task run` starts it,
+ *   whatever its `#!` line says.
+ * - `--out <dir>` writes the `dist/` tree under `<dir>` instead of the package
+ *   folder, so a test can build without rewriting the package's own `dist/`.
  */
 import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import ts from 'typescript'
 import { PROGRAMS } from '../../../harness/processes/vinaya-strict/tools/programs.js'
 
 const pkgRoot = join(import.meta.dir, '..')
+/** Where the `dist/` tree is written: the package folder, or the folder `--out` names. */
+const outFlag = process.argv.indexOf('--out')
+const outRoot = outFlag === -1 ? pkgRoot : resolve(process.argv[outFlag + 1] ?? '')
+if (outFlag !== -1 && !process.argv[outFlag + 1]) {
+  console.error('build: --out needs a folder')
+  process.exit(2)
+}
 const pkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf-8')) as {
   dependencies?: Record<string, string>
 }
@@ -78,15 +90,15 @@ async function build(entrypoints: string[], outdir: string, naming = '[name].[ex
   }
 }
 
-await build([join(pkgRoot, 'src', 'index.ts')], join(pkgRoot, 'dist'))
-normalizeExecutable(join(pkgRoot, 'dist', 'index.js'))
+await build([join(pkgRoot, 'src', 'index.ts')], join(outRoot, 'dist'))
+normalizeExecutable(join(outRoot, 'dist', 'index.js'))
 
 const processChecksDir = join(pkgRoot, '..', '..', 'harness', 'processes', 'vinaya-strict', 'checks')
 const checkBinDir = join(processChecksDir, 'bin')
 const checkEntrypoints = readdirSync(checkBinDir)
   .filter((f) => f.endsWith('.ts'))
   .map((f) => join(checkBinDir, f))
-const checkOutdir = join(pkgRoot, 'dist', 'checks', 'bin')
+const checkOutdir = join(outRoot, 'dist', 'checks', 'bin')
 await build(checkEntrypoints, checkOutdir)
 for (const f of readdirSync(checkBinDir).filter((f) => f.endsWith('.ts'))) {
   normalizeExecutable(join(checkOutdir, f.replace(/\.ts$/, '.js')))
@@ -128,7 +140,7 @@ for (const n of ['verify-dispatch', 'verify-docs', 'verify-coherence']) {
 // built under `dist/lib`, each from its source file; a published install reaches them here.
 const libPrograms = [...PROGRAMS.values()].filter((program) => program.built.startsWith('dist/lib/'))
 const libBinNames = libPrograms.map((program) => program.built.slice('dist/lib/'.length))
-const libOutdir = join(pkgRoot, 'dist', 'lib')
+const libOutdir = join(outRoot, 'dist', 'lib')
 await build(
   libPrograms.map((program) => join(pkgRoot, '..', '..', program.source)),
   libOutdir
@@ -139,7 +151,7 @@ for (const f of libBinNames) normalizeExecutable(join(libOutdir, f))
 // runs this one file (`node dist/kernel/tools/host/dev-tools-bridge.js --socket <path>`)
 // to reach the driver's dev-tools host, so a published install ships it beside the CLI.
 const bridgeSource = join(pkgRoot, '..', '..', 'harness', 'kernel', 'tools', 'host', 'dev-tools-bridge.ts')
-const bridgeOutdir = join(pkgRoot, 'dist', 'kernel', 'tools', 'host')
+const bridgeOutdir = join(outRoot, 'dist', 'kernel', 'tools', 'host')
 await build([bridgeSource], bridgeOutdir)
 normalizeExecutable(join(bridgeOutdir, 'dev-tools-bridge.js'))
 
@@ -148,12 +160,12 @@ normalizeExecutable(join(bridgeOutdir, 'dev-tools-bridge.js'))
 // file name — the name the program checks it was started as — is its own.
 const repoRoot = join(pkgRoot, '..', '..')
 for (const program of PROGRAMS.values()) {
-  const outFile = join(pkgRoot, program.built)
+  const outFile = join(outRoot, program.built)
   if (!program.built.startsWith('dist/programs/')) continue
   await build([join(repoRoot, program.source)], dirname(outFile))
   normalizeExecutable(outFile)
 }
-const unbuilt = [...PROGRAMS.values()].filter((program) => !existsSync(join(pkgRoot, program.built)))
+const unbuilt = [...PROGRAMS.values()].filter((program) => !existsSync(join(outRoot, program.built)))
 if (unbuilt.length > 0) {
   console.error(`the build emitted no ${unbuilt.map((program) => program.built).join(', ')}`)
   process.exit(1)
@@ -167,9 +179,9 @@ const LIBRARY_ENTRIES = [
   { name: 'process', source: 'harness/processes/vinaya-strict/public-api.ts' }
 ]
 for (const entry of LIBRARY_ENTRIES) {
-  await build([join(repoRoot, entry.source)], join(pkgRoot, 'dist'), `${entry.name}.[ext]`)
+  await build([join(repoRoot, entry.source)], join(outRoot, 'dist'), `${entry.name}.[ext]`)
 }
-const typesOutdir = join(pkgRoot, 'dist', 'types')
+const typesOutdir = join(outRoot, 'dist', 'types')
 const declarationProgram = ts.createProgram(
   LIBRARY_ENTRIES.map((entry) => join(repoRoot, entry.source)),
   {
@@ -197,7 +209,7 @@ if (emitProblems.length > 0 || emitted.emitSkipped) {
 }
 for (const entry of LIBRARY_ENTRIES) {
   for (const file of [
-    join(pkgRoot, 'dist', `${entry.name}.js`),
+    join(outRoot, 'dist', `${entry.name}.js`),
     join(typesOutdir, entry.source.replace(/\.ts$/, '.d.ts'))
   ]) {
     if (!existsSync(file)) {

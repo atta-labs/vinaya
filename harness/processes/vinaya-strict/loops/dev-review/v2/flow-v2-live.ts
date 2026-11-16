@@ -13,7 +13,6 @@ import {
 } from 'node:fs'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
-import { fileURLToPath } from 'node:url'
 
 import { type DevToolContext, devToolError } from '../../../../../kernel/tools/dev-tools-server'
 import type { ReviewInputManifest } from '../../../tools/task-contract/review-input-manifest'
@@ -181,7 +180,7 @@ import {
 } from '../../../tools/pre-push-ready-policy'
 import { createTestTempRun, removeTestTempRun, sweepAbandoned } from '../../../../../kernel/conformance/unit/test-temp'
 import { appendLoopLogLine, loopLogPathFor } from '../../../../../kernel/log/client/loop-log'
-import { progressObserverEntry } from '../../../tools/programs'
+import { programFile, progressObserverEntry } from '../../../tools/programs'
 import {
   appendProgressBytes,
   appendProgressRecord,
@@ -616,8 +615,11 @@ export interface SupervisedRun {
   interrupted: 'cancel' | 'deadline' | null
 }
 
-/** The wrapper every supervised command runs under, as the live leader of its process group. */
-export const SUPERVISED_COMMAND_WRAPPER = fileURLToPath(new URL('./supervised-command.ts', import.meta.url))
+/**
+ * The wrapper every supervised command runs under, as the live leader of its process group: the program table's
+ * file for it, the source beside this file in a checkout and the built program in an installed package.
+ */
+export const SUPERVISED_COMMAND_WRAPPER = programFile('supervised-command')
 
 /** How long a stopped group's output pipes may stay open before they are closed from this side. */
 const OUTPUT_DRAIN_MS = 2000

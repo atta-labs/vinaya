@@ -135,7 +135,7 @@ export const COMMANDS: readonly Command[] = [
       }
     ],
     details: [
-      'The atta-engine runner starts the workspace Engine script with Bun, streams its output and returns its exit code. A published install without the script prints one notice and falls back to standalone. Engine Log events use the local folder only; logs: false disables all Log destinations for both runners.',
+      'The atta-engine runner starts the Engine runner with Bun, so it needs Bun on the machine, streams its output and returns its exit code. The published package carries the Engine runner as a built program and a checkout starts its source file; a command line without the runner file prints one notice and falls back to standalone. Engine Log events use the local folder only; logs: false disables all Log destinations for both runners.',
       // VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-engine.ts contains:export function crossRunnerRefusalReason(
       "A run's runner is recorded when it starts and never changes: switching `runner` in config changes only the runner of new runs, and a run recorded on `atta-engine` keeps routing to the Engine for `task status`, `task_resume` and `task_cancel`. A start on a pause another runner holds is refused with a typed reason naming the recorded runner and the requested one, and so is a start on another runner's Engine run that is still in flight with no pause held — halted or stopped short of completed or cancelled.",
       // VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/backend-rollback.ts contains:export async function terminateAndRestart(

@@ -86,6 +86,12 @@ describe('the command line allow list', () => {
     expect(binDrift(manifestBin())).toEqual({ unnamed: [], missing: [], misplaced: [] })
   })
 
+  test('the manifest ships the Engine runner and the supervised-command wrapper as built programs', () => {
+    const bin = manifestBin()
+    expect(bin['vinaya-run-engine']).toBe('dist/programs/run-engine.js')
+    expect(bin['vinaya-supervised-command']).toBe('dist/programs/supervised-command.js')
+  })
+
   test('a manifest bin the program table does not name fails', () => {
     const drift = binDrift({ ...manifestBin(), 'vinaya-not-a-program': 'dist/programs/not-a-program.js' })
     expect(drift.unnamed).toEqual(['vinaya-not-a-program'])

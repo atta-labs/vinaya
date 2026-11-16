@@ -1,2 +1,3 @@
 tests/public-api.test.ts
 tests/studio.test.ts
+tests/engine-runner-install.test.ts

@@ -35,7 +35,9 @@
     "vinaya-log-send": "dist/programs/log-send.js",
     "vinaya-log-emit": "dist/programs/log-emit.js",
     "vinaya-log-selftest": "dist/programs/log-selftest.js",
-    "vinaya-sync": "dist/programs/sync.js"
+    "vinaya-sync": "dist/programs/sync.js",
+    "vinaya-run-engine": "dist/programs/run-engine.js",
+    "vinaya-supervised-command": "dist/programs/supervised-command.js"
   },
   "exports": {
     "./harness": {
