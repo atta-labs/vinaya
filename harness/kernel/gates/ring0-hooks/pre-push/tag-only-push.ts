@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Tells a tag-only push of already-pushed commits apart from every other push,
  * so this repository's self-hosted pre-push hook can stop after the Vinaya
