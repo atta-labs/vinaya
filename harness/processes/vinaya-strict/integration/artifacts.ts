@@ -1693,6 +1693,13 @@ if [ "$VINAYA_PUSH_MODE" = "storage" ]; then
   echo "vinaya pre-push: storage push — cheap checks only, no tests (no pull request is open)"
   exit 0
 fi
+# A tag-only push of commits the remote default branch already reaches adds no
+# code and passed CI there: the checks above were its whole gate. Reads
+# VINAYA_PUSH_REFS, never stdin again.
+if [ "$(${libBinInvocation(selfHost, 'harness/kernel/gates/ring0-hooks/pre-push/tag-only-push.ts', 'vinaya-tag-only-push')})" = "tags" ]; then
+  echo "vinaya pre-push: tag-only push of already-pushed commits — checks only, no typecheck, no tests"
+  exit 0
+fi
 # Ring 0 (O6): typecheck, then only the test files the real import graph
 # says the changed files could affect.
 VINAYA_STEP_STARTED=$(date +%s)
