@@ -5,6 +5,8 @@ import {
 } from '../../../loops/dev-review/actions/developer-dev-tools-context.js'
 import type { PublicationCheckInput } from '../../../loops/dev-review/standalone/dev-review-loop/developer-publication.js'
 import { devToolError } from '../../../../../kernel/tools/dev-tools-server.js'
+import { EVIDENCE_PLACEHOLDER_TEXT } from '../../../checks/evidence-fresh-logic.js'
+import { REGION_PREFIX_CURRENT } from '../../../tools/legacy-markers.js'
 
 /**
  * The production gate-backed `DevToolContext` (O3): each tool runs the gates in
@@ -275,10 +277,110 @@ describe('PR-body gate', () => {
         effectState: 'not_started'
       })
   })
-  it('passes a valid body through to open/update', async () => {
+  it('passes a valid body through to open/update, with the Evidence section added', async () => {
     const ctx = createDeveloperDevToolContext(deps())
     expect((await ctx.openPullRequest('t', 'good')).ok).toBe(true)
     expect((await ctx.updatePullRequestBody('good')).ok).toBe(true)
+  })
+
+  describe('the Evidence section', () => {
+    const START = `<!-- ${REGION_PREFIX_CURRENT}:EVIDENCE:START -->`
+    const END = `<!-- ${REGION_PREFIX_CURRENT}:EVIDENCE:END -->`
+    const PLACEHOLDER_BLOCK = `${START}\n${EVIDENCE_PLACEHOLDER_TEXT}\n${END}`
+    const WRITTEN_BLOCK = `${START}\nHead: abc1234\n\n#### C1: bun test\n${END}`
+    const bare = 'Closes #1\n\n## Scope\n\nscope\n'
+    const withSection = `Closes #1\n\n## Evidence\n\n${PLACEHOLDER_BLOCK}\n\n## Scope\n\nscope\n`
+
+    it('open_pull_request hands the gate and the forge the body with the section added', async () => {
+      const gated: string[] = []
+      const opened: string[] = []
+      const ctx = createDeveloperDevToolContext(
+        deps({
+          validatePrBody: (body) => {
+            gated.push(body)
+            return { ok: true }
+          },
+          openPullRequest: async (_title, body) => {
+            opened.push(body)
+            return { ok: true, result: { prNumber: 1 } }
+          }
+        })
+      )
+      expect((await ctx.openPullRequest('t', bare)).ok).toBe(true)
+      expect(gated).toEqual([withSection])
+      expect(opened).toEqual([withSection])
+    })
+
+    it('open_pull_request passes a body with a real pair through byte for byte', async () => {
+      const own = `Closes #1\n\n## Evidence\n\n${WRITTEN_BLOCK}\n\n## Scope\n\nscope\n`
+      const opened: string[] = []
+      const ctx = createDeveloperDevToolContext(
+        deps({
+          openPullRequest: async (_title, body) => {
+            opened.push(body)
+            return { ok: true, result: { prNumber: 1 } }
+          }
+        })
+      )
+      await ctx.openPullRequest('t', own)
+      expect(opened).toEqual([own])
+    })
+
+    it('update_pull_request_body adds the placeholder section when the live body has no pair', async () => {
+      const gated: string[] = []
+      const written: string[] = []
+      const ctx = createDeveloperDevToolContext(
+        deps({
+          validatePrBody: (body) => {
+            gated.push(body)
+            return { ok: true }
+          },
+          updatePullRequestBody: async (body) => {
+            written.push(body)
+            return { ok: true, result: { prNumber: 1 } }
+          }
+        })
+      )
+      await ctx.updatePullRequestBody(bare)
+      expect(gated).toEqual([withSection])
+      expect(written).toEqual([withSection])
+    })
+
+    it('update_pull_request_body keeps the live pair block instead of the placeholder', async () => {
+      const written: string[] = []
+      const live = `Closes #1\n\n## Evidence\n\n${WRITTEN_BLOCK}\n\n## Scope\n\nold\n`
+      const ctx = createDeveloperDevToolContext(
+        deps({
+          readPullRequest: async () => ({
+            ok: true,
+            result: { prNumber: 1, state: 'OPEN', head: 'h', checks: null, reviews: null, body: live, failedChecks: [] }
+          }),
+          updatePullRequestBody: async (body) => {
+            written.push(body)
+            return { ok: true, result: { prNumber: 1 } }
+          }
+        })
+      )
+      await ctx.updatePullRequestBody(bare)
+      expect(written).toEqual([`Closes #1\n\n## Evidence\n\n${WRITTEN_BLOCK}\n\n## Scope\n\nscope\n`])
+    })
+
+    it('update_pull_request_body still adds the placeholder when reading the live body throws', async () => {
+      const written: string[] = []
+      const ctx = createDeveloperDevToolContext(
+        deps({
+          readPullRequest: async () => {
+            throw new Error('forge down')
+          },
+          updatePullRequestBody: async (body) => {
+            written.push(body)
+            return { ok: true, result: { prNumber: 1 } }
+          }
+        })
+      )
+      await ctx.updatePullRequestBody(bare)
+      expect(written).toEqual([withSection])
+    })
   })
 })
 

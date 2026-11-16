@@ -31,6 +31,7 @@ import {
   type DevPullRequestView,
   type DevToolResult
 } from '../../../../../kernel/tools/dev-tools-server.js'
+import { addEvidenceSection, realEvidenceBlock } from '../../../tools/pr-report/evidence-section.js'
 import type { DevToolContext } from '../../../../../kernel/tools/dev-tools-server.js'
 import type {
   FetchDocumentationInput,
@@ -118,6 +119,15 @@ export function createDeveloperDevToolContext(deps: DeveloperDevToolDeps): DevTo
     guard(check, 'not_started', run)
   const effect = <T>(check: string, run: () => Promise<DevToolResult<T>>): Promise<DevToolResult<T>> =>
     guard(check, 'uncertain', run)
+  /** The live pull request body's own Evidence block, kept across a body rewrite; `null` when the read fails or the live body has no real pair. */
+  const liveEvidenceBlock = async (): Promise<string | null> => {
+    try {
+      const live = await deps.readPullRequest()
+      return live.ok && typeof live.result.body === 'string' ? realEvidenceBlock(live.result.body) : null
+    } catch {
+      return null
+    }
+  }
   return {
     publishChanges: (header) =>
       publication('publish_changes', () =>
@@ -149,9 +159,10 @@ export function createDeveloperDevToolContext(deps: DeveloperDevToolDeps): DevTo
           }
         })
       ),
-    openPullRequest: (title, body) =>
+    openPullRequest: (title, submittedBody) =>
       publication('open_pull_request', () =>
         gate('open_pull_request', async () => {
+          const body = addEvidenceSection(submittedBody)
           const validated = await deps.validatePrBody(body, title)
           if (!validated.ok) {
             return refuse('pr-body-gate', validated.reason, 'Fix the PR body to satisfy the body gate, then reopen.')
@@ -159,9 +170,10 @@ export function createDeveloperDevToolContext(deps: DeveloperDevToolDeps): DevTo
           return effect('open_pull_request', () => deps.openPullRequest(title, body))
         })
       ),
-    updatePullRequestBody: (body) =>
+    updatePullRequestBody: (submittedBody) =>
       publication('update_pull_request_body', () =>
         gate('update_pull_request_body', async () => {
+          const body = addEvidenceSection(submittedBody, await liveEvidenceBlock())
           const validated = await deps.validatePrBody(body)
           if (!validated.ok) {
             return refuse(

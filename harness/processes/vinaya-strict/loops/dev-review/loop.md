@@ -153,7 +153,10 @@ that glob, or one matching no `in:` glob — as `beyondSurface`, which
 `publish_changes` hands back to the Developer with the pushed head. The driver
 records the branch's beyond-Surface paths in the pull request body: on every
 body write (`open_pull_request`, `update_pull_request_body`, `refresh_evidence`,
-the `**For:**` line update) and after every landed push, it rewrites the
+the `**For:**` line update; the first two add the `## Evidence` section with its
+`VINAYA:EVIDENCE` anchor pair when the body has no real pair — the live body's own
+pair on an update — before the body gate runs, and pass a body that has one through
+unchanged) and after every landed push, it rewrites the
 body's marked `VINAYA:BEYOND-SURFACE` block in the `## Scope` section from the
 branch's merge-base diff (`withBeyondSurfaceRecord` → `withBeyondSurfaceBlock`),
 replacing only that region the way it replaces the `**For:**` line, so a list
