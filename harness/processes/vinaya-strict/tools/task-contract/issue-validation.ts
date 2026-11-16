@@ -20,6 +20,7 @@ import type { GeneratedArtifactSources } from './generated-artifacts'
 
 import {
   findLetteredEdgeIds,
+  findPlainTextEdgeLabels,
   parseRationaleDeps,
   SECTION_HEADER,
   splitSlugQualifiedEdge
@@ -170,6 +171,25 @@ export function checkEdgeIdsWholeNumbers(body: string): IssueSectionResult {
     errors: lettered.map(
       (id) =>
         `issue-validation edge id: \`${id}\` in a \`Depends-on\`/\`Conflicts-with\` edge is not a whole number — task ids are whole numbers (\`1\`, \`2\`), never lettered (\`2a\`). \`vinaya task run\` and \`task dispatch\` refuse a non-numeric id, so a plan naming one names a task that cannot be started.`
+    )
+  }
+}
+
+/**
+ * **A `Depends-on`/`Conflicts-with` edge is written inside backticks.** The edge
+ * reader reads a label only inside a backtick span, so a plain-text
+ * `Depends-on: #5.` is dropped and the brief renders `Depends-on: —`.
+ * `findPlainTextEdgeLabels` names each such label with ids; prose labels with
+ * no id pass. One error line per label.
+ */
+export function checkEdgesInBackticks(body: string): IssueSectionResult {
+  const plain = findPlainTextEdgeLabels(body)
+  if (plain.length === 0) return { status: 'pass', errors: [] }
+  return {
+    status: 'fail',
+    errors: plain.map(
+      (label) =>
+        `issue-validation edge backticks: \`${label}\` is written outside backticks — an edge is read only inside backticks, as \`Depends-on: #5\`, so this one is silently dropped and the task would start without it. Wrap it in a backtick span.`
     )
   }
 }

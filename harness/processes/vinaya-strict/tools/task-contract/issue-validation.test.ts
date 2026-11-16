@@ -14,6 +14,7 @@ import {
   checkBoundaryClaimsNeedPremise,
   checkConflictCompleteness,
   checkEdgeIdsWholeNumbers,
+  checkEdgesInBackticks,
   checkFileCollisions,
   checkIssueBriefSections,
   checkIssueObjectives,
@@ -291,6 +292,22 @@ describe('checkEdgeIdsWholeNumbers', () => {
     const r = checkEdgeIdsWholeNumbers(body)
     expect(r.status).toBe('fail')
     expect(r.errors).toHaveLength(2)
+  })
+})
+
+describe('checkEdgesInBackticks', () => {
+  it('refuses a plain-text edge, quoting the label and the backtick form', () => {
+    const body = '**Dependency rationale** — Depends-on: #5.\n\n**Traps to avoid** — none.'
+    const r = checkEdgesInBackticks(body)
+    expect(r.status).toBe('fail')
+    expect(r.errors).toHaveLength(1)
+    expect(r.errors[0]).toContain('`Depends-on: #5`')
+    expect(r.errors[0]).toMatch(/only inside backticks/)
+  })
+
+  it('passes a backticked edge', () => {
+    const body = '**Dependency rationale** — `Depends-on: #5`.\n\n**Traps to avoid** — none.'
+    expect(checkEdgesInBackticks(body)).toEqual({ status: 'pass', errors: [] })
   })
 })
 

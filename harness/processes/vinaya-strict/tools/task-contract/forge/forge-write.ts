@@ -39,6 +39,7 @@ import {
   checkBoundaryClaimsNeedPremise,
   checkDocsWithinSurface,
   checkEdgeIdsWholeNumbers,
+  checkEdgesInBackticks,
   checkFileCollisions,
   checkIssueBriefSections,
   checkIssueObjectives,
@@ -1754,6 +1755,8 @@ const ISSUE_CONTENT_RECOVERY = {
     'Fix the named Part to cite an objective id the `## Objectives` section actually defines, or add the missing objective, then re-run `{cmd}`.',
   edgeIdsWholeNumbers:
     'Rewrite the named `Depends-on`/`Conflicts-with` edge to a whole-number task id (`1`, `2`), a `#<NNN>` Issue ref, or a `<slug> <n>` cross-tranche reference — task ids are never lettered — then re-run `{cmd}`.',
+  edgesInBackticks:
+    'Wrap the named `Depends-on`/`Conflicts-with` label and its ids in one backtick span (`Depends-on: #5`) — an edge written outside backticks is not read — then re-run `{cmd}`.',
   docsWithinSurface:
     'Move the named doc pointer to a path `## Surface`\'s `in:` globs actually cover (never widen the surface just to fit the pointer — that renders an unusable brief), or drop it from "Docs to keep coherent" if this task does not really keep it coherent, then re-run `{cmd}`.',
   surfaceExcludesBoundDoc:
@@ -1910,6 +1913,7 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [checkSurfaceGlobsResolve(input.body, input.resolvesToFile).errors, 'surfaceGlobsResolve'],
     [checkPartsCiteDefinedObjectives(input.body).errors, 'partsCiteObjectives'],
     [checkEdgeIdsWholeNumbers(input.body).errors, 'edgeIdsWholeNumbers'],
+    [checkEdgesInBackticks(input.body).errors, 'edgesInBackticks'],
     [checkDocsWithinSurface(input.body, input.issueNumber, input.briefSectionsSinceIssue).errors, 'docsWithinSurface'],
     [checkSurfaceExcludesBoundDoc(input.body, input.docOwnersContent).errors, 'surfaceExcludesBoundDoc'],
     [

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   AmbiguousBareEdgeError,
   findLetteredEdgeIds,
+  findPlainTextEdgeLabels,
   parseRationaleDeps,
   requireTrancheQualifiedEdges
 } from './parse-rationale-deps'
@@ -160,6 +161,35 @@ describe('findLetteredEdgeIds', () => {
   it('de-duplicates a repeated lettered id within a span', () => {
     const body = '**Dependency rationale** — `Conflicts-with: 4e, 4e`.\n\n**Traps to avoid** — none.'
     expect(findLetteredEdgeIds(body)).toEqual(['4e'])
+  })
+})
+
+describe('findPlainTextEdgeLabels', () => {
+  const section = (text: string) => `**Dependency rationale** ${text}\n\n**Traps to avoid** — none.`
+
+  it('names a plain-text `Depends-on: #5.`', () => {
+    expect(findPlainTextEdgeLabels(section('— Depends-on: #5.'))).toEqual(['Depends-on: #5'])
+  })
+
+  it('names a plain `Depends-on: 6 — reason` and a plain `Conflicts-with: 1, 2`', () => {
+    expect(findPlainTextEdgeLabels(section('— Depends-on: 6 — reason'))).toEqual(['Depends-on: 6'])
+    expect(findPlainTextEdgeLabels(section('— Conflicts-with: 1, 2'))).toEqual(['Conflicts-with: 1, 2'])
+  })
+
+  it('passes the label-without-id forms', () => {
+    expect(findPlainTextEdgeLabels(section('— No Depends-on: it needs only merged code'))).toEqual([])
+    expect(findPlainTextEdgeLabels(section('— Depends-on: none'))).toEqual([])
+    expect(findPlainTextEdgeLabels(section('— Depends-on: — Conflicts-with: —'))).toEqual([])
+  })
+
+  it('never flags a label inside a backtick span', () => {
+    expect(findPlainTextEdgeLabels(section('— `Depends-on: #5`, `Conflicts-with: 1, 2`.'))).toEqual([])
+  })
+
+  it('never reads a plain label outside the Dependency rationale section', () => {
+    const body =
+      '**Boundary** — Depends-on: #5.\n\n**Dependency rationale** — `Depends-on: 1`.\n\n**Traps to avoid** — Depends-on: 7.'
+    expect(findPlainTextEdgeLabels(body)).toEqual([])
   })
 })
 
