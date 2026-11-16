@@ -241,6 +241,34 @@ export function findLetteredEdgeIds(body: string): string[] {
 }
 
 /**
+ * Every `Depends-on`/`Conflicts-with` label written in plain text — outside a
+ * backtick span — in a body's "Dependency rationale" section that is followed
+ * by at least one edge id. `parseRationaleDeps` reads an edge only inside a
+ * backtick span, so such a label is an edge the reader silently drops. Each
+ * entry quotes the label and its ids as written (`Depends-on: #5`).
+ *
+ * A plain label whose value carries no edge id (`No Depends-on: it needs only
+ * merged code`, `Depends-on: none`, `Depends-on: — Conflicts-with: —`) is
+ * prose and is not reported. The value is read up to the first `.`, `;`, `—`,
+ * `(` or end of line, then split on commas and filtered by `ID_TOKEN`. Labels
+ * outside the section are never read. Pure: `parseRationaleDeps` itself stays
+ * unchanged, so a plain mention never becomes a live edge.
+ */
+export function findPlainTextEdgeLabels(body: string): string[] {
+  const prose = extractSection(body).replace(/`[^`]*`/g, ' ')
+  const found: string[] = []
+  const labelPattern = /(Depends-on|Conflicts-with)\s*:[ \t]*([^.;—(\n]*)/gi
+  let match: RegExpExecArray | null = labelPattern.exec(prose)
+  while (match !== null) {
+    const value = (match[2] ?? '').trim()
+    const hasId = value.split(',').some((s) => ID_TOKEN.test(s.trim()))
+    if (hasId) found.push(`${match[1]}: ${value}`)
+    match = labelPattern.exec(prose)
+  }
+  return found
+}
+
+/**
  * Thrown by `requireTrancheQualifiedEdges` for a bare edge id that has
  * become ambiguous — `token` is the exact id as written (never re-formatted,
  * so the refusal quotes what the author actually typed), `tranches` is
