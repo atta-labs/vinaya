@@ -1,20 +1,37 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
+  bootstrapUrl,
   choosePort,
   FALLBACK_PORT,
-  launchStudio,
+  launchStudio as launchStudioWith,
   parsePortFlag,
+  parseRepoFlags,
   planLaunch,
   PRIMARY_PORT,
+  remoteIdentity,
+  resolveLaunchRepositories,
   resolveStudioTarget,
+  type StudioDeps,
   STUDIO_HOST,
   studioEnv
 } from '../src/commands/studio'
+
+const SECRET = 'A'.repeat(43)
+
+/** Launches with a fixed repository, so a test that is not about repositories needs no git checkout. */
+function launchStudio(cwd: string, args: string[], deps: StudioDeps = {}) {
+  return launchStudioWith(cwd, args, {
+    repositories: () => ({ repositories: [{ root: '/work/repo', remote: null }] }),
+    secret: SECRET,
+    ...deps
+  })
+}
 import {
   packStudioNodeModules,
   repairStudioNodeModules,
@@ -122,18 +139,28 @@ describe('studio host, port and launch plan', () => {
     expect(env).toMatchObject({ HOSTNAME: '127.0.0.1', PORT: '3108', KEEP: 'yes' })
   })
 
-  test('a checkout runs the Studio host from source in development mode, host and port from the environment', () => {
+  test('the ingest token, forge tokens and API keys never reach the Studio server; the read token does', () => {
+    const env = studioEnv(
+      { VINAYA_LOG_TOKEN: 'i', GH_TOKEN: 'g', GITHUB_TOKEN: 'g', ANTHROPIC_API_KEY: 'a', VINAYA_LOG_READ_TOKEN: 'r' },
+      3008
+    )
+    expect(Object.keys(env).sort()).toEqual(['HOSTNAME', 'PORT', 'VINAYA_LOG_READ_TOKEN'])
+  })
+
+  test('a checkout bundles the Studio host for Node, then runs it in development mode with its context on stdin', () => {
     const plan = planLaunch({ kind: 'checkout', appDir: '/repo/apps/vinaya-studio' }, '/repo', 3108, {
       HOSTNAME: '0.0.0.0'
     })
     expect(plan.command).toBe('node')
     expect(plan.args).toEqual([
-      '--experimental-strip-types',
-      join('src', 'server', 'entry.ts'),
+      join('.next', 'studio-host', 'entry.mjs'),
       '--dir',
       '/repo/apps/vinaya-studio',
-      '--dev'
+      '--dev',
+      '--context-stdin'
     ])
+    expect(plan.prepare?.command).toBe('bun')
+    expect(plan.prepare?.args).toContain(`--outfile=${join('.next', 'studio-host', 'entry.mjs')}`)
     expect(plan.cwd).toBe('/repo/apps/vinaya-studio')
     expect(plan.env).toMatchObject({ HOSTNAME: '127.0.0.1', PORT: '3108' })
   })
@@ -142,7 +169,7 @@ describe('studio host, port and launch plan', () => {
     const serverDir = studioServerDir('/pkg/studio-standalone')
     const plan = planLaunch({ kind: 'shipped', bundleRoot: '/pkg/studio-standalone', serverDir }, '/work', 3008, {})
     expect(plan.command).toBe('node')
-    expect(plan.args).toEqual([join(serverDir, STUDIO_ENTRY_FILENAME), '--dir', serverDir])
+    expect(plan.args).toEqual([join(serverDir, STUDIO_ENTRY_FILENAME), '--dir', serverDir, '--context-stdin'])
     expect(plan.cwd).toBe('/work')
   })
 
@@ -248,7 +275,7 @@ describe('studio launch of the shipped server', () => {
       launch.child.kill()
       await launch.exited
     })
-    expect(opened).toEqual([`http://127.0.0.1:${port}`])
+    expect(opened).toEqual([bootstrapUrl(`http://127.0.0.1:${port}`, SECRET)])
     expect(logs.join('\n')).not.toContain(`127.0.0.1:${port}`)
   })
 
@@ -267,9 +294,111 @@ describe('studio launch of the shipped server', () => {
         launch.child.kill()
         await launch.exited
       })
-      const address = `http://127.0.0.1:${port}`
+      const address = bootstrapUrl(`http://127.0.0.1:${port}`, SECRET)
       expect(logs.join('\n').split(address).length - 1).toBe(1)
     }
+  })
+
+  test('the launch context reaches the server on standard input only, never in its arguments or environment', async () => {
+    const install = fakeInstall(true)
+    const report = join(scratch(), 'context.json')
+    // The fake server writes what its standard input, arguments and environment hold, then answers on its port.
+    writeFileSync(
+      join(studioServerDir(install.bundleRoot), STUDIO_ENTRY_FILENAME),
+      `import http from 'node:http'\nimport { writeFileSync } from 'node:fs'\nlet stdin = ''\nprocess.stdin.on('data', (d) => (stdin += d))\nprocess.stdin.on('end', () => {\n  writeFileSync(${JSON.stringify(report)}, JSON.stringify({ stdin, argv: process.argv.slice(2), env: process.env }))\n  http.createServer((req, res) => res.end('ok')).listen(Number(process.env.PORT), process.env.HOSTNAME)\n})\n`
+    )
+    const port = await freePort()
+    const root = realpathSync(scratch())
+    const launch = await launchStudio(root, ['--port', String(port)], {
+      moduleUrl: install.moduleUrl,
+      env: { ...process.env, VINAYA_LOG_TOKEN: 'ingest-secret' },
+      repositories: () => ({ repositories: [{ root, remote: { owner: 'acme', repo: 'widgets' } }] }),
+      openBrowser: async () => true,
+      log: () => {},
+      error: () => {}
+    })
+    if ('exitCode' in launch) throw new Error(`launch failed with exit ${launch.exitCode}`)
+    closers.push(async () => {
+      launch.child.kill()
+      await launch.exited
+    })
+    const seen = JSON.parse(readFileSync(report, 'utf-8')) as { stdin: string; argv: string[]; env: NodeJS.ProcessEnv }
+    expect(JSON.parse(seen.stdin)).toEqual({
+      secret: SECRET,
+      repositories: [{ root, remote: { owner: 'acme', repo: 'widgets' } }]
+    })
+    expect(JSON.stringify(seen.argv)).not.toContain(SECRET)
+    expect(JSON.stringify(seen.env)).not.toContain(SECRET)
+    expect(seen.env.VINAYA_LOG_TOKEN).toBeUndefined()
+  })
+
+  test('a launch from a folder that is no git checkout is refused before anything starts', async () => {
+    const errors: string[] = []
+    const result = await launchStudioWith(scratch(), [], {
+      moduleUrl: fakeInstall(true).moduleUrl,
+      error: (line) => errors.push(line)
+    })
+    expect(result).toEqual({ exitCode: 2 })
+    expect(errors.join('\n')).toContain('not inside a git checkout')
+  })
+})
+
+function gitRepo(origin: string | null): string {
+  const root = realpathSync(scratch())
+  execFileSync('git', ['init', '-q'], { cwd: root })
+  if (origin) execFileSync('git', ['remote', 'add', 'origin', origin], { cwd: root })
+  return root
+}
+
+describe('studio launch repositories', () => {
+  test('a nested folder of a checkout resolves to the canonical root with the local remote identity', () => {
+    const root = gitRepo('git@github.com:acme/widgets.git')
+    const nested = join(root, 'a', 'b')
+    mkdirSync(nested, { recursive: true })
+    expect(resolveLaunchRepositories(nested, [])).toEqual({
+      repositories: [{ root, remote: { owner: 'acme', repo: 'widgets' } }]
+    })
+  })
+
+  test('a linked worktree resolves to its own root', () => {
+    const main = gitRepo('https://github.com/acme/widgets.git')
+    execFileSync('git', ['-c', 'user.email=a@b.c', '-c', 'user.name=t', 'commit', '--allow-empty', '-qm', 'x'], {
+      cwd: main
+    })
+    const worktree = join(realpathSync(scratch()), 'wt')
+    execFileSync('git', ['worktree', 'add', '-q', worktree, '-b', 'wt'], { cwd: main })
+    const nested = join(worktree, 'deep')
+    mkdirSync(nested)
+    expect(resolveLaunchRepositories(nested, [])).toEqual({
+      repositories: [{ root: realpathSync(worktree), remote: { owner: 'acme', repo: 'widgets' } }]
+    })
+  })
+
+  test('two explicit checkouts are both selected, each with its own identity; a repeat is dropped; no remote is null', () => {
+    const one = gitRepo('https://github.com/acme/one')
+    const two = gitRepo(null)
+    expect(resolveLaunchRepositories('/', [one, two, join(one, '.')])).toEqual({
+      repositories: [
+        { root: one, remote: { owner: 'acme', repo: 'one' } },
+        { root: two, remote: null }
+      ]
+    })
+  })
+
+  test('a path outside any checkout is an error naming it', () => {
+    const result = resolveLaunchRepositories('/', [scratch()])
+    expect('error' in result && result.error).toContain('not inside a git checkout')
+  })
+
+  test('the repo flag parses both forms, repeats, and refuses a missing value', () => {
+    expect(parseRepoFlags(['--repo', 'a', '--port', '1', '--repo=b'])).toEqual({ paths: ['a', 'b'] })
+    expect(parseRepoFlags([])).toEqual({ paths: [] })
+    expect('error' in parseRepoFlags(['--repo'])).toBe(true)
+  })
+
+  test('remote identities come from the URL text alone', () => {
+    expect(remoteIdentity('ssh://git@host.example/acme/widgets.git')).toEqual({ owner: 'acme', repo: 'widgets' })
+    expect(remoteIdentity('nonsense')).toBeNull()
   })
 })
 

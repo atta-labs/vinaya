@@ -1,7 +1,8 @@
-import { type ChildProcess, spawn } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { type ChildProcess, execFileSync, spawn, spawnSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import net from 'node:net'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import {
   prepareShippedStudio,
   STUDIO_APP_RELPATH,
@@ -14,6 +15,13 @@ export const STUDIO_HOST = '127.0.0.1'
 export const PRIMARY_PORT = 3008
 export const FALLBACK_PORT = 3108
 
+/** The one-time bootstrap route Studio's server answers before any other request; the launcher's address carries its secret. */
+export const BOOTSTRAP_ROUTE = '/__studio/bootstrap'
+
+/** Where a checkout's Studio host is bundled for Node before it starts, beside Next's own output. */
+const CHECKOUT_HOST_RELPATH = join('.next', 'studio-host', 'entry.mjs')
+
+const GIT_TIMEOUT_MS = 5_000
 const WAIT_FOR_PORT_MS = 120_000
 const POLL_MS = 150
 
@@ -121,17 +129,103 @@ export function parsePortFlag(args: string[]): { port: number | null } | { error
  * environment is spread, so a caller's `HOSTNAME` or `PORT` can never make Studio listen on another interface.
  */
 export function studioEnv(base: NodeJS.ProcessEnv, port: number): NodeJS.ProcessEnv {
-  return { ...base, HOSTNAME: STUDIO_HOST, PORT: String(port) }
+  const env: NodeJS.ProcessEnv = {}
+  for (const [name, value] of Object.entries(base)) if (!isWithheldFromStudio(name)) env[name] = value
+  return { ...env, HOSTNAME: STUDIO_HOST, PORT: String(port) }
 }
 
-export type SpawnPlan = { command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }
+/**
+ * Studio reads a Log and shows it; it never writes one or acts on the forge. The Log ingest token, forge tokens and
+ * provider API keys stay out of its environment. The read credential a repository's `logs.readHeaders` names is not
+ * among them, so it still resolves.
+ */
+const WITHHELD_NAMES = new Set(['VINAYA_LOG_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN', 'NPM_TOKEN', 'NODE_AUTH_TOKEN'])
+function isWithheldFromStudio(name: string): boolean {
+  return WITHHELD_NAMES.has(name) || /_API_KEY$/.test(name)
+}
+
+/** A fresh one-time launch secret: 256 random bits, base64url. */
+export function createLaunchSecret(): string {
+  return randomBytes(32).toString('base64url')
+}
+
+/** The address the launcher opens: the bootstrap route carrying the launch secret. */
+export function bootstrapUrl(origin: string, secret: string): string {
+  return `${origin}${BOOTSTRAP_ROUTE}?token=${secret}`
+}
+
+export type LaunchRepository = { root: string; remote: { owner: string; repo: string } | null }
+
+/** Every `--repo <path>` / `--repo=<path>`, in order. A flag with no value is an error. */
+export function parseRepoFlags(args: string[]): { paths: string[] } | { error: string } {
+  const paths: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] as string
+    let raw: string | undefined
+    if (arg === '--repo') raw = args[++i]
+    else if (arg.startsWith('--repo=')) raw = arg.slice('--repo='.length)
+    else continue
+    if (!raw) return { error: '--repo needs the path of a local checkout.' }
+    paths.push(raw)
+  }
+  return { paths }
+}
+
+function git(cwd: string, args: string[]): string | null {
+  try {
+    return execFileSync('git', args, {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: GIT_TIMEOUT_MS
+    }).trim()
+  } catch {
+    return null
+  }
+}
+
+/** `owner/repo` from an `origin` URL, whatever the host or scheme; null when it does not name one. */
+export function remoteIdentity(url: string): { owner: string; repo: string } | null {
+  const m = url.trim().match(/[:/]([^/:\s]+)\/([^/\s]+?)(?:\.git)?\/?$/)
+  return m?.[1] && m[2] ? { owner: m[1], repo: m[2] } : null
+}
+
+/**
+ * The checkouts one launch observes, from local git only: each path (the current directory when no `--repo` is given)
+ * becomes its canonical top-level folder, so a nested folder or a linked worktree resolves the same way anywhere, and
+ * its `origin` URL becomes the owner/repo identity. Nothing asks the forge.
+ */
+export function resolveLaunchRepositories(
+  cwd: string,
+  paths: string[]
+): { repositories: LaunchRepository[] } | { error: string } {
+  const repositories: LaunchRepository[] = []
+  for (const path of paths.length > 0 ? paths : ['.']) {
+    const from = resolve(cwd, path)
+    const top = git(from, ['rev-parse', '--show-toplevel'])
+    if (!top) return { error: `${from} is not inside a git checkout.` }
+    const root = realpathSync(top)
+    if (repositories.some((r) => r.root === root)) continue
+    const url = git(root, ['remote', 'get-url', 'origin'])
+    repositories.push({ root, remote: url ? remoteIdentity(url) : null })
+  }
+  return { repositories }
+}
+
+export type SpawnPlan = {
+  command: string
+  args: string[]
+  cwd: string
+  env: NodeJS.ProcessEnv
+  /** Runs once before `command`, to bundle a checkout's host for Node. */
+  prepare?: { command: string; args: string[] }
+}
 
 /**
  * How each shape starts: the same Studio host (`apps/vinaya-studio/src/server`), which reads `HOSTNAME` and `PORT` from
- * its environment, never the app's `dev` script (it fixes host and port and would never let the fallback port apply).
- * A checkout runs the host from source in development mode, under Node with type stripping (available from the
- * published minimum Node, 22.13, behind the flag), as Next's own dev server runs; the installed package runs the host
- * bundled for Node from the shipped folder.
+ * its environment, never the app's `dev` script (it fixes host and port and would never let the fallback port apply),
+ * and its launch context from standard input (`--context-stdin`). Both shapes run the host bundled for Node: the
+ * installed package from its shipped folder, a checkout from a bundle made just before it starts, in development mode.
  */
 export function planLaunch(
   target: Exclude<StudioTarget, { kind: 'missing' }>,
@@ -143,14 +237,26 @@ export function planLaunch(
   if (target.kind === 'checkout') {
     return {
       command: 'node',
-      args: ['--experimental-strip-types', join('src', 'server', 'entry.ts'), '--dir', target.appDir, '--dev'],
+      args: [CHECKOUT_HOST_RELPATH, '--dir', target.appDir, '--dev', '--context-stdin'],
       cwd: target.appDir,
-      env
+      env,
+      prepare: {
+        command: 'bun',
+        args: [
+          'build',
+          join('src', 'server', 'entry.ts'),
+          '--target=node',
+          '--format=esm',
+          '--external=next',
+          '--external=ws',
+          `--outfile=${CHECKOUT_HOST_RELPATH}`
+        ]
+      }
     }
   }
   return {
     command: 'node',
-    args: [join(target.serverDir, STUDIO_ENTRY_FILENAME), '--dir', target.serverDir],
+    args: [join(target.serverDir, STUDIO_ENTRY_FILENAME), '--dir', target.serverDir, '--context-stdin'],
     cwd,
     env
   }
@@ -184,6 +290,10 @@ export type StudioDeps = {
   answers?: (port: number) => Promise<boolean>
   openBrowser?: (url: string) => Promise<boolean>
   waitMs?: number
+  /** A test seam for the launch secret. */
+  secret?: string
+  /** A test seam for the repository resolution. */
+  repositories?: (cwd: string, paths: string[]) => { repositories: LaunchRepository[] } | { error: string }
   log?: (line: string) => void
   error?: (line: string) => void
 }
@@ -216,6 +326,16 @@ export async function launchStudio(
     error(flag.error)
     return { exitCode: 2 }
   }
+  const repoFlags = parseRepoFlags(args)
+  if ('error' in repoFlags) {
+    error(repoFlags.error)
+    return { exitCode: 2 }
+  }
+  const selected = (deps.repositories ?? resolveLaunchRepositories)(cwd, repoFlags.paths)
+  if ('error' in selected) {
+    error(selected.error)
+    return { exitCode: 2 }
+  }
   const choice = await choosePort(flag.port, deps.free, deps.ports)
   if (!choice.ok) {
     error(choice.message)
@@ -228,7 +348,22 @@ export async function launchStudio(
   }
 
   const plan = planLaunch(target, cwd, port, deps.env ?? process.env)
-  const child = spawn(plan.command, plan.args, { cwd: plan.cwd, env: plan.env, stdio: 'inherit' })
+  if (plan.prepare) {
+    const prepared = spawnSync(plan.prepare.command, plan.prepare.args, {
+      cwd: plan.cwd,
+      env: plan.env,
+      stdio: 'inherit'
+    })
+    if (prepared.status !== 0) {
+      error('Studio could not be bundled for this checkout.')
+      return { exitCode: 1 }
+    }
+  }
+  const secret = deps.secret ?? createLaunchSecret()
+  const child = spawn(plan.command, plan.args, { cwd: plan.cwd, env: plan.env, stdio: ['pipe', 'inherit', 'inherit'] })
+  // The launch context travels over the child's standard input only: not an argument, an environment variable or a URL.
+  child.stdin?.on('error', () => {})
+  child.stdin?.end(JSON.stringify({ secret, repositories: selected.repositories }))
   let exitedEarly = false
   const exited = new Promise<number>((resolve) => {
     child.once('error', (e) => {
@@ -255,14 +390,15 @@ export async function launchStudio(
   }
 
   const url = `http://${STUDIO_HOST}:${port}`
+  const link = bootstrapUrl(url, secret)
   let opened = false
   try {
-    opened = await (deps.openBrowser ?? openInBrowser)(url)
+    opened = await (deps.openBrowser ?? openInBrowser)(link)
   } catch {
     opened = false
   }
   // A browser that cannot be opened never fails the launch; the address is printed once instead.
-  if (!opened) log(`Studio is running. Open ${url} in your browser.`)
+  if (!opened) log(`Studio is running. Open ${link} in your browser. The link works once.`)
   return { port, url, child, exited }
 }
 
