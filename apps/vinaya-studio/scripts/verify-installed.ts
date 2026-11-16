@@ -465,9 +465,12 @@ async function serverLateOpeningAndLiveChange(): Promise<void> {
 
     // Task ages advance on the page's own clock while no frame arrives.
     const quiet = early.frames.length
+    // Task 42's last sign is t0 + 1s. The clock started at t0 + 2min and has advanced 1min since, so this advance of
+    // 2min reaches t0 + 5min: an age of 4min 59s, which reads "4m ago".
     server.clock.advance(2 * MIN)
-    await early.waitFor('the age to advance locally', () =>
-      /\b(2|3)m ago\b/.test(early.rows().find((r) => r.task === 42)?.cells['last-sign'] ?? '')
+    await early.waitFor(
+      'the age to advance locally to exactly 4m ago',
+      () => early.rows().find((r) => r.task === 42)?.cells['last-sign'] === '4m ago'
     )
     assert.equal(early.frames.length, quiet, 'no frame was needed for the age to move')
     early.close()
