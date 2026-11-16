@@ -399,7 +399,7 @@ describe('task_cancel handler', () => {
     if (!result.ok) {
       expect(result.error.kind).toBe('precondition')
       expect(result.error.message).toContain('no ruling is needed')
-      expect(result.error.message).toContain('Continue it with `vinaya task run x 1`')
+      expect(result.error.message).toContain('Continue it with `vinaya task run x 1 --runner standalone`')
     }
   })
 })

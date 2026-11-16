@@ -4,7 +4,7 @@ The `vinaya` bin — Vinaya's npm-distributed CLI, published to the public npm r
 
 ## Install
 
-The published artifact is a Node-executable bundle — plain Node ≥ 22.13 is enough, through any package manager:
+The published artifact is a Node-executable bundle — plain Node ≥ 22.13 is enough, through any package manager. Running a task (`vinaya task run`) also needs Bun on the PATH: tasks run on the Atta Engine by default, which runs on Bun, and a run that cannot start it is refused unless you choose the standalone runner (`--runner standalone`, or `"runner": "standalone"` in `vinaya.config.json`).
 
 ```bash
 npx @attalabs/vinaya init        # or: pnpm dlx / yarn dlx / bunx

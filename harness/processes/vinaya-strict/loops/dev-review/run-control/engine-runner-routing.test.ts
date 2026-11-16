@@ -99,7 +99,7 @@ function fixtureDeps(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
     devReviewLoop: async () => ({ task: 42, prNumber: 7, finalDecision: { type: 'publish' } }),
     resolveRepo: async () => null,
     assignIssue: () => {},
-    runnerConfig: () => null,
+    runnerConfig: () => ({ runner: 'standalone' }),
     ...overrides
   }
 }
@@ -181,25 +181,27 @@ describe('the recorded runner', () => {
     expect(readTaskRunner(17, runtime)).toBe('standalone')
   })
 
-  it('task run records the runner it actually used: the Engine, a fallback to standalone, or standalone', async () => {
+  it('task run records the runner it actually used, and an Engine that cannot start records none', async () => {
     const recorded: string[] = []
     const recordRunner = (_issue: number, runner: string) => void recorded.push(runner)
     const engine = (exists: boolean) => ({
       scriptPath: () => '/runner.ts',
       exists: () => exists,
       spawn: async () => 0,
-      notice: () => {}
+      findBun: () => '/usr/local/bin/bun'
     })
     await runTask(
       { issue: 42, agent: 'claude', runner: 'atta-engine' },
       fixtureDeps({ recordRunner, engine: engine(true) })
     )
-    await runTask(
-      { issue: 42, agent: 'claude', runner: 'atta-engine' },
-      fixtureDeps({ recordRunner, engine: engine(false) })
-    )
+    await expect(
+      runTask(
+        { issue: 42, agent: 'claude', runner: 'atta-engine' },
+        fixtureDeps({ recordRunner, engine: engine(false) })
+      )
+    ).rejects.toThrow('the Atta Engine runner cannot start')
     await runTask({ issue: 42, agent: 'claude', runner: 'standalone' }, fixtureDeps({ recordRunner }))
-    expect(recorded).toEqual(['atta-engine', 'standalone', 'standalone'])
+    expect(recorded).toEqual(['atta-engine', 'standalone'])
   })
 })
 
@@ -223,7 +225,7 @@ describe('task_start', () => {
             engineStarts += 1
             return 0
           },
-          notice: () => {}
+          findBun: () => '/usr/local/bin/bun'
         }
       })
     await runTask({ issue: 42, agent: 'claude', runner: 'standalone' }, deps(false))
@@ -254,7 +256,7 @@ describe('a cancelled Engine checkpoint', () => {
           starts.push(1)
           return 0
         },
-        notice: () => {}
+        findBun: () => '/usr/local/bin/bun'
       }
     })
   const runDirWith = (...entries: string[]) => {

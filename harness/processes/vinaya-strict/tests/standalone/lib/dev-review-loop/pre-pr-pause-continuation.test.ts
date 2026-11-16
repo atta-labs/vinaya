@@ -115,7 +115,7 @@ function runTaskDeps(world: LoopWorld, deps: Partial<LoopDeps>, watch: Partial<D
     resolveRepo: async () => null,
     assignIssue: () => {},
     // The standalone runner, whatever runner the repository's own config names.
-    runnerConfig: () => null
+    runnerConfig: () => ({ runner: 'standalone' })
   }
 }
 

@@ -1,19 +1,28 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { programFile } from '../tools/programs.js'
-import { flowForFlags, parseFlags, runnerForFlags } from '../../../../apps/cli/src/commands/task-run.js'
+import {
+  engineStartRefusalForStart,
+  flowForFlags,
+  parseFlags,
+  runnerForFlags
+} from '../../../../apps/cli/src/commands/task-run.js'
 import { resolveTaskRunner, VinayaConfigSchema } from '../integration/config/compose.js'
 import { runTask, type RunTaskDeps } from '../loops/dev-review/run-control/task-run.js'
 import {
   defaultEngineRunnerDeps,
-  ENGINE_FALLBACK_NOTICE,
   engineContinuationArgv,
   engineRunnerScriptPath,
+  engineStartRefusal,
+  findBunOnPath,
   runTaskEngine
 } from '../loops/dev-review/run-control/task-run-engine.js'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture.js'
+
+/** A Bun the stand-in lookup finds, so no test depends on a real Bun on the PATH. */
+const BUN = '/usr/local/bin/bun'
 
 function fixture(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
   return {
@@ -33,14 +42,14 @@ function fixture(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
     devReviewLoop: async () => ({ task: 42, prNumber: 7, finalDecision: { type: 'publish' } }),
     resolveRepo: async () => null,
     assignIssue: () => {},
-    runnerConfig: () => null,
+    runnerConfig: () => ({ runner: 'standalone' }),
     ...overrides
   }
 }
 
 describe('task runner selection', () => {
-  it('defaults to standalone and accepts each configured runner', () => {
-    expect(resolveTaskRunner(undefined, VinayaConfigSchema.parse({}))).toBe('standalone')
+  it('defaults to the Atta Engine and accepts each configured runner', () => {
+    expect(resolveTaskRunner(undefined, VinayaConfigSchema.parse({}))).toBe('atta-engine')
     for (const runner of ['standalone', 'atta-engine'] as const) {
       expect(resolveTaskRunner(undefined, VinayaConfigSchema.parse({ runner }))).toBe(runner)
     }
@@ -74,7 +83,7 @@ describe('task runner selection', () => {
         )
         expect(result.status).toBe(2)
         expect(result.stderr).toContain('runner')
-        expect(result.stderr).not.toContain(ENGINE_FALLBACK_NOTICE)
+        expect(result.stderr).not.toContain('falling back')
       }
     } finally {
       rmSync(root, { recursive: true, force: true })
@@ -132,9 +141,7 @@ describe('task runner selection', () => {
             calls.push({ argv, options })
             return 17
           },
-          notice: () => {
-            throw new Error('unexpected fallback')
-          }
+          findBun: () => BUN
         },
         devReviewLoop: async () => {
           throw new Error('unexpected standalone call')
@@ -191,7 +198,7 @@ describe('task runner selection', () => {
             calls.push(argv)
             return 0
           },
-          notice: () => {}
+          findBun: () => BUN
         },
         devReviewLoop: async () => {
           throw new Error('unexpected standalone call')
@@ -222,11 +229,38 @@ describe('task runner selection', () => {
           spawn: async (argv) => {
             calls.push(argv)
             return 0
-          }
+          },
+          findBun: () => BUN
         }
       })
     )
     expect(calls).toEqual([['bun', '/runner.ts', '--task', '42', '--agent', 'claude']])
+  })
+
+  it('runs a repository that names no runner, started with no --runner, on the Atta Engine', async () => {
+    const calls: string[][] = []
+    const recorded: string[] = []
+    await runTask(
+      { issue: 42, agent: 'claude' },
+      fixture({
+        runnerConfig: () => null,
+        recordRunner: (_issue, runner) => void recorded.push(runner),
+        engine: {
+          scriptPath: () => '/runner.ts',
+          exists: () => true,
+          spawn: async (argv) => {
+            calls.push(argv)
+            return 0
+          },
+          findBun: () => BUN
+        },
+        devReviewLoop: async () => {
+          throw new Error('unexpected standalone call')
+        }
+      })
+    )
+    expect(calls).toHaveLength(1)
+    expect(recorded).toEqual(['atta-engine'])
   })
 
   it('lets the invocation select standalone over configured Engine', async () => {
@@ -249,60 +283,208 @@ describe('task runner selection', () => {
     expect(standalone).toBe(1)
   })
 
-  it('prints exactly one fallback line and calls standalone once when the script is absent', async () => {
-    const notices: string[] = []
-    const standalone: unknown[] = []
-    const result = await runTask(
-      { issue: 42, agent: 'claude', runner: 'atta-engine' },
-      fixture({
-        engine: {
-          exists: () => false,
-          notice: (line) => notices.push(line),
-          spawn: async () => {
-            throw new Error('unexpected spawn')
-          }
-        },
-        devReviewLoop: async (input) => {
-          standalone.push(input)
-          return { task: 42, prNumber: 7, finalDecision: { type: 'publish' } }
-        }
-      })
-    )
-    expect(notices).toEqual([ENGINE_FALLBACK_NOTICE])
-    expect(notices[0]).toContain('standalone')
-    expect(notices[0]?.split('\n')).toHaveLength(1)
-    expect(standalone).toEqual([{ task: 42, agent: 'claude', model: 'resolved-model' }])
-    expect(result.prNumber).toBe(7)
-  })
-
-  it('refuses explicit v2 when the Engine is absent without starting standalone', async () => {
-    let standalone = 0
-    await expect(
-      runTask(
-        { issue: 42, agent: 'claude', runner: 'atta-engine', flow: 'v2' },
-        fixture({
-          engine: { exists: () => false, notice: () => {}, spawn: async () => 0 },
-          devReviewLoop: async () => {
-            standalone++
-            return { task: 42, prNumber: 7, finalDecision: { type: 'publish' } }
-          }
-        })
-      )
-    ).rejects.toThrow('flow v2 requires the Engine')
-    expect(standalone).toBe(0)
-  })
-
   it('propagates a spawn failure without silently switching runners', async () => {
     await expect(
       runTaskEngine(
         { task: 42, agent: 'claude' },
         {
-          exists: () => true,
           spawn: async () => {
             throw new Error('spawn refused')
           }
         }
       )
     ).rejects.toThrow('spawn refused')
+  })
+})
+
+describe('whether the Engine runner can start', () => {
+  const present = () => true
+  const absent = () => false
+  const bun = () => BUN
+  const noBun = () => null
+
+  it('answers nothing when the runner file and Bun are both there, and the cause when either is not', () => {
+    expect(engineStartRefusal(undefined, '/runner.ts', present, bun)).toBeNull()
+    const noFile = engineStartRefusal(undefined, '/runner.ts', absent, bun)
+    expect(noFile).toContain('the Atta Engine runner cannot start')
+    expect(noFile).toContain('runner file /runner.ts is absent')
+    expect(noFile).toContain('`--runner standalone`')
+    const bunMissing = engineStartRefusal(undefined, '/runner.ts', present, noBun)
+    expect(bunMissing).toContain('Bun is not on the PATH')
+    expect(bunMissing).toContain('`--runner standalone`')
+    for (const text of [noFile, bunMissing]) expect(text).not.toMatch(/fall(s|ing)? back/)
+  })
+
+  it('says a flow other than v1 needs the Engine instead of naming the standalone runner', () => {
+    const text = engineStartRefusal('v2', '/runner.ts', absent, bun)
+    expect(text).toContain('flow v2 needs the Engine')
+    expect(text).not.toContain('--runner standalone')
+    expect(engineStartRefusal('v1', '/runner.ts', absent, bun)).toContain('`--runner standalone`')
+  })
+
+  it('finds a plain bun executable on the PATH, and none where there is only a directory or a plain file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bun-lookup-'))
+    try {
+      const empty = join(dir, 'empty')
+      const notExecutable = join(dir, 'plain')
+      const withBun = join(dir, 'with-bun')
+      mkdirSync(join(empty, 'bun'), { recursive: true })
+      mkdirSync(notExecutable)
+      writeFileSync(join(notExecutable, 'bun'), '')
+      mkdirSync(withBun)
+      writeFileSync(join(withBun, 'bun'), '')
+      chmodSync(join(withBun, 'bun'), 0o755)
+      expect(findBunOnPath([empty, notExecutable].join(delimiter))).toBeNull()
+      expect(findBunOnPath([empty, notExecutable, withBun].join(delimiter))).toBe(join(withBun, 'bun'))
+      expect(findBunOnPath('')).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  for (const [cause, engine, expected] of [
+    ['its runner file is absent', { exists: () => false, findBun: () => BUN }, 'runner file /runner.ts is absent'],
+    ['Bun is not on the PATH', { exists: () => true, findBun: () => null }, 'Bun is not on the PATH']
+  ] as const) {
+    it(`refuses a run when ${cause}: no Issue assigned, no runner recorded, no loop started`, async () => {
+      const assigned: number[] = []
+      const recorded: string[] = []
+      let spawned = 0
+      let loops = 0
+      await expect(
+        runTask(
+          { issue: 42, agent: 'claude' },
+          fixture({
+            runnerConfig: () => null,
+            assignIssue: (issue) => void assigned.push(issue),
+            recordRunner: (_issue, runner) => void recorded.push(runner),
+            engine: {
+              scriptPath: () => '/runner.ts',
+              ...engine,
+              spawn: async () => {
+                spawned++
+                return 0
+              }
+            },
+            devReviewLoop: async () => {
+              loops++
+              return { task: 42, prNumber: 7, finalDecision: { type: 'publish' } }
+            }
+          })
+        )
+      ).rejects.toThrow(expected)
+      expect(assigned).toEqual([])
+      expect(recorded).toEqual([])
+      expect(spawned).toBe(0)
+      expect(loops).toBe(0)
+    })
+  }
+
+  it('refuses a flow other than v1 with the flow message when the Engine cannot start', async () => {
+    let loops = 0
+    await expect(
+      runTask(
+        { issue: 42, agent: 'claude', runner: 'atta-engine', flow: 'v2' },
+        fixture({
+          engine: { scriptPath: () => '/runner.ts', exists: () => false, findBun: () => BUN, spawn: async () => 0 },
+          devReviewLoop: async () => {
+            loops++
+            return { task: 42, prNumber: 7, finalDecision: { type: 'publish' } }
+          }
+        })
+      )
+    ).rejects.toThrow('flow v2 needs the Engine')
+    expect(loops).toBe(0)
+  })
+
+  it('makes no check for a --rollback start, which restarts on the standalone runner', async () => {
+    let checks = 0
+    let loops = 0
+    await runTask(
+      { issue: 42, agent: 'claude', rollback: true },
+      fixture({
+        runnerConfig: () => null,
+        engine: {
+          exists: () => {
+            checks++
+            return false
+          },
+          findBun: () => {
+            checks++
+            return null
+          }
+        },
+        backendRollback: async (issue, wiring) => {
+          await wiring.startStandalone(issue)
+          return { action: 'terminated' } as unknown as Awaited<ReturnType<NonNullable<RunTaskDeps['backendRollback']>>>
+        },
+        devReviewLoop: async () => {
+          loops++
+          return { task: 42, prNumber: 7, finalDecision: { type: 'publish' } }
+        }
+      })
+    )
+    expect(checks).toBe(0)
+    expect(loops).toBe(1)
+  })
+
+  it('the real command exits 3 with the refusal before preparing, also with --background, when Bun is not on the PATH', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'runner-no-bun-'))
+    try {
+      writeFileSync(join(root, 'vinaya.config.json'), JSON.stringify({ logs: false }))
+      for (const extra of [[], ['--background']]) {
+        const result = await spawnBudgetedAsync(
+          [
+            process.execPath,
+            join(import.meta.dir, '../../../../apps/cli/src/index.ts'),
+            'task',
+            'run',
+            '--issue',
+            '42',
+            '--agent',
+            'codex',
+            ...extra
+          ],
+          { cwd: root, env: { ...stripVinayaEnv(), HOME: root, PATH: root } }
+        )
+        expect(result.status).toBe(3)
+        expect(result.stderr).toContain('the Atta Engine runner cannot start: Bun is not on the PATH')
+        expect(result.stderr).toContain('`--runner standalone`')
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("task run's own check refuses an Engine start that cannot start, and makes none for standalone or --rollback", () => {
+    const missing = { script: '/runner.ts', exists: () => false, findBun: () => BUN }
+    const noBunOnPath = { script: '/runner.ts', exists: () => true, findBun: () => null }
+    const ready = { script: '/runner.ts', exists: () => true, findBun: () => BUN }
+    expect(engineStartRefusalForStart({ runner: 'atta-engine' }, missing)).toContain('runner file /runner.ts is absent')
+    expect(engineStartRefusalForStart({ runner: 'atta-engine' }, noBunOnPath)).toContain('Bun is not on the PATH')
+    expect(engineStartRefusalForStart({ runner: 'atta-engine', flow: 'v2' }, missing)).toContain(
+      'flow v2 needs the Engine'
+    )
+    expect(engineStartRefusalForStart({ runner: 'atta-engine' }, ready)).toBeNull()
+    const untouched = {
+      script: '/runner.ts',
+      exists: () => {
+        throw new Error('unexpected Engine check')
+      },
+      findBun: () => {
+        throw new Error('unexpected Engine check')
+      }
+    }
+    expect(engineStartRefusalForStart({ runner: 'standalone' }, untouched)).toBeNull()
+    expect(engineStartRefusalForStart({ runner: 'atta-engine', rollback: true }, untouched)).toBeNull()
+    // The same text runTask throws, so both callers print one message.
+    expect(engineStartRefusalForStart({ runner: 'atta-engine' }, missing)).toBe(
+      engineStartRefusal(
+        undefined,
+        '/runner.ts',
+        () => false,
+        () => BUN
+      )
+    )
   })
 })

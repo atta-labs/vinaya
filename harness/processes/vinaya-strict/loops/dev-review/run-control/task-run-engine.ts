@@ -1,14 +1,11 @@
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { accessSync, constants, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { delimiter, dirname, join } from 'node:path'
 import type { AgentVendor } from '../dispatch/dispatch.js'
 import { isDriverPidAlive, readDriverLock } from '../standalone/dev-review-loop/pause-resume.js'
 import { programFile } from '../../../tools/programs.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../../kernel/run-paths.js'
 import type { TaskRunner } from '../../../integration/config/compose.js'
-
-export const ENGINE_FALLBACK_NOTICE =
-  'vinaya task run: Engine runner script is unavailable; falling back to standalone.'
 
 export type EngineRunInput = { task: number; agent: AgentVendor; model?: string; flow?: string }
 
@@ -145,10 +142,54 @@ export type EngineRunnerDeps = {
   scriptPath: () => string
   exists: (path: string) => boolean
   spawn: (argv: string[], options: { stdio: 'inherit' }) => Promise<number>
-  notice: (line: string) => void
+  /** The path of a `bun` executable on the PATH, or null when there is none. */
+  findBun?: () => string | null
 }
 
-export const defaultEngineRunnerDeps: EngineRunnerDeps = {
+/**
+ * A plain `bun` executable in one of the PATH's directories, or null. Scanned by hand rather than asked of Bun,
+ * because the command runs under Node in an installed package.
+ */
+export function findBunOnPath(path: string | undefined = process.env.PATH): string | null {
+  for (const directory of (path ?? '').split(delimiter)) {
+    if (directory === '') continue
+    const candidate = join(directory, 'bun')
+    try {
+      if (!statSync(candidate).isFile()) continue
+      accessSync(candidate, constants.X_OK)
+      return candidate
+    } catch {
+      // Not here, or not executable: the next PATH entry.
+    }
+  }
+  return null
+}
+
+/**
+ * Whether the Atta Engine runner can start: null when it can, otherwise the one refusal text `task run` and
+ * `runTask` both print. It cannot when the runner's file is absent, or when Bun, which runs it, is not on the PATH.
+ * The text names `--runner standalone`, except for a flow other than `v1`, which only the Engine runs.
+ */
+export function engineStartRefusal(
+  flow: string | undefined = undefined,
+  script: string = engineRunnerScriptPath(),
+  exists: (path: string) => boolean = existsSync,
+  findBun: () => string | null = () => findBunOnPath()
+): string | null {
+  const cause = !exists(script)
+    ? `its runner file ${script} is absent`
+    : findBun() === null
+      ? 'Bun is not on the PATH, and the Engine runner runs on Bun'
+      : null
+  if (cause === null) return null
+  const remedy =
+    flow !== undefined && flow !== 'v1'
+      ? `flow ${flow} needs the Engine, so make the Engine startable before starting this flow`
+      : 'make the Engine startable, or start this task on the standalone runner with `--runner standalone`'
+  return `the Atta Engine runner cannot start: ${cause}. Nothing was started; ${remedy}.`
+}
+
+export const defaultEngineRunnerDeps: Required<EngineRunnerDeps> = {
   scriptPath: engineRunnerScriptPath,
   exists: existsSync,
   spawn: (argv, options) =>
@@ -159,7 +200,7 @@ export const defaultEngineRunnerDeps: EngineRunnerDeps = {
         resolveExit(code ?? (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : 1))
       })
     }),
-  notice: (line) => process.stderr.write(`${line}\n`)
+  findBun: () => findBunOnPath()
 }
 
 /** The Vinaya process folder, relative to the root of a checkout of this repository. */
@@ -174,24 +215,16 @@ export function engineRunnerScriptPath(): string {
 }
 
 /**
- * Starts the Engine runner by path, with `bun`: its checkpoint store is Bun's SQLite. A command line without the
- * runner file keeps the standalone loop. `starting` runs once the Engine is known to start, before it does.
+ * Starts the Engine runner by path, with `bun`: its checkpoint store is Bun's SQLite. Its caller has already asked
+ * `engineStartRefusal`, so this always starts the Engine and answers its exit code. `starting` runs before it does.
  */
 export async function runTaskEngine(
   input: EngineRunInput,
   overrides: Partial<EngineRunnerDeps> = {},
   starting: () => void = () => {}
-): Promise<number | null> {
+): Promise<number> {
   const deps = { ...defaultEngineRunnerDeps, ...overrides }
   const script = deps.scriptPath()
-  if (!deps.exists(script)) {
-    if (input.flow && input.flow !== 'v1')
-      throw new Error(
-        `flow ${input.flow} requires the Engine; its runner script is unavailable. Install the workspace runner before starting this flow.`
-      )
-    deps.notice(ENGINE_FALLBACK_NOTICE)
-    return null
-  }
   starting()
   return deps.spawn(
     [

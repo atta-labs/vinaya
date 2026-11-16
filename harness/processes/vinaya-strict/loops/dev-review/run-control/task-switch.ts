@@ -129,7 +129,7 @@ export async function switchTask(input: SwitchTaskInput, deps: SwitchTaskDeps): 
   if (deps.readRunner(task) !== 'atta-engine') {
     return {
       kind: 'standalone',
-      message: `vinaya task switch: task ${task} runs on the standalone runner, which already continues a task on a new --agent by itself; nothing was changed. Run: ${run}`
+      message: `vinaya task switch: task ${task} runs on the standalone runner, which already continues a task on a new --agent by itself; nothing was changed. Run: ${run} --runner standalone`
     }
   }
   const pid = deps.liveDriverPid(task)

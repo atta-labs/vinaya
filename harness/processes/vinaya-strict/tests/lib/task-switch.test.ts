@@ -266,7 +266,7 @@ describe('the address a switch restarts a task in', () => {
       { task: 7, address: tranche, agent: 'codex' },
       deps({ readRunner: () => 'standalone' })
     )
-    expect(result.message).toContain('Run: vinaya task run some-tranche-v1 4 --agent codex')
+    expect(result.message).toContain('Run: vinaya task run some-tranche-v1 4 --agent codex --runner standalone')
   })
 
   const resolution = (labels: string[], title: string, started: unknown[]) => ({

@@ -8,7 +8,7 @@ import { cancelDevReviewLoop, taskFromPrBody } from '../standalone/dev-review-lo
 import { readDriverLock, readPauseState, writeDriverLock } from '../standalone/dev-review-loop/pause-resume'
 import { runnerReadingFor } from './task-status'
 import { runTask, type RunTaskDeps } from './task-run'
-import { ENGINE_FALLBACK_NOTICE, readTaskRunner, recordTaskRunner, taskRunnerRecordPath } from './task-run-engine'
+import { readTaskRunner, recordTaskRunner, taskRunnerRecordPath } from './task-run-engine'
 import { createTaskCancelHandler } from './cancel'
 import { resumeContinuation } from './resume'
 import { programInvocation } from '../../../tools/programs'
@@ -72,18 +72,18 @@ function fixtureDeps(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
     devReviewLoop: async () => ({ task: 42, prNumber: 7, finalDecision: { type: 'publish' } }),
     resolveRepo: async () => null,
     assignIssue: () => {},
-    runnerConfig: () => null,
+    runnerConfig: () => ({ runner: 'standalone' }),
     ...overrides
   }
 }
 
 describe('the runner this repository configures', () => {
-  it('resolves atta-engine from this repository, standalone with no runner key, and standalone when selected', () => {
+  it('resolves atta-engine from this repository and with no runner key, and standalone when selected', () => {
     const repo = configFrom(REPO_ROOT)
     expect(repo?.runner).toBe('atta-engine')
     expect(resolveTaskRunner(undefined, repo)).toBe('atta-engine')
-    expect(resolveTaskRunner(undefined, configWithoutRunner())).toBe('standalone')
-    expect(resolveTaskRunner(undefined, null)).toBe('standalone')
+    expect(resolveTaskRunner(undefined, configWithoutRunner())).toBe('atta-engine')
+    expect(resolveTaskRunner(undefined, null)).toBe('atta-engine')
     expect(resolveTaskRunner('standalone', repo)).toBe('standalone')
     expect(resolveTaskRunner(undefined, { ...repo, runner: 'standalone' })).toBe('standalone')
   })
@@ -99,7 +99,12 @@ describe('the runner this repository configures', () => {
         devReviewLoop: async () => {
           throw new Error('a run started in this repository must not take the standalone loop')
         },
-        engine: { scriptPath: () => '/runner.ts', exists: () => true, spawn: async () => 0, notice: () => {} }
+        engine: {
+          scriptPath: () => '/runner.ts',
+          exists: () => true,
+          spawn: async () => 0,
+          findBun: () => '/usr/local/bin/bun'
+        }
       })
     )
     expect('exitCode' in result && result.exitCode).toBe(0)
@@ -125,7 +130,7 @@ describe('the runner this repository configures', () => {
           spawn: async () => {
             throw new Error('--runner standalone must not start the Engine')
           },
-          notice: () => {}
+          findBun: () => '/usr/local/bin/bun'
         }
       })
     )
@@ -219,11 +224,13 @@ describe('a run with no recorded runner', () => {
 })
 
 describe('the config reference runner entry', () => {
-  it('states the standalone default and the one fallback notice task run prints', () => {
+  it('states the Atta Engine default, the Bun requirement and the refusal, and no fallback', () => {
     const entry = CONFIG_REFERENCE.find((field) => field.key === 'runner')
     const text = entry?.semantics.join('\n') ?? ''
-    expect(text).toContain('The default is `standalone`')
-    expect(text).toContain(ENGINE_FALLBACK_NOTICE)
+    expect(text).toContain('The default is `atta-engine`')
+    expect(text).toContain('Bun on the PATH')
+    expect(text).toContain('is refused')
     expect(text).toContain('A run with no recorded runner')
+    expect(text).not.toMatch(/fall(s|ing)? back/)
   })
 })

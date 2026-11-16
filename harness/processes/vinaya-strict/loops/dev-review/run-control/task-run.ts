@@ -45,7 +45,9 @@ import {
   crossRunnerInFlightText,
   crossRunnerRefusalReason,
   crossRunnerRefusalText,
+  defaultEngineRunnerDeps,
   engineRunDirectory,
+  engineStartRefusal,
   engineRunInFlight,
   readTaskRunner,
   recordTaskRunner,
@@ -649,6 +651,11 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
         `runTask: ${taskLabel} was cancelled at ${cancelled.consumedAt} and its Engine checkpoint is kept — a cancelled run is never resumed. To set that checkpoint aside and start the task anew on ${agent}, run \`${taskSwitchCommand(issue, agent)}\`.`
       )
     }
+    // An Engine that cannot start refuses the run here, before the Issue is assigned or a runner recorded: no run
+    // ever continues on the standalone runner by itself.
+    const engine = { ...defaultEngineRunnerDeps, ...deps.engine }
+    const refusal = engineStartRefusal(input.flow, engine.scriptPath(), engine.exists, engine.findBun)
+    if (refusal !== null) throw new RunTaskError(refusal)
   }
   // Every start path reaches this one call: the foreground command, the
   // detached child a `--background` start launches, and the Operator's
@@ -663,13 +670,9 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
         ...(input.flow ? { flow: input.flow } : {})
       },
       deps.engine,
-      // Recorded once the Engine is known to start, so a fallback is never recorded as an Engine run.
       () => deps.recordRunner?.(issue, 'atta-engine')
     )
-    if (exitCode !== null) return { exitCode, task: issue, branch, prUrl: null, prNumber: null, finalDecision: null }
-    // The Engine is unavailable: the standalone loop continues only a pause the standalone runner holds.
-    const refusedFallback = heldByAnother('standalone')
-    if (refusedFallback !== null) throw refusedFallback
+    return { exitCode, task: issue, branch, prUrl: null, prNumber: null, finalDecision: null }
   }
   deps.recordRunner?.(issue, 'standalone')
   const loopResult = await deps.devReviewLoop(

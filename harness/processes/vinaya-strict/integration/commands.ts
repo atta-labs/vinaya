@@ -112,7 +112,8 @@ export const COMMANDS: readonly Command[] = [
     flags: [
       {
         flag: '--runner <standalone|atta-engine>',
-        description: 'Override runner config for this invocation; absent uses config, whose default is standalone'
+        description:
+          'Override runner config for this invocation; absent uses config, whose default is atta-engine, which needs Bun on the PATH'
       },
       {
         flag: '--agent <claude|codex>',
@@ -135,7 +136,7 @@ export const COMMANDS: readonly Command[] = [
       }
     ],
     details: [
-      'The atta-engine runner starts the Engine runner with Bun, so it needs Bun on the machine, streams its output and returns its exit code. The published package carries the Engine runner as a built program and a checkout starts its source file; a command line without the runner file prints one notice and falls back to standalone. Engine Log events use the local folder only; logs: false disables all Log destinations for both runners.',
+      'The atta-engine runner starts the Engine runner with Bun, so it needs Bun on the PATH, streams its output and returns its exit code; it is the default when config names no runner. The published package carries the Engine runner as a built program and a checkout starts its source file. When the runner file is absent or Bun is not on the PATH, the run is refused with one message naming the cause and exits 3, before it is prepared or a background controller launched, and names `--runner standalone` — or, for a flow other than v1, says that flow needs the Engine; a `--rollback` start makes no such check. Engine Log events use the local folder only; logs: false disables all Log destinations for both runners.',
       // VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-engine.ts contains:export function crossRunnerRefusalReason(
       "A run's runner is recorded when it starts and never changes: switching `runner` in config changes only the runner of new runs, and a run recorded on `atta-engine` keeps routing to the Engine for `task status`, `task_resume` and `task_cancel`. A start on a pause another runner holds is refused with a typed reason naming the recorded runner and the requested one, and so is a start on another runner's Engine run that is still in flight with no pause held — halted or stopped short of completed or cancelled.",
       // VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/backend-rollback.ts contains:export async function terminateAndRestart(

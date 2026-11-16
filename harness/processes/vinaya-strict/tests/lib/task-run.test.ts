@@ -87,7 +87,7 @@ function deps(overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
     // refused run never touches the Issue.
     assignIssue: () => {},
     // The standalone runner, whatever runner the repository's own config names.
-    runnerConfig: () => null,
+    runnerConfig: () => ({ runner: 'standalone' }),
     ...overrides
   }
 }
@@ -869,7 +869,7 @@ describe('runTask — --widen-surface continues a pre-pull-request widen-surface
       })
     )
     await expect(run).rejects.toThrow(
-      "runTask: task 10 in tranche `t-v1`'s pause (reason `escalation`, round 1) is not a widen-surface escalation — the round's accepted Developer result asks for no `widen_surface` decision. Continue it with `vinaya task run t-v1 10 --agent claude` once its own ruling is settled."
+      "runTask: task 10 in tranche `t-v1`'s pause (reason `escalation`, round 1) is not a widen-surface escalation — the round's accepted Developer result asks for no `widen_surface` decision. Continue it with `vinaya task run t-v1 10 --agent claude --runner standalone` once its own ruling is settled."
     )
     expect(calls).toEqual([])
   })
@@ -1051,10 +1051,10 @@ describe('widenSurfaceRequestOf / widenSurfaceCommandFor', () => {
 
   it('renders the address form the branch takes, quoting what a shell would split', () => {
     expect(widenSurfaceCommandFor(77, 'task/issue-77', [], 'codex', 'gpt-5')).toBe(
-      "vinaya task run --issue 77 --widen-surface '<glob,...>' --reason '<why the Surface widens>' --agent codex --model gpt-5"
+      "vinaya task run --issue 77 --runner standalone --widen-surface '<glob,...>' --reason '<why the Surface widens>' --agent codex --model gpt-5"
     )
     expect(widenSurfaceCommandFor(77, 'task/t-v1/3', ['a/b', 'c/**'])).toBe(
-      "vinaya task run t-v1 3 --widen-surface a/b,c/** --reason '<why the Surface widens>'"
+      "vinaya task run t-v1 3 --runner standalone --widen-surface a/b,c/** --reason '<why the Surface widens>'"
     )
   })
 })

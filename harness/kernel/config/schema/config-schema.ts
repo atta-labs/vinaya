@@ -397,12 +397,15 @@ export function resolveLogsHeaderValues(
 
 export type TaskRunner = 'standalone' | 'atta-engine'
 
-/** Selects the runner for one invocation; an absent setting keeps the standalone loop. */
+/**
+ * Selects the runner for one invocation; an absent setting runs the Atta Engine. The Engine runs on Bun, which must be
+ * on the PATH: a run that cannot start it is refused, never continued on the standalone runner.
+ */
 export function resolveTaskRunner(
   override: string | undefined,
   config: Pick<KernelConfig, 'runner'> | null
 ): TaskRunner {
-  const runner = override ?? config?.runner ?? 'standalone'
+  const runner = override ?? config?.runner ?? 'atta-engine'
   if (runner !== 'standalone' && runner !== 'atta-engine') {
     throw new Error('runner: expected standalone or atta-engine')
   }
