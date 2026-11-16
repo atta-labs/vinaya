@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
-import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { packageRoot } from '../src/lib/package-root'
@@ -210,6 +210,51 @@ describe('vinaya: an installed build defers to this repo’s own source (Issue #
       expect(deferralLines[0]).toContain(SRC_INDEX)
     } finally {
       rmSync(installedPkgDir, { recursive: true, force: true })
+    }
+  })
+
+  it('built files carry no Bun pragma line, so Bun reads the title pattern’s em dash as UTF-8', () => {
+    const buildResult = spawnSyncBudgeted(
+      'bun',
+      ['run', 'build'],
+      { cwd: CLI_ROOT, encoding: 'utf8' },
+      60_000,
+      'apps/cli build'
+    )
+    expect(buildResult.status, `apps/cli build failed:\n${buildResult.stdout}\n${buildResult.stderr}`).toBe(0)
+
+    const distDir = join(CLI_ROOT, 'dist')
+    const jsFiles = (readdirSync(distDir, { recursive: true }) as string[]).filter((f) => f.endsWith('.js'))
+    expect(jsFiles.length).toBeGreaterThan(0)
+    const pragmaFiles = jsFiles.filter((f) =>
+      readFileSync(join(distDir, f), 'utf8')
+        .split('\n')
+        .some((line) => line.startsWith('// @bun'))
+    )
+    expect(pragmaFiles).toEqual([])
+
+    const scratch = join(tmpdir(), `vinaya-pragma-probe-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    mkdirSync(scratch, { recursive: true })
+    try {
+      const titleFile = join(scratch, 'title.txt')
+      writeFileSync(titleFile, '[some-slug] 3 — Do the thing', 'utf8')
+      const probe = join(scratch, 'probe.js')
+      writeFileSync(
+        probe,
+        [
+          "import { readFileSync } from 'node:fs'",
+          'const [built, titleFile] = process.argv.slice(2)',
+          "const line = readFileSync(built, 'utf8').split('\\n').find((l) => l.startsWith('var TITLE_PATTERN = '))",
+          "if (!line) throw new Error('no TITLE_PATTERN line')",
+          "const pattern = (0, eval)(line.replace('var TITLE_PATTERN = ', '').replace(/;$/, ''))",
+          "const title = readFileSync(titleFile, 'utf8')",
+          "process.stdout.write(pattern.test(title) ? 'match' : 'no match')"
+        ].join('\n')
+      )
+      const result = run('bun', [probe, join(distDir, 'checks', 'bin', 'verify-dispatch.js'), titleFile], scratch)
+      expect(result.stdout, result.stderr).toBe('match')
+    } finally {
+      rmSync(scratch, { recursive: true, force: true })
     }
   })
 })
