@@ -398,6 +398,10 @@ async function twoMachineFolderReplay(): Promise<void> {
         'the row shows the recorded title or the fallback'
       )
     }
+    // Until the follower reports live, the picture is catching up, never live.
+    await page.waitFor('catching up before the follower is live', () => page.status() === 'catching-up')
+    assert.ok(server.followed[0], 'the folder source was followed')
+    server.followed[0].sink.state?.({ state: 'live' })
     // A folder cannot read its rotated slots, so the picture is declared source-limited, never plainly live.
     await page.waitFor('the folder coverage limit', () => page.status() === 'source-limited')
     // Rows keep the server's state order.
@@ -408,7 +412,6 @@ async function twoMachineFolderReplay(): Promise<void> {
       [...order].sort((a, b) => a - b),
       'rows follow the state order'
     )
-    assert.ok(!page.rows().some((r) => /0s ago/.test(r.cells['last-sign'] ?? '') && r.cells['last-sign'] === 'unknown'))
   } finally {
     page.close()
     await server.stop()
@@ -474,16 +477,19 @@ async function serverLateOpeningAndLiveChange(): Promise<void> {
     assert.equal(late.rows().find((r) => r.task === task)?.state, 'ready_to_merge')
 
     // Nothing secret reached the browser: not the read credential, not the launch secret, not a local path.
-    const seen = [late.html, ...late.frames]
+    // The page's own sources are the HTML and the socket frames: no path either. The repositories route names the
+    // launched checkouts by design, so it is held only to the credential rule.
+    const pageSources = [late.html, ...late.frames]
+    const routeSources: string[] = []
     for (const route of [REPOSITORIES_ROUTE, TASK_LIST_ROUTE]) {
-      seen.push(await (await fetch(`${server.origin}${route}`, { headers: { cookie: server.cookie } })).text())
+      routeSources.push(await (await fetch(`${server.origin}${route}`, { headers: { cookie: server.cookie } })).text())
     }
-    for (const text of seen) {
+    for (const text of [...pageSources, ...routeSources]) {
       assert.ok(!text.includes(READ_SECRET), 'the read credential value is never sent')
       assert.ok(!text.includes(LAUNCH_SECRET), 'the launch secret is never sent')
-      assert.ok(!text.includes('/private/acceptance'), 'no local path is sent')
       assert.ok(!/authorization/i.test(text), 'no credential header name is sent')
     }
+    for (const text of pageSources) assert.ok(!text.includes('/private/acceptance'), 'no local path is sent')
     late.close()
   } finally {
     await server.stop()
