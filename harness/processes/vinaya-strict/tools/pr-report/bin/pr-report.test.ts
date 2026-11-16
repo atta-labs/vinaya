@@ -662,14 +662,11 @@ describe('runAgentCommand / computeGroupC — test-run reuse (O3, Issue #707)', 
     expect(first.commands.every((c) => c.reusedFrom === undefined)).toBe(true)
     expect(readFileSync(counterFile, 'utf8')).toBe('ab')
 
-    const started = performance.now()
     const second = await computeGroupC(body, dir, {}, cache)
-    const elapsedMs = performance.now() - started
     expect(second.commands.every((c) => c.reusedFrom !== undefined)).toBe(true)
+    // Reused, not re-run: neither command appended to the counter a second time. The counter is the proof, not a
+    // wall-clock bound, which a busy host running several test files at once can exceed.
     expect(readFileSync(counterFile, 'utf8')).toBe('ab')
-    // Reused, not re-run — no process spawn on the second pass, so this
-    // stays well under the second it would cost to fork `bash -c` twice more.
-    expect(elapsedMs).toBeLessThan(1000)
   })
 
   it('renderGroupC names the run a reused command reused, right below its own fence', () => {

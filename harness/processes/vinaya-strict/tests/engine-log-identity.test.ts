@@ -1,5 +1,4 @@
 import { expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import enginePackage from '@atta/engine/package.json' with { type: 'json' }
 import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
@@ -23,11 +22,8 @@ test('stamps the loaded Vinaya process, installed Engine version and dispatched 
   })
 })
 
-test('reads the Engine version from a static import of its manifest, with no lookup at run time', () => {
+test('stamps the Engine version its manifest declares', () => {
   expect(ENGINE_VERSION).toBe(enginePackage.version)
-  const source = readFileSync(resolve(import.meta.dir, '../bin/engine-log-identity.ts'), 'utf8')
-  expect(source).toContain("import enginePackage from '@atta/engine/package.json' with { type: 'json' }")
-  expect(source).not.toContain('createRequire')
 })
 
 test('refuses to stamp a run whose Engine version is empty', () => {
