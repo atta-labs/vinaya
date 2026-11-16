@@ -291,6 +291,8 @@ async function openPage(server: Booted): Promise<Page> {
     Node: dom.window.Node
   })
   const frames: string[] = []
+  // The static render was only asserted above; the live list mounts into an empty body so its elements are the only ones read.
+  dom.window.document.body.innerHTML = ''
   const container = dom.window.document.createElement('div')
   dom.window.document.body.appendChild(container)
   const root: Root = createRoot(container)
