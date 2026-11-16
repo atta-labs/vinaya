@@ -260,11 +260,9 @@ export function findPlainTextEdgeLabels(body: string): string[] {
   const labelPattern = /(Depends-on|Conflicts-with)\s*:[ \t]*([^.;—(\n]*)/gi
   let match: RegExpExecArray | null = labelPattern.exec(prose)
   while (match !== null) {
-    const ids = (match[2] ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0 && ID_TOKEN.test(s))
-    if (ids.length > 0) found.push(`${match[1]}: ${ids.join(', ')}`)
+    const value = (match[2] ?? '').trim()
+    const hasId = value.split(',').some((s) => ID_TOKEN.test(s.trim()))
+    if (hasId) found.push(`${match[1]}: ${value}`)
     match = labelPattern.exec(prose)
   }
   return found

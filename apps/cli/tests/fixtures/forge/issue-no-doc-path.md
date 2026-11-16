@@ -6,7 +6,7 @@
 
 **Project(s) + blast radius** — vinaya; touches `@attalabs/vinaya-sources` (registry), re-verified.
 
-**Dependency rationale** — Depends-on: 3 (the check runner + CheckError contract).
+**Dependency rationale** — `Depends-on: —` `Conflicts-with: —` (the check runner + CheckError contract is already merged).
 
 **Traps** — Whatever the reviewer flags.
 
