@@ -109,7 +109,19 @@ One server-owned service holds one shared picture per selected repository. It ow
 
 ## The live endpoints
 
-- **`/api/mission-control/live`** — the WebSocket above. Until the picture is wired in, a connection receives one fixed greeting frame, `{"type":"hello"}`, and carries no repository data.
+- **`/api/mission-control/live`** — the WebSocket above, open only to a page holding the launch session. A host with no picture service answers one fixed greeting frame, `{"type":"hello"}`, and carries no repository data; Studio's own start registers the live endpoint below in its place.
+
+## The live protocol
+
+Every frame is JSON and names `"v":1`. The page rejects any other version or any unknown type.
+
+- **Server frames.** `snapshot` carries every repository and every task and starts a new *generation*. `task` carries one whole changed task, keyed by repository and task. `status` carries a repository's connection and coverage. `keepalive` carries nothing. A `task` or `status` frame names the generation of the snapshot it follows; a page ignores one from any other generation. A page replaces tasks whole and never patches them.
+- **Repository ids.** A repository is named on the wire by an opaque id (`r1`, `r2`, ... in launch order) and its remote's name. Its local folder never leaves the server.
+- **What a task carries.** An explicit allowlist, built field by field: number, title, state, amber, reason, decision, pull request, the one line saying what is happening, last sign, who acts, the command, model, each round's outcome, checks, agents, confidence, reviewers' outcomes and finding counts, and token sums. Recorded gate payloads, finding text, reasoning, the feed's narration, machine names, loop identities, local paths, credential headers and the launch or session secret never reach the page. Text is cut at 500 characters and a repository sends at most 10000 tasks.
+- **Keep-alive.** The server sends a `keepalive` every twenty seconds. It proves the socket and nothing else: it is never a sign of life of any task and never moves silence. A page that hears nothing for fifty seconds drops the socket.
+- **Reconnecting.** The page keeps its last picture and the time of its last update while it reconnects, after 1, 2, 4, 8, 15 and then every 30 seconds, for at most twenty attempts; then it stops until asked again. The first frame of every connection is a fresh snapshot that replaces the page's state. A reconnect sends nothing: the session cookie is the only credential, and the launch token is never sent again.
+- **Slow pages.** A page whose socket holds more than 1 MiB unsent has its frames dropped and gets a fresh snapshot once it drains; past 4 MiB it is closed and reconnects.
+- **What the page may send.** One frame, `resync`, which answers with a fresh snapshot. Any other frame, or one over 256 bytes, closes the connection. Nothing a page sends runs a command.
 - **`/api/mission-control/tasks`** — the minimum live task list, an HTTP `GET` answering `{"tasks":[]}` until the picture is wired in.
 
 Neither endpoint stores or describes task topology: which task depends on which, and in what order they run, stay with the repository's Issues.

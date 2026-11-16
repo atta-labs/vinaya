@@ -1,4 +1,5 @@
-import { createStudioHost } from './host.ts'
+import { createStudioHost, LIVE_ROUTE } from './host.ts'
+import { createLiveSocket, type LiveSocketEndpoint } from './live-socket.ts'
 import { createPictureService, type PictureService } from './picture-service.ts'
 import { type LaunchContext, parseLaunchContext, resolveStudioRepositories } from './repositories.ts'
 import { isWellFormedSecret } from './session.ts'
@@ -52,6 +53,7 @@ for (const repository of repositories) {
 
 // One picture service for the whole launch: one source and follower per repository, shared by every browser.
 let pictures: PictureService | null = null
+let live: LiveSocketEndpoint | null = null
 const host = createStudioHost({
   dir,
   dev,
@@ -61,6 +63,9 @@ const host = createStudioHost({
   session: { secret: context.secret },
   compose: (composition) => {
     pictures = createPictureService({ repositories: composition.repositories, clock: composition.clock })
+    // The page's WebSocket reads the one shared service; it never opens a follower of its own.
+    live = createLiveSocket({ service: pictures, repositories: composition.repositories })
+    composition.socket(LIVE_ROUTE, (socket) => live?.handler(socket))
     void pictures.start()
   }
 })
@@ -71,6 +76,7 @@ function stop(): void {
   stopping = true
   const force = setTimeout(() => process.exit(1), FORCE_EXIT_MS)
   force.unref()
+  live?.close()
   Promise.all([pictures?.close(), host.close()]).then(
     () => process.exit(0),
     () => process.exit(1)
