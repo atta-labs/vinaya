@@ -16,6 +16,10 @@ import { tmpdir } from 'node:os'
 import { delimiter, join, relative, sep } from 'node:path'
 // The route and frame come from the host itself, so the proof cannot drift from what Studio serves.
 import { LIVE_HELLO, LIVE_ROUTE } from '../../vinaya-studio/src/server/live-protocol'
+import { BOOTSTRAP_ROUTE } from '../src/commands/studio'
+
+// The task list route the host registers (`TASK_LIST_ROUTE` in the host, which this script does not import: it pulls in `ws`).
+const TASK_LIST_ROUTE = '/api/mission-control/tasks'
 
 const CLI_PKG_DIR = join(import.meta.dir, '..')
 const REPO_ROOT = join(CLI_PKG_DIR, '..', '..')
@@ -37,10 +41,30 @@ function freeLoopbackPort(): Promise<number> {
   })
 }
 
+/** Whether an application upgrade with these headers is refused or opens. */
+function socketOutcome(url: string, headers: Record<string, string>): Promise<'refused' | 'open'> {
+  return new Promise((resolve) => {
+    const socket = new WebSocket(url, { headers } as never)
+    const timer = setTimeout(() => {
+      socket.close()
+      resolve('refused')
+    }, 10_000)
+    socket.onmessage = () => {
+      clearTimeout(timer)
+      socket.close()
+      resolve('open')
+    }
+    socket.onerror = () => {
+      clearTimeout(timer)
+      resolve('refused')
+    }
+  })
+}
+
 /** Opens the application WebSocket and resolves with the first frame, or rejects at the deadline. */
-function firstFrame(url: string, deadlineMs: number): Promise<string> {
+function firstFrame(url: string, headers: Record<string, string>, deadlineMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url)
+    const socket = new WebSocket(url, { headers } as never)
     const timer = setTimeout(() => {
       socket.close()
       reject(new Error('no frame before the deadline'))
@@ -84,8 +108,14 @@ export async function proveInstalledStudio(options: {
     writeFileSync(join(stubDir, opener), `#!/bin/sh\necho "$1" >> "${openedPath}"\n`, { mode: 0o755 })
   }
   const childEnv = { ...env, PATH: `${stubDir}${delimiter}${env.PATH ?? ''}` }
+  // The launch observes a git checkout: a fresh one with the proof started from a nested folder of it, as a user's
+  // shell may be. It lies in `cwd`, outside this repository.
+  const repoDir = mkdtempSync(join(cwd, 'studio-checkout-'))
+  execFileSync('git', ['init', '-q'], { cwd: repoDir })
+  const nested = join(repoDir, 'packages', 'app')
+  mkdirSync(nested, { recursive: true })
   const child = spawn(bin, ['studio', '--port', String(port)], {
-    cwd,
+    cwd: nested,
     env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe']
   })
@@ -101,42 +131,89 @@ export async function proveInstalledStudio(options: {
   })
 
   try {
-    let page = ''
+    const origin = `http://127.0.0.1:${port}`
+    // Anything that answers HTTP is up; an unauthenticated page is refused, so only the status says it is alive.
+    let answered = false
     const deadline = Date.now() + ANSWER_DEADLINE_MS
-    while (!page && state.exitCode === null && Date.now() < deadline) {
+    while (!answered && state.exitCode === null && Date.now() < deadline) {
       try {
-        const res = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(5_000) })
-        if (res.status === 200) page = await res.text()
-        else await new Promise((resolve) => setTimeout(resolve, 500))
+        await fetch(`${origin}/`, { signal: AbortSignal.timeout(5_000) })
+        answered = true
       } catch {
         await new Promise((resolve) => setTimeout(resolve, 500))
       }
     }
-    if (!page) {
+    if (!answered) {
       return {
         ok: false,
         detail: `no page answered, exited early: ${state.exitCode ?? 'no'} — ${output.trim().slice(-300)}`
       }
     }
 
+    // Without the session nothing is readable: no page, no task data, no application socket.
+    for (const path of ['/', TASK_LIST_ROUTE]) {
+      const res = await fetch(`${origin}${path}`)
+      if (res.status !== 401) return { ok: false, detail: `${path} without a session answered ${res.status}, not 401` }
+    }
+    if ((await socketOutcome(`ws://127.0.0.1:${port}${LIVE_ROUTE}`, { origin })) !== 'refused') {
+      return { ok: false, detail: 'the application upgrade opened without a session' }
+    }
+
+    // The opener runs just after the port answers; give it a moment to record the one-time link.
+    for (let i = 0; i < 20 && !existsSync(openedPath); i++) await new Promise((resolve) => setTimeout(resolve, 250))
+    const opened = existsSync(openedPath) ? readFileSync(openedPath, 'utf-8').trim() : ''
+    let link: URL
+    try {
+      link = new URL(opened)
+    } catch {
+      return { ok: false, detail: `the browser opener received "${opened}"` }
+    }
+    if (link.origin !== origin || link.pathname !== BOOTSTRAP_ROUTE || !link.searchParams.get('token')) {
+      return { ok: false, detail: `the browser opener received "${opened.replace(/token=[^&]*/, 'token=…')}"` }
+    }
+
+    // A forged secret is refused and does not spend the real one.
+    const forged = await fetch(`${origin}${BOOTSTRAP_ROUTE}?token=${'A'.repeat(43)}`, { redirect: 'manual' })
+    if (forged.status !== 403) return { ok: false, detail: `a forged link answered ${forged.status}, not 403` }
+
+    const exchange = await fetch(opened, { redirect: 'manual' })
+    const cookie = exchange.headers.get('set-cookie')?.split(';')[0] ?? ''
+    if (exchange.status !== 303 || exchange.headers.get('location') !== '/' || !cookie) {
+      return { ok: false, detail: `the one-time link answered ${exchange.status} with no session cookie` }
+    }
+    if (/HttpOnly/i.test(exchange.headers.get('set-cookie') ?? '') === false) {
+      return { ok: false, detail: 'the session cookie is not HttpOnly' }
+    }
+    const reused = await fetch(opened, { redirect: 'manual' })
+    if (reused.status !== 403 || reused.headers.get('set-cookie')) {
+      return { ok: false, detail: `reusing the one-time link answered ${reused.status}, not 403` }
+    }
+
+    const page = await fetch(`${origin}/`, { headers: { cookie } })
+    if (page.status !== 200) return { ok: false, detail: `the protected page answered ${page.status} with the session` }
+    const tasks = await fetch(`${origin}${TASK_LIST_ROUTE}`, { headers: { cookie } })
+    if (tasks.status !== 200) return { ok: false, detail: `the task route answered ${tasks.status} with the session` }
+    const hostile = await fetch(`${origin}${TASK_LIST_ROUTE}`, { headers: { cookie, origin: 'http://evil.example' } })
+    if (hostile.status !== 403) return { ok: false, detail: `a hostile Origin answered ${hostile.status}, not 403` }
+
+    const url = `ws://127.0.0.1:${port}${LIVE_ROUTE}`
+    if ((await socketOutcome(url, { cookie, origin: 'http://evil.example' })) !== 'refused') {
+      return { ok: false, detail: 'the application upgrade opened for a hostile Origin' }
+    }
     let frame = ''
     try {
-      frame = await firstFrame(`ws://127.0.0.1:${port}${LIVE_ROUTE}`, 10_000)
+      frame = await firstFrame(url, { cookie, origin }, 10_000)
     } catch (error) {
       return { ok: false, detail: `${(error as Error).message} — ${output.trim().slice(-300)}` }
     }
     if (frame !== LIVE_HELLO) return { ok: false, detail: `the application upgrade answered "${frame}"` }
 
-    // The opener runs just after the port answers; give it a moment to record the address.
-    for (let i = 0; i < 20 && !existsSync(openedPath); i++) await new Promise((resolve) => setTimeout(resolve, 250))
-    const opened = existsSync(openedPath) ? readFileSync(openedPath, 'utf-8').trim() : ''
-    if (opened !== `http://127.0.0.1:${port}`) return { ok: false, detail: `the browser opener received "${opened}"` }
-
     return {
       ok: true,
-      detail: `packed Studio served a page and an application WebSocket handshake on 127.0.0.1:${port}, and the browser was asked to open ${opened}`
+      detail: `packed Studio, started from a nested folder of a git checkout, refused every request without a session, exchanged its single-use link once (reuse and a forged link refused), then served its protected page and application WebSocket on 127.0.0.1:${port}`
     }
   } finally {
+    rmSync(repoDir, { recursive: true, force: true })
     child.kill('SIGTERM')
     await new Promise<void>((resolve) => {
       if (state.exitCode !== null) return resolve()

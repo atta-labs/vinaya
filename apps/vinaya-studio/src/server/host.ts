@@ -3,6 +3,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Duplex } from 'node:stream'
 import { type WebSocket, WebSocketServer } from 'ws'
 import { LIVE_HELLO, LIVE_ROUTE } from './live-protocol.ts'
+import { type RepositoryView, repositoryViews, type StudioRepository } from './repositories.ts'
+import { BOOTSTRAP_ROUTE, createSessionGuard, type SessionDecision } from './session.ts'
 
 /**
  * Studio's one local application server. It owns the HTTP listener, answers WebSocket upgrades on the application
@@ -14,6 +16,9 @@ export { LIVE_HELLO, LIVE_ROUTE }
 
 /** The minimal live task-list endpoint of this tranche. It carries no repository data. */
 export const TASK_LIST_ROUTE = '/api/mission-control/tasks'
+
+/** The repositories this launch observes and the state of each one's Log source. It carries no credential. */
+export const REPOSITORIES_ROUTE = '/api/mission-control/repositories'
 
 /** How long `close()` waits for connections to end before it destroys them. */
 export const CLOSE_GRACE_MS = 3_000
@@ -42,6 +47,8 @@ export type StudioComposition = {
   socket(path: string, handler: SocketHandler): void
   /** The host's clock. */
   clock: () => number
+  /** The repositories the launcher selected, each with its resolved Log source. Server-side only. */
+  repositories: readonly StudioRepository[]
 }
 
 export type StudioHostOptions = {
@@ -50,6 +57,10 @@ export type StudioHostOptions = {
   hostname: string
   port: number
   dev: boolean
+  /** The one-time session. Absent only for a programmatic host, which then answers loopback requests without one. */
+  session?: { secret: string; ttlMs?: number }
+  /** The repositories the launcher selected, already resolved. */
+  repositories?: readonly StudioRepository[]
   /** Programmatic only: the clock subsequent tasks read. */
   clock?: () => number
   /** Programmatic only: where subsequent tasks register their routes. */
@@ -108,6 +119,17 @@ export function createStudioHost(options: StudioHostOptions): StudioHost {
   const routes = new Map<string, RouteHandler>()
   const sockets = new Map<string, SocketHandler>()
   const clock = options.clock ?? Date.now
+  const repositories = options.repositories ?? []
+  let boundPort = options.port
+  const guard = options.session
+    ? createSessionGuard({
+        secret: options.session.secret,
+        ttlMs: options.session.ttlMs,
+        clock,
+        expectedHost: () =>
+          `${options.hostname.includes(':') ? `[${options.hostname}]` : options.hostname}:${boundPort}`
+      })
+    : null
   const wss = new WebSocketServer({ noServer: true })
   // Next attaches its own upgrade listener (development hot reload) to whatever `httpServer` it is given. It is given
   // this private emitter, never the real listener, so Next can never answer an application upgrade; the host forwards
@@ -119,18 +141,44 @@ export function createStudioHost(options: StudioHostOptions): StudioHost {
   const composition: StudioComposition = {
     route: (path, handler) => void routes.set(path, handler),
     socket: (path, handler) => void sockets.set(path, handler),
-    clock
+    clock,
+    repositories
   }
   composition.socket(LIVE_ROUTE, (socket) => socket.send(LIVE_HELLO))
   composition.route(TASK_LIST_ROUTE, (_req, res) => {
     res.setHeader('content-type', 'application/json')
     res.end(JSON.stringify({ tasks: [] }))
   })
+  composition.route(REPOSITORIES_ROUTE, (_req, res) => {
+    const views: RepositoryView[] = repositoryViews(repositories)
+    res.setHeader('content-type', 'application/json')
+    res.setHeader('cache-control', 'no-store')
+    res.end(JSON.stringify({ repositories: views }))
+  })
   options.compose?.(composition)
 
+  function refuseRequest(res: ServerResponse, decision: Extract<SessionDecision, { ok: false }>): void {
+    res.statusCode = decision.status
+    res.setHeader('cache-control', 'no-store')
+    res.setHeader('referrer-policy', 'no-referrer')
+    res.setHeader('content-type', 'text/plain; charset=utf-8')
+    res.end('Open Studio with `vinaya studio`.\n')
+  }
+
   const server = createServer((req, res) => {
+    if (guard) {
+      if (pathOf(req) === BOOTSTRAP_ROUTE) {
+        guard.exchange(req, res)
+        return
+      }
+      const decision = guard.authorizeHttp(req)
+      if (!decision.ok) {
+        refuseRequest(res, decision)
+        return
+      }
+    }
     const route = routes.get(pathOf(req))
-    if (route && !isLocalRequest(req)) {
+    if (!guard && route && !isLocalRequest(req)) {
       res.statusCode = 403
       res.end()
       return
@@ -143,9 +191,17 @@ export function createStudioHost(options: StudioHostOptions): StudioHost {
   })
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    if (guard) {
+      // Every upgrade, the application's and Next's hot reload alike, needs the session and the exact local Origin.
+      const decision = guard.authorizeUpgrade(req)
+      if (!decision.ok) {
+        socket.end(`HTTP/1.1 ${decision.status} Refused\r\nConnection: close\r\n\r\n`)
+        return
+      }
+    }
     const handler = sockets.get(pathOf(req))
     if (handler) {
-      if (!isLocalRequest(req)) {
+      if (!guard && !isLocalRequest(req)) {
         socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
         return
       }
@@ -177,11 +233,14 @@ export function createStudioHost(options: StudioHostOptions): StudioHost {
         server.listen(options.port, options.hostname, () => {
           server.off('error', reject)
           const address = server.address()
-          resolve(typeof address === 'object' && address ? address.port : options.port)
+          boundPort = typeof address === 'object' && address ? address.port : options.port
+          guard?.arm()
+          resolve(boundPort)
         })
       })
     },
     async close() {
+      guard?.invalidate()
       for (const client of wss.clients) client.close(1001)
       const closed = new Promise<void>((resolve) => server.close(() => resolve()))
       const timer = setTimeout(() => {
