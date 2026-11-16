@@ -74,6 +74,7 @@
       "tests/demo.test.ts",
       "tests/doctor.test.ts",
       "tests/doctrine.test.ts",
+      "tests/engine-runner-install.test.ts",
       "tests/fixture-env.ts",
       "tests/fixtures/forge/",
       "tests/import-boundary.test.ts",

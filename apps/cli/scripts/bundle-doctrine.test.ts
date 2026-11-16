@@ -1,12 +1,16 @@
-import { describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { loadProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
 import {
   BUNDLED_DOCTRINE_DIR,
   DOCTRINE_MAP,
   doctrineSource
 } from '../../../harness/processes/vinaya-strict/tools/doctrine/doctrine-map'
+import { BUILT_PROCESS_FOLDER } from '../../../harness/processes/vinaya-strict/tools/programs'
+import { pinnedProcessFiles } from './bundle-doctrine'
 
 // Regression guard for the exact miss found live: milestone-model.md and
 // task-model.md shipped in the doctrine without being added to the bundler's
@@ -21,14 +25,31 @@ import {
 // against the real doctrine and asserts the files actually landed in the
 // bundled output, at their process-relative paths under `vinaya-strict/` —
 // proof the doctrine map and the source tree agree, not a guess that they do.
+// The script writes under a temporary `--out` folder, never the package's own.
 
 const repoRoot = join(import.meta.dir, '..', '..', '..')
-const pkgRoot = join(import.meta.dir, '..')
-const bundledRoot = join(pkgRoot, BUNDLED_DOCTRINE_DIR)
+const processFolder = join(repoRoot, 'harness', 'processes', 'vinaya-strict')
+let outRoot: string
+let bundledRoot: string
+let shippedProcess: string
+
+function bundle(): void {
+  execFileSync('bun', [join(import.meta.dir, 'bundle-doctrine.ts'), '--out', outRoot], { cwd: repoRoot })
+}
+
+beforeAll(() => {
+  outRoot = mkdtempSync(join(tmpdir(), 'bundle-doctrine-'))
+  bundledRoot = join(outRoot, BUNDLED_DOCTRINE_DIR)
+  shippedProcess = join(outRoot, BUILT_PROCESS_FOLDER)
+})
+
+afterAll(() => {
+  rmSync(outRoot, { recursive: true, force: true })
+})
 
 describe('bundle-doctrine — the milestone/task-model regression', () => {
   it('bundles milestone-model.md and task-model.md alongside tranche-model.md', () => {
-    execFileSync('bun', [join(import.meta.dir, 'bundle-doctrine.ts')], { cwd: repoRoot })
+    bundle()
 
     for (const file of ['tranche-model.md', 'milestone-model.md', 'task-model.md']) {
       expect(
@@ -39,7 +60,7 @@ describe('bundle-doctrine — the milestone/task-model regression', () => {
   })
 
   it('every doctrine file that is portable doctrine is bundled — new files must be added deliberately', () => {
-    execFileSync('bun', [join(import.meta.dir, 'bundle-doctrine.ts')], { cwd: repoRoot })
+    bundle()
 
     // This-repo operational prose that is deliberately NOT portable doctrine
     // (see bundle-doctrine.ts's own top comment) — excluded here by the same
@@ -54,5 +75,43 @@ describe('bundle-doctrine — the milestone/task-model regression', () => {
       missing,
       `doctrine file(s) not bundled — mark them shipped in the doctrine map: ${missing.join(', ')}`
     ).toEqual([])
+  })
+})
+
+describe('bundle-doctrine — the process files the Engine runner loads', () => {
+  it('copies every file the process loader pins under dist/vinaya-strict, and the copy loads to the same digest', () => {
+    bundle()
+
+    const pinned = pinnedProcessFiles(processFolder)
+    for (const file of [
+      'process.yaml',
+      'executing/dev-review.flow.yaml',
+      'loops/dev-review/v2/dev-review-v2.flow.yaml'
+    ])
+      expect(pinned).toContain(file)
+    const missing = pinned.filter((file) => !existsSync(join(shippedProcess, file)))
+    expect(missing).toEqual([])
+    expect(loadProcess(shippedProcess).digest).toBe(loadProcess(processFolder).digest)
+  })
+
+  it('never ships a pinned process file beside the top-level doctrine, where the test walkers would find it', () => {
+    bundle()
+
+    const outsideDist = pinnedProcessFiles(processFolder)
+      .filter((file) => file.endsWith('.test.ts'))
+      .filter((file) => existsSync(join(bundledRoot, file)))
+    expect(outsideDist).toEqual([])
+  })
+
+  it('removes the shipped copy before each run, so a file deleted since the last pack leaves no stale copy', () => {
+    bundle()
+    const stale = join(shippedProcess, 'executing', 'developer', 'deleted-since.md')
+    mkdirSync(join(stale, '..'), { recursive: true })
+    writeFileSync(stale, 'stale\n')
+
+    bundle()
+
+    expect(existsSync(stale)).toBe(false)
+    expect(loadProcess(shippedProcess).digest).toBe(loadProcess(processFolder).digest)
   })
 })

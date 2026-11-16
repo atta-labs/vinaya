@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { AgentVendor } from '../dispatch/dispatch.js'
 import { isDriverPidAlive, readDriverLock } from '../standalone/dev-review-loop/pause-resume.js'
-import { cliPackageRoot } from '../../../../../../apps/cli/src/lib/package-root.js'
+import { programFile } from '../../../tools/programs.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../../kernel/run-paths.js'
 import type { TaskRunner } from '../../../integration/config/compose.js'
 
@@ -165,13 +165,17 @@ export const defaultEngineRunnerDeps: EngineRunnerDeps = {
 /** The Vinaya process folder, relative to the root of a checkout of this repository. */
 export const PROCESS_FOLDER_IN_CHECKOUT = 'harness/processes/vinaya-strict'
 
+/**
+ * The Engine runner `task run`, resume, status and cancel start: the program table's answer for its row, which is the
+ * built runner in an installed package and the runner's source file in a checkout.
+ */
 export function engineRunnerScriptPath(): string {
-  return resolve(cliPackageRoot(), '../..', PROCESS_FOLDER_IN_CHECKOUT, 'bin/run-engine.ts')
+  return programFile('run-engine')
 }
 
 /**
- * Starts the workspace script by path; a published CLI without it keeps the standalone loop. `starting` runs once
- * the Engine is known to start, before it does.
+ * Starts the Engine runner by path, with `bun`: its checkpoint store is Bun's SQLite. A command line without the
+ * runner file keeps the standalone loop. `starting` runs once the Engine is known to start, before it does.
  */
 export async function runTaskEngine(
   input: EngineRunInput,

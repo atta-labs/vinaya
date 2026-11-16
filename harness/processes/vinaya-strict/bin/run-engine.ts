@@ -213,7 +213,7 @@ import {
 } from '../../../kernel/log/client/loop-log'
 import { type AgentStreamRenderer, createAgentStreamRenderer } from '../../../kernel/adapters/agents/agent-stream'
 import { CLI_ENTRY_ENV } from '../tools/cli-entry'
-import { programSourceIn } from '../tools/programs'
+import { cliEntryFor, processFolderFor, programFile, programSourceIn } from '../tools/programs'
 import { pollMergeableState } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import { developerTurnResultJsonSchema } from '../executing/developer/developer-turn-result'
 import {
@@ -1444,6 +1444,8 @@ export interface EngineRunOptions {
   repoRoot: string
   /** Where the shim's CLI entry is found: the Vinaya install. Defaults to `repoRoot`, which is the install when Vinaya runs on itself. */
   cliRoot?: string
+  /** The dev-tools bridge file the shim runs; takes precedence over `cliRoot`. The live runner names the program table's file. */
+  bridgeProgram?: string
   runtimeDir: string
   loopId: string
   taskInput: TaskInput
@@ -1916,7 +1918,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           shimContent(
             socketPath,
             options.execPath ?? process.execPath,
-            devBridgeProgramOf(options.cliRoot ?? options.repoRoot),
+            options.bridgeProgram ?? devBridgeProgramOf(options.cliRoot ?? options.repoRoot),
             capability
           ),
           { mode: 0o700 }
@@ -2712,9 +2714,6 @@ export function engineLiveDevToolsContext(input: {
   return { context, beginTurn, completeTurn, state, changedProtectedPaths: () => attribution.changedPaths() }
 }
 
-/** The CLI entry script under `repoRoot`: the gate checks run it. */
-export const cliEntryOf = (repoRoot: string): string => join(repoRoot, 'apps', 'cli', 'src', 'index.ts')
-
 /** The dev-tools bridge program under `repoRoot`: the shim runs it directly. */
 export const devBridgeProgramOf = (repoRoot: string): string => programSourceIn(repoRoot, 'dev-bridge')
 
@@ -2933,8 +2932,10 @@ export async function liveTaskInput(
     completion?: Partial<BoundFunctions>
     /** The repository (`owner/repo`) the round's manifest record names. */
     repository?: string
-    /** Where the CLI the checks run from lives; defaults to `repoRoot`. The live runner passes the Vinaya install, which differs from the task's repository when Vinaya is adopted elsewhere. */
+    /** Where the CLI the checks run from lives; defaults to `repoRoot`, which is the install when Vinaya runs on itself. */
     cliRoot?: string
+    /** The check program the gates run; takes precedence over `cliRoot`. The live runner names the program table's file, which differs from the task's repository when Vinaya is adopted elsewhere. */
+    checkProgram?: string
     /** Complete repair seam: tests replacing it never fall through to a live forge operation. */
     planRepair?: Omit<MidRunPlanRepairDeps, 'record'>
     reviewSources?: Partial<
@@ -3129,7 +3130,7 @@ export async function liveTaskInput(
     frozenBrief: () => forge.fetchFrozenBrief(args.task),
     stageReviewInput: (n) => reviewInput.stage(n),
     runtimeDir,
-    checkProgram: programSourceIn(lookups.cliRoot ?? repoRoot, 'check'),
+    checkProgram: lookups.checkProgram ?? programSourceIn(lookups.cliRoot ?? repoRoot, 'check'),
     branch,
     issueNumber: args.task,
     worktreePath,
@@ -3466,7 +3467,7 @@ async function runLive(
   process.env.VINAYA_RUN = loopId
   const repo = liveRepo()
   const taskInput = await liveTaskInput(args, repoRoot, runtimeDir, loopId, {
-    cliRoot: VINAYA_ROOT,
+    checkProgram: programFile('check'),
     ...(repo ? { repository: `${repo.owner}/${repo.repo}` } : {})
   })
   const liveContext = engineLiveDevToolsContext({
@@ -3609,8 +3610,8 @@ async function runLive(
     args,
     process: loaded,
     repoRoot,
-    // The shim's CLI entry lives in the Vinaya install, not in the task's repository.
-    cliRoot: VINAYA_ROOT,
+    // The shim's bridge is the Vinaya install's program, not one under the task's repository.
+    bridgeProgram: programFile('dev-bridge'),
     runtimeDir,
     loopId,
     taskInput,
@@ -3760,7 +3761,7 @@ async function runShadowLive(
   const branch = developerBranchFor(args.task)
   const checkout = prepareShadowCheckout({ repoRoot, branch, shadowRuntimeDir: runtimeDir })
   const taskInput = await liveTaskInput(args, checkout, runtimeDir, loopId, {
-    cliRoot: VINAYA_ROOT,
+    checkProgram: programFile('check'),
     ...(repo ? { repository: `${repo.owner}/${repo.repo}` } : {})
   })
   // The enforcement controls are the live repository's: the copy installs no hooks of its own.
@@ -3789,7 +3790,7 @@ async function runShadowLive(
     args,
     process: loaded,
     repoRoot: checkout,
-    cliRoot: VINAYA_ROOT,
+    bridgeProgram: programFile('dev-bridge'),
     runtimeDir,
     liveRuntimeDir,
     loopId,
@@ -3817,9 +3818,6 @@ async function runShadowLive(
   return result.exitCode
 }
 
-/** The Vinaya install this runner ships in: where the CLI and the process folder live. */
-const VINAYA_ROOT = resolve(import.meta.dir, '../../../..')
-
 /** The repository the task runs in: the git top level of the directory the runner was started from, which is not the Vinaya install when Vinaya is adopted elsewhere. */
 export function targetRepoRoot(cwd: string = process.cwd()): string {
   return sh('git', ['rev-parse', '--show-toplevel'], cwd).trim()
@@ -3827,10 +3825,12 @@ export function targetRepoRoot(cwd: string = process.cwd()): string {
 
 export async function main(argv: readonly string[]): Promise<number> {
   // This process hosts the CLI's code without being the CLI: commands it runs as the CLI start the install's entry.
-  process.env[CLI_ENTRY_ENV] = cliEntryOf(VINAYA_ROOT)
+  // The install's entry: this checkout's source entry, or the package's `dist/index.js` when this runner is built.
+  process.env[CLI_ENTRY_ENV] = cliEntryFor()
   const repoRoot = targetRepoRoot()
   // The run's flow is chosen by `--flow` (or, on a resume, recorded by the run it continues); none takes the default.
-  const processFolder = resolve(import.meta.dir, '..')
+  // The process folder is this checkout's, or the copy an installed package carries under `dist/vinaya-strict`.
+  const processFolder = processFolderFor()
   const runtimeDir = await liveRuntimeDir()
   if (argv.includes('--resume')) {
     const args = parseResumeArgs(argv)

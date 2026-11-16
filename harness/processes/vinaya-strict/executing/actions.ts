@@ -29,7 +29,7 @@ import type { RepairReview } from './review-input'
 import type { StagedPullRequest, V2Functions } from '../loops/dev-review/v2/v2-actions'
 import { encodeExecutionRound } from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import { runCliChecks } from '../../../../harness/kernel/gates/checks/run-checks'
-import { programForWords } from '../tools/programs'
+import { processFolderFor, programForWords } from '../tools/programs'
 import { refreshPrEvidence } from './refresh-evidence'
 import { guardedSpawnSync } from '../loops/dev-review/standalone/driver-tool-guard'
 import { agentEnvAllowlist } from '../../../../harness/kernel/adapters/agents/launch-env'
@@ -2977,7 +2977,8 @@ export const decisions: DecisionRegistry = {
   'classify-publish-mergeability': isSentBack
 }
 
-const executing = join(import.meta.dir)
+/** The launched roles' folders: under the process folder `processFolderFor` names, a checkout's or the package's copy. */
+const executing = join(processFolderFor(), 'executing')
 
 /** Role launchers from the roles' grants files, one generated settings set per role under `generatedRoot`. */
 export function createRoleLaunchers(options: {
