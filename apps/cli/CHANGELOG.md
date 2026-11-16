@@ -1,5 +1,14 @@
 # @attalabs/vinaya
 
+## 0.43.1
+
+### Patch Changes
+
+- 1d79e46: The Developer's `open_pull_request` and `update_pull_request_body` tools add the `## Evidence` section with its anchor pair when the body has none, so the loop can always write the run's evidence into the pull request.
+- 8f5422b: `vinaya studio` now runs one local Studio server that serves the pages and application WebSocket upgrades, from a checkout and from the installed package, which ships an explicit deployment bundle instead of Next's generated standalone server.
+- 7e678d9: `vinaya studio` now opens the repository you launch it from, or each `--repo <path>` you name, behind a one-time local session: the browser link works once and becomes an HttpOnly cookie, every request and WebSocket upgrade needs it, and Studio reports an invalid `logs` configuration or a missing read credential instead of choosing another source.
+- 55434f2: A tag-only push of commits the remote default branch already reaches, such as the release's `git push origin --tags`, runs the Vinaya checks in this repository's pre-push hook and then stops, without the typecheck or the tests.
+
 ## 0.43.0
 
 ### Minor Changes
