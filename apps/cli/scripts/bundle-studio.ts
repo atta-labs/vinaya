@@ -65,6 +65,9 @@ function fail(message: string): never {
 /** The packages the host imports directly, as the app's `package.json` declares them besides `next`. */
 const HOST_RUNTIME_PACKAGES = ['ws'] as const
 
+/** Folders of the `next` package that it requires dynamically at start, relative to the package. */
+const NEXT_DYNAMIC_DIRS = [join('dist', 'compiled', 'webpack'), join('dist', 'compiled', '@babel', 'runtime')]
+
 function listFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
     entry.isDirectory() ? listFiles(join(dir, entry.name)) : [join(dir, entry.name)]
@@ -139,6 +142,11 @@ const hostTrace = await nodeFileTrace([hostBundle, requireFromApp.resolve('next'
 for (const file of hostTrace.fileList) runtimeFiles.add(resolve(monorepoRoot, file))
 // The host's own declared dependencies are packed whole and by name, never left to static analysis: it resolves `ws`
 // through a package `exports` map, and a missing one would only show when Studio starts.
+// Next loads these by a computed path the static trace cannot follow (its config loader requires `webpack-lib` even
+// when serving a production build), so they are packed whole.
+for (const dir of NEXT_DYNAMIC_DIRS) {
+  for (const file of listFiles(join(dirname(requireFromApp.resolve('next/package.json')), dir))) runtimeFiles.add(file)
+}
 for (const name of HOST_RUNTIME_PACKAGES) {
   for (const file of listFiles(dirname(requireFromApp.resolve(`${name}/package.json`)))) runtimeFiles.add(file)
 }
