@@ -3237,7 +3237,26 @@ export function checkIntroducedConfigKeysCovered(
 export function boundaryPinnedFiles(body: string): string[] {
   const boundary = rationaleFieldText(PATH_TEXT(body), 'Boundary')
   const excluded = new Set(namedPathsIn(boundaryOutText(body)))
-  return namedPathsIn(boundary).filter((p) => looksLikeFilePath(p) && !excluded.has(p))
+  const named = [...namedPathsIn(boundary), ...rootFilesPinnedIn(boundary)]
+  return [...new Set(named)].filter((p) => looksLikeFilePath(p) && !excluded.has(p))
+}
+
+/** A backticked file name with no directory, as a repository-root file is written (`README.md`, `package.json`). */
+const ROOT_FILE_RE_GLOBAL = /`([\w.@-]+\.[A-Za-z0-9]{1,6})`/g
+
+/**
+ * The repository-root files a Boundary's `Pinned files:` clause names. A file
+ * with no directory has no `/`, so the path reader above never sees it; it is
+ * read only inside that clause (up to `Out:`), where a bare file name always
+ * means a root file, never a basename mentioned in passing elsewhere.
+ */
+function rootFilesPinnedIn(boundary: string): string[] {
+  const start = boundary.search(/\bPinned files\s*:/i)
+  if (start === -1) return []
+  const clause = boundary.slice(start)
+  const out = BOUNDARY_OUT_RE.exec(clause)
+  const pinned = out ? clause.slice(0, out.index) : clause
+  return [...pinned.matchAll(ROOT_FILE_RE_GLOBAL)].map((m) => m[1] as string)
 }
 
 /** One declaration per writer, irrespective of how many files it emits. */

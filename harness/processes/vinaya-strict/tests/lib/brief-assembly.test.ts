@@ -14,6 +14,7 @@ import {
   fastForwardToRemoteIfSafe,
   readFileAtRevision,
   repoBriefCommandFacts,
+  step0InstallCommand,
   resolveBoundaryPaths,
   resolveRemoteDefaultBranch,
   resolveTrancheTaskId,
@@ -96,10 +97,15 @@ describe('resolveBoundaryPaths', () => {
     ])
   })
 
-  it('resolves a bare filename elided from a shared directory prefix via a unique suffix match', () => {
+  it('resolves a path elided from a shared directory prefix via a unique suffix match', () => {
     const files = ['docs/roles/developer.md', 'docs/process.md', 'docs/manual-flow.md']
-    expect(resolveBoundaryPaths(['process.md'], files)).toEqual(['docs/process.md'])
     expect(resolveBoundaryPaths(['roles/developer.md'], files)).toEqual(['docs/roles/developer.md'])
+  })
+
+  it('reads a bare file name as a repository-root file: exact match only, never a deeper file of the same name', () => {
+    const files = ['README.md', 'docs/process.md']
+    expect(resolveBoundaryPaths(['README.md'], files)).toEqual(['README.md'])
+    expect(resolveBoundaryPaths(['process.md'], files)).toEqual([])
   })
 
   it('drops a token with zero matches, never guessing a new/renamed path', () => {
@@ -680,11 +686,39 @@ describe('resolveTrancheTaskId', () => {
  * rendered for reaches the CLI, so an adopter never receives one naming a path
  * only this repository has.
  */
+describe('step0InstallCommand', () => {
+  const withFiles = (files: string[], read: (dir: string) => void): void => {
+    const dir = mkdtempSync(join(tmpdir(), 'brief-step0-install-'))
+    try {
+      for (const f of files) writeFileSync(join(dir, f), '')
+      read(dir)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  it('names the package manager whose lockfile the repository commits', () => {
+    withFiles(['bun.lock'], (d) => expect(step0InstallCommand(d)).toBe('bun install --frozen-lockfile --silent'))
+    withFiles(['bun.lockb'], (d) => expect(step0InstallCommand(d)).toBe('bun install --frozen-lockfile --silent'))
+    withFiles(['package-lock.json'], (d) => expect(step0InstallCommand(d)).toBe('npm ci'))
+    withFiles(['pnpm-lock.yaml'], (d) => expect(step0InstallCommand(d)).toBe('pnpm install --frozen-lockfile'))
+    withFiles(['yarn.lock'], (d) => expect(step0InstallCommand(d)).toBe('yarn install --frozen-lockfile'))
+  })
+
+  it('keeps the Bun install for a repository with no lockfile, and prefers Bun when both are committed', () => {
+    withFiles([], (d) => expect(step0InstallCommand(d)).toBe('bun install --frozen-lockfile --silent'))
+    withFiles(['bun.lock', 'package-lock.json'], (d) =>
+      expect(step0InstallCommand(d)).toBe('bun install --frozen-lockfile --silent')
+    )
+  })
+})
+
 describe('repoBriefCommandFacts', () => {
   it('this repository vendors the CLI: the source entry, plus the unabridged gate derivations it ships', () => {
     const facts = repoBriefCommandFacts(REPO_ROOT)
     expect(facts.cliInvocation).toBe('bun apps/cli/src/index.ts')
     expect(facts.localGateCommands).toEqual({
+      install: 'bun install --frozen-lockfile --silent',
       dispatchReadiness: 'bun harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts',
       docCoverage: 'bun harness/processes/vinaya-strict/checks/standalone/verify-docs.ts'
     })
@@ -720,7 +754,11 @@ describe('repoBriefCommandFacts', () => {
 
       const facts = repoBriefCommandFacts(dir)
       expect(facts.cliInvocation).toBe('bun apps/cli/src/index.ts')
-      expect(facts.localGateCommands).toEqual({ dispatchReadiness: null, docCoverage: null })
+      expect(facts.localGateCommands).toEqual({
+        install: 'bun install --frozen-lockfile --silent',
+        dispatchReadiness: null,
+        docCoverage: null
+      })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -752,7 +790,11 @@ describe('repoBriefCommandFacts', () => {
       writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'adopter' }))
       const facts = repoBriefCommandFacts(dir)
       expect(facts.cliInvocation).toMatch(/^npx --yes @attalabs\/vinaya@\d+\.\d+\.\d+$/)
-      expect(facts.localGateCommands).toEqual({ dispatchReadiness: null, docCoverage: null })
+      expect(facts.localGateCommands).toEqual({
+        install: 'bun install --frozen-lockfile --silent',
+        dispatchReadiness: null,
+        docCoverage: null
+      })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

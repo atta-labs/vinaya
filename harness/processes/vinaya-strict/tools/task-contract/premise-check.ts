@@ -29,6 +29,15 @@ export type PremiseAssertion =
 const ASSERTION_KINDS = new Set(['contains', 'absent', 'sha256'])
 
 /**
+ * The one line a brief's `**Premise:**` block carries when every file its
+ * Boundary names is new: a file that does not exist yet has no content to pin,
+ * so the brief says so in place of a pin, and `checkPremiseCoverage` accepts
+ * this exact line as the block's coverage.
+ */
+export const NEW_FILES_ONLY_PREMISE =
+  '- (no pin — every file this task names is new, so no existing content can be pinned)'
+
+/**
  * True for the header line in either serialization the rest of the brief
  * grammar uses (`brief-validation.ts`, `issue-validation.ts`): `**Premise:**`
  * bold-inline or `### Premise` heading. Strips `*`/`#` markup first rather

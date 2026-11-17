@@ -14,7 +14,7 @@
 import { type AnchorField, anchoredRegion, stripCode } from '../../../../kernel/gates/checks/anchored-region'
 import { COMMENT_MARKER_PREFIX_CURRENT, COMMENT_MARKER_PREFIX_PATTERN, REGION_PREFIXES } from '../legacy-markers'
 import { type Objective, objectivesVersion, objectivesOf } from './objectives'
-import { parsePremiseBlock, premiseBlockText } from './premise-check'
+import { NEW_FILES_ONLY_PREMISE, parsePremiseBlock, premiseBlockText } from './premise-check'
 import { locateTestPlanSection } from './test-plan-section'
 import { isPrincipal } from './waiver-label'
 
@@ -231,6 +231,8 @@ export function checkPrincipalPlaceholder(prBody: string): BriefSectionResult {
  */
 export function checkPremiseCoverage(prBody: string, surfaceFiles: string[]): BriefSectionResult {
   if (surfaceFiles.length === 0) return { status: 'pass', errors: [] }
+  // A brief whose named files are all new carries this line instead of a pin.
+  if (prBody.includes(NEW_FILES_ONLY_PREMISE)) return { status: 'pass', errors: [] }
   const assertions = parsePremiseBlock(prBody)
   if (assertions.some((a) => surfaceFiles.includes(a.path))) return { status: 'pass', errors: [] }
   return {
@@ -263,7 +265,10 @@ export function checkWorktreeStep0(prBody: string): BriefSectionResult {
   if (
     /git worktree add/.test(prBody) ||
     /cd \.worktrees\//.test(prBody) ||
-    /bun install --frozen-lockfile/.test(prBody)
+    /bun install --frozen-lockfile/.test(prBody) ||
+    // The rendered Step 0 heading over its install block, whichever package
+    // manager the repository's lockfile names.
+    /\*\*Step 0 \(mandatory, verbatim\):\*\*\n\n```\n\S[^\n]*\n```/.test(prBody)
   )
     return { status: 'pass', errors: [] }
   return {
