@@ -220,6 +220,8 @@ export interface V2Functions {
     commands: readonly string[]
     signal?: AbortSignal
     deadlineAt: number
+    /** True when the push ran no local tests: a whole-suite command then runs here, since nothing else ran it. */
+    runWholeSuites?: boolean
   }) => Promise<ExplicitCommandsResult> | ExplicitCommandsResult
   /** The strict required-CI read for a deferred head (`ci-recovery.ts`). */
   readRequiredCi?: (
@@ -750,6 +752,7 @@ export async function readyPush(
         body: approved,
         commands,
         deadlineAt: started + deadlineMs,
+        ...(noLocalTests ? { runWholeSuites: true } : {}),
         ...(context.signal ? { signal: context.signal } : {})
       })
       fns.log?.(

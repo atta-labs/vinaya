@@ -1452,6 +1452,11 @@ export async function runExplicitCommandsLive(input: {
   log?: (line: string) => void
   /** Where the run's live progress goes; none when absent. */
   progress?: ProgressContext | null
+  /**
+   * True when the ready push ran no local tests: a whole-suite command is then run here like any other, since no hook
+   * ran the suite and a repository that installs Vinaya may have no CI shard that does.
+   */
+  runWholeSuites?: boolean
 }): Promise<ExplicitCommandsResult> {
   const now = input.now ?? (() => Date.now())
   const log = input.log ?? (() => {})
@@ -1479,7 +1484,7 @@ export async function runExplicitCommandsLive(input: {
       index += 1
       if (input.signal?.aborted) throw new ReadyGateCancelledError()
       // A whole suite is the required CI shards' work; running it here repeats it and outlasts the command limit.
-      if (isWholeSuiteCommand(command)) {
+      if (!input.runWholeSuites && isWholeSuiteCommand(command)) {
         results.push({
           command,
           outcome: 'passed',
@@ -1683,7 +1688,7 @@ export function liveV2Functions(input: {
     ...(input.requiredCiPolicy ? { requiredCiPolicy: input.requiredCiPolicy } : {}),
     checkReadyBaseline: () => checkReadyBaseline(input.baselineRoot ?? input.worktreePath),
     ...(input.readyPushDeadlineMs ? { readyDeadlineMs: input.readyPushDeadlineMs } : {}),
-    runExplicitCommands: ({ head, body, commands, signal, deadlineAt }) => {
+    runExplicitCommands: ({ head, body, commands, signal, deadlineAt, runWholeSuites }) => {
       if (commands.length > 0) {
         try {
           input.onExplicitCommandsStart?.()
@@ -1698,6 +1703,7 @@ export function liveV2Functions(input: {
         body,
         commands,
         deadlineAt,
+        ...(runWholeSuites ? { runWholeSuites: true } : {}),
         ...(signal ? { signal } : {}),
         ...(input.startDeadline ? { startDeadline: input.startDeadline } : {}),
         ...(input.log ? { log: input.log } : {}),

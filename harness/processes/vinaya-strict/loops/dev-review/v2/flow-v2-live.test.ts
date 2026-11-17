@@ -1190,6 +1190,36 @@ describe('the explicit Test Plan commands the driver runs at the publication bou
     ])
   })
 
+  test('a push with no local tests runs a whole-suite command itself and records its receipt', async () => {
+    const dir = repo()
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ name: 'whole', private: true, scripts: { test: 'echo suite-ran' } })
+    )
+    const env = { ...process.env }
+    for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
+    execFileSync('git', ['add', '-A'], { cwd: dir, env, stdio: 'ignore' })
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'Chore: Script'], {
+      cwd: dir,
+      env,
+      stdio: 'ignore'
+    })
+    const cache = memoryCache()
+    const result = await runExplicitCommandsLive({
+      worktreePath: dir,
+      head: headOf(dir),
+      branch: 'b',
+      body: '',
+      commands: ['bun run test'],
+      deadlineAt: Date.now() + 60_000,
+      cache,
+      runWholeSuites: true
+    })
+    expect(result.outcome).toBe('passed')
+    expect(result.results.map((r) => [r.command, r.reusedFrom ?? null])).toEqual([['bun run test', null]])
+    expect(result.results[0]?.output).toContain('suite-ran')
+  })
+
   test('only a command that runs a whole suite counts as one', () => {
     for (const whole of [
       'bunx turbo run test --affected',
