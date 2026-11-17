@@ -1324,6 +1324,19 @@ describe('ready tests deferred to required CI', () => {
     expect(ready?.requiredCi).toBeUndefined()
   })
 
+  test('a hook that ran no local tests: the driver still runs the explicit commands once on the head, the plan unchanged', async () => {
+    const observed = await runV2('claude', { readyTests: { mode: 'local' }, stagedBody: PLAN_BODY, noLocalTests: true })
+    expect(observed.outcome).toBe('completed')
+    expect(observed.world.readyRuns).toEqual([[]])
+    const [ready] = records(observed, 'ready-push')
+    expect(ready?.localTests).toBe('none')
+    expect(observed.world.explicitRuns).toEqual([{ head: ready?.head as string, commands: EXPLICIT }])
+    expect(ready?.explicit).toEqual(EXPLICIT.map((command) => ({ command, outcome: 'passed' })))
+    const opened = observed.world.openedBodies[0] ?? ''
+    expect(opened).toContain('bun test ./a.test.ts → passes')
+    expect(opened).not.toContain('.vinaya/test-runner')
+  })
+
   test('a failing explicit command on the local path goes back to the Developer with its command and output', async () => {
     const observed = await runV2('claude', {
       readyTests: { mode: 'local' },

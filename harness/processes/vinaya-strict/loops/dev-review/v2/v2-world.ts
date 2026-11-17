@@ -85,6 +85,8 @@ export interface Scenario {
   failingTests?: (readyAttempt: number) => string[]
   /** Whether the ready push at this attempt (1-based) runs past its deadline; default never. */
   readyTimesOut?: (readyAttempt: number) => boolean
+  /** Whether the ready push's hook runs no local tests (the repository declares no test runner); default it runs them. */
+  noLocalTests?: boolean
   /** The test files the changes since a refused push affect; default none. */
   affectedSince?: string[]
   /** What each round-test run (1-based) reports for the head it was asked to judge; absent: the run is not wired. */
@@ -704,6 +706,18 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
             wallMs: 5,
             localTests: 'deferred' as const,
             requiredCi: { workflow: '.github/workflows/ci.yml', check: 'Vinaya CI' }
+          }
+        }
+        if (scenario.noLocalTests) {
+          // The hook ran every gate and printed its marker: no selection, no test run, no record of one.
+          world.readyRuns.push([])
+          return {
+            passed: true,
+            output: 'vinaya pre-push: no local tests (no test runner declared at .vinaya/test-runner)',
+            selection: null,
+            failed: [],
+            wallMs: 5,
+            localTests: 'none' as const
           }
         }
         const note = chooseTests({

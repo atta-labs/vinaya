@@ -708,13 +708,9 @@ export async function readyPush(
   })
   const wallMs = gate.wallMs > 0 ? gate.wallMs : Math.max(0, now() - started)
   const deferred = gate.passed && gate.localTests === 'deferred' && gate.requiredCi !== undefined
-  // A passed local run with a non-empty selection: the hook ran the selected suite, so the explicit commands follow it.
-  const local =
-    gate.passed &&
-    !deferred &&
-    gate.localTests !== 'none' &&
-    (gate.selection?.selected.length ?? 0) > 0 &&
-    fns.runExplicitCommands !== undefined
+  // Every other passed push — a selected suite, the declared test runner, or no local tests at all: the hook ran
+  // whatever tests it owns, so the explicit commands follow it, and are never left without a receipt.
+  const local = gate.passed && !deferred && fns.runExplicitCommands !== undefined
   // Deferred or local: the approved explicit Test Plan commands run now, through the driver, on the head being published.
   let explicit: ExplicitCommandsResult | null = null
   if (deferred || local) {

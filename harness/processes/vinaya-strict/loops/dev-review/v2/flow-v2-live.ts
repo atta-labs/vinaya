@@ -1813,13 +1813,17 @@ export async function readyGateEvidence(input: {
             : 'every selected test file passes'
       )
   const commands: GroupCCommandResult[] = []
-  if (none) commands.push(hookEntry)
+  const lines = extractAgentCommandLines(body)
+  // A Test Plan with no command lines: the push's own entry stands alone.
+  if (none && lines.length === 0) commands.push(hookEntry)
   else {
-    // One entry per Test Plan line, in order: the hook run for the selected suite, the driver's receipt for the rest.
+    // One entry per Test Plan line, in order: the hook entry for the automatic test line, the driver's receipt for
+    // the rest. A push that ran no local tests still owes every explicit command its own receipt, since the driver
+    // ran them at that ready push all the same.
     const cache = input.cache ?? defaultTestRunCache()
     const missing: string[] = []
     let hookPlaced = false
-    for (const line of extractAgentCommandLines(body)) {
+    for (const line of lines) {
       if (isTestRunLine(line)) {
         if (!hookPlaced) commands.push(hookEntry)
         hookPlaced = true
@@ -1834,7 +1838,7 @@ export async function readyGateEvidence(input: {
       throw new Error(
         `these Test Plan commands hold no green receipt at head ${input.head} and its tree: ${missing.map((m) => `\`${m}\``).join(', ')}. Only the driver runs Test Plan commands, at the ready push; a command added or changed in the live body gains no execution authority here.`
       )
-    if (!hookPlaced) commands.unshift(hookEntry)
+    if (!none && !hookPlaced) commands.unshift(hookEntry)
   }
   const report = await buildReport({
     cwd: input.worktreePath,
