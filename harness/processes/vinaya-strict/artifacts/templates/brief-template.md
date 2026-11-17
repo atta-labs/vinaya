@@ -60,6 +60,8 @@ You are the Vinaya Developer. Run `vinaya doctrine --role developer --print` and
 - [path/inside/the/surface.ts] contains: [literal substring the brief's reasoning depends on]
 - [another/surface/path.ts] absent: [literal substring pinned absent]
 
+When every file the Boundary names is new, nothing exists to pin: the block holds the one line `- (no pin — every file this task names is new, so no existing content can be pinned)` instead, and premise coverage and the premise re-check accept it.
+
 ## 5. Pre-flight checks
 
 **Step 0 (mandatory, verbatim):**

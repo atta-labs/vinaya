@@ -14,7 +14,7 @@
 import { type AnchorField, anchoredRegion, stripCode } from '../../../../kernel/gates/checks/anchored-region'
 import { COMMENT_MARKER_PREFIX_CURRENT, COMMENT_MARKER_PREFIX_PATTERN, REGION_PREFIXES } from '../legacy-markers'
 import { type Objective, objectivesVersion, objectivesOf } from './objectives'
-import { parsePremiseBlock, premiseBlockText } from './premise-check'
+import { declaresNewFilesOnly, parsePremiseBlock, premiseBlockText } from './premise-check'
 import { locateTestPlanSection } from './test-plan-section'
 import { isPrincipal } from './waiver-label'
 
@@ -226,11 +226,17 @@ export function checkPrincipalPlaceholder(prBody: string): BriefSectionResult {
  * actual changed-file list, the same diff-derived-truth philosophy
  * `deriveTierFromDiff` already uses), or (b) `surfaceFiles` is empty (a
  * Tier 0 brief with zero runtime/code surface has nothing to pin — mirrors
- * `checkTestPlan`'s `unit-tests-only` exemption). Presence-only: does not
- * judge whether the pinned premise is the *right* one to have pinned.
+ * `checkTestPlan`'s `unit-tests-only` exemption), or (c) the `Premise:` block
+ * is exactly `NEW_FILES_ONLY_PREMISE` (`declaresNewFilesOnly`), which the
+ * renderer writes when every file the Boundary names is new and so has no
+ * content to pin. Presence-only: does not judge whether the pinned premise is
+ * the *right* one to have pinned. The new-files exemption trusts the block:
+ * it never checks that the changed files are new, as no pin checks that the
+ * pinned file is the one the change needed.
  */
 export function checkPremiseCoverage(prBody: string, surfaceFiles: string[]): BriefSectionResult {
   if (surfaceFiles.length === 0) return { status: 'pass', errors: [] }
+  if (declaresNewFilesOnly(prBody)) return { status: 'pass', errors: [] }
   const assertions = parsePremiseBlock(prBody)
   if (assertions.some((a) => surfaceFiles.includes(a.path))) return { status: 'pass', errors: [] }
   return {
@@ -253,23 +259,31 @@ export function checkDocUpdateList(prBody: string): BriefSectionResult {
  * Step 0 no longer creates the worktree (`git worktree add`) — the driver does
  * that before the first Developer dispatch — and no longer enters one either
  * (`cd .worktrees/<branch> && …`): O2, the dispatched session's own `cwd` IS
- * that worktree, so Step 0 is just `bun install --frozen-lockfile …`. Accepts
- * ALL THREE shapes so a brief rendered at any generation passes — the oldest
+ * that worktree, so Step 0 is just a frozen-lockfile install. Accepts every
+ * shape so a brief rendered at any generation passes — the oldest
  * (`git worktree add`), the middle one (`cd .worktrees/`), and the newest
- * (a bare frozen-lockfile install). This gate judges presence of a Step 0
- * marker, never which generation rendered it.
+ * (the install line for the repository's lockfile: `bun install
+ * --frozen-lockfile`, or under the rendered Step 0 heading `npm ci`,
+ * `pnpm install --frozen-lockfile` or `yarn install --frozen-lockfile`). This
+ * gate judges presence of a Step 0 marker, never which generation rendered it.
  */
-export function checkWorktreeStep0(prBody: string): BriefSectionResult {
+export function checkWorktreeStep0(body: string): BriefSectionResult {
+  const prBody = body.replaceAll('\r\n', '\n')
   if (
     /git worktree add/.test(prBody) ||
     /cd \.worktrees\//.test(prBody) ||
-    /bun install --frozen-lockfile/.test(prBody)
+    /bun install --frozen-lockfile/.test(prBody) ||
+    // The rendered Step 0 heading over the install line `step0InstallCommand`
+    // writes for an npm, pnpm or Yarn lockfile.
+    /\*\*Step 0 \(mandatory, verbatim\):\*\*\n\n```\n(?:npm ci|pnpm install --frozen-lockfile|yarn install --frozen-lockfile)\n```/.test(
+      prBody
+    )
   )
     return { status: 'pass', errors: [] }
   return {
     status: 'fail',
     errors: [
-      'brief-validation worktree Step 0: no `git worktree add`, `cd .worktrees/`, or `bun install --frozen-lockfile` command found in the PR body.'
+      'brief-validation worktree Step 0: no `git worktree add`, `cd .worktrees/`, or frozen-lockfile install (`bun install --frozen-lockfile`, `npm ci`, `pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile`) found in the PR body.'
     ]
   }
 }

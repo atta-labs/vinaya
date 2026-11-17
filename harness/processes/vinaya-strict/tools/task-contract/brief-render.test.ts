@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { checkBriefSections, checkConsumerTests } from './brief-validation'
+import { checkBriefSections, checkConsumerTests, checkPremiseCoverage, checkWorktreeStep0 } from './brief-validation'
+import { NEW_FILES_ONLY_PREMISE } from './premise-check'
 import {
   checkIssueRationale,
   parseIssueParts,
@@ -485,15 +486,29 @@ describe('renderBrief', () => {
       expect(result.missing.some((m) => m.includes(LEGACY_DOCTRINE_ROOT))).toBe(true)
     })
 
-    it('refuses, naming the surface, when every Boundary-named file is a not-yet-created entry with no sha256 to pin', () => {
+    it('renders, with the new-files premise line in place of a pin, when every Boundary-named file is new', () => {
       const facts = baseFacts({
         surface: { in: ['packages/core/src'], out: [] },
         surfaceFiles: [{ path: 'packages/core/src/new-file.ts', sha256: null, packageName: '@attalabs/core' }]
       })
       const result = renderBrief(facts, TEMPLATE)
-      expect(result.ok).toBe(false)
-      if (result.ok) return
-      expect(result.missing.some((m) => /Premise pins/.test(m))).toBe(true)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain(`**Premise:**\n${NEW_FILES_ONLY_PREMISE}`)
+      expect(result.brief).toContain('- packages/core/src/new-file.ts')
+      expect(checkPremiseCoverage(result.brief, ['packages/core/src/new-file.ts']).status).toBe('pass')
+    })
+
+    it('writes Step 0 with the install the repository lockfile names, and the Step 0 gate accepts it', () => {
+      const result = renderBrief(
+        baseFacts({ localGateCommands: { install: 'npm ci', dispatchReadiness: null, docCoverage: null } }),
+        TEMPLATE
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.brief).toContain('**Step 0 (mandatory, verbatim):**\n\n```\nnpm ci\n```')
+      expect(result.brief).not.toContain('bun install --frozen-lockfile')
+      expect(checkWorktreeStep0(result.brief).status).toBe('pass')
     })
 
     it('renders at least one premise pin when the surface resolves to a real, admitted tracked file', () => {

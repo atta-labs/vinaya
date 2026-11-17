@@ -34,6 +34,7 @@ import {
   type IssueTestPlan
 } from './issue-validation'
 import {
+  DEFAULT_STEP0_INSTALL,
   parseRationaleFields,
   renderBrief,
   type BriefFacts,
@@ -112,10 +113,26 @@ export function repoBriefCommandFacts(repoRoot: string): {
   return {
     cliInvocation: briefCliInvocation(vendored, repoRoot),
     localGateCommands: {
+      install: step0InstallCommand(repoRoot),
       dispatchReadiness: program('harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts'),
       docCoverage: program('harness/processes/vinaya-strict/checks/standalone/verify-docs.ts')
     }
   }
+}
+
+/**
+ * Step 0's dependency install for the repository at `repoRoot`, read from the
+ * lockfile it commits: Bun's for a `bun.lock` or `bun.lockb`, then npm's,
+ * pnpm's and Yarn's for theirs. A repository with no lockfile gets the Bun
+ * install, as before.
+ */
+export function step0InstallCommand(repoRoot: string): string {
+  const has = (file: string): boolean => existsSync(join(repoRoot, file))
+  if (has('bun.lock') || has('bun.lockb')) return DEFAULT_STEP0_INSTALL
+  if (has('package-lock.json')) return 'npm ci'
+  if (has('pnpm-lock.yaml')) return 'pnpm install --frozen-lockfile'
+  if (has('yarn.lock')) return 'yarn install --frozen-lockfile'
+  return DEFAULT_STEP0_INSTALL
 }
 
 /** This checkout's git toplevel — the anchor every path in `repoBriefCommandFacts` resolves against. Falls back to the process cwd when `git` cannot answer, the same degradation `git()` itself takes. */
@@ -470,11 +487,13 @@ export function checkDirtyPinnedFiles(pinnedPaths: string[], cwd?: string): stri
  * Resolves each `boundaryPinnedFiles` token to a real tracked path
  * against `allTrackedFiles` (a `git ls-files` snapshot, injected rather than
  * read here so this stays testable without a real repo) — an exact match, or
- * a UNIQUE suffix match for a bare filename elided from a shared directory
- * prefix in the Boundary prose (e.g. a real brief's own "harness/processes/vinaya-strict/
- * manual-flow.md, process.md, roles/developer.md"). A token matching
- * zero or more-than-one tracked file is dropped, never guessed, unless it
- * is an exact new repository path covered by the supplied Surface.
+ * a UNIQUE suffix match for a path elided from a shared directory prefix in
+ * the Boundary prose (e.g. `roles/developer.md` for
+ * `harness/processes/vinaya-strict/roles/developer.md`). A token with no
+ * directory is a repository-root file named in `Pinned files:` and matches
+ * only exactly, never by suffix. A token matching zero or more-than-one
+ * tracked file is dropped, never guessed, unless it is an exact new
+ * repository path, a root file included, covered by the supplied Surface.
  */
 export function resolveBoundaryPaths(tokens: string[], allTrackedFiles: string[], surface?: IssueSurface): string[] {
   const trackedSet = new Set(allTrackedFiles)
@@ -487,7 +506,6 @@ export function resolveBoundaryPaths(tokens: string[], allTrackedFiles: string[]
     // New files need an exact repository path; suffix matching remains tracked-only.
     if (
       surface &&
-      token.includes('/') &&
       !token.split('/').some((part) => part === '.' || part === '..' || part === '') &&
       surface.in.some((glob) => globCoversPath(glob, token)) &&
       !surface.out.some((glob) => globCoversPath(glob, token))
@@ -495,6 +513,9 @@ export function resolveBoundaryPaths(tokens: string[], allTrackedFiles: string[]
       resolved.add(token)
       continue
     }
+    // A name with no directory is a repository-root file: it resolves only
+    // exactly, above, never to a deeper file that happens to share its name.
+    if (!token.includes('/')) continue
     const suffix = `/${token}`
     const suffixMatches = allTrackedFiles.filter((f) => f.endsWith(suffix))
     if (suffixMatches.length === 1) resolved.add(suffixMatches[0] as string)

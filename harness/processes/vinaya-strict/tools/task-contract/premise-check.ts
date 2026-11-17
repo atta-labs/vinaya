@@ -29,6 +29,15 @@ export type PremiseAssertion =
 const ASSERTION_KINDS = new Set(['contains', 'absent', 'sha256'])
 
 /**
+ * The one line a brief's `**Premise:**` block carries when every file its
+ * Boundary names is new: a file that does not exist yet has no content to pin,
+ * so the brief says so in place of a pin, and `checkPremiseCoverage` accepts
+ * this exact line as the block's coverage.
+ */
+export const NEW_FILES_ONLY_PREMISE =
+  '- (no pin — every file this task names is new, so no existing content can be pinned)'
+
+/**
  * True for the header line in either serialization the rest of the brief
  * grammar uses (`brief-validation.ts`, `issue-validation.ts`): `**Premise:**`
  * bold-inline or `### Premise` heading. Strips `*`/`#` markup first rather
@@ -79,6 +88,21 @@ export function parsePremiseBlock(prBody: string): PremiseAssertion[] {
   }
 
   return assertions
+}
+
+/**
+ * True when the `Premise:` block (inside its anchor pair when the body has
+ * one) is exactly `NEW_FILES_ONLY_PREMISE`: the header line, then that line
+ * as the block's first non-blank entry, and no parseable pin. The line counts
+ * nowhere else in the body.
+ */
+export function declaresNewFilesOnly(prBody: string): boolean {
+  const searchIn = anchoredRegion(prBody, 'PREMISE', REGION_PREFIXES) ?? prBody
+  const lines = searchIn.split(/\r?\n/).map((l) => l.trim())
+  const header = lines.findIndex(isPremiseHeader)
+  if (header === -1) return false
+  const first = lines.slice(header + 1).find((l) => l !== '')
+  return first === NEW_FILES_ONLY_PREMISE && parsePremiseBlock(prBody).length === 0
 }
 
 /**

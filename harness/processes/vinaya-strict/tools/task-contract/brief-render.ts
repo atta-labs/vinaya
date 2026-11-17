@@ -22,6 +22,7 @@
 import type { IssueDocumentation } from '@attalabs/harness/issue-documentation'
 import { packagesNamedIn } from './brief-validation'
 import { deriveSection7 } from './derive-section7'
+import { NEW_FILES_ONLY_PREMISE } from './premise-check'
 import type { GateCutovers } from './gate-cutovers'
 import {
   globCoversPath,
@@ -337,8 +338,17 @@ export type BriefFacts = {
   localGateCommands: LocalGateCommands
 }
 
+/** Step 0's install command when the repository's lockfile names no other package manager. */
+export const DEFAULT_STEP0_INSTALL = 'bun install --frozen-lockfile --silent'
+
 /** See `BriefFacts.localGateCommands`. */
 export type LocalGateCommands = {
+  /**
+   * Step 0's dependency install, chosen from the repository's lockfile
+   * (`step0InstallCommand`, `brief-assembly.ts`). Absent renders
+   * `DEFAULT_STEP0_INSTALL`.
+   */
+  install?: string
   /** e.g. `bun <the existing-work verification program>`, or `null`. */
   dispatchReadiness: string | null
   /**
@@ -567,11 +577,11 @@ function renderSection4(facts: BriefFacts): string {
       ? facts.surface.out.join(', ')
       : "(none named — the Issue's `## Surface` `out:` line is empty)") +
     BEYOND_SURFACE_RECORDING_RULE
-  const premisePinsBlock = bulletList(
-    facts.surfaceFiles
-      .filter((f): f is SurfaceFileFact & { sha256: string } => f.sha256 !== null)
-      .map((f) => `${f.path} sha256: ${f.sha256}`)
-  )
+  const pins = facts.surfaceFiles
+    .filter((f): f is SurfaceFileFact & { sha256: string } => f.sha256 !== null)
+    .map((f) => `${f.path} sha256: ${f.sha256}`)
+  // Every named file is new: nothing exists to pin, and the block says so.
+  const premisePinsBlock = pins.length > 0 ? bulletList(pins) : NEW_FILES_ONLY_PREMISE
 
   // checkConsumerTests (brief-validation.ts) requires, for every workspace
   // package a touched `packages/<pkg>` consumer depends on, either a named
@@ -669,7 +679,7 @@ function renderSection5(facts: BriefFacts): string {
     '**Step 0 (mandatory, verbatim):**',
     '',
     '```',
-    'bun install --frozen-lockfile --silent',
+    facts.localGateCommands.install ?? DEFAULT_STEP0_INSTALL,
     '```',
     '',
     '1. Clean status; parent `origin/main`; branch suffix literal-matches the task id.',
@@ -1007,14 +1017,12 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
     missing.push(
       "Surface map (every file the Boundary named is excluded by the Issue's own `## Surface` `in:`/`out:` globs — Boundary and Surface disagree; fix the Issue rather than render an empty surface map)"
     )
-  } else if (facts.surface.in.length > 0 && filteredSurfaceFiles.filter((f) => f.sha256 !== null).length === 0) {
-    // issue-657, O3 — the caller already guarantees every `## Surface` `in:`
-    // glob resolves to at least one real tracked file before `renderBrief`
-    // is ever called; if nothing the Boundary named survives to a premise
-    // pin (nothing was named at all, or every named file is a not-yet-
-    // created "Create" entry with no sha256 to pin), refuse naming the
-    // surface rather than render an empty `**Premise:**` block the brief's
-    // own `checkBriefSections` validator then rejects.
+  } else if (facts.surface.in.length > 0 && filteredSurfaceFiles.length === 0) {
+    // The caller already guarantees every `## Surface` `in:` glob resolves
+    // to at least one real tracked file before `renderBrief` is called; when
+    // the Boundary names no file at all, refuse naming the surface. A
+    // Boundary whose named files are all new renders: its `**Premise:**`
+    // block carries `NEW_FILES_ONLY_PREMISE` in place of a pin.
     missing.push(
       `Premise pins (the Issue's \`## Surface\` \`in:\` — ${facts.surface.in.join(', ')} — resolves to at least one tracked file, but the Boundary names none of them to pin; name a real in-scope file in the Boundary rationale)`
     )
