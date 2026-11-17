@@ -230,7 +230,9 @@ export function checkPrincipalPlaceholder(prBody: string): BriefSectionResult {
  * is exactly `NEW_FILES_ONLY_PREMISE` (`declaresNewFilesOnly`), which the
  * renderer writes when every file the Boundary names is new and so has no
  * content to pin. Presence-only: does not judge whether the pinned premise is
- * the *right* one to have pinned.
+ * the *right* one to have pinned. The new-files exemption trusts the block:
+ * it never checks that the changed files are new, as no pin checks that the
+ * pinned file is the one the change needed.
  */
 export function checkPremiseCoverage(prBody: string, surfaceFiles: string[]): BriefSectionResult {
   if (surfaceFiles.length === 0) return { status: 'pass', errors: [] }
@@ -265,7 +267,8 @@ export function checkDocUpdateList(prBody: string): BriefSectionResult {
  * `pnpm install --frozen-lockfile` or `yarn install --frozen-lockfile`). This
  * gate judges presence of a Step 0 marker, never which generation rendered it.
  */
-export function checkWorktreeStep0(prBody: string): BriefSectionResult {
+export function checkWorktreeStep0(body: string): BriefSectionResult {
+  const prBody = body.replaceAll('\r\n', '\n')
   if (
     /git worktree add/.test(prBody) ||
     /cd \.worktrees\//.test(prBody) ||

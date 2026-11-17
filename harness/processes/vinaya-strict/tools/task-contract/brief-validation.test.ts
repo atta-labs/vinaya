@@ -269,6 +269,7 @@ describe('checkWorktreeStep0', () => {
       expect(checkWorktreeStep0(step0(install)).status).toBe('pass')
     }
     expect(checkWorktreeStep0(step0('echo skip')).status).toBe('fail')
+    expect(checkWorktreeStep0(step0('npm ci').replaceAll('\n', '\r\n')).status).toBe('pass')
   })
   it('passes when a git worktree add command is present', () => {
     expect(checkWorktreeStep0(WELL_FORMED).status).toBe('pass')
@@ -746,6 +747,7 @@ describe('checkPlanPrNoCloses', () => {
 describe('checkPremiseCoverage', () => {
   it('passes a Premise block that is exactly the new-files line, and never that line anywhere else', () => {
     expect(checkPremiseCoverage(`**Premise:**\n${NEW_FILES_ONLY_PREMISE}\n`, ['src/new.ts']).status).toBe('pass')
+    expect(checkPremiseCoverage(`**Premise:**\n\n${NEW_FILES_ONLY_PREMISE}\n`, ['src/new.ts']).status).toBe('pass')
     expect(checkPremiseCoverage(`## Notes\n\n${NEW_FILES_ONLY_PREMISE}\n`, ['src/old.ts']).status).toBe('fail')
     expect(
       checkPremiseCoverage(`**Premise:**\n- src/other.ts contains: x\n\n${NEW_FILES_ONLY_PREMISE}\n`, ['src/old.ts'])

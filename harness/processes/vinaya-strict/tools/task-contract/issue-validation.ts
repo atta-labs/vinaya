@@ -3248,7 +3248,7 @@ export function boundaryPinnedFiles(body: string): string[] {
  * is never read as a file.
  */
 const ROOT_FILE_RE_GLOBAL =
-  /`([\w.@-]+\.(?:md|mdx|txt|json|jsonc|ts|tsx|js|jsx|mjs|cjs|mts|cts|yml|yaml|toml|lock|html|css|scss|sh|py|rb|go|rs|xml|ini|cfg|conf|env\.example))`/g
+  /`([\w.@-]+\.(?:md|mdx|txt|json|jsonc|ts|tsx|js|jsx|mjs|cjs|mts|cts|yml|yaml|toml|lock|html|css|scss|sh|py|rb|go|rs|xml|ini|cfg|conf))`/g
 
 /**
  * The repository-root files a Boundary's `Pinned files:` clause names. A file
