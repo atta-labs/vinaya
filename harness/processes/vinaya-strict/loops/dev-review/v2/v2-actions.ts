@@ -539,6 +539,17 @@ export function explicitTestPlanCommands(body: string): string[] {
     .filter((command) => command.length > 0 && !isReadyCiCommand(command))
 }
 
+/**
+ * The Test Plan commands a push that ran no local tests owes: every command line, in order, test-run lines included.
+ * With no hook run to stand for a test-run line, each needs its own genuine receipt, exactly as an explicit command
+ * does. A required-CI line belongs to a deferred head only, and is never run here.
+ */
+export function noLocalTestsPlanCommands(body: string): string[] {
+  return extractAgentCommandLines(body)
+    .map(agentCommandText)
+    .filter((command) => command.length > 0 && !isReadyCiCommand(command))
+}
+
 /** Text in a fence no backtick run inside it can close. */
 const fenced = (text: string): string => {
   const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length))
@@ -711,12 +722,14 @@ export async function readyPush(
   // Every other passed push — a selected suite, the declared test runner, or no local tests at all: the hook ran
   // whatever tests it owns, so the explicit commands follow it, and are never left without a receipt.
   const local = gate.passed && !deferred && fns.runExplicitCommands !== undefined
+  // A push that ran no local tests (none declared, or none selected): no hook run stands for any Test Plan line.
+  const noLocalTests = local && (gate.localTests === 'none' || gate.selection?.selected.length === 0)
   // Deferred or local: the approved explicit Test Plan commands run now, through the driver, on the head being published.
   let explicit: ExplicitCommandsResult | null = null
   if (deferred || local) {
     const approved = approvedTestPlanBody(fns)
     if (approved === null) {
-      const detail = `the ready push of ${head} ${deferred ? 'deferred its selected tests' : 'ran its selected tests'}, but the approved Test Plan (the staged pull-request body) could not be read, so its explicit commands cannot run; the live body grants no command authority. Restore the staged body, then resume.`
+      const detail = `the ready push of ${head} ${deferred ? 'deferred its selected tests' : noLocalTests ? 'ran no local tests' : 'ran its selected tests'}, but the approved Test Plan (the staged pull-request body) could not be read, so its explicit commands cannot run; the live body grants no command authority. Restore the staged body, then resume.`
       pauseThrough(task, 'ready-push', { reason: 'infrastructure', detail })
       return {
         exitCode: BACK,
@@ -729,7 +742,7 @@ export async function readyPush(
         })
       }
     }
-    const commands = explicitTestPlanCommands(approved)
+    const commands = noLocalTests ? noLocalTestsPlanCommands(approved) : explicitTestPlanCommands(approved)
     if (commands.length > 0 && fns.runExplicitCommands) {
       const deadlineMs = fns.readyDeadlineMs?.() ?? DEFAULT_READY_PUSH_TIMEOUT_MINUTES * 60_000
       explicit = await fns.runExplicitCommands({

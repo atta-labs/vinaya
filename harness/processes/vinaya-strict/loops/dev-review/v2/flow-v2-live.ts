@@ -1813,39 +1813,40 @@ export async function readyGateEvidence(input: {
             : 'every selected test file passes'
       )
   const commands: GroupCCommandResult[] = []
-  const lines = extractAgentCommandLines(body)
-  // A Test Plan with no command lines: the push's own entry stands alone.
-  if (none && lines.length === 0) commands.push(hookEntry)
-  else {
-    // One entry per Test Plan line, in order: the hook entry for the automatic test line, the driver's receipt for
-    // the rest. A push that ran no local tests still owes every explicit command its own receipt, since the driver
-    // ran them at that ready push all the same.
-    const cache = input.cache ?? defaultTestRunCache()
-    const missing: string[] = []
-    let hookPlaced = false
-    for (const line of lines) {
-      if (isTestRunLine(line)) {
-        if (!hookPlaced) commands.push(hookEntry)
-        hookPlaced = true
-        continue
-      }
-      const command = agentCommandText(line)
-      const reused = await lookupGreenRun(command, input.worktreePath, cache)
-      if (reused) commands.push(commandRunsCheckAll(command) ? { ...reused, omittedEvidenceFresh: true } : reused)
-      else missing.push(command)
+  // One entry per Test Plan line, in order. A push that ran local tests stands its hook run for the automatic test
+  // line and the driver's receipt for the rest; a push that ran none has no hook run to stand for any line, so every
+  // line is the driver's receipt, test-run lines included, and a Test Plan with no command has no Group C entry.
+  const cache = input.cache ?? defaultTestRunCache()
+  const missing: string[] = []
+  let hookPlaced = false
+  for (const line of extractAgentCommandLines(body)) {
+    if (!none && isTestRunLine(line)) {
+      if (!hookPlaced) commands.push(hookEntry)
+      hookPlaced = true
+      continue
     }
-    if (missing.length > 0)
-      throw new Error(
-        `these Test Plan commands hold no green receipt at head ${input.head} and its tree: ${missing.map((m) => `\`${m}\``).join(', ')}. Only the driver runs Test Plan commands, at the ready push; a command added or changed in the live body gains no execution authority here.`
-      )
-    if (!none && !hookPlaced) commands.unshift(hookEntry)
+    const command = agentCommandText(line)
+    const reused = await lookupGreenRun(command, input.worktreePath, cache)
+    if (reused) commands.push(commandRunsCheckAll(command) ? { ...reused, omittedEvidenceFresh: true } : reused)
+    else missing.push(command)
   }
+  if (missing.length > 0)
+    throw new Error(
+      `these Test Plan commands hold no green receipt at head ${input.head} and its tree: ${missing.map((m) => `\`${m}\``).join(', ')}. Only the driver runs Test Plan commands, at the ready push; a command added or changed in the live body gains no execution authority here.`
+    )
+  if (!none && !hookPlaced) commands.unshift(hookEntry)
+  // A push that ran no local tests says so in Group B, with the hook's own marker line when it printed one.
+  const marker = gate.output.split('\n').find((line) => line.startsWith(NO_LOCAL_TESTS_MARKER))
+  const noLocalTestsNote = { severity: 'note', message: `No local tests ran.${marker ? ` ${marker}` : ''}` }
   const report = await buildReport({
     cwd: input.worktreePath,
     body,
     groupA,
     gradedBodySource: 'push',
-    gateRunner: () => ({ failed: false, outcomes: [{ name: 'ready-gate', status: 'pass', errors: [] }] }),
+    gateRunner: () => ({
+      failed: false,
+      outcomes: [{ name: 'ready-gate', status: 'pass', errors: none ? [noLocalTestsNote] : [] }]
+    }),
     groupC: { commands }
   })
   return replaceEvidenceBlock(body, report.blockInner)
