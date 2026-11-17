@@ -108,6 +108,12 @@ describe('resolveBoundaryPaths', () => {
     expect(resolveBoundaryPaths(['process.md'], files)).toEqual([])
   })
 
+  it('keeps a new repository-root file the Surface covers', () => {
+    const surface = { in: ['*'], out: [] }
+    expect(resolveBoundaryPaths(['CONTRIBUTING.md'], ['README.md'], surface)).toEqual(['CONTRIBUTING.md'])
+    expect(resolveBoundaryPaths(['CONTRIBUTING.md'], ['README.md'], { in: ['src'], out: [] })).toEqual([])
+  })
+
   it('drops a token with zero matches, never guessing a new/renamed path', () => {
     expect(resolveBoundaryPaths(['this-file-does-not-exist.ts'], ['apps/cli/src/lib/dispatch-task.ts'])).toEqual([])
   })

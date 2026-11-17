@@ -39,6 +39,7 @@ import {
   resolveNewestFrozenBrief
 } from './brief-validation'
 import { FROZEN_BRIEF_MARKER, PRINCIPAL_RULING_MARKER } from '../legacy-markers'
+import { NEW_FILES_ONLY_PREMISE } from './premise-check'
 import { type Objective, objectivesOf } from './objectives'
 import { EOLS, FENCE_DELIMS, fenceShapes } from '../../tests/fixtures/fence-shapes'
 import { readTierFromPrBody } from './pr-tier'
@@ -262,6 +263,13 @@ describe('checkDocUpdateList', () => {
 })
 
 describe('checkWorktreeStep0', () => {
+  it('passes the rendered Step 0 block for an npm, pnpm or Yarn lockfile, and refuses any other line there', () => {
+    const step0 = (line: string): string => `**Step 0 (mandatory, verbatim):**\n\n\`\`\`\n${line}\n\`\`\``
+    for (const install of ['npm ci', 'pnpm install --frozen-lockfile', 'yarn install --frozen-lockfile']) {
+      expect(checkWorktreeStep0(step0(install)).status).toBe('pass')
+    }
+    expect(checkWorktreeStep0(step0('echo skip')).status).toBe('fail')
+  })
   it('passes when a git worktree add command is present', () => {
     expect(checkWorktreeStep0(WELL_FORMED).status).toBe('pass')
   })
@@ -736,6 +744,15 @@ describe('checkPlanPrNoCloses', () => {
 })
 
 describe('checkPremiseCoverage', () => {
+  it('passes a Premise block that is exactly the new-files line, and never that line anywhere else', () => {
+    expect(checkPremiseCoverage(`**Premise:**\n${NEW_FILES_ONLY_PREMISE}\n`, ['src/new.ts']).status).toBe('pass')
+    expect(checkPremiseCoverage(`## Notes\n\n${NEW_FILES_ONLY_PREMISE}\n`, ['src/old.ts']).status).toBe('fail')
+    expect(
+      checkPremiseCoverage(`**Premise:**\n- src/other.ts contains: x\n\n${NEW_FILES_ONLY_PREMISE}\n`, ['src/old.ts'])
+        .status
+    ).toBe('fail')
+  })
+
   it('passes trivially when surfaceFiles is empty (no code surface to pin)', () => {
     const result = checkPremiseCoverage('no premise section at all', [])
     expect(result.status).toBe('pass')

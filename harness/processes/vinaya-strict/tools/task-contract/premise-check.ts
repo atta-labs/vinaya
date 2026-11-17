@@ -91,6 +91,20 @@ export function parsePremiseBlock(prBody: string): PremiseAssertion[] {
 }
 
 /**
+ * True when the `Premise:` block (inside its anchor pair when the body has
+ * one) is exactly `NEW_FILES_ONLY_PREMISE`: the header line, then that line
+ * as the block's first and only entry, and no parseable pin. The line counts
+ * nowhere else in the body.
+ */
+export function declaresNewFilesOnly(prBody: string): boolean {
+  const searchIn = anchoredRegion(prBody, 'PREMISE', REGION_PREFIXES) ?? prBody
+  const lines = searchIn.split(/\r?\n/).map((l) => l.trim())
+  const header = lines.findIndex(isPremiseHeader)
+  if (header === -1) return false
+  return lines[header + 1] === NEW_FILES_ONLY_PREMISE && parsePremiseBlock(prBody).length === 0
+}
+
+/**
  * The `Premise:` block's own raw text (header line through its last bullet),
  * mirroring `parsePremiseBlock`'s exact same header/bullet/stop rules so the
  * two can never disagree about where the block ends. Returns `null` when no

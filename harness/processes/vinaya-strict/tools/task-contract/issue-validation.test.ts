@@ -3377,7 +3377,7 @@ describe('boundaryPinnedFiles', () => {
   it('pins a repository-root file its `Pinned files:` clause names, and reads no bare file name elsewhere', () => {
     const body = issueBody({
       boundary:
-        'In: the docs, beside `brief-render.ts`. Pinned files: `README.md`, `src/cart.ts`, `package.json`. Out: `CHANGELOG.md`, `LICENSE.txt`.',
+        'In: the docs, beside `brief-render.ts`. Pinned files: `README.md`, `src/cart.ts`, `package.json`, `process.env`, `path.join`. Out: `CHANGELOG.md`, `LICENSE.txt`.',
       objectives: ['O1. The readme names the cart.'],
       partLines: ['Part 1 (O1) — the readme names the cart.'],
       in: '*',

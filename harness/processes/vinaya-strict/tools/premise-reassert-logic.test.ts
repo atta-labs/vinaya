@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { reassertPremiseFile } from './premise-reassert-logic'
+import { NEW_FILES_ONLY_PREMISE } from './task-contract/premise-check'
 
 const CHECK_NAME = 'dispatch-readiness'
 
@@ -42,6 +43,13 @@ describe('reassertPremiseFile', () => {
     expect(result.pass).toBe(false)
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0]?.message).toContain('carries no `Premise:` assertions')
+  })
+
+  it('a block that is exactly the new-files line passes; the same line outside the block does not', () => {
+    const inBlock = ['**Premise:**', NEW_FILES_ONLY_PREMISE, ''].join('\n')
+    expect(reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', inBlock, () => null).pass).toBe(true)
+    const elsewhere = ['## Summary', '', NEW_FILES_ONLY_PREMISE, ''].join('\n')
+    expect(reassertPremiseFile(CHECK_NAME, '/tmp/brief.md', elsewhere, () => null).pass).toBe(false)
   })
 
   it('multiple failed pins each produce their own error, all pass:false', () => {

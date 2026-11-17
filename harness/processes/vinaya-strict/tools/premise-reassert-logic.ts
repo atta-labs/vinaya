@@ -18,7 +18,7 @@
  */
 import { readFileSync, realpathSync } from 'node:fs'
 import { sep } from 'node:path'
-import { checkPremises, parsePremiseBlock } from './task-contract/premise-check'
+import { checkPremises, declaresNewFilesOnly, parsePremiseBlock } from './task-contract/premise-check'
 import { CHECK_SCHEMA_VERSION, type CheckError } from '../../../kernel/gates/checks/contract'
 import { containedAbs } from '../../../kernel/gates/ops'
 
@@ -64,6 +64,8 @@ export function reassertPremiseFile(
   }
 
   const assertions = parsePremiseBlock(body)
+  // A brief whose named files are all new pins nothing and says so.
+  if (assertions.length === 0 && declaresNewFilesOnly(body)) return { pass: true, errors: [] }
   if (assertions.length === 0) {
     return {
       pass: false,

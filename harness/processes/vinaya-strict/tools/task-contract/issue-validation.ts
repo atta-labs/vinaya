@@ -3241,8 +3241,14 @@ export function boundaryPinnedFiles(body: string): string[] {
   return [...new Set(named)].filter((p) => looksLikeFilePath(p) && !excluded.has(p))
 }
 
-/** A backticked file name with no directory, as a repository-root file is written (`README.md`, `package.json`). */
-const ROOT_FILE_RE_GLOBAL = /`([\w.@-]+\.[A-Za-z0-9]{1,6})`/g
+/**
+ * A backticked file name with no directory, as a repository-root file is
+ * written (`README.md`, `package.json`). The extension must be a file kind a
+ * repository root holds, so a dotted identifier (`process.env`, `path.join`)
+ * is never read as a file.
+ */
+const ROOT_FILE_RE_GLOBAL =
+  /`([\w.@-]+\.(?:md|mdx|txt|json|jsonc|ts|tsx|js|jsx|mjs|cjs|mts|cts|yml|yaml|toml|lock|html|css|scss|sh|py|rb|go|rs|xml|ini|cfg|conf|env\.example))`/g
 
 /**
  * The repository-root files a Boundary's `Pinned files:` clause names. A file
