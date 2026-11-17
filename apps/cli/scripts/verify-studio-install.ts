@@ -15,16 +15,21 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { delimiter, join, relative, sep } from 'node:path'
 // The route and frame come from the host itself, so the proof cannot drift from what Studio serves.
+import { buildExecution } from '../../../harness/kernel/log/fixtures/executions'
 import { LIVE_ROUTE } from '../../vinaya-studio/src/server/live-protocol'
 import { BOOTSTRAP_ROUTE } from '../src/commands/studio'
 
 // The task list route the host registers (`TASK_LIST_ROUTE` in the host, which this script does not import: it pulls in `ws`).
 const TASK_LIST_ROUTE = '/api/mission-control/tasks'
 
+/** The Issue the recorded `green-one-round` execution names; its row must reach the live socket. */
+const RECORDED_TASK = 101
+
 const CLI_PKG_DIR = join(import.meta.dir, '..')
 const REPO_ROOT = join(CLI_PKG_DIR, '..', '..')
 
 const ANSWER_DEADLINE_MS = 120_000
+const ROWS_DEADLINE_MS = 30_000
 const STOP_GRACE_MS = 10_000
 
 export type StudioProof = { ok: boolean; detail: string }
@@ -114,6 +119,16 @@ export async function proveInstalledStudio(options: {
   execFileSync('git', ['init', '-q'], { cwd: repoDir })
   const nested = join(repoDir, 'packages', 'app')
   mkdirSync(nested, { recursive: true })
+  // The repository's Log source is a real folder of recorded events (the layout the Log sink writes, `unresolved`
+  // because the checkout has no remote), read by the packed follower: no fixture follower stands in for it.
+  const recorded = buildExecution('green-one-round')
+  const folderRoot = join(repoDir, 'recorded-log')
+  mkdirSync(join(folderRoot, 'unresolved'), { recursive: true })
+  writeFileSync(
+    join(folderRoot, 'unresolved', `${RECORDED_TASK}.ndjson`),
+    `${recorded.lines.map((line) => line.raw).join('\n')}\n`
+  )
+  writeFileSync(join(repoDir, 'vinaya.config.json'), JSON.stringify({ logs: { folder: folderRoot } }))
   const child = spawn(bin, ['studio', '--port', String(port)], {
     cwd: nested,
     env: childEnv,
@@ -200,23 +215,43 @@ export async function proveInstalledStudio(options: {
     if ((await socketOutcome(url, { cookie, origin: 'http://evil.example' })) !== 'refused') {
       return { ok: false, detail: 'the application upgrade opened for a hostile Origin' }
     }
+    // The service opens its sources after the server answers, so a snapshot may precede the recorded tasks: ask again
+    // until a snapshot carries the recorded task, or the bound passes.
+    type Snapshot = {
+      v?: unknown
+      type?: unknown
+      repositories?: { tasks?: { task?: unknown }[]; status?: { kind?: unknown; reason?: unknown } }[]
+    }
     let frame = ''
-    try {
-      frame = await firstFrame(url, { cookie, origin }, 10_000)
-    } catch (error) {
-      return { ok: false, detail: `${(error as Error).message} — ${output.trim().slice(-300)}` }
-    }
-    let first: { v?: unknown; type?: unknown; repositories?: unknown } = {}
-    try {
-      first = JSON.parse(frame)
-    } catch {
-      // reported below
-    }
-    if (first.v !== 1 || first.type !== 'snapshot' || !Array.isArray(first.repositories)) {
-      return {
-        ok: false,
-        detail: `the application upgrade did not open with a version-1 snapshot: "${frame.slice(0, 120)}"`
+    let first: Snapshot = {}
+    const rowsBy = Date.now() + ROWS_DEADLINE_MS
+    for (;;) {
+      try {
+        frame = await firstFrame(url, { cookie, origin }, 10_000)
+      } catch (error) {
+        return { ok: false, detail: `${(error as Error).message} — ${output.trim().slice(-300)}` }
       }
+      first = {}
+      try {
+        first = JSON.parse(frame)
+      } catch {
+        // reported below
+      }
+      if (first.v !== 1 || first.type !== 'snapshot' || !Array.isArray(first.repositories)) {
+        return {
+          ok: false,
+          detail: `the application upgrade did not open with a version-1 snapshot: "${frame.slice(0, 120)}"`
+        }
+      }
+      if (first.repositories.some((r) => r.tasks?.some((t) => t.task === RECORDED_TASK))) break
+      if (Date.now() > rowsBy) {
+        const status = first.repositories[0]?.status
+        return {
+          ok: false,
+          detail: `the recorded task ${RECORDED_TASK} never reached the live socket (source status: ${JSON.stringify(status)}) — ${output.trim().slice(-300)}`
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500))
     }
     // The page the browser opens is the live list, still connecting when the server renders it; no secret is in it.
     const html = await page.text()
@@ -230,7 +265,7 @@ export async function proveInstalledStudio(options: {
 
     return {
       ok: true,
-      detail: `packed Studio, started from a nested folder of a git checkout, refused every request without a session, exchanged its single-use link once (reuse and a forged link refused), then served its protected live-list page and an application WebSocket that opens with a snapshot on 127.0.0.1:${port}`
+      detail: `packed Studio, started from a nested folder of a git checkout, refused every request without a session, exchanged its single-use link once (reuse and a forged link refused), then served its protected live-list page and an application WebSocket whose snapshot carries the task recorded in a local Log folder, read by the packed follower, on 127.0.0.1:${port}`
     }
   } finally {
     rmSync(repoDir, { recursive: true, force: true })

@@ -177,34 +177,48 @@ const realTimers: Timers = {
   clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>)
 }
 
-/** The real source and follower of one repository's spec. */
-// Held in constants so the type program does not follow them (as `host.ts` does for Next).
-const LOG_FOLLOW_SPECIFIER = '../../../../harness/kernel/log/client/log-follow.ts'
-const FOLDER_SOURCE_SPECIFIER = '../../../../harness/kernel/log/client/log-sync-folder-source.ts'
+/**
+ * The follower and the folder source are files of the host's own runtime: the CLI builds each for Node beside the host
+ * (in the packed bundle and in a checkout's host output) and they are loaded by a path resolved from this running
+ * module. The specifier is a variable, so neither the type program nor `next build` follows it.
+ */
+export const LOG_FOLLOW_FILENAME = 'log-follow.mjs'
+export const FOLDER_SOURCE_FILENAME = 'log-sync-folder-source.mjs'
 
 type KernelFollow = {
   createFolderLogFollower(deps: { folderRoot: string; repo: StudioRepository['remote'] }): LogFollower
   createServerLogFollower(deps: Record<string, unknown>): LogFollower
 }
 
-export const createRealSource: SourceFactory = async (spec, repository) => {
-  const follow = (await import(LOG_FOLLOW_SPECIFIER)) as KernelFollow
-  if (spec.kind === 'folder') {
-    const folder = (await import(FOLDER_SOURCE_SPECIFIER)) as {
-      createFolderLogSource(deps: { folderRoot: string; repo: StudioRepository['remote'] }): LogSource
+/** A source factory that loads the two runtime files from `runtimeDir` (a folder URL). A file that cannot be loaded rejects. */
+export function createRealSourceFrom(runtimeDir: string | URL): SourceFactory {
+  const load = (filename: string): Promise<unknown> => {
+    const specifier = new URL(filename, runtimeDir).href
+    return import(specifier)
+  }
+  return async (spec, repository) => {
+    const follow = (await load(LOG_FOLLOW_FILENAME)) as KernelFollow
+    if (spec.kind === 'folder') {
+      const folder = (await load(FOLDER_SOURCE_FILENAME)) as {
+        createFolderLogSource(deps: { folderRoot: string; repo: StudioRepository['remote'] }): LogSource
+      }
+      const deps = { folderRoot: spec.folderRoot, repo: repository.remote }
+      return { source: folder.createFolderLogSource(deps), follower: follow.createFolderLogFollower(deps) }
     }
-    const deps = { folderRoot: spec.folderRoot, repo: repository.remote }
-    return { source: folder.createFolderLogSource(deps), follower: follow.createFolderLogFollower(deps) }
+    const deps = {
+      eventsUrl: spec.url,
+      readHeaders: spec.readHeaders,
+      env: process.env,
+      fetchImpl: (input: string, init?: RequestInit) => fetch(input, init),
+      WebSocketImpl: globalThis.WebSocket
+    }
+    return { source: createServerLogSource(deps), follower: follow.createServerLogFollower(deps) }
   }
-  const deps = {
-    eventsUrl: spec.url,
-    readHeaders: spec.readHeaders,
-    env: process.env,
-    fetchImpl: (input: string, init?: RequestInit) => fetch(input, init),
-    WebSocketImpl: globalThis.WebSocket
-  }
-  return { source: createServerLogSource(deps), follower: follow.createServerLogFollower(deps) }
 }
+
+/** The real source and follower of one repository's spec, loaded from the folder this module runs in. */
+export const createRealSource: SourceFactory = (spec, repository) =>
+  createRealSourceFrom(new URL('./', import.meta.url))(spec, repository)
 
 // ---------------------------------------------------------------------------
 // Reading a stored line
