@@ -1,5 +1,17 @@
 # @attalabs/vinaya
 
+## 0.44.0
+
+### Minor Changes
+
+- cf60043: A task runs on the Atta Engine by default: a repository whose configuration names no `runner`, started with no `--runner`, runs its task on the Engine, which needs Bun on the PATH. A run that cannot start the Engine — its runner file absent, or Bun not on the PATH — is refused with one message naming the cause, before the Issue is assigned, and `vinaya task run --background` refuses in the terminal that ran it; no run continues on the standalone runner by itself any more. The standalone runner stays selectable with `"runner": "standalone"` or `--runner standalone`, and the command that continues a paused standalone run with no pull request now names `--runner standalone`.
+
+### Patch Changes
+
+- 94391e9: Built files no longer carry the `// @bun` pragma line Bun's bundler writes, so Bun 1.4.4 decodes them as UTF-8: the dispatch-readiness check's title pattern matches a task title written `[<slug>] <n> — <title>` again, instead of finding no task of any tranche.
+- f8e3e00: An Engine run in a repository whose pre-push hook runs its declared test runner (`.vinaya/test-runner`) now writes Evidence that matches its Test Plan: the Test Plan's test line becomes `.vinaya/test-runner → every test passes`, the Group C entry for it is the hook's recorded run under that same command, and every other Test Plan command keeps its receipt, so `evidence-fresh` passes instead of refusing a Group C headed `repository pre-push hook`.
+- d2e6ada: A `Depends-on` or `Conflicts-with` edge written in plain text, outside backticks, is now refused when a task Issue is created, edited or validated, with one error naming the label and its ids and the backtick form to use. Before, the edge was dropped without a word, the rendered brief read `Depends-on: —`, and the task could start before the task it depends on. Prose that mentions the label with no edge id, such as `No Depends-on: it needs only merged code`, still passes.
+
 ## 0.43.1
 
 ### Patch Changes
