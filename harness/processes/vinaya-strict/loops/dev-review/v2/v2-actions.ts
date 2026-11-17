@@ -22,6 +22,7 @@ import type { SelectionNote } from '../../../../../kernel/gates/ring0-hooks/pre-
 import { PROGRESS_SUMMARY_INTERVAL_MS } from '../../../../../kernel/gates/ring0-hooks/pre-push/push-progress'
 import { manifestDigest } from '../../../executing/code-reviewer/review-result'
 import {
+  ADOPTER_TEST_RUNNER,
   isNativeRunCommand,
   readyTestCommand
 } from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
@@ -1015,12 +1016,17 @@ function readyGateCommand(results: Results, worktreePath: string): { command: st
 }
 
 /**
- * The automatic selected-suite line of a Test Plan: a bare test-run line, a native run's aggregate command, or a
- * deferred head's required-CI line.
+ * The automatic selected-suite line of a Test Plan: a bare test-run line, a native run's aggregate command, a
+ * deferred head's required-CI line, or the repository's declared test runner its pre-push hook runs.
  */
 export const isTestRunLine = (line: string): boolean => {
   const command = line.split('→')[0]?.trim() ?? ''
-  return /^(bun\s+)?test(\s|$)/.test(command) || isNativeRunCommand(command) || isReadyCiCommand(command)
+  return (
+    /^(bun\s+)?test(\s|$)/.test(command) ||
+    isNativeRunCommand(command) ||
+    isReadyCiCommand(command) ||
+    command === ADOPTER_TEST_RUNNER
+  )
 }
 
 /**
