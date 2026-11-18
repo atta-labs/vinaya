@@ -814,14 +814,17 @@ describe('workspaceInventory builds one commit’s inventory from its own manife
     }
   })
 
-  it.each(['group: packages/extra', '- packages/nested'])('stops reading a pnpm block list at %s', (item) => {
-    expect(
-      patternsOf({
-        'package.json': '{}',
-        'pnpm-workspace.yaml': ['packages:', '  - packages/core', '  - ' + item, '  - packages/web'].join('\n')
-      })
-    ).toEqual(['packages/core'])
-  })
+  it.each(['group: packages/extra', '- packages/nested', '|', '>-'])(
+    'stops reading a pnpm block list at %s',
+    (item) => {
+      expect(
+        patternsOf({
+          'package.json': '{}',
+          'pnpm-workspace.yaml': ['packages:', '  - packages/core', '  - ' + item, '  - packages/web'].join('\n')
+        })
+      ).toEqual(['packages/core'])
+    }
+  )
 
   it.each(['catalog:\n  packages: [ignored]', 'packages: other', 'packages: [unclosed', 'packages:[ignored]'])(
     'keeps manifest patterns for an unsupported pnpm workspace declaration (%s)',

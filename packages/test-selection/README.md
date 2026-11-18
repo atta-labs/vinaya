@@ -212,7 +212,13 @@ It reads the root manifest's `workspaces` field (an array, or the `packages`
 array of the object form), followed by entries from the root
 `pnpm-workspace.yaml` that the manifest did not list. The YAML file's top-level
 `packages` list can use block entries (indented or flush left) or a bracketed
-list on the same line. Entries can be plain or quoted.
+list on the same line. Entries can be plain, single-quoted, or double-quoted.
+A doubled single quote inside a single-quoted entry represents one quote.
+Escape sequences, anchors, aliases, tags, and flow mappings are outside the
+supported subset. Blank lines and comments can appear within a block list,
+and a hash within a quoted entry is part of that entry. The block list ends
+at the first line outside that subset, including a block scalar indicator
+(`|` or `>`), mapping item, or nested sequence.
 A segment `*` matches one folder name, a `!` prefix removes matching folders,
 and a `**` segment expands to no folders. Members need a named manifest.
 

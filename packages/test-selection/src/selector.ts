@@ -795,7 +795,7 @@ function workspacePatternScalar(text: string, inline: boolean): { pattern: strin
   const scalar = inline ? (/^[^,[\]]*/.exec(text)?.[0] ?? '') : text
   const comment = /(?:^|\s)#/.exec(scalar)
   const pattern = scalar.slice(0, comment?.index ?? scalar.length).trimEnd()
-  if (!pattern || /:(?:\s|$)/.test(pattern) || /^(?:[[{]|[-?:](?:\s|$))/.test(pattern)) return null
+  if (!pattern || /:(?:\s|$)/.test(pattern) || /^(?:[[{|>]|[-?:](?:\s|$))/.test(pattern)) return null
   return { pattern, rest: comment ? scalar.slice(comment.index).trimStart() : text.slice(scalar.length) }
 }
 
