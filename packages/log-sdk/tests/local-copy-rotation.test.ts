@@ -40,7 +40,7 @@ function records(folder: string, files: string[]) {
   )
 }
 
-test('the next export finishes a short append before recording its own line', () => {
+test('a failed partial append is reported and seals the segment', async () => {
   const { options, folder } = setup()
   const errors: unknown[] = []
   try {
@@ -55,20 +55,32 @@ test('the next export finishes a short append before recording its own line', ()
       .mockImplementationOnce(() => {
         throw new Error('simulated disk full')
       })
+    let partial: Buffer
     try {
-      handle.stageChanged({ to: 'second' })
+      expect(() => handle.stageChanged({ to: 'second' })).not.toThrow()
       expect(errors).toEqual([expect.objectContaining({ message: 'simulated disk full' })])
-      const partial = readFileSync(path)
+      partial = readFileSync(path)
       expect(partial.length).toBe(original.length + 17)
       expect(partial.subarray(0, original.length).equals(original)).toBe(true)
+      expect(() => JSON.parse(partial.subarray(original.length).toString())).toThrow()
     } finally {
       append.mockRestore()
     }
+    await handle.flush()
+    expect(readFileSync(path).equals(partial)).toBe(true)
     handle.stageChanged({ to: 'third' })
-    expect(readdirSync(folder)).toEqual([file])
-    expect(records(folder, [file])).toEqual(
-      ['first', 'second', 'third'].map((stage) => ({ stage, writer: handle.writerId }))
+    await handle.shutdown()
+    const files = readdirSync(folder).sort()
+    expect(files).toHaveLength(2)
+    expect(files[0]).toBe(file)
+    expect(readFileSync(path).equals(partial)).toBe(true)
+    expect(records(folder, files.slice(1))).toEqual([{ stage: 'third', writer: handle.writerId }])
+    const next = JSON.parse(readFileSync(join(folder, files[1]!), 'utf8'))
+    const sequence = next.resourceLogs[0].scopeLogs[0].logRecords[0].attributes.find(
+      (attr: { key: string }) => attr.key === 'vinaya.seq'
     )
+    expect(Number(sequence?.value.intValue)).toBe(3)
+    expect(errors).toHaveLength(1)
   } finally {
     rmSync(options.runtimeDir, { recursive: true, force: true })
   }

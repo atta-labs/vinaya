@@ -52,7 +52,6 @@ export function createFileExporters(options: FileCopyOptions): { spans: SpanExpo
   const repository = Buffer.byteLength(repo) <= MAX_COMPONENT_BYTES ? repo : 'unresolved'
   let nextIndex = 0
   let active: Segment | undefined
-  let pending: { line: Buffer; offset: number } | undefined
 
   function directory(): string {
     const root = resolve(options.repoRoot)
@@ -98,17 +97,16 @@ export function createFileExporters(options: FileCopyOptions): { spans: SpanExpo
       // Start a new file on a signal change so filename order preserves record order.
       // An oversized record occupies one whole file, and the next record rolls over.
       if (!previous) nextIndex += 1
-      const segment = { path, signal, bytes: Number(stat.size), dev: stat.dev, ino: stat.ino }
-      active = segment
-      const record = pending ?? { line, offset: 0 }
-      pending = record
-      while (record.offset < record.line.length) {
-        const count = writeSync(fd, record.line, record.offset, record.line.length - record.offset)
+      // If a write fails, leave any partial line at the end of this file.
+      // Later records start a new segment and retain their original sequence numbers.
+      active = undefined
+      let offset = 0
+      while (offset < line.length) {
+        const count = writeSync(fd, line, offset, line.length - offset)
         if (count === 0) throw new Error(`Log append made no progress: ${path}`)
-        record.offset += count
-        segment.bytes += count
+        offset += count
       }
-      pending = undefined
+      active = { path, signal, bytes: Number(stat.size) + line.length, dev: stat.dev, ino: stat.ino }
     } finally {
       closeSync(fd)
     }
@@ -120,8 +118,6 @@ export function createFileExporters(options: FileCopyOptions): { spans: SpanExpo
     if (payload === undefined) throw new Error('OTLP JSON serializer returned no payload')
     const line = Buffer.concat([payload, Buffer.from('\n')])
     const folder = directory()
-    // Finish a short append before publishing any later record, without changing bytes already written.
-    if (pending && active) write(folder, active.signal, pending.line, active)
     const reuse = active?.signal === signal && active.bytes + line.length <= MAX_BYTES ? active : undefined
     write(folder, signal, line, reuse)
   }
