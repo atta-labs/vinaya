@@ -393,6 +393,7 @@ environment variable of its own; git's own settings still apply.
 
 ```sh
 npx test-selection --base <commit> --head <commit> [--record <file>] [--config <file>]
+npx test-selection --help
 ```
 
 - `--record <file>` — a read record (`ReadRecord`, checked with
@@ -508,7 +509,9 @@ jobs:
           npx test-selection --base "$BASE" --head "$HEAD" "${record[@]}" --config selection.json > plan.json
 ```
 
-It exits 0 when it printed a plan. A missing argument, a folder outside a git
+It exits 0 when it prints a plan. With `--help` or `-h` anywhere in the
+arguments, it prints help on standard output and exits 0, even outside a git
+repository. A missing argument, a folder outside a git
 repository, an argument that names no commit, a `--record` file that is
 missing or not a read record, or a `--config` file that is missing or not a
 valid consumer config prints one message on standard error and exits 2; any
@@ -598,7 +601,9 @@ Flags:
 - `--only <test,test>` — record only these test files;
 - `--expect <test>=<path>` — fail unless the test's record reaches `path`;
 - `--summary <file>` — append a Markdown summary, such as
-  `$GITHUB_STEP_SUMMARY`.
+  `$GITHUB_STEP_SUMMARY`;
+- `--help` or `-h` — print help on standard output when present anywhere in
+  the arguments, on any platform and without requiring git or `strace`.
 
 It writes `<out>/read-record.json`, one JSON document:
 
@@ -626,7 +631,7 @@ It writes `<out>/read-record.json`, one JSON document:
 A test entry may also hold `fallback` (`git-read`, with the `gitReaders` that
 read repository content under `.git/`, or `truncated-path`) and
 `branchesOnPlatform`. A merge refuses shards whose records are of different
-versions. It exits 0 when it wrote a record; 2 for a missing
+versions. It exits 0 when it writes a record or prints help; 2 for a missing
 `--out`, a malformed `--shard`, a host that is not Linux or a missing
 `strace`, each with one message on standard error; 1 when a merge is refused
 or an `--expect` read is missing.
