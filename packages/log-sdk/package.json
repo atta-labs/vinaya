@@ -31,10 +31,16 @@
     "test": "bun test --timeout=600000"
   },
   "dependencies": {
+    "@opentelemetry/api": "~1.9.1",
+    "@opentelemetry/api-logs": "0.223.2",
+    "@opentelemetry/resources": "2.12.1",
+    "@opentelemetry/sdk-logs": "0.223.2",
+    "@opentelemetry/sdk-trace-base": "2.12.1",
     "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",
+    "@types/node": "^26.0.0",
     "typescript": "^5.7.0"
   }
 }
