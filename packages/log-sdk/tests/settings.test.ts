@@ -83,8 +83,8 @@ test('a bad log.config.json is reported, not thrown, and the handle records noth
   }
 })
 
-test('connect without processors records to nowhere and does not throw', () => {
-  const h = connect({ runId: 'r', repoRoot: root({}) })
+test('connect without custom processors does not throw', () => {
+  const h = connect({ runId: 'r', repoRoot: root({}), runtimeDir: root({}) })
   expect(() => {
     h.startRun()
     h.endRun()

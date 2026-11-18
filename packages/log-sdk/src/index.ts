@@ -4,6 +4,12 @@ export * from './contract/ids.js'
 export * from './contract/redact.js'
 export * from './contract/schema.js'
 export * from './contract/store.js'
-export { type ConnectOptions, connect, type LogHandle } from './writer/connect.js'
+export {
+  type ConnectOptions,
+  connect,
+  type LogHandle,
+  type ReadableLogRecord,
+  type ReadableSpan
+} from './writer/connect.js'
 export type { LogsSetting } from './writer/settings.js'
 export { writeWholeSpan } from './writer/whole-span.js'
