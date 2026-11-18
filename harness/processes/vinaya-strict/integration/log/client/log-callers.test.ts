@@ -75,7 +75,7 @@ const FLOW_V2_EVENTS_PATH = 'harness/processes/vinaya-strict/loops/dev-review/fl
 const LOG_WEBHOOK_DRAIN_LIB_PATH = 'harness/kernel/log/client/log-webhook-drain.ts'
 const EFFECTS_PATH = 'harness/kernel/effects/effects.ts'
 const BROKER_PATH = 'harness/kernel/tools/host/broker.ts'
-const SCHEMA_PATH = 'harness/kernel/log/schema.ts'
+const SCHEMA_PATH = 'packages/log-sdk/src/contract/schema.ts'
 const ASSESS_ROUND_PATH = 'harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts'
 const FUTURE_CALLER_ALLOWLIST = new Set<string>([])
 /**
