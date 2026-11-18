@@ -945,7 +945,7 @@ export async function recordReads(
 export type RecordCommandOptions = RecorderSetup & {
   /** The name each message starts with. */
   name: string
-  /** The usage lines a missing `--out` prints. */
+  /** Custom usage lines for help and the missing-`--out` message. */
   usage?: string
   /** The host's platform. Default: `process.platform`. */
   platform?: NodeJS.Platform
@@ -955,12 +955,27 @@ export type RecordCommandOptions = RecorderSetup & {
   hasTracer?: () => boolean
   /** Where messages go. Default: standard error. */
   write?: (text: string) => void
+  /** Where help goes. Default: standard output. */
+  writeHelp?: (text: string) => void
 }
 
+const formatRecordUsage = (name: string, suffix: string): string =>
+  `usage: ${name} --out <dir> [--commit <sha>] [--concurrency <n>] [--shard <i>/<n>] [--only <test,test>] [--expect <test>=<path>] [--summary <file>]${suffix}\n` +
+  `       ${name} --merge <dir> --out <dir> [--commit <sha>] [--summary <file>]${suffix}\n`
+
 /** The command's usage lines, for a command named `name`. */
-export const recordUsage = (name: string): string =>
-  `usage: ${name} --out <dir> [--commit <sha>] [--concurrency <n>] [--shard <i>/<n>] [--only <test,test>] [--expect <test>=<path>] [--summary <file>]\n` +
-  `       ${name} --merge <dir> --out <dir> [--commit <sha>] [--summary <file>]\n`
+export const recordUsage = (name: string): string => formatRecordUsage(name, ' [--help]')
+
+const RECORD_HELP_FLAGS = `  --out <dir>            Directory to write the read record to.
+  --commit <sha>         Commit to record (default: HEAD).
+  --concurrency <n>      Number of test files to trace at once (default: 3).
+  --shard <i>/<n>        Record slice i of n.
+  --merge <dir>          Directory containing shard outputs to merge.
+  --only <test,test>     Comma-separated test files to record.
+  --expect <test>=<path> Require the test's record to reach the path.
+  --summary <file>       File to append the Markdown summary to.
+  --help, -h            Print help.
+`
 
 const straceRuns = (): boolean => spawnSync('strace', ['-V'], { stdio: 'ignore' }).status === 0
 
@@ -1026,11 +1041,17 @@ function mergeMain(argv: readonly string[], partsDir: string, out: string, optio
  * or an `--expect` read is missing.
  */
 export async function recordCommand(argv: readonly string[], options: RecordCommandOptions): Promise<number> {
+  if (argv.includes('--help') || argv.includes('-h')) {
+    const writeHelp = options.writeHelp ?? ((text: string) => process.stdout.write(text))
+    const usage = options.usage ?? recordUsage(options.name)
+    writeHelp(`${usage.endsWith('\n') ? usage : `${usage}\n`}${RECORD_HELP_FLAGS}`)
+    return 0
+  }
   const write = options.write ?? ((text: string) => process.stderr.write(text))
   const say = (line: string): void => write(`${options.name}: ${line}\n`)
   const out = argValue(argv, '--out')
   if (!out) {
-    write(options.usage ?? recordUsage(options.name))
+    write(options.usage ?? formatRecordUsage(options.name, ''))
     return 2
   }
   const partsDir = argValue(argv, '--merge')
