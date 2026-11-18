@@ -13,7 +13,7 @@
     "sourceMap": false,
     "outDir": "./dist",
     "rootDir": "./src",
-    "types": []
+    "types": ["node"]
   },
   "include": ["src/**/*"]
 }
