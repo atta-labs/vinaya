@@ -5,8 +5,9 @@
  * serves them. It is the one place in the package that builds a git reader
  * itself; it starts no test and writes no file.
  *
- * Usage: `test-selection --base <commit> --head <commit> [--record <file>] [--config <file>]`.
- * It reads no file but the two the optional flags name.
+ * Usage: `test-selection --base <commit> --head <commit> [--record <file>] [--config <file>] [--help]`.
+ * For selection it reads the committed trees and the files named by the optional flags.
+ * With `--help` or `-h` it prints help without reading a repository or either file.
  */
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -18,6 +19,14 @@ import { gitRepository, plannedTests, selectTests } from './selector.js'
 import { workspaceInventory } from './workspace-inventory.js'
 
 const USAGE = 'usage: test-selection --base <commit> --head <commit> [--record <file>] [--config <file>]'
+
+const HELP = `${USAGE} [--help]
+  --base <commit>  Base commit to compare from.
+  --head <commit>  Head commit to compare to.
+  --record <file>  JSON read record from a previous run.
+  --config <file>  JSON consumer config for selection.
+  --help, -h       Print help.
+`
 
 class CommandError extends Error {}
 
@@ -151,8 +160,13 @@ function planDocument(cwd: string, argv: readonly string[]): unknown {
 }
 
 function main(): number {
+  const argv = process.argv.slice(2)
+  if (argv.includes('--help') || argv.includes('-h')) {
+    process.stdout.write(HELP)
+    return 0
+  }
   try {
-    process.stdout.write(`${JSON.stringify(planDocument(process.cwd(), process.argv.slice(2)), null, 2)}\n`)
+    process.stdout.write(`${JSON.stringify(planDocument(process.cwd(), argv), null, 2)}\n`)
     return 0
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

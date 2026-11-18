@@ -51,6 +51,15 @@ function run(command: string, args: string[], cwd: string, home: string, timeout
   return result
 }
 
+function expectHelp(command: string, args: string[], home: string, usage: string, flags: string[]): void {
+  const help = spawnSync('node', [command, ...args], { cwd: home, encoding: 'utf8', env: bareEnv(home) })
+  expect(help.status).toBe(0)
+  expect(help.stderr).toBe('')
+  expect(help.stdout.startsWith(usage)).toBe(true)
+  const documented = help.stdout.split('\n').map((line) => line.trimStart().split(/[ ,]/)[0])
+  for (const flag of flags) expect(documented).toContain(flag)
+}
+
 /** The README's one runnable example, verbatim. */
 function readmeExample(): string {
   const readme = readFileSync(join(PACKAGE_DIR, 'README.md'), 'utf8')
@@ -225,6 +234,16 @@ describe('a fresh repository installs the packed package and selects with it', (
         expect(refused.stderr.trim().split('\n')).toHaveLength(1)
       }
 
+      for (const args of [['--help'], ['--base', 'HEAD~1', '--head', 'HEAD', '--config', '-h']]) {
+        expectHelp(command, args, home, 'usage: test-selection --base <commit>', [
+          '--base',
+          '--head',
+          '--record',
+          '--config',
+          '--help'
+        ])
+      }
+
       // The command with a read record and a consumer config, in a fresh repository whose head commit changes only
       // a data file one test reads without importing it, and whose next commit adds a test with its own data file.
       const cfg = join(home, 'cfg')
@@ -348,6 +367,19 @@ describe('a fresh repository installs the packed package and selects with it', (
       const usage = spawnSync('node', [recorder], { cwd: mono, encoding: 'utf8', env: bareEnv(home) })
       expect(usage.status).toBe(2)
       expect(usage.stderr.startsWith('usage: test-selection-record --out <dir>')).toBe(true)
+      for (const args of [['-h'], ['--shard', 'invalid', '--out', '--help']]) {
+        expectHelp(recorder, args, home, 'usage: test-selection-record --out <dir>', [
+          '--out',
+          '--commit',
+          '--concurrency',
+          '--shard',
+          '--merge',
+          '--only',
+          '--expect',
+          '--summary',
+          '--help'
+        ])
+      }
       const out = join(home, 'record')
       const recording = spawnSync('node', [recorder, '--out', out, '--only', 'packages/app/tests/none.test.ts'], {
         cwd: mono,
