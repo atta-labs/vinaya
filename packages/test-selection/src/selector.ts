@@ -742,18 +742,60 @@ function deriveEntrypoints(dir: string, pkg: PackageManifest, knownFiles: Set<st
   return out
 }
 
+const yamlEscapes = new Map([
+  ['0', '\0'],
+  ['a', '\x07'],
+  ['b', '\b'],
+  ['t', '\t'],
+  ['\t', '\t'],
+  ['n', '\n'],
+  ['v', '\v'],
+  ['f', '\f'],
+  ['r', '\r'],
+  ['e', '\x1b'],
+  [' ', ' '],
+  ['"', '"'],
+  ['/', '/'],
+  ['\\', '\\'],
+  ['N', '\u0085'],
+  ['_', '\u00a0'],
+  ['L', '\u2028'],
+  ['P', '\u2029']
+])
+
+function decodeDoubleQuotedPattern(text: string): string | null {
+  let pattern = ''
+  let offset = 0
+  for (const match of text.matchAll(/\\(?:x([\da-fA-F]{2})|u([\da-fA-F]{4})|U([\da-fA-F]{8})|(.)?)/g)) {
+    pattern += text.slice(offset, match.index)
+    const hex = match[1] ?? match[2] ?? match[3]
+    if (hex !== undefined) {
+      const codePoint = Number.parseInt(hex, 16)
+      if (codePoint > 0x10ffff) return null
+      pattern += String.fromCodePoint(codePoint)
+    } else {
+      const decoded = yamlEscapes.get(match[4] ?? '')
+      if (decoded === undefined) return null
+      pattern += decoded
+    }
+    offset = match.index + match[0].length
+  }
+  return pattern + text.slice(offset)
+}
+
 function workspacePatternScalar(text: string, inline: boolean): { pattern: string; rest: string } | null {
   if (text.startsWith("'") || text.startsWith('"')) {
     const quoted = /^(?:'((?:[^']|'')*)'|"((?:[^"\\]|\\.)*)")/.exec(text)
     if (!quoted) return null
-    const pattern = quoted[1]?.replace(/''/g, "'") ?? (quoted[2] ?? '').replace(/\\(["\\/])/g, '$1')
+    const pattern = quoted[1]?.replace(/''/g, "'") ?? decodeDoubleQuotedPattern(quoted[2] ?? '')
+    if (pattern === null) return null
     return { pattern, rest: text.slice(quoted[0].length).trimStart() }
   }
 
   const scalar = inline ? (/^[^,[\]]*/.exec(text)?.[0] ?? '') : text
   const comment = /(?:^|\s)#/.exec(scalar)
   const pattern = scalar.slice(0, comment?.index ?? scalar.length).trimEnd()
-  if (!pattern || /:(?:\s|$)/.test(pattern) || pattern.startsWith('{') || pattern.startsWith('[')) return null
+  if (!pattern || /:(?:\s|$)/.test(pattern) || /^(?:[[{]|[-?:](?:\s|$))/.test(pattern)) return null
   return { pattern, rest: comment ? scalar.slice(comment.index).trimStart() : text.slice(scalar.length) }
 }
 

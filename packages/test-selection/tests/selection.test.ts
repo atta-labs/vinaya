@@ -793,8 +793,14 @@ describe('workspaceInventory builds one commit’s inventory from its own manife
     ).toEqual(['apps/*', 'packages/*', 'plugins/#local', 'tools/[one],#private'])
   })
 
-  it('reads escaped quotes and embedded hashes in both pnpm list shapes', () => {
-    const entries = ["'plugins/team''s#one'", '"plugins/team\\"s#two"', 'plugins/team#three', 'packages/core']
+  it('reads escaped quotes, Unicode escapes, and embedded hashes in both pnpm list shapes', () => {
+    const entries = [
+      "'plugins/team''s#one'",
+      '"plugins/team\\"s#two"',
+      'plugins/team#three',
+      '"packages/\\u0063ore"',
+      '"plugins/\\x23\\U0001f331"'
+    ]
     const block = ['packages:', ...entries.map((entry) => '  - ' + entry + ' # Member')].join('\n')
     const inline = 'packages: [' + entries.join(', ') + '] # Members'
     for (const yaml of [block, inline]) {
@@ -802,16 +808,17 @@ describe('workspaceInventory builds one commit’s inventory from its own manife
         "plugins/team's#one",
         'plugins/team"s#two',
         'plugins/team#three',
-        'packages/core'
+        'packages/core',
+        'plugins/#🌱'
       ])
     }
   })
 
-  it('stops reading a pnpm block list at a mapping item', () => {
+  it.each(['group: packages/extra', '- packages/nested'])('stops reading a pnpm block list at %s', (item) => {
     expect(
       patternsOf({
         'package.json': '{}',
-        'pnpm-workspace.yaml': 'packages:\n  - packages/core\n  - group: packages/extra\n  - packages/web\n'
+        'pnpm-workspace.yaml': ['packages:', '  - packages/core', '  - ' + item, '  - packages/web'].join('\n')
       })
     ).toEqual(['packages/core'])
   })
