@@ -6,7 +6,8 @@
  * `fixed` group live, resolves each member's own `package.json` `files`
  * allowlist live (never a hardcoded path list), reads the diff's changed
  * files, and reports a finding when a shipped path is hit with no
- * `.changeset/*.md` in the same diff.
+ * `.changeset/*.md` in the same diff. It also checks surviving changesets
+ * in the diff for package names covered by the configured ignore list.
  *
  * Blocking: a finding is `error` severity and exits `1`, so the pre-push
  * hook refuses the push and CI fails the pull request. The one waiver is an
@@ -30,12 +31,17 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { CHANGESET_RELEASE_BRANCH } from '../../tools/review-gate'
 import { repoRoot, resolveChangedFiles } from '../../../../../harness/kernel/connectors/git/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
-import { evaluateChangesetCoverage, type FixedGroupMember } from '../changeset-coverage-logic'
+import {
+  evaluateChangesetCoverage,
+  evaluateIgnoredChangesets,
+  isChangesetFile,
+  type FixedGroupMember
+} from '../changeset-coverage-logic'
 
 const CHECK_NAME = 'changeset-coverage'
 
@@ -126,10 +132,10 @@ function resolveWorkspaceMembers(root: string): Map<string, { dir: string; files
   return members
 }
 
-/** `.changeset/config.json`'s `fixed` group, flattened across every sub-array — read live, never hardcoded. Missing/malformed config degrades to `[]` (dormant). */
-function fixedGroupNames(root: string): string[] {
-  const pkg = readPackageJson(join(root, '.changeset', 'config.json')) as { fixed?: unknown } | null
-  const fixed = pkg?.fixed
+type ChangesetsConfigView = { fixed?: unknown; ignore?: unknown }
+
+/** `.changeset/config.json`'s `fixed` group, flattened across every sub-array. */
+function fixedGroupNames(fixed: unknown): string[] {
   if (!Array.isArray(fixed)) return []
   return fixed.flat().filter((n): n is string => typeof n === 'string')
 }
@@ -185,8 +191,21 @@ function main(): void {
   const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'])
   const isReleaseBranch = branch === CHANGESET_RELEASE_BRANCH
 
+  const config = readPackageJson(join(root, '.changeset', 'config.json')) as ChangesetsConfigView | null
+  const ignore = Array.isArray(config?.ignore)
+    ? config.ignore.filter((entry): entry is string => typeof entry === 'string')
+    : []
+  const changedChangesets =
+    ignore.length > 0 && !isReleaseBranch
+      ? changedFiles.filter(isChangesetFile).flatMap((path) => {
+          const absolute = join(root, path)
+          return existsSync(absolute) ? [{ path, text: readFileSync(absolute, 'utf8') }] : []
+        })
+      : []
+  const ignored = evaluateIgnoredChangesets(ignore, changedChangesets, isReleaseBranch)
+
   const workspaceMembers = resolveWorkspaceMembers(root)
-  const fixedGroup: FixedGroupMember[] = fixedGroupNames(root)
+  const fixedGroup: FixedGroupMember[] = fixedGroupNames(config?.fixed)
     .map((name) => {
       const member = workspaceMembers.get(name)
       return member ? { name, dir: member.dir, files: member.files } : null
@@ -209,8 +228,18 @@ function main(): void {
       agent_recovery_prompt:
         "Either add a `.changeset/*.md` entry describing the change in user terms (run the repo's changeset CLI, e.g. `bunx changeset`), or, when the change ships nothing users see, add an empty changeset (`bunx changeset add --empty`). Commit it in the same PR."
     })
-    process.exit(1)
   }
+  for (const { path, packages } of ignored) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `changeset-coverage: ${path} names ignored package(s): ${packages.join(', ')}.`,
+      agent_recovery_prompt:
+        'Remove the ignored package entries from the changeset frontmatter. If no release is intended, use an empty changeset or delete the file when a changeset is unnecessary.'
+    })
+  }
+  if (result.status === 'finding' || ignored.length > 0) process.exit(1)
 }
 
 main()

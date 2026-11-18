@@ -63,6 +63,47 @@ async function runBin(
   return { exitCode, stderr, stdout }
 }
 
+describe('check-changeset-coverage (bin) — ignored packages', () => {
+  it.each(['add', 'edit', 'delete', 'release branch', 'no ignore list', 'no config'])(
+    'grades the changed changeset for %s',
+    async (scenario) => {
+      const root = newRoot('ignored-package')
+      initRepo(root)
+      scaffoldFixedGroup(root)
+      const config = join(root, '.changeset', 'config.json')
+      if (scenario === 'no config') rmSync(config)
+      else if (scenario !== 'no ignore list') {
+        writeFileSync(config, JSON.stringify({ ignore: ['@fixture/portal', '@other/*'] }))
+      }
+      const changeset = join(root, '.changeset', 'portal.md')
+      const ignored = "---\n'@fixture/portal': patch\n'@other/tool': minor\n---\n"
+      if (scenario === 'delete') writeFileSync(changeset, ignored)
+      if (scenario === 'edit') writeFileSync(changeset, '---\n---\n')
+      git(root, ['add', '.'])
+      git(root, ['commit', '-qm', 'Chore: initial scaffold'])
+      git(root, ['checkout', '-qb', scenario === 'release branch' ? 'changeset-release/main' : 'fix/portal'])
+      mkdirSync(join(root, 'apps', 'portal'), { recursive: true })
+      writeFileSync(join(root, 'apps', 'portal', 'index.ts'), 'export {}\n')
+      if (scenario === 'delete') rmSync(changeset)
+      else writeFileSync(changeset, ignored)
+      git(root, ['add', '.'])
+      git(root, ['commit', '-qm', 'Fix(portal): update fixture'])
+
+      const { exitCode, stderr } = await runBin(root)
+      const refused = scenario === 'add' || scenario === 'edit'
+      expect(exitCode).toBe(refused ? 1 : 0)
+      const findings = parseFindings(stderr)
+      expect(findings).toHaveLength(refused ? 1 : 0)
+      if (refused) {
+        expect(findings[0]?.severity).toBe('error')
+        expect(findings[0]?.message).toContain('.changeset/portal.md')
+        expect(findings[0]?.message).toContain('@fixture/portal')
+        expect(findings[0]?.message).toContain('@other/tool')
+      }
+    }
+  )
+})
+
 function parseFindings(stderr: string): CheckError[] {
   return stderr
     .split('\n')

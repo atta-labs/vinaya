@@ -136,3 +136,36 @@ export function evaluateChangesetCoverage(
 
   return { status: 'finding', shippedPathsHit }
 }
+
+/** Read package keys from the line-oriented Changesets frontmatter. */
+function changesetPackageNames(text: string): string[] {
+  const lines = text.split(/\r?\n/)
+  const start = lines.findIndex((line) => line.trimEnd() === '---')
+  if (start < 0) return []
+  const end = lines.findIndex((line, index) => index > start && line.trimEnd() === '---')
+  if (end < 0) return []
+
+  const names = new Set<string>()
+  for (const line of lines.slice(start + 1, end)) {
+    const key = /^\s*(?:'([^']+)'|"([^"]+)"|([^\s:'"#]+))\s*:\s*\S/.exec(line)
+    const name = key?.[1] ?? key?.[2] ?? key?.[3]
+    if (name) names.add(name)
+  }
+  return [...names]
+}
+
+export function evaluateIgnoredChangesets(
+  ignore: string[],
+  changedChangesets: { path: string; text: string }[],
+  isReleaseBranch: boolean
+): { path: string; packages: string[] }[] {
+  if (isReleaseBranch) return []
+
+  const patterns = ignore.filter((entry) => !entry.startsWith('!') && !/[?{}]/.test(entry)).map(filesGlobToRegex)
+  if (patterns.length === 0) return []
+
+  return changedChangesets.flatMap(({ path, text }) => {
+    const packages = changesetPackageNames(text).filter((name) => patterns.some((pattern) => pattern.test(name)))
+    return packages.length > 0 ? [{ path, packages }] : []
+  })
+}
