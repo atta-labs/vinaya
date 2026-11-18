@@ -10,7 +10,7 @@
  * commit — gives no record, with the reason; a missing record is never read as
  * "no test reads anything".
  */
-import { execFileSync } from 'node:child_process'
+import { type ExecFileSyncOptionsWithStringEncoding, execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -25,8 +25,36 @@ export const RECORD_WORKFLOW = 'ci.yml'
 /** The artifact that holds a commit's record. */
 export const recordArtifactName = (commit: string): string => `read-record-${commit}`
 
+/**
+ * The limit of each short forge query (`gh repo view`, `gh run list`). They answer in about a second, so this limit is
+ * what bounds a forge that does not answer.
+ */
+export const RECORD_QUERY_TIMEOUT_MS = 20_000
+
+/**
+ * The limit of one record download (`gh run download`). A record runs to many megabytes and its download can take
+ * longer than a short query's limit, so it has a limit of its own.
+ */
+export const RECORD_DOWNLOAD_TIMEOUT_MS = 120_000
+
 /** Returns the record file's text for `commit`, or throws with the reason it could not be reached. */
 export type RecordFetch = (commit: string) => string
+
+/** Runs a command and returns its standard output; throws as `execFileSync` does, a timeout included. */
+export type CommandRunner = (file: string, args: string[], options: ExecFileSyncOptionsWithStringEncoding) => string
+
+/** Thrown by the fetch when a record's download ran out of time: the record may exist, it was not reached in time. */
+export class RecordDownloadTimeout extends Error {
+  constructor(commit: string) {
+    super(`the download of the record of ${commit} ran out of time (limit ${RECORD_DOWNLOAD_TIMEOUT_MS / 1000} s)`)
+    this.name = 'RecordDownloadTimeout'
+  }
+}
+
+/** True when a child call was stopped by its `timeout` option: the error it raises carries the code `ETIMEDOUT`. */
+function ranOutOfTime(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'ETIMEDOUT'
+}
 
 function cleanEnv(): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...process.env }
@@ -34,39 +62,50 @@ function cleanEnv(): NodeJS.ProcessEnv {
   return out
 }
 
-/** The default fetch: the run of the commit's push on the default branch, then its artifact. */
-export function ghRecordFetch(repoRoot: string): RecordFetch {
+/**
+ * The default fetch: the run of the commit's push on the default branch, then its artifact. A download that runs out
+ * of time throws `RecordDownloadTimeout` at once, without trying the commit's other runs: each would wait as long.
+ */
+export function ghRecordFetch(
+  repoRoot: string,
+  run: CommandRunner = (file, args, options) => execFileSync(file, args, options)
+): RecordFetch {
   return (commit) => {
-    const gh = (args: string[]) =>
-      execFileSync('gh', args, {
+    const gh = (args: string[], timeout: number) =>
+      run('gh', args, {
         cwd: repoRoot,
         encoding: 'utf8',
         env: cleanEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 20_000
+        timeout
       })
     let runs: { databaseId: number }[]
     try {
       const branch = (
-        JSON.parse(gh(['repo', 'view', '--json', 'defaultBranchRef'])) as { defaultBranchRef: { name: string } }
+        JSON.parse(gh(['repo', 'view', '--json', 'defaultBranchRef'], RECORD_QUERY_TIMEOUT_MS)) as {
+          defaultBranchRef: { name: string }
+        }
       ).defaultBranchRef.name
       runs = JSON.parse(
-        gh([
-          'run',
-          'list',
-          '--branch',
-          branch,
-          '--workflow',
-          RECORD_WORKFLOW,
-          '--commit',
-          commit,
-          '--event',
-          'push',
-          '--json',
-          'databaseId',
-          '--limit',
-          '5'
-        ])
+        gh(
+          [
+            'run',
+            'list',
+            '--branch',
+            branch,
+            '--workflow',
+            RECORD_WORKFLOW,
+            '--commit',
+            commit,
+            '--event',
+            'push',
+            '--json',
+            'databaseId',
+            '--limit',
+            '5'
+          ],
+          RECORD_QUERY_TIMEOUT_MS
+        )
       ) as { databaseId: number }[]
     } catch (err) {
       throw new Error(`gh run list failed: ${(err as Error).message.split('\n')[0]}`)
@@ -76,9 +115,14 @@ export function ghRecordFetch(repoRoot: string): RecordFetch {
     try {
       for (const run of runs) {
         try {
-          gh(['run', 'download', String(run.databaseId), '--name', recordArtifactName(commit), '--dir', dir])
+          gh(
+            ['run', 'download', String(run.databaseId), '--name', recordArtifactName(commit), '--dir', dir],
+            RECORD_DOWNLOAD_TIMEOUT_MS
+          )
           return readFileSync(join(dir, RECORD_FILE), 'utf8')
-        } catch {}
+        } catch (err) {
+          if (ranOutOfTime(err)) throw new RecordDownloadTimeout(commit)
+        }
       }
       throw new Error(`no run for ${commit} holds the ${recordArtifactName(commit)} artifact`)
     } finally {
@@ -111,7 +155,8 @@ export function parseRecordFor(text: string, commit: string): ReadRecord | null 
   }
 }
 
-export type ReachedRecord = { record: ReadRecord | null; reason: string }
+/** A reached record, or the reason there is none; `downloadTimedOut` marks a download that ran out of time. */
+export type ReachedRecord = { record: ReadRecord | null; reason: string; downloadTimedOut?: boolean }
 
 /** The record of exactly `commit`: the local copy when one is kept, else the fetched one (then kept). */
 export function reachableRecord(
@@ -130,6 +175,7 @@ export function reachableRecord(
   try {
     text = fetch(commit)
   } catch (err) {
+    if (err instanceof RecordDownloadTimeout) return { record: null, reason: err.message, downloadTimedOut: true }
     return { record: null, reason: `no record is reachable: ${(err as Error).message.split('\n')[0]}` }
   }
   const record = parseRecordFor(text, commit)
@@ -150,7 +196,9 @@ export const RECORD_ANCESTOR_LIMIT = 10
  * The record of the nearest commit at or before `commit` on its first-parent line that has one, looking through at
  * most `limit` commits. A record of an earlier commit is still a record: the selection compares its commit with the
  * base and leaves every test whose recorded paths changed in between to the static selection. A new default-branch
- * commit has no record until its recording run finishes, so the exact commit alone is rarely reachable.
+ * commit has no record until its recording run finishes, so the exact commit alone is rarely reachable. The first
+ * download that runs out of time ends the search with its reason: every further commit could wait as long, so walking
+ * on could cost more than running every test.
  */
 export function nearestReachableRecord(
   repoRoot: string,
@@ -173,6 +221,7 @@ export function nearestReachableRecord(
             ? reached.reason
             : `${reached.reason}, of ${candidate}, the nearest earlier commit that has one`
       }
+    if (reached.downloadTimedOut) return { record: null, reason: reached.reason, downloadTimedOut: true }
     reasons.push(reached.reason)
   }
   return { record: null, reason: reasons[0] ?? `no record is reachable for ${commit}` }
