@@ -5,6 +5,28 @@ import { join } from 'node:path'
 import { connect } from '../src/index.js'
 import { createFileExporters } from '../src/local-copy/file-exporters.js'
 
+test('an oversized repository component falls back in both default directories', () => {
+  const root = mkdtempSync(join(tmpdir(), 'log-sdk-long-repo-'))
+  try {
+    const vinayaHome = join(root, 'home')
+    const errors: unknown[] = []
+    const handle = connect({
+      runId: 'long-repo',
+      repository: `${'a'.repeat(128)}/${'b'.repeat(127)}`,
+      repoRoot: join(root, 'repo'),
+      vinayaHome,
+      onError: (error) => errors.push(error)
+    })
+    handle.alive()
+    expect(errors).toEqual([])
+    expect(readdirSync(join(vinayaHome, 'runtime', 'unresolved', 'logs', 'unresolved'))).toEqual([
+      `long-repo~${handle.writerId}~000000000000.logs.jsonl`
+    ])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('a run ID that leaves no room for the file suffix falls back to unresolved', () => {
   const runtimeDir = mkdtempSync(join(tmpdir(), 'log-sdk-long-run-'))
   try {

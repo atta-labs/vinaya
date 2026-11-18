@@ -3,10 +3,9 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { JsonLogsSerializer, JsonTraceSerializer } from '@opentelemetry/otlp-transformer'
 import type { LogRecordExporter, ReadableLogRecord } from '@opentelemetry/sdk-logs'
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base'
-import { repoSegment, type ResolvedSettings } from '../writer/settings.js'
+import { MAX_COMPONENT_BYTES, repoSegment, type ResolvedSettings } from '../writer/settings.js'
 
 const MAX_BYTES = 8 * 1024 * 1024
-const MAX_COMPONENT_BYTES = 255
 const INDEX_WIDTH = 12
 const SAFE_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
 const APPEND_FLAGS = constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK
@@ -48,8 +47,7 @@ export function createFileExporters(options: FileCopyOptions): { spans: SpanExpo
     safeSegment(options.runId) && Buffer.byteLength(options.runId) + suffixBytes <= MAX_COMPONENT_BYTES
       ? options.runId
       : 'unresolved'
-  const repo = repoSegment(options.repository)
-  const repository = Buffer.byteLength(repo) <= MAX_COMPONENT_BYTES ? repo : 'unresolved'
+  const repository = repoSegment(options.repository)
   let nextIndex = 0
   let active: Segment | undefined
 

@@ -51,17 +51,19 @@ export type ResolvedSettings = {
 
 export type SettingsResult = { ok: true; settings: ResolvedSettings } | { ok: false; error: Error }
 
+export const MAX_COMPONENT_BYTES = 255
 const SAFE_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
 
 function safeSegment(s: string): boolean {
   return SAFE_SEGMENT.test(s) && !s.includes('..')
 }
 
-/** `<owner>-<repo>`, or `unresolved` when either part fails the safe-segment rule. */
+/** `<owner>-<repo>`, or `unresolved` when either part is unsafe or the combined name is too long. */
 export function repoSegment(repository: string | undefined): string {
   const [owner, repo, ...rest] = (repository ?? '').split('/')
   if (!owner || !repo || rest.length > 0 || !safeSegment(owner) || !safeSegment(repo)) return 'unresolved'
-  return `${owner}-${repo}`
+  const segment = `${owner}-${repo}`
+  return Buffer.byteLength(segment) <= MAX_COMPONENT_BYTES ? segment : 'unresolved'
 }
 
 /** The default runtime directory: `<Vinaya home>/runtime/<owner>-<repo>`. */
