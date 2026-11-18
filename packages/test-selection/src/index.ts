@@ -163,6 +163,14 @@ export {
   workspaceTestInventory
 } from './recorder.js'
 export {
+  type CommandRunner,
+  findReadRecord,
+  RECORD_ARTIFACT_PREFIX,
+  RECORD_WORKFLOW_FILE,
+  type RecordSearch,
+  type RecordSource
+} from './record-fetch.js'
+export {
   type LeftOutPackage,
   type LeftOutReason,
   WORKSPACE_INVENTORY_SCHEMA,
