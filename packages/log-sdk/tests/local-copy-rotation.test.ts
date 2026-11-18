@@ -1,4 +1,5 @@
-import { expect, test } from 'bun:test'
+import { expect, spyOn, test } from 'bun:test'
+import * as fs from 'node:fs'
 import {
   mkdirSync,
   mkdtempSync,
@@ -38,6 +39,40 @@ function records(folder: string, files: string[]) {
       })
   )
 }
+
+test('the next export finishes a short append before recording its own line', () => {
+  const { options, folder } = setup()
+  const errors: unknown[] = []
+  try {
+    const handle = connect({ ...options, onError: (error) => errors.push(error) })
+    handle.stageChanged({ to: 'first' })
+    const file = readdirSync(folder)[0]!
+    const path = join(folder, file)
+    const original = readFileSync(path)
+    const write = fs.writeSync
+    const append = spyOn(fs, 'writeSync')
+      .mockImplementationOnce((fd, buffer) => write(fd, buffer as Uint8Array, 0, 17))
+      .mockImplementationOnce(() => {
+        throw new Error('simulated disk full')
+      })
+    try {
+      handle.stageChanged({ to: 'second' })
+      expect(errors).toEqual([expect.objectContaining({ message: 'simulated disk full' })])
+      const partial = readFileSync(path)
+      expect(partial.length).toBe(original.length + 17)
+      expect(partial.subarray(0, original.length).equals(original)).toBe(true)
+    } finally {
+      append.mockRestore()
+    }
+    handle.stageChanged({ to: 'third' })
+    expect(readdirSync(folder)).toEqual([file])
+    expect(records(folder, [file])).toEqual(
+      ['first', 'second', 'third'].map((stage) => ({ stage, writer: handle.writerId }))
+    )
+  } finally {
+    rmSync(options.runtimeDir, { recursive: true, force: true })
+  }
+})
 
 test('three size rollovers preserve each record and seal earlier files', () => {
   const { options, folder } = setup()

@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, realpathSync, writeFileSync } from 'node:fs'
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, realpathSync, writeSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { JsonLogsSerializer, JsonTraceSerializer } from '@opentelemetry/otlp-transformer'
 import type { LogRecordExporter, ReadableLogRecord } from '@opentelemetry/sdk-logs'
@@ -6,6 +6,8 @@ import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base'
 import { repoSegment, type ResolvedSettings } from '../writer/settings.js'
 
 const MAX_BYTES = 8 * 1024 * 1024
+const MAX_COMPONENT_BYTES = 255
+const INDEX_WIDTH = 12
 const SAFE_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
 const APPEND_FLAGS = constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK
 
@@ -41,10 +43,16 @@ type FileCopyOptions = {
 
 export function createFileExporters(options: FileCopyOptions): { spans: SpanExporter; logs: LogRecordExporter } {
   const { writerId, settings } = options
-  const run = safeSegment(options.runId) ? options.runId : 'unresolved'
-  const repository = repoSegment(options.repository)
+  const suffixBytes = Buffer.byteLength(`~${writerId}~${'0'.repeat(INDEX_WIDTH)}.traces.jsonl`)
+  const run =
+    safeSegment(options.runId) && Buffer.byteLength(options.runId) + suffixBytes <= MAX_COMPONENT_BYTES
+      ? options.runId
+      : 'unresolved'
+  const repo = repoSegment(options.repository)
+  const repository = Buffer.byteLength(repo) <= MAX_COMPONENT_BYTES ? repo : 'unresolved'
   let nextIndex = 0
   let active: Segment | undefined
+  let pending: { line: Buffer; offset: number } | undefined
 
   function directory(): string {
     const root = resolve(options.repoRoot)
@@ -62,35 +70,60 @@ export function createFileExporters(options: FileCopyOptions): { spans: SpanExpo
     return target
   }
 
-  function append(signal: Signal, payload: Uint8Array | undefined): void {
-    if (!safeSegment(writerId)) throw new Error('Unsafe Log writer identifier')
-    if (payload === undefined) throw new Error('OTLP JSON serializer returned no payload')
-    const line = Buffer.concat([payload, Buffer.from('\n')])
-    const folder = directory()
-    const previous = active
-    const reuse = previous !== undefined && previous.signal === signal && previous.bytes + line.length <= MAX_BYTES
-    const index = String(nextIndex).padStart(12, '0')
-    const path = reuse ? previous.path : join(folder, `${run}~${writerId}~${index}.${signal}.jsonl`)
+  function write(folder: string, signal: Signal, line: Buffer, previous?: Segment): void {
+    const index = String(nextIndex).padStart(INDEX_WIDTH, '0')
+    if (index.length > INDEX_WIDTH) throw new Error('Log file sequence exhausted')
+    const path = previous?.path ?? join(folder, `${run}~${writerId}~${index}.${signal}.jsonl`)
     if (dirname(path) !== folder) throw new Error(`Log directory changed: ${path}`)
-    const fd = openSync(path, reuse ? APPEND_FLAGS : APPEND_FLAGS | constants.O_CREAT | constants.O_EXCL, 0o600)
+    const parent = lstatSync(folder, { bigint: true })
+    if (!parent.isDirectory() || realpathSync(folder) !== folder) throw new Error(`Unsafe Log directory: ${folder}`)
+    const fd = openSync(path, previous ? APPEND_FLAGS : APPEND_FLAGS | constants.O_CREAT | constants.O_EXCL, 0o600)
     try {
       const stat = fstatSync(fd, { bigint: true })
+      const currentParent = lstatSync(folder, { bigint: true })
+      const entry = lstatSync(path, { bigint: true })
       if (
         !stat.isFile() ||
         stat.nlink !== 1n ||
-        (reuse && (stat.dev !== previous.dev || stat.ino !== previous.ino || stat.size !== BigInt(previous.bytes)))
+        !currentParent.isDirectory() ||
+        currentParent.dev !== parent.dev ||
+        currentParent.ino !== parent.ino ||
+        realpathSync(folder) !== folder ||
+        entry.dev !== stat.dev ||
+        entry.ino !== stat.ino ||
+        (previous && (stat.dev !== previous.dev || stat.ino !== previous.ino || stat.size !== BigInt(previous.bytes)))
       ) {
         throw new Error(`Unsafe Log file: ${path}`)
       }
       // Start a new file on a signal change so filename order preserves record order.
       // An oversized record occupies one whole file, and the next record rolls over.
-      if (!reuse) nextIndex += 1
-      active = undefined
-      writeFileSync(fd, line)
-      active = { path, signal, bytes: Number(stat.size) + line.length, dev: stat.dev, ino: stat.ino }
+      if (!previous) nextIndex += 1
+      const segment = { path, signal, bytes: Number(stat.size), dev: stat.dev, ino: stat.ino }
+      active = segment
+      const record = pending ?? { line, offset: 0 }
+      pending = record
+      while (record.offset < record.line.length) {
+        const count = writeSync(fd, record.line, record.offset, record.line.length - record.offset)
+        if (count === 0) throw new Error(`Log append made no progress: ${path}`)
+        record.offset += count
+        segment.bytes += count
+      }
+      pending = undefined
     } finally {
       closeSync(fd)
     }
+  }
+
+  function append(signal: Signal, payload: Uint8Array | undefined): void {
+    if (!safeSegment(writerId) || suffixBytes + 'unresolved'.length > MAX_COMPONENT_BYTES)
+      throw new Error('Unsafe Log writer identifier')
+    if (payload === undefined) throw new Error('OTLP JSON serializer returned no payload')
+    const line = Buffer.concat([payload, Buffer.from('\n')])
+    const folder = directory()
+    // Finish a short append before publishing any later record, without changing bytes already written.
+    if (pending && active) write(folder, active.signal, pending.line, active)
+    const reuse = active?.signal === signal && active.bytes + line.length <= MAX_BYTES ? active : undefined
+    write(folder, signal, line, reuse)
   }
 
   function exporter<Record>(signal: Signal, serialize: (records: Record[]) => Uint8Array | undefined) {

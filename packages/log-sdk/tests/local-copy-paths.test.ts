@@ -5,6 +5,22 @@ import { join } from 'node:path'
 import { connect } from '../src/index.js'
 import { createFileExporters } from '../src/local-copy/file-exporters.js'
 
+test('a run ID that leaves no room for the file suffix falls back to unresolved', () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'log-sdk-long-run-'))
+  try {
+    const handle = connect({ runId: 'a'.repeat(200), runtimeDir, repoRoot: join(runtimeDir, 'repo') })
+    handle.startRun()
+    handle.endRun()
+    const files = readdirSync(join(runtimeDir, 'logs', 'unresolved')).sort()
+    expect(files).toEqual([
+      `unresolved~${handle.writerId}~000000000000.logs.jsonl`,
+      `unresolved~${handle.writerId}~000000000001.traces.jsonl`
+    ])
+  } finally {
+    rmSync(runtimeDir, { recursive: true, force: true })
+  }
+})
+
 test('configured folders win unless they resolve inside the repository', () => {
   const root = mkdtempSync(join(tmpdir(), 'log-sdk-paths-'))
   try {
