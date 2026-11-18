@@ -147,11 +147,23 @@ function changesetPackageNames(text: string): string[] {
 
   const names = new Set<string>()
   for (const line of lines.slice(start + 1, end)) {
-    const key = /^\s*(?:'([^']+)'|"([^"]+)"|([^\s:'"#]+))\s*:\s*\S/.exec(line)
-    const name = key?.[1] ?? key?.[2] ?? key?.[3]
+    const key = /^\s*(?:'((?:[^']|'')+)'|"((?:[^"\\]|\\.)+)"|([^\s:'"#]+))\s*:\s*\S/.exec(line)
+    const name = key?.[1]?.replaceAll("''", "'") ?? decodeDoubleQuotedKey(key?.[2]) ?? key?.[3]
     if (name) names.add(name)
   }
   return [...names]
+}
+
+/** Decode YAML escapes that can represent characters in package names. */
+function decodeDoubleQuotedKey(key: string | undefined): string | undefined {
+  return key?.replace(
+    /\\(?:x([a-fA-F\d]{2})|u([a-fA-F\d]{4})|U([a-fA-F\d]{8})|(\/)|.)/g,
+    (sequence, short, medium, long, slash) => {
+      if (slash) return slash
+      const code = Number.parseInt(short ?? medium ?? long ?? '', 16)
+      return code <= 0x10ffff ? String.fromCodePoint(code) : sequence
+    }
+  )
 }
 
 export function evaluateIgnoredChangesets(

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CheckError } from '../../../kernel/gates/checks/contract'
@@ -64,6 +64,52 @@ async function runBin(
 }
 
 describe('check-changeset-coverage (bin) — ignored packages', () => {
+  it.each(['ignored in index', 'ignored only in worktree', 'symlink'])(
+    'reads regular snapshot blobs and reports both rules for %s',
+    async (scenario) => {
+      const root = newRoot('changeset-snapshot')
+      initRepo(root)
+      scaffoldFixedGroup(root)
+      writeFileSync(
+        join(root, '.changeset', 'config.json'),
+        JSON.stringify({ fixed: [['@fixture/pkg-a']], ignore: ['@fixture/portal'] })
+      )
+      git(root, ['add', '.'])
+      git(root, ['commit', '-qm', 'Chore: initial scaffold'])
+      git(root, ['checkout', '-qb', 'fix/pkg-a'])
+      writeFileSync(join(root, 'packages', 'pkg-a', 'src', 'index.ts'), 'export {}\n')
+      git(root, ['add', '.'])
+      git(root, ['commit', '-qm', 'Fix(pkg-a): update fixture'])
+
+      const changeset = join(root, '.changeset', 'portal.md')
+      const ignored = "---\n'@fixture/portal': patch\n---\n"
+      const empty = '---\n---\n'
+      if (scenario === 'symlink') {
+        const target = join(newRoot('changeset-target'), 'outside.md')
+        writeFileSync(target, ignored)
+        symlinkSync(target, changeset)
+      } else {
+        writeFileSync(changeset, scenario === 'ignored in index' ? ignored : empty)
+      }
+      git(root, ['add', '.'])
+      if (scenario !== 'symlink') writeFileSync(changeset, scenario === 'ignored in index' ? empty : ignored)
+      const { exitCode, stderr } = await runBin(root, {
+        VINAYA_COMMIT_HOOK: '1',
+        GIT_INDEX_FILE: join(root, '.git', 'index')
+      })
+      const findings = parseFindings(stderr)
+      if (scenario === 'ignored in index') {
+        expect(exitCode).toBe(1)
+        expect(findings.map(({ severity }) => severity)).toEqual(['error', 'error'])
+        expect(findings[0]?.message).toContain('packages/pkg-a/src/index.ts')
+        expect(findings[1]?.message).toContain('@fixture/portal')
+      } else {
+        expect(exitCode).toBe(0)
+        expect(findings).toEqual([])
+      }
+    }
+  )
+
   it.each(['add', 'edit', 'delete', 'release branch', 'no ignore list', 'no config'])(
     'grades the changed changeset for %s',
     async (scenario) => {

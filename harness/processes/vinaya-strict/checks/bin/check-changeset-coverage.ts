@@ -31,7 +31,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { CHANGESET_RELEASE_BRANCH } from '../../tools/review-gate'
 import { repoRoot, resolveChangedFiles } from '../../../../../harness/kernel/connectors/git/diff-evidence'
@@ -51,6 +51,18 @@ function git(args: string[]): string {
   } catch {
     return ''
   }
+}
+
+/** Read only regular blobs from the snapshot used for diff evidence. */
+function readChangeset(root: string, path: string, staged: boolean): string | null {
+  const args = staged ? ['ls-files', '--stage'] : ['ls-tree', 'HEAD']
+  const options = { cwd: root, encoding: 'utf8' as const, stdio: 'pipe' as const }
+  const entry = execFileSync('git', ['--literal-pathspecs', ...args, '-z', '--', path], options)
+  const oid = (
+    staged ? /^100(?:644|755) ([a-f0-9]+) 0\t/.exec(entry) : /^100(?:644|755) blob ([a-f0-9]+)\t/.exec(entry)
+  )?.[1]
+  if (!oid) return null
+  return execFileSync('git', ['cat-file', 'blob', oid], options)
 }
 
 /** `git symbolic-ref --quiet --short HEAD` — `''` on detached HEAD, never a false name. */
@@ -195,11 +207,12 @@ function main(): void {
   const ignore = Array.isArray(config?.ignore)
     ? config.ignore.filter((entry): entry is string => typeof entry === 'string')
     : []
+  const staged = process.env.VINAYA_COMMIT_HOOK === '1' && Boolean(process.env.GIT_INDEX_FILE)
   const changedChangesets =
     ignore.length > 0 && !isReleaseBranch
       ? changedFiles.filter(isChangesetFile).flatMap((path) => {
-          const absolute = join(root, path)
-          return existsSync(absolute) ? [{ path, text: readFileSync(absolute, 'utf8') }] : []
+          const text = readChangeset(root, path, staged)
+          return text === null ? [] : [{ path, text }]
         })
       : []
   const ignored = evaluateIgnoredChangesets(ignore, changedChangesets, isReleaseBranch)
@@ -212,7 +225,12 @@ function main(): void {
     })
     .filter((m): m is FixedGroupMember => m !== null)
 
-  const result = evaluateChangesetCoverage(fixedGroup, changedFiles, isReleaseBranch)
+  const refusedChangesets = new Set(ignored.map(({ path }) => path))
+  const result = evaluateChangesetCoverage(
+    fixedGroup,
+    changedFiles.filter((path) => !refusedChangesets.has(path)),
+    isReleaseBranch
+  )
 
   // stdout only — stderr is the CheckError JSON channel (contract.ts).
   console.log(
@@ -224,7 +242,7 @@ function main(): void {
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
       severity: 'error',
-      message: `changeset-coverage: this diff changes a published package's shipped file(s) with no \`.changeset/*.md\` in the same diff: ${result.shippedPathsHit.join(', ')}. Add a changeset describing the change, or add an empty one when the change ships nothing users see.`,
+      message: `changeset-coverage: this diff changes a published package's shipped file(s) with no accepted \`.changeset/*.md\` in the same diff: ${result.shippedPathsHit.join(', ')}. Add a changeset describing the change, or add an empty one when the change ships nothing users see.`,
       agent_recovery_prompt:
         "Either add a `.changeset/*.md` entry describing the change in user terms (run the repo's changeset CLI, e.g. `bunx changeset`), or, when the change ships nothing users see, add an empty changeset (`bunx changeset add --empty`). Commit it in the same PR."
     })

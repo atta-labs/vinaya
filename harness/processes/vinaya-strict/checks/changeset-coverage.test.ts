@@ -29,7 +29,7 @@ describe('evaluateIgnoredChangesets', () => {
       '---',
       'plain: patch',
       "'@fixture/a': minor",
-      '"@fixture/b": major',
+      '"\\x40fixture\\/b": major',
       'released: patch',
       '---',
       'body-only: patch'
