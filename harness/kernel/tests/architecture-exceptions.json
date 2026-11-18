@@ -270,11 +270,6 @@
     "owner": "@attalabs/harness"
   },
   {
-    "file": "harness/kernel/log/schema.ts",
-    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
-    "owner": "@attalabs/harness"
-  },
-  {
     "file": "harness/kernel/loops/runtimes/atta-engine/run-process.ts",
     "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
     "owner": "@attalabs/harness"

@@ -1,0 +1,40 @@
+{
+  "name": "@attalabs/vinaya-log-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Vinaya Log's contract: the event schema, custom-event declarations, redaction and the stored-line classifier.",
+  "type": "module",
+  "license": "FSL-1.1-ALv2",
+  "author": "Daniel Estevez",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --timeout=600000"
+  },
+  "dependencies": {
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^5.7.0"
+  }
+}

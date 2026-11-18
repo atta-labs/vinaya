@@ -52,6 +52,14 @@
       "preload": null
     },
     {
+      "id": "log-sdk",
+      "owner": "@attalabs/vinaya-log-sdk",
+      "kind": "workspace",
+      "dir": "packages/log-sdk",
+      "runner": "bun",
+      "preload": null
+    },
+    {
       "id": "kernel",
       "owner": "@attalabs/harness",
       "kind": "workspace",
@@ -160,6 +168,7 @@
             "studio",
             "cms",
             "test-selection",
+            "log-sdk",
             "kernel",
             "process-vinaya",
             "repository",
