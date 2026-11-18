@@ -766,7 +766,7 @@ const yamlEscapes = new Map([
 function decodeDoubleQuotedPattern(text: string): string | null {
   let pattern = ''
   let offset = 0
-  for (const match of text.matchAll(/\\(?:x([\da-fA-F]{2})|u([\da-fA-F]{4})|U([\da-fA-F]{8})|(.)?)/g)) {
+  for (const match of text.matchAll(/\\(?:x([\da-fA-F]{2})|u([\da-fA-F]{4})|U([\da-fA-F]{8})|([^\n])?)/g)) {
     pattern += text.slice(offset, match.index)
     const hex = match[1] ?? match[2] ?? match[3]
     if (hex !== undefined) {
