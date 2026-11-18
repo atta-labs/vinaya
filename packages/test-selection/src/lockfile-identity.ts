@@ -22,13 +22,44 @@
  *   or github spec and its commit id are kept, the meta and integrity kept;
  * - any other shape is kept whole.
  *
- * Pure: the caller parses the text (the lockfile is JSON with trailing
- * commas) and a malformed or ambiguous lockfile throws, so a reader of it
- * keeps the conservative answer.
+ * The text reader accepts JSON with trailing commas. A malformed or ambiguous
+ * lockfile throws so selection keeps the conservative answer.
  */
 
 const PATH = '<path>'
 const PATH_PROTOCOLS = ['workspace:', 'file:', 'link:']
+const JSON_WHITESPACE = /[ \t\r\n]/
+
+/** Read the dependency identity of a text bun.lock, including Bun's trailing commas. */
+export function readBunLockIdentity(text: string): unknown {
+  let json = ''
+  let start = 0
+  let inString = false
+  let previousToken = ''
+  for (let i = 0; i < text.length; i++) {
+    const char = text.charAt(i)
+    if (inString) {
+      if (char === '\\') i++
+      else if (char === '"') inString = false
+      continue
+    }
+    if (JSON_WHITESPACE.test(char)) continue
+    if (char === '"') inString = true
+    // Leave commas in empty containers for JSON.parse to reject.
+    if (char === ',' && previousToken !== '{' && previousToken !== '[') {
+      let next = i + 1
+      while (JSON_WHITESPACE.test(text.charAt(next))) next++
+      const closer = text.charAt(next)
+      if (closer === '}' || closer === ']') {
+        json += text.slice(start, i)
+        start = i + 1
+      }
+      i = next - 1
+    }
+    previousToken = char
+  }
+  return bunLockIdentity(JSON.parse(json + text.slice(start)))
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

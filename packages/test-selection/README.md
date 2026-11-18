@@ -102,6 +102,10 @@ Two are provided, each built by the caller and passed in:
 and `memoryRepository({ [revision]: files })` serves in-memory trees. A caller
 with its own storage implements the type itself.
 
+`readBunLockIdentity(text)` reads the text of a `bun.lock` in Node or Bun and
+returns its dependency identity with local paths normalized. It accepts
+trailing commas and throws on malformed text or a non-object value.
+
 ### Inventory and record types
 
 - `InventoryView` — one revision's validated inventory: its suites, tests,
@@ -132,6 +136,15 @@ with its own storage implements the type itself.
   once per process, so an `opens` count above 1 means one file was read as
   data. A version-1 record, and a version-2 entry lacking any of these facts,
   selects as it always did.
+
+With a read record, `selectTests` compares a modified `bun.lock` package by
+package by default. It selects the recorded readers of changed packages and
+of the lockfile itself. A `bun-lock` parser in `SelectionPolicy.parsers`
+replaces the built-in reader. Adding or deleting a lockfile, unreadable
+text, a missing or invalid `packages` object, or changes to fields outside
+`packages` and `workspaces` select every recorded package reader. Without
+a caller parser, changes to `bun.lockb`, `package-lock.json`,
+`pnpm-lock.yaml` or `yarn.lock` also select every recorded package reader.
 
 On the record path a test whose reads include a changed file is left out, with
 a reason in the plan, in two independent ways; neither applies to the test file
@@ -572,7 +585,8 @@ right after the file's failure line: it reads the run's standard output and
 standard error as they come, keeps only the newest 40 lines, and cuts those to
 their newest 4,000 characters. A file that passes logs no output, and the
 output is never written into the record. A read under installed dependencies is recorded as the
-repository's lockfile joined to the package's name (`bun.lock#zod`).
+repository's lockfile joined to the package's name (`bun.lock#zod`), so
+selection can match individual package changes in `bun.lock` by default.
 
 Flags:
 
@@ -670,7 +684,7 @@ command itself with those injected.
 | `src/recorder.ts` | the read recorder: traced runs, the record entry each builds, shards and their merge |
 | `src/listing-probe.ts` | the listing probe a recorded Bun run preloads, never imported by the entrypoint |
 | `src/listing-probe-paths.ts` | the probe's log variable and path helpers |
-| `src/lockfile-identity.ts` | a parsed `bun.lock`'s dependency identity, its path text replaced |
+| `src/lockfile-identity.ts` | the text `bun.lock` reader and dependency identity comparison |
 | `src/selector.ts` | trees, repository readers, the graph walk and `selectTests` |
 | `src/recorded-reads.ts` | read records, and what a record decides for a change |
 | `src/pass-entries.ts` | earlier complete passes, their keys, and which planned tests they cover |

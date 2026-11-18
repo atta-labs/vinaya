@@ -114,7 +114,7 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { dirname, extname, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { affectedNames as attributeNames, type FileDiff, lineDiffRanges } from './changed-names.js'
 import {
   ALL_PREFIX,
@@ -140,7 +140,7 @@ import {
   validateInventory
 } from './inventory.js'
 import { globToRegex, inputCovers, underDeclaredRoot } from './path-pattern.js'
-import { changedLockPackages } from './lockfile-identity.js'
+import { changedLockPackages, readBunLockIdentity } from './lockfile-identity.js'
 import {
   anyDependencyRead,
   DEPENDENCY_PACKAGE_SEPARATOR,
@@ -2364,14 +2364,14 @@ function selectChange(input: SelectTestsInput): ChangePlan {
     scope.tests.push(test)
   }
   const records = input.records ?? null
-  // The inputs whose reads the record keeps per installed package (`bun.lock#zod`), and the parser of their format.
+  // The inputs whose reads the record keeps per installed package (`bun.lock#zod`).
   const dependencyInputs = new Set<string>()
   for (const entry of Object.values(records?.record.tests ?? {}))
     for (const read of entry.reads) {
       const at = read.indexOf(DEPENDENCY_PACKAGE_SEPARATOR)
       if (at > 0) dependencyInputs.add(read.slice(0, at))
     }
-  const lockParser = (policy.parsers ?? {})['bun-lock']
+  const policyLockParser = policy.parsers?.['bun-lock']
   /**
    * A change to a per-package input also reaches the reads of each package whose lockfile entry changed, or of every
    * package when the two sides cannot be compared package by package.
@@ -2380,6 +2380,7 @@ function selectChange(input: SelectTestsInput): ChangePlan {
     if (list === null || dependencyInputs.size === 0) return list
     return list.flatMap((change): PathChange[] => {
       if (!dependencyInputs.has(change.path)) return [change]
+      const lockParser = policyLockParser ?? (basename(change.path) === 'bun.lock' ? readBunLockIdentity : undefined)
       let names: string[] | null = null
       if (change.status === 'modified' && lockParser)
         try {

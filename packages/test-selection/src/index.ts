@@ -60,7 +60,7 @@ export {
   validateInventory,
   validateInventoryView
 } from './inventory.js'
-export { bunLockIdentity, changedLockPackages, lockKeyPackageName } from './lockfile-identity.js'
+export { bunLockIdentity, changedLockPackages, lockKeyPackageName, readBunLockIdentity } from './lockfile-identity.js'
 export {
   DEFAULT_CONFIGURATION,
   type ExecutedValidation,
