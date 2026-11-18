@@ -694,6 +694,24 @@ describe('the shipped recorder', () => {
     expect(written).toEqual(['test-selection-record: the recorder runs on Linux only (strace)\n'])
   })
 
+  it('writes custom usage and flag help on a non-Linux host before validating arguments', async () => {
+    const written: string[] = []
+    const help: string[] = []
+    const usage = 'usage: custom-recorder --out <dir>'
+    const status = await recordCommand(['--shard', 'invalid', '--out', '-h'], {
+      name: 'custom-recorder',
+      platform: 'darwin',
+      usage,
+      write: (text) => written.push(text),
+      writeHelp: (text) => help.push(text)
+    })
+    expect(status).toBe(0)
+    expect(written).toEqual([])
+    expect(help).toHaveLength(1)
+    expect(help[0]).toStartWith(`${usage}\n  --out <dir>`)
+    expect(help[0]).toContain('  --help, -h')
+  })
+
   it('launches a plain runner in the suite’s folder, and confirms the one file by its exit status alone', () => {
     const group: NativeGroup = {
       id: 'web@default',

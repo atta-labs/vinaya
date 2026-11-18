@@ -6,8 +6,9 @@
  * Never imported by the entrypoint.
  *
  * Usage:
- *   test-selection-record --out <dir> [--commit <sha>] [--concurrency <n>] [--shard <i>/<n>] [--only <test,test>] [--expect <test>=<path>] [--summary <file>]
- *   test-selection-record --merge <dir> --out <dir> [--commit <sha>] [--summary <file>]
+ *   test-selection-record --out <dir> [--commit <sha>] [--concurrency <n>] [--shard <i>/<n>] [--only <test,test>] [--expect <test>=<path>] [--summary <file>] [--help]
+ *   test-selection-record --merge <dir> --out <dir> [--commit <sha>] [--summary <file>] [--help]
+ * With `--help` or `-h` it prints help on any platform, without git or strace.
  */
 import { recordCommand } from './recorder.js'
 
