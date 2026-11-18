@@ -18,7 +18,8 @@
     "strict": true,
     "target": "ES2022",
     "paths": {
-      "@attalabs/test-selection": ["../test-selection/src/index.ts"]
+      "@attalabs/test-selection": ["../test-selection/src/index.ts"],
+      "@attalabs/vinaya-log-sdk": ["../log-sdk/src/index.ts"]
     }
   }
 }

@@ -23,6 +23,7 @@ is derived from the folder tree.
 | vinaya-studio | `apps/vinaya-studio` | `apps/vinaya-studio/specs/` | (state tracked globally) |
 | ui | `packages/ui` | `packages/ui/specs/` | (state tracked globally) |
 | cms | `packages/cms` | `packages/cms/specs/` | (state tracked globally) |
+| log-sdk | `packages/log-sdk` | `packages/log-sdk/specs/` | (state tracked globally) |
 
 Each workspace package that is a work surface gets its own row, so a task's
 `Project:` names the package it actually touches rather than the repository

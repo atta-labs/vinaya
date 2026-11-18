@@ -20,3 +20,4 @@ One file per decision, numbered in order; a number is never reused. A record tha
 | [0014](0014-the-kernel-and-the-process-sit-under-harness.md) | The kernel and the process sit under harness | Accepted |
 | [0015](0015-doctrine-lives-in-the-process-and-ships-in-the-package.md) | Doctrine lives in the process and ships in the package | Accepted |
 | [0016](0016-vinaya-web-apps-share-one-ui-package-and-one-cms-package.md) | Vinaya web apps share one UI package and one CMS package | Accepted |
+| [0017](0017-the-log-is-opentelemetry.md) | The Log is OpenTelemetry | Accepted |

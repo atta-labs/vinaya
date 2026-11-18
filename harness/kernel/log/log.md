@@ -329,9 +329,9 @@ This exits `0` and prints the event name and the kind of destination it was reco
 
 ## The storage contract
 
-`harness/kernel/log/store.ts` is the typed storage contract the sink's append, the sender's drain and the sync sources share: one `LogStore` interface — `append`, `readPage`, `acknowledge`, `size` — plus the pure helpers both backends build on (`recordIdentity`, `classifyStoredLine`, `readPageFrom`) and a deterministic in-memory fixture backend (`createFixtureStore`). It is policy-layer pure — no filesystem, no network, no process (`apps/cli/specs/surface.md` "The rule") — so the adversarial fault cases below are provable against the fixture with no I/O.
+`packages/log-sdk/src/contract/store.ts` (re-exported at `harness/kernel/log/store.ts`) is the typed storage contract the sink's append, the sender's drain and the sync sources share: one `LogStore` interface — `append`, `readPage`, `acknowledge`, `size` — plus the pure helpers both backends build on (`recordIdentity`, `classifyStoredLine`, `readPageFrom`) and a deterministic in-memory fixture backend (`createFixtureStore`). It is policy-layer pure — no filesystem, no network, no process (`apps/cli/specs/surface.md` "The rule") — so the adversarial fault cases below are provable against the fixture with no I/O.
 
-<!-- VINAYA:CLAIM: harness/kernel/log/store.ts contains:export interface LogStore -->
+<!-- VINAYA:CLAIM: packages/log-sdk/src/contract/store.ts contains:export interface LogStore -->
 
 - **Stable identity across retry, concurrent append and a lost acknowledgement.** `recordIdentity` reads a `schema: 2` line's `event_id` (generated once per `log()` call), falling back to `${run_id}:${seq}` for a `schema: 1` line — the same pair a stored line is deduplicated on. `append` is idempotent by that identity: re-appending an already-stored batch is a no-op (reported in `AppendOutcome.duplicates`), so a retry after a lost acknowledgement collapses to one record rather than a duplicate.
 - **Acknowledged records alone are removed.** `acknowledge(identities)` removes exactly the identities it is handed — never a positional truncation that could drop a record the forge never confirmed.
