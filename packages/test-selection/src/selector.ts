@@ -115,6 +115,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { affectedNames as attributeNames, type FileDiff, lineDiffRanges } from './changed-names.js'
 import {
   ALL_PREFIX,
@@ -2387,11 +2388,7 @@ function selectChange(input: SelectTestsInput): ChangePlan {
           const before = repo.read(from, change.path)
           const after = repo.read(to, change.path)
           if (before !== null && after !== null)
-            names = changedLockPackages(
-              lockParser(before),
-              lockParser(after),
-              (a, b) => stableJson(a) === stableJson(b)
-            )
+            names = changedLockPackages(lockParser(before), lockParser(after), isDeepStrictEqual)
         } catch {
           names = null
         }

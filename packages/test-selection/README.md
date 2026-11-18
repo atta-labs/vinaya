@@ -102,7 +102,9 @@ Two are provided, each built by the caller and passed in:
 and `memoryRepository({ [revision]: files })` serves in-memory trees. A caller
 with its own storage implements the type itself.
 
-`readBunLockIdentity(text)` reads the text of a `bun.lock` in Node or Bun and
+<!-- VINAYA:CLAIM: packages/test-selection/src/lockfile-identity.ts contains:return bunLockIdentity(JSON.parse(json + text.slice(start))) -->
+<!-- VINAYA:CLAIM: packages/test-selection/src/lockfile-identity.ts contains:throw new Error('bun.lock is not an object') -->
+[`readBunLockIdentity(text)`](src/lockfile-identity.ts) reads the text of a `bun.lock` in Node or Bun and
 returns its dependency identity with local paths normalized. It accepts
 trailing commas and throws on malformed text or a non-object value.
 

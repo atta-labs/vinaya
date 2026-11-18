@@ -130,7 +130,17 @@ describe('selection from recorded dependency reads', () => {
       '{"packages":{},"__proto__":{"mode":2}}'
     ],
     ['a null field was added', '{"packages":{}}', '{"packages":{},"overrides":null}'],
-    ['a null field was removed', '{"packages":{},"overrides":null}', '{"packages":{}}']
+    ['a null field was removed', '{"packages":{},"overrides":null}', '{"packages":{}}'],
+    [
+      'a field changed to an overflowing number',
+      '{"packages":{},"configVersion":null}',
+      '{"packages":{},"configVersion":1e400}'
+    ],
+    [
+      'a nested value changed to an overflowing number',
+      '{"packages":{},"extra":[null]}',
+      '{"packages":{},"extra":[-1e400]}'
+    ]
   ])('selects every package reader when the lockfile is %s', (_case, base, head) => {
     expect(select('bun.lock', base, head).required).toEqual([zod, direct, react])
   })
