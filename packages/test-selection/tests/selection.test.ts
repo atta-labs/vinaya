@@ -793,7 +793,30 @@ describe('workspaceInventory builds one commit’s inventory from its own manife
     ).toEqual(['apps/*', 'packages/*', 'plugins/#local', 'tools/[one],#private'])
   })
 
-  it.each(['catalog:\n  packages: [ignored]', 'packages: other', 'packages: [unclosed'])(
+  it('reads escaped quotes and embedded hashes in both pnpm list shapes', () => {
+    const entries = ["'plugins/team''s#one'", '"plugins/team\\"s#two"', 'plugins/team#three', 'packages/core']
+    const block = ['packages:', ...entries.map((entry) => '  - ' + entry + ' # Member')].join('\n')
+    const inline = 'packages: [' + entries.join(', ') + '] # Members'
+    for (const yaml of [block, inline]) {
+      expect(patternsOf({ 'package.json': '{}', 'pnpm-workspace.yaml': yaml })).toEqual([
+        "plugins/team's#one",
+        'plugins/team"s#two',
+        'plugins/team#three',
+        'packages/core'
+      ])
+    }
+  })
+
+  it('stops reading a pnpm block list at a mapping item', () => {
+    expect(
+      patternsOf({
+        'package.json': '{}',
+        'pnpm-workspace.yaml': 'packages:\n  - packages/core\n  - group: packages/extra\n  - packages/web\n'
+      })
+    ).toEqual(['packages/core'])
+  })
+
+  it.each(['catalog:\n  packages: [ignored]', 'packages: other', 'packages: [unclosed', 'packages:[ignored]'])(
     'keeps manifest patterns for an unsupported pnpm workspace declaration (%s)',
     (yaml) => {
       expect(patternsOf({ 'package.json': '{"workspaces":["apps/*"]}', 'pnpm-workspace.yaml': yaml })).toEqual([

@@ -742,27 +742,46 @@ function deriveEntrypoints(dir: string, pkg: PackageManifest, knownFiles: Set<st
   return out
 }
 
+function workspacePatternScalar(text: string, inline: boolean): { pattern: string; rest: string } | null {
+  if (text.startsWith("'") || text.startsWith('"')) {
+    const quoted = /^(?:'((?:[^']|'')*)'|"((?:[^"\\]|\\.)*)")/.exec(text)
+    if (!quoted) return null
+    const pattern = quoted[1]?.replace(/''/g, "'") ?? (quoted[2] ?? '').replace(/\\(["\\/])/g, '$1')
+    return { pattern, rest: text.slice(quoted[0].length).trimStart() }
+  }
+
+  const scalar = inline ? (/^[^,[\]]*/.exec(text)?.[0] ?? '') : text
+  const comment = /(?:^|\s)#/.exec(scalar)
+  const pattern = scalar.slice(0, comment?.index ?? scalar.length).trimEnd()
+  if (!pattern || /:(?:\s|$)/.test(pattern) || pattern.startsWith('{') || pattern.startsWith('[')) return null
+  return { pattern, rest: comment ? scalar.slice(comment.index).trimStart() : text.slice(scalar.length) }
+}
+
 function pnpmWorkspacePatterns(content: string): string[] {
   const lines = content.split(/\r?\n/)
-  const index = lines.findIndex((line) => line.startsWith('packages:'))
+  const index = lines.findIndex((line) => /^packages:(?:\s|$)/.test(line))
   if (index === -1) return []
   const value = lines[index]?.slice('packages:'.length).trim() ?? ''
 
   const patterns: string[] = []
   if (value.startsWith('[')) {
-    let rest = value.slice(1)
-    while (!/^\s*\]\s*(?:#.*)?$/.test(rest)) {
-      const item = /^\s*(?:'([^']*)'|"([^"]*)"|(?!['"\s])([^#,[\]]+?))\s*(,|(?=\]))/.exec(rest)
+    let rest = value.slice(1).trimStart()
+    while (!/^\]\s*(?:#.*)?$/.test(rest)) {
+      const item = workspacePatternScalar(rest, true)
       if (!item) return []
-      patterns.push(item[1] ?? item[2] ?? item[3] ?? '')
-      rest = rest.slice(item[0].length)
+      patterns.push(item.pattern)
+      if (item.rest.startsWith(']')) rest = item.rest
+      else if (item.rest.startsWith(',')) rest = item.rest.slice(1).trimStart()
+      else return []
     }
   } else if (value === '' || value.startsWith('#')) {
     for (const line of lines.slice(index + 1)) {
       if (/^\s*(?:#.*)?$/.test(line)) continue
-      const item = /^\s*-\s+(?:'([^']*)'|"([^"]*)"|([^'"#\s][^#]*?))\s*(?:#.*)?$/.exec(line)
-      if (!item) break
-      patterns.push(item[1] ?? item[2] ?? item[3] ?? '')
+      const entry = /^\s*-\s+/.exec(line)
+      if (!entry) break
+      const item = workspacePatternScalar(line.slice(entry[0].length), false)
+      if (!item || (item.rest && !item.rest.startsWith('#'))) break
+      patterns.push(item.pattern)
     }
   }
   return patterns
