@@ -137,7 +137,9 @@ trailing commas and throws on malformed text or a non-object value.
   data. A version-1 record, and a version-2 entry lacking any of these facts,
   selects as it always did.
 
-With a read record, `selectTests` compares a modified `bun.lock` package by
+<!-- VINAYA:CLAIM: packages/test-selection/src/selector.ts contains:const lockParser = policyLockParser ?? (basename(change.path) === 'bun.lock' ? readBunLockIdentity : undefined) -->
+<!-- VINAYA:CLAIM: packages/test-selection/src/selector.ts contains:names === null ? [anyDependencyRead(change.path)] -->
+With a read record, [`selectTests`](src/selector.ts) compares a modified `bun.lock` package by
 package by default. It selects the recorded readers of changed packages and
 of the lockfile itself. A `bun-lock` parser in `SelectionPolicy.parsers`
 replaces the built-in reader. Adding or deleting a lockfile, unreadable

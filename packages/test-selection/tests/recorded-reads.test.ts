@@ -123,7 +123,14 @@ describe('selection from recorded dependency reads', () => {
     ['deleted', before, null],
     ['malformed', before, '{"packages":'],
     ['missing packages', before, '{}'],
-    ['overrides changed', before, '{"packages":{},"overrides":{"zod":"4"}}']
+    ['overrides changed', before, '{"packages":{},"overrides":{"zod":"4"}}'],
+    [
+      'an own __proto__ field changed',
+      '{"packages":{},"__proto__":{"mode":1}}',
+      '{"packages":{},"__proto__":{"mode":2}}'
+    ],
+    ['a null field was added', '{"packages":{}}', '{"packages":{},"overrides":null}'],
+    ['a null field was removed', '{"packages":{},"overrides":null}', '{"packages":{}}']
   ])('selects every package reader when the lockfile is %s', (_case, base, head) => {
     expect(select('bun.lock', base, head).required).toEqual([zod, direct, react])
   })
