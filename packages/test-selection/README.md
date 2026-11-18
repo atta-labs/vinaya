@@ -209,13 +209,16 @@ console.log(view.suites.map((suite) => suite.id), leftOut)
 
 It reads every file through `repo`, for exactly `revision`, and nothing else.
 It reads the root manifest's `workspaces` field (an array, or the `packages`
-array of the object form) and expands each pattern. A segment `*` matches one
-folder name. It reads no pnpm workspace file, never expands a `**` pattern
-segment, and skips a member whose manifest has no `name`.
+array of the object form), followed by entries from the root
+`pnpm-workspace.yaml` that the manifest did not list. The YAML file's top-level
+`packages` list can use block entries (indented or flush left) or a bracketed
+list on the same line. Entries can be plain or quoted.
+A segment `*` matches one folder name, a `!` prefix removes matching folders,
+and a `**` segment expands to no folders. Members need a named manifest.
 
 - A suite for each member whose `test` script starts `bun test` or Vitest,
   with that runner, and one for the root package on the same rule from its
-  own `test` script. A root manifest that declares no workspaces gives the
+  own `test` script. A repository with no workspace members gives the
   root suite alone. A suite's id is its package's `name` (`root` for an
   unnamed root).
 - Every test-named file (`*.test.*` or `*.spec.*`) is a test of the suite

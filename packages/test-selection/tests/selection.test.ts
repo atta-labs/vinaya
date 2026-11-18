@@ -10,11 +10,13 @@ import {
   passEntryKey,
   parseHunkRanges,
   plannedTests,
+  readWorkspacePatterns,
   READ_RECORD_SCHEMA,
   type ReadRecord,
   type RecordedTest,
   type RepositoryReader,
   type ResolvedEdge,
+  revisionTree,
   SelectionInputError,
   type SelectionPlan,
   selectTests,
@@ -756,7 +758,92 @@ describe('workspaceInventory builds one commit’s inventory from its own manife
     expect(new Set(asked)).toEqual(new Set(['c1']))
   })
 
-  it('gives a repository with no workspaces field the root suite alone', () => {
+  const patternsOf = (revision: Record<string, string>) => {
+    const repo = memoryRepository({ c1: revision })
+    return readWorkspacePatterns(revisionTree(repo, 'c1', repo.list('c1'), '/workspace'))
+  }
+
+  it('appends pnpm block entries in order without repeating manifest entries', () => {
+    expect(
+      patternsOf({
+        'package.json': '{"workspaces":{"packages":["apps/*","packages/*"]}}',
+        'pnpm-workspace.yaml': [
+          'catalog:',
+          '  packages: [ignored]',
+          'packages: # Members',
+          '- packages/* # Already declared',
+          "  - 'plugins/#local' # Keep the quoted hash",
+          '',
+          '  # More members',
+          '    - "tools/#private"',
+          '- examples/*',
+          'other:',
+          '  - ignored'
+        ].join('\r\n')
+      })
+    ).toEqual(['apps/*', 'packages/*', 'plugins/#local', 'tools/#private', 'examples/*'])
+  })
+
+  it('reads a one-line pnpm list with plain and quoted entries', () => {
+    expect(
+      patternsOf({
+        'package.json': '{"workspaces":["apps/*"]}',
+        'pnpm-workspace.yaml': 'packages: [packages/*, \'plugins/#local\', "tools/[one],#private"] # Members\n'
+      })
+    ).toEqual(['apps/*', 'packages/*', 'plugins/#local', 'tools/[one],#private'])
+  })
+
+  it.each(['catalog:\n  packages: [ignored]', 'packages: other', 'packages: [unclosed'])(
+    'keeps manifest patterns for an unsupported pnpm workspace declaration (%s)',
+    (yaml) => {
+      expect(patternsOf({ 'package.json': '{"workspaces":["apps/*"]}', 'pnpm-workspace.yaml': yaml })).toEqual([
+        'apps/*'
+      ])
+    }
+  )
+
+  it('uses pnpm patterns for suites and cross-package imports', () => {
+    const appTest = 'packages/app/app.test.ts'
+    const source = 'packages/core/src/index.ts'
+    const base = {
+      'package.json': '{"name":"mono"}',
+      'pnpm-workspace.yaml': 'packages: [packages/*, packages/core/plugins/*]',
+      'packages/core/package.json': '{"name":"@mono/core","main":"./src/index.ts","scripts":{"test":"bun test"}}',
+      [source]: 'export const value = 1\n',
+      'packages/core/core.test.ts': 'export {}\n',
+      'packages/app/package.json': '{"name":"app","scripts":{"test":"vitest"}}',
+      [appTest]: "import { value } from '@mono/core'\nexport { value }\n",
+      'packages/core/plugins/extra/package.json': '{"name":"extra","scripts":{"test":"vitest run"}}',
+      'packages/core/plugins/extra/extra.spec.ts': 'export {}\n'
+    }
+    const repo = memoryRepository({ base, head: { ...base, [source]: 'export const value = 2\n' } })
+    const inventory = { base: workspaceInventory(repo, 'base').view, head: workspaceInventory(repo, 'head').view }
+    expect(inventory.head.suites.map((suite) => [suite.id, suite.runner])).toEqual([
+      ['extra', 'vitest'],
+      ['app', 'vitest'],
+      ['@mono/core', 'bun']
+    ])
+    expect(inventory.head.tests.map((test) => [test.id, test.suite])).toEqual([
+      [appTest, 'app'],
+      ['packages/core/core.test.ts', '@mono/core'],
+      ['packages/core/plugins/extra/extra.spec.ts', 'extra']
+    ])
+    const plan = selectTests({ repo, base: 'base', head: 'head', inventory, policy: { depth: 'transitive' } })
+    expect(plan.required.map((test) => test.test)).toEqual([appTest])
+    expect(plan.fallbacks).toEqual([])
+  })
+
+  it('applies pnpm exclusions and skips patterns with a double-star segment', () => {
+    const revision = {
+      ...files,
+      'package.json': '{"name":"mono"}',
+      'pnpm-workspace.yaml': "packages: [packages/*, '!packages/web', tools/**, '!**/test/**']"
+    }
+    const { view } = workspaceInventory(memoryRepository({ c1: revision }), 'c1')
+    expect(view.workspaces).toEqual(['packages/core', 'packages/docs'])
+  })
+
+  it('gives a repository with neither workspace declaration the root suite alone', () => {
     const single = {
       'package.json': '{ "name": "single", "scripts": { "test": "vitest" } }\n',
       'src/a.ts': 'export const a = 1\n',

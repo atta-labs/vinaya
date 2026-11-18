@@ -742,10 +742,36 @@ function deriveEntrypoints(dir: string, pkg: PackageManifest, knownFiles: Set<st
   return out
 }
 
+function pnpmWorkspacePatterns(content: string): string[] {
+  const lines = content.split(/\r?\n/)
+  const index = lines.findIndex((line) => line.startsWith('packages:'))
+  if (index === -1) return []
+  const value = lines[index]?.slice('packages:'.length).trim() ?? ''
+
+  const patterns: string[] = []
+  if (value.startsWith('[')) {
+    let rest = value.slice(1)
+    while (!/^\s*\]\s*(?:#.*)?$/.test(rest)) {
+      const item = /^\s*(?:'([^']*)'|"([^"]*)"|(?!['"\s])([^#,[\]]+?))\s*(,|(?=\]))/.exec(rest)
+      if (!item) return []
+      patterns.push(item[1] ?? item[2] ?? item[3] ?? '')
+      rest = rest.slice(item[0].length)
+    }
+  } else if (value === '' || value.startsWith('#')) {
+    for (const line of lines.slice(index + 1)) {
+      if (/^\s*(?:#.*)?$/.test(line)) continue
+      const item = /^\s*-\s+(?:'([^']*)'|"([^"]*)"|([^'"#\s][^#]*?))\s*(?:#.*)?$/.exec(line)
+      if (!item) break
+      patterns.push(item[1] ?? item[2] ?? item[3] ?? '')
+    }
+  }
+  return patterns
+}
+
 /**
- * The root manifest's `workspaces` entries — the array form, or the `packages`
- * array of the object form — or `null` when the manifest is missing or not
- * JSON.
+ * The root manifest's workspace entries, followed by entries from the
+ * `packages` list in `pnpm-workspace.yaml` that the manifest did not list.
+ * Returns `null` when the root manifest is missing or unreadable as JSON.
  */
 export function readWorkspacePatterns(tree: SourceTree): string[] | null {
   try {
@@ -753,7 +779,9 @@ export function readWorkspacePatterns(tree: SourceTree): string[] | null {
       workspaces?: string[] | { packages?: string[] }
     }
     const declared = Array.isArray(rootPkg.workspaces) ? rootPkg.workspaces : (rootPkg.workspaces?.packages ?? [])
-    return declared.filter((entry): entry is string => typeof entry === 'string')
+    const manifestPatterns = declared.filter((entry): entry is string => typeof entry === 'string')
+    const pnpmPatterns = pnpmWorkspacePatterns(tree.readFile(join(tree.root, 'pnpm-workspace.yaml')) ?? '')
+    return [...manifestPatterns, ...pnpmPatterns.filter((entry) => !manifestPatterns.includes(entry))]
   } catch {
     return null
   }
@@ -771,7 +799,7 @@ function escapeForRegex(text: string): string {
 }
 
 /**
- * Expands workspace patterns to the repository-relative directories they
+ * Expands manifest and pnpm workspace patterns to the repository-relative directories they
  * name, in declaration order and each once: a literal directory (`harness`),
  * a glob in the last segment (`apps/*`) or in any segment
  * (`harness/processes/*`). A `!`-prefixed pattern removes what it matches. A
@@ -818,10 +846,8 @@ export function expandWorkspacePatterns(tree: SourceTree, patterns: readonly str
 
 /**
  * The repository-relative directories of every workspace member with a real,
- * named `package.json`, found from the root manifest's own `workspaces`
- * entries ({@link expandWorkspacePatterns}) — never a fixed list of folders,
- * so a member moved under a new parent (`harness/kernel`,
- * `harness/processes/<name>`) is found the moment the manifest names it.
+ * named `package.json`, found by expanding patterns from the root manifest's
+ * `workspaces` field and the `packages` list of `pnpm-workspace.yaml`.
  */
 export function discoverWorkspaceDirs(tree: SourceTree): string[] {
   const patterns = readWorkspacePatterns(tree)
@@ -837,8 +863,8 @@ export function discoverWorkspaceDirs(tree: SourceTree): string[] {
 }
 
 /**
- * Reads the tree root's `package.json` `workspaces` entries and returns every
- * member with a real `package.json` ({@link discoverWorkspaceDirs}). A member
+ * Returns every workspace member with a real `package.json`
+ * ({@link discoverWorkspaceDirs}). A member
  * nested inside another (`harness/kernel` inside `harness`) owns its own
  * files: they are left out of the enclosing member's `sourceFiles`, so no file
  * belongs to two packages.
