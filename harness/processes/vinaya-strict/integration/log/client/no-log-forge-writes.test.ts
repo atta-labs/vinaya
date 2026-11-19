@@ -109,7 +109,11 @@ describe('no source file posts a log comment or uploads a log artifact (O4)', ()
     // `artifacts.ts` emits exactly one upload: `vinaya-body-checks.yml`'s read
     // job handing the forge snapshot to its two check jobs. The workflow test
     // below holds every generated upload to that one artifact name.
-    const allowlist = new Set(['harness/processes/vinaya-strict/integration/artifacts.ts'])
+    const allowlist = new Set([
+      'harness/processes/vinaya-strict/integration/artifacts.ts',
+      // This workflow uploads the selection read record, not a log.
+      'packages/test-selection/src/setup-command.ts'
+    ])
     const offenders = files
       .filter(([rel, abs]) => !allowlist.has(rel) && readFileSync(abs, 'utf8').includes('actions/upload-artifact'))
       .map(([rel]) => rel)

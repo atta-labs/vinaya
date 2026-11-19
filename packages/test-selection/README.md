@@ -7,7 +7,7 @@ caller has one, a record of what each test actually read.
 
 The package knows no hook, CI job, forge or process. Its library touches git,
 the file system or the network only through the reader its caller passes. The
-exceptions are the two commands, which find the repository they are started
+exceptions are the installed commands, which find the repository they are started
 in through `git`, and the read recorder, which runs and traces its tests. The
 exported search `findReadRecord`, and the `test-selection` command given
 `--fetch-record`, start `gh` and so reach GitHub; nothing else in the library
@@ -680,28 +680,8 @@ versions. It exits 0 when it writes a record or prints help; 2 for a missing
 `strace`, each with one message on standard error; 1 when a merge is refused
 or an `--expect` read is missing.
 
-A GitHub Actions job that records every push to the default branch and keeps
-the record as an artifact named for the commit:
-
-```yaml
-on:
-  push:
-    branches: [main]
-jobs:
-  record-reads:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: sudo apt-get install -y strace
-      - run: npx test-selection-record --out "$RUNNER_TEMP/read-record" --summary "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: read-record-${{ github.sha }}
-          path: ${{ runner.temp }}/read-record/read-record.json
-          retention-days: 60
-```
+Use [`test-selection-setup`](#the-test-selection-setup-command) to generate
+the GitHub Actions workflow that records every push to the default branch.
 
 A selection for a change then downloads the artifact of its base commit and
 passes the parsed record to `selectTests`, or the file to the `test-selection`
@@ -718,6 +698,68 @@ caller with its own inventory, runner launch, run-outcome check, time limit or
 dependency input passes them (`RecorderSetup`), and `recordCommand` is the
 command itself with those injected.
 
+## The `test-selection-setup` command
+
+Run `npx test-selection-setup` from any folder in your git repository. It
+writes `.github/workflows/test-selection-record.yml` at the repository root.
+Commit the generated workflow so GitHub Actions can run it on pushes to
+the chosen branch. Setup uses local git and files and starts no tests.
+
+- `--branch <name>` chooses the branch to record. By default the command
+  reads the local `origin/HEAD` ref and asks for the flag if the ref is missing.
+- `--package-manager <bun|npm|pnpm|yarn>` chooses how the workflow installs
+  dependencies and starts the recorder. By default the command looks for
+  `bun.lock` or `bun.lockb`, `package-lock.json`, `pnpm-lock.yaml`, or `yarn.lock`
+  at the repository root. Pass the flag if no lockfile exists or the
+  lockfiles belong to more than one package manager.
+- `--help` or `-h` prints usage and flags on standard output.
+
+The command exits `0` and prints the repository-relative path when it writes
+the file. A byte-for-byte match prints that the file is unchanged and also
+exits `0`, as does help. A refusal exits `2` with one message on standard
+error. If the file already has different content, setup leaves it intact.
+Setup refuses symbolic links at `.github`, `.github/workflows`, or the
+workflow file itself.
+To take the workflow from a later package version, delete the file and
+run setup again.
+
+For Bun and the branch `main`, setup writes:
+
+```yaml
+on:
+  push:
+    branches: ['main']
+permissions:
+  contents: read
+jobs:
+  record-reads:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: sudo apt-get install -y strace
+      - run: npx test-selection-record --out "$RUNNER_TEMP/read-record" --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: read-record-${{ github.sha }}
+          path: ${{ runner.temp }}/read-record/read-record.json
+          retention-days: 60
+```
+
+| Package manager | Install steps | Recorder invocation |
+|---|---|---|
+| npm | `npm ci` | `npx test-selection-record` |
+| pnpm | `corepack enable`, then `pnpm install --frozen-lockfile` | `pnpm exec test-selection-record` |
+| Yarn | `corepack enable`, then `yarn install --immutable` with `.yarnrc.yml` at the repository root or `yarn install --frozen-lockfile` otherwise | `yarn run test-selection-record` |
+
+The npm, pnpm and Yarn variants are verified by their generated text until
+a repository runs them in GitHub Actions.
 
 ## Files
 
@@ -732,6 +774,7 @@ command itself with those injected.
 | `src/consumer-config.ts` | the command's consumer config: its validation, and its declared inputs as edges |
 | `src/record-fetch.ts` | the search for a read record: kept copies, and `gh` for a commit's recording run |
 | `src/record-command.ts` | the `test-selection-record` command, never imported by the entrypoint |
+| `src/setup-command.ts` | the `test-selection-setup` command, never imported by the entrypoint |
 | `src/recorder.ts` | the read recorder: traced runs, the record entry each builds, shards and their merge |
 | `src/listing-probe.ts` | the listing probe a recorded Bun run preloads, never imported by the entrypoint |
 | `src/listing-probe-paths.ts` | the probe's log variable and path helpers |
