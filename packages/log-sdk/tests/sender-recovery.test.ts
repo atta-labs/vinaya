@@ -45,9 +45,9 @@ test.each(['before', 'during', 'after'])('recovers after a sender is killed %s a
       `import { writeSync } from 'node:fs';
        import { sendLocalCopy } from ${JSON.stringify(moduleUrl)};
        const phase = ${JSON.stringify(phase)};
-       if (phase === 'before') process.kill(process.pid, 'SIGKILL');
        let requests = 0;
        await sendLocalCopy({ ...${JSON.stringify(options)}, fetch: async (_url, init) => {
+         if (phase === 'before') process.kill(process.pid, 'SIGKILL');
          if (phase === 'after' && requests++ > 0) process.kill(process.pid, 'SIGKILL');
          writeSync(1, init.body + '\\n');
          if (phase === 'during') process.kill(process.pid, 'SIGKILL');

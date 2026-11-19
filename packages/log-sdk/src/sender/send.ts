@@ -260,6 +260,9 @@ export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<Loca
         await lost(name, writer)
       }
     }
+    // The writer (local-copy/file-exporters.ts) numbers one run's files per writer from 0 with one
+    // counter shared by both signals, advanced only after a file is created, so a missing index
+    // below the highest one seen is a file that was removed.
     for (const [prefix, positions] of writers) {
       let expected = 0
       for (const index of [...positions].sort((a, b) => a - b)) {
