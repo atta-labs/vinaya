@@ -14,7 +14,6 @@ type Mapping = {
   attributes: Fields
   durationMs?: number
   usage?: Usage
-  attempt?: { effectId: string; alternateKey: string }
   repeatable?: true
 }
 
@@ -220,12 +219,6 @@ export function mapEarlierEvent(event: LogEvent): Mapping {
             })
       if (event.event !== 'dispatch_failed' && event.usage !== null) {
         result.usage = { effectId: event.effect_id, ...event.usage }
-      }
-      if (event.kind === 'role_attempt') {
-        result.attempt = {
-          effectId: event.effect_id,
-          alternateKey: `attempt:${event.effect_id}:${recordIdentity(event)}`
-        }
       }
       return result
     }

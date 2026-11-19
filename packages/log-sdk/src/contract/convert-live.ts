@@ -112,7 +112,7 @@ function startOfDuration(end: bigint, durationMs = 0): bigint {
 export function createEarlierConversionState(runId: string, seeds: readonly EarlierOpenStart[], home: string) {
   const traceId = traceIdFor(runId)
   const open = new Map<string, OpenStart>(seeds.map((seed) => [seed.spanKey, { ...seed }]))
-  const usageGiven = new Set<string>()
+  const writtenEffects = new Set<string>()
 
   return {
     accept(event: LogEvent): { converted: ConvertedEarlierRecord; pairedStart?: StartedRecord } {
@@ -141,13 +141,20 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
           if (open.has(mapping.key)) key = mapping.key
         }
       }
-      let parent = mapping.parent
-      if (mapping.attempt && (open.has(`span:${spanIdFor(runId, key)}`) || usageGiven.has(mapping.attempt.effectId))) {
-        parent = key
-        key = mapping.attempt.alternateKey
-      }
       const spanId = spanIdFor(runId, key)
-      const openKey = event.kind === 'dispatch' ? `span:${spanId}` : key
+      const agent = event.kind === 'dispatch' || event.kind === 'role_attempt'
+      const openKey = agent ? `span:${spanId}` : key
+      const laterAgentRecord = agent && !started && writtenEffects.has(event.effect_id)
+      if (agent && !started) writtenEffects.add(event.effect_id)
+      const roundSuffix = mapping.parent?.replace(/^run(?=:)/, '')
+      const parent = agent
+        ? [...open.keys()].find(
+            (candidate) =>
+              roundSuffix?.startsWith(':round:') && candidate.startsWith('loop:') && candidate.endsWith(roundSuffix)
+          )
+        : mapping.parent !== undefined && open.has(mapping.parent)
+          ? mapping.parent
+          : undefined
       const resource = {
         attributes: attributesOf(
           {
@@ -168,8 +175,7 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
       const workRef = task == null ? ('work' in meta ? (meta.work.ref ?? undefined) : undefined) : String(task)
       const usage = mapping.usage
       const tokenAttributes: Fields = {}
-      if (usage !== undefined && !usageGiven.has(usage.effectId)) {
-        usageGiven.add(usage.effectId)
+      if (usage !== undefined && !laterAgentRecord) {
         tokenAttributes[A.usageInputTokens] = usage.input
         tokenAttributes[A.usageOutputTokens] = usage.output
       }
@@ -190,16 +196,17 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
         { key: A.eventId, value: { stringValue: identity } },
         {
           key: A.writerId,
-          value: { stringValue: EARLIER_WRITER_PREFIX + ('process_id' in meta ? meta.process_id : runId) }
+          value: { stringValue: EARLIER_WRITER_PREFIX + ('process_id' in meta ? redact(meta.process_id, home) : runId) }
         }
       )
       if (mapping.repeatable) attributes.push({ key: A.questionKey, value: { stringValue: key } })
       if (started) attributes.push({ key: A.spanKey, value: { stringValue: openKey } })
-      if (mapping.mode === 'event' || started) {
+      if (mapping.mode === 'event' || started || laterAgentRecord) {
+        const eventName = laterAgentRecord ? `${EARLIER_EVENT_PREFIX}${event.kind}.${event.event}` : mapping.name
         const converted: StartedRecord = {
           type: 'log',
           resource,
-          record: { eventName: mapping.name, traceId, spanId, timeUnixNano, attributes, flags: 1 }
+          record: { eventName, traceId, spanId, timeUnixNano, attributes, flags: 1 }
         }
         if (started && !open.has(openKey)) {
           open.set(openKey, { spanKey: openKey, startTimeUnixNano: timeUnixNano, started: converted })
@@ -207,7 +214,7 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
         return { converted }
       }
 
-      const start = mapping.mode === 'end' ? open.get(openKey) : undefined
+      const start = mapping.mode === 'end' || agent ? open.get(openKey) : undefined
       if (start !== undefined) open.delete(openKey)
       const pairedStart = start?.started
       const converted: ConvertedEarlierRecord = {

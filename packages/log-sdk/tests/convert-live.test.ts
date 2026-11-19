@@ -75,7 +75,7 @@ test('keeps exact IDs and uses an opaque dispatch seed key without exporting the
     ...start.meta,
     schema: 4,
     process_id: opaque,
-    event_id: opaque,
+    event_id: 'event-exact',
     actor_id: null,
     lineage: { run: null, attempt: null, parent: null },
     input_versions: { objectives_version: null, brief_hash: null, ruling_ordinal: null, policy_digest: null },
@@ -93,8 +93,8 @@ test('keeps exact IDs and uses an opaque dispatch seed key without exporting the
   const key = `span:${spanIdFor(runId, `agent:${opaque}`)}`
   for (const [attribute, value] of [
     [A.spanKey, key],
-    [A.eventId, opaque],
-    [A.writerId, `earlier:${opaque}`],
+    [A.eventId, 'event-exact'],
+    [A.writerId, 'earlier:<redacted>'],
     [A.workRef, '412']
   ] as const)
     expect(raised.record.attributes).toContainEqual({ key: attribute, value: { stringValue: value } })
@@ -105,6 +105,7 @@ test('keeps exact IDs and uses an opaque dispatch seed key without exporting the
   if (completed.type !== 'span') throw new Error('Expected a dispatch span')
   expect(completed.record.startTimeUnixNano).toBe(raised.record.timeUnixNano)
   expect(completed.record.spanId).toBe(raised.record.spanId)
+  expect(JSON.stringify([raised, completed])).not.toContain(opaque)
 })
 
 test('matches out-of-order hand-off resolutions to the recorded reason', () => {
@@ -137,17 +138,17 @@ test('matches out-of-order hand-off resolutions to the recorded reason', () => {
   }
 })
 
-test('failures leave token accounting to the role attempt and reserved custom names stay reported', () => {
+test('a failure claims its agent span and a subsequent role attempt stays an earlier event', () => {
   const failure = fixtures.find((event) => event.event === 'dispatch_failed')!
   const attempt = fixtures.find((event) => event.kind === 'role_attempt')!
   const custom = fixtures.find((event) => event.kind === 'custom')!
   const live = createLiveEarlierConverter(runId)
   const failed = live.convert(LogEventSchema.parse({ ...failure, effect_id: 'e1', usage: { input: 7, output: 8 } }))
   expect(failed.record.attributes.some((attr) => attr.key === A.usageInputTokens)).toBe(false)
-  expect(live.convert(attempt).record.attributes).toContainEqual({
-    key: A.usageInputTokens,
-    value: { intValue: '100' }
-  })
+  const later = live.convert(attempt)
+  expect(failed.type).toBe('span')
+  if (later.type !== 'log') throw new Error('Expected a later role attempt log')
+  expect(later.record.eventName).toBe('vinaya.earlier.role_attempt.attempted')
   const reported = live.convert(LogEventSchema.parse({ ...custom, name: E.runStarted }))
   if (reported.type !== 'log') throw new Error('Expected a custom log record')
   expect(reported.record.eventName).toBe('vinaya.earlier.custom.recorded')
@@ -226,4 +227,16 @@ test('earlier finding metadata survives without finding descriptions', () => {
     expect(encoded).toContain('F1')
     expect(encoded).toContain('BLOCKER')
   }
+})
+
+test('a dispatch links to the round span the converter actually emits', () => {
+  const start = fixtures.find((event) => event.event === 'round_started')!
+  const end = fixtures.find((event) => event.event === 'round_ended')!
+  const dispatch = fixtures.find((event) => event.event === 'outcome_received')!
+  const { traces } = convertEarlierEvents([start, dispatch, end])
+  const spans = traces.resourceSpans.flatMap((group) => group.scopeSpans.flatMap((scope) => scope.spans))
+  const agent = spans.find((span) => span.name === 'invoke_agent')
+  const round = spans.find((span) => span.name === 'vinaya.round')
+  expect(round?.spanId).toBeDefined()
+  expect(agent?.parentSpanId).toBe(round?.spanId)
 })
