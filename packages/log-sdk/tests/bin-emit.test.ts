@@ -1,6 +1,17 @@
 import { expect, test } from 'bun:test'
 import { fixture } from './bin-fixture.js'
 
+test('emit accepts the harness argument form and reports the configured server', () => {
+  const repo = fixture({ url: 'https://example.invalid/logs', events: { 'acme.deploy': { fields: {} } } })
+  try {
+    const result = repo.call(['emit', 'acme.deploy', '--json', '{}'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.toString()).toBe('vinaya log emit: recorded acme.deploy → server\n')
+  } finally {
+    repo.clean()
+  }
+})
+
 test('emit records a declaration and reports usage errors and field-only refusals', async () => {
   const repo = fixture({ events: { 'acme.deploy': { fields: { count: 'number' } } } })
   try {

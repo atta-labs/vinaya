@@ -53,7 +53,7 @@ function terminalLine(text: string): string {
 }
 
 function runReader(folder: string, runId: string): Reader {
-  return createReader(createFolderSource({ folder, runId, canonicalFolder: true }), { position: '{}' })
+  return createReader(createFolderSource({ folder, runId, canonicalFolder: true }), { firstSequence: 1 })
 }
 
 export async function follow(folder: string, selection: { run?: string; task?: string }): Promise<void> {

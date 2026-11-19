@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { checkCustomEvent } from '../contract/custom.js'
@@ -65,7 +66,7 @@ export async function main(argv: string[]): Promise<number> {
     return 0
   }
 
-  if (!commands.has(command) || runId === undefined) return usage(command)
+  if (!commands.has(command) || (runId === undefined && command !== 'emit')) return usage(command)
   const parsed = await readFields(command === 'emit' ? args : [command, ...args], stdin)
   if (!parsed.ok) return usage(command, parsed.message)
 
@@ -86,17 +87,17 @@ export async function main(argv: string[]): Promise<number> {
   const workRef = task ?? (process.env.VINAYA_WORK_REF || undefined)
   const handle = connect({
     ...location,
-    runId,
+    runId: runId ?? (process.env.VINAYA_RUN_ID || randomUUID()),
     ...(workRef === undefined ? {} : { workRef }),
     onError: () => {
       failed = true
     }
   })
   try {
-    const folder = await localFolder(settings, repoRoot, repository)
     if (checked?.ok) {
       handle.custom.recorded(checked.name, checked.fields)
     } else {
+      const folder = await localFolder(settings, repoRoot, repository)
       await invoke(command, handle, parsed.fields, folder)
     }
   } catch (error) {
@@ -109,7 +110,10 @@ export async function main(argv: string[]): Promise<number> {
     console.error('vinaya-log: could not record')
     return 1
   }
-  if (checked?.ok) console.log('vinaya log emit: recorded %s → %s', checked.name, handle.enabled ? 'folder' : 'none')
+  if (checked?.ok) {
+    const destination = !handle.enabled ? 'none' : settings.logs && settings.logs.url ? 'server' : 'folder'
+    console.log('vinaya log emit: recorded %s → %s', checked.name, destination)
+  }
   return 0
 }
 

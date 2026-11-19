@@ -1,5 +1,5 @@
 import { constants } from 'node:fs'
-import { open, readdir, realpath } from 'node:fs/promises'
+import { lstat, open, readdir, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createLineReader } from './lines.js'
 import type { OtelRecord } from './records.js'
@@ -68,11 +68,15 @@ type Segment = { writer: string; index: number; file: string }
 async function bytesFrom(path: string, offset: number): Promise<{ bytes: Buffer; size: number }> {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
   try {
-    const stat = await handle.stat()
-    if (!stat.isFile() || stat.nlink !== 1 || (await realpath(path)) !== path) {
+    const stat = await handle.stat({ bigint: true })
+    if (!stat.isFile() || stat.nlink !== 1n || (await realpath(path)) !== path) {
       throw new Error('Unsafe local Log segment')
     }
-    const size = stat.size
+    const entry = await lstat(path, { bigint: true })
+    if (entry.dev !== stat.dev || entry.ino !== stat.ino || (await realpath(path)) !== path) {
+      throw new Error('Local Log segment changed while opening')
+    }
+    const size = Number(stat.size)
     if (size <= offset) return { bytes: Buffer.alloc(0), size }
     const bytes = Buffer.alloc(size - offset)
     let filled = 0

@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
-import { readdirSync, renameSync, symlinkSync } from 'node:fs'
+import { readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { ATTRIBUTE_NAMES as A } from '../src/contract/catalogue.js'
 import { narrate } from '../src/narration/narrate.js'
 import { fixture } from './bin-fixture.js'
 
@@ -13,7 +14,16 @@ test('follow narrates local records and gaps even with a server destination conf
     const { records } = await repo.read()
     const line = narrate(records[0])?.text
     expect(line).toContain('Custom-reviewer')
-    renameSync(join(repo.folder, file), join(repo.folder, file.replace('000000000000', '000000000001')))
+    const path = join(repo.folder, file)
+    const document = JSON.parse(readFileSync(path, 'utf8'))
+    const attrs = document.resourceLogs[0].scopeLogs[0].logRecords[0].attributes as Array<{
+      key: string
+      value: { intValue: string }
+    }>
+    const sequence = attrs.find((attr) => attr.key === A.seq)
+    if (!sequence) throw new Error('missing writer sequence')
+    sequence.value.intValue = '2'
+    writeFileSync(path, JSON.stringify(document) + '\n')
     const child = repo.follow(['--run', 'test-run'])
     const reader = child.stdout.getReader()
     try {
@@ -23,7 +33,7 @@ test('follow narrates local records and gaps even with a server destination conf
       const expired = new Promise<never>((_, reject) =>
         deadline.addEventListener('abort', () => reject(new Error('follow did not print')), { once: true })
       )
-      while (!output.includes('Log gap') || !output.includes(line ?? 'missing narration')) {
+      while (!output.includes('sequence 1') || !output.includes(line ?? 'missing narration')) {
         const chunk = await Promise.race([reader.read(), expired])
         if (chunk.done) throw new Error('follow exited early')
         output += decoder.decode(chunk.value, { stream: true })

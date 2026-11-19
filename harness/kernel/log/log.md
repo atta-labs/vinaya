@@ -292,8 +292,10 @@ Loops using the Log SDK can record without Vinaya:
 vinaya-log emit acme.deploy --run deploy-42 --json '{"env":"prod","count":1,"note":"done","ok":true}'
 ```
 
-The SDK reports `folder` for the run's local copy or `none` when recording
-is disabled. Both commands read the JSON through the same argument reader.
+With no `--run`, the SDK uses `VINAYA_RUN_ID` or generates a run ID. The SDK
+writes to the run's local copy and reports the configured destination kind
+(`server` for `logs.url`, `folder` by default, or `none` when disabled).
+Both commands read the JSON through the same argument reader.
 `bun apps/cli/src/index.ts log emit` uses the harness sink and reports its
 configured destination.
 
