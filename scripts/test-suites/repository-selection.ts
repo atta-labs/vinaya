@@ -10,8 +10,7 @@
  * comparison base, the head, the record and the platform differ between them,
  * and each comes from here.
  *
- * The facts it supplies, each read from the head commit's own committed files
- * — never from the checkout this runs in:
+ * The facts it supplies include committed policy and the checkout's install layout:
  *
  * - the inventory views, built by `inventory-check.ts` for each commit from
  *   that commit's declarations;
@@ -32,7 +31,7 @@
  *   bun scripts/test-suites/repository-selection.ts --base <rev> --head <rev> [--record <file>]
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, posix } from 'node:path'
 import {
@@ -254,10 +253,15 @@ export function fileLevelLists(repoRoot: string, head: string): NonNullable<Sele
   return { realSandbox: keys('real-sandbox'), outsideCall: keys('outside-call') }
 }
 
-/** This repository's selection policy, read from the head commit: the same for every caller. */
+/** This repository's selection policy comes from the head commit, except the install layout, which comes from the checkout. */
 export function repositoryPolicy(repoRoot: string, head: string, view: InventoryView): SelectionPolicy {
+  const modules = join(repoRoot, 'node_modules')
+  const hoisted =
+    statSync(modules, { throwIfNoEntry: false })?.isDirectory() &&
+    !statSync(join(modules, '.bun'), { throwIfNoEntry: false })?.isDirectory()
   return {
     depth: 'one',
+    ...(hoisted ? { installLayout: 'hoisted' as const } : {}),
     scanners: scannerDeclarations(repoRoot, head),
     spawnPrograms: [
       { binary: CLI_SPAWN_BINARY, entrypoint: DEFAULT_CLI_ENTRYPOINT },

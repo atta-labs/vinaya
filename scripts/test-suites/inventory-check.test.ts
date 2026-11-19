@@ -13,7 +13,7 @@
  */
 import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { parse } from 'yaml'
@@ -522,6 +522,12 @@ describe('the lockfile is read as its dependency identity, so a path move alone 
 
   test('the selection policy carries the one bun-lock parser the inventory wrapper uses', () => {
     expect(policy.parsers?.['bun-lock']).toBe(bunLockParser)
+    const modules = join(REPO_ROOT, 'node_modules')
+    const hoisted =
+      statSync(modules, { throwIfNoEntry: false })?.isDirectory() &&
+      !statSync(join(modules, '.bun'), { throwIfNoEntry: false })?.isDirectory()
+    if (hoisted) expect(policy.installLayout).toBe('hoisted')
+    else expect(policy).not.toHaveProperty('installLayout')
   })
 
   for (const { move, before, after } of moves)
