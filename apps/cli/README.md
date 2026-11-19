@@ -271,7 +271,9 @@ The generated review-authority workflows run only default-branch code: the requi
 
 ## Changeset coverage
 
-The `changeset-coverage` core check couples a diff touching a published package's shipped files to a `.changeset/*.md` entry in the same diff — for each member of `.changeset/config.json`'s `fixed` group, a changed path counts as shipped iff it falls under that member's own `package.json` `files` allowlist, read live from every workspace member's own manifest, never a hardcoded path list. The Changesets-release branch itself is exempt by construction. Report-only (`scope: diff`, ring 0): findings print at `warning` severity and the check's own exit code always stays `0`, so installing it cannot newly redden an existing repo's CI. Dormant when the repo carries no `.changeset/config.json`, or none of its `fixed`-group members resolve.
+The `changeset-coverage` core check requires a `.changeset/*.md` entry when a diff touches a shipped file of a member of a `.changeset/config.json` `fixed` group. It reads each member's shipped-file allowlist from its `package.json` `files` field.
+
+The check also refuses added or edited changesets naming packages covered by the Changesets `ignore` list, even when the diff touches no shipped files. It matches exact names and `*` patterns and skips entries starting with `!`. Remove ignored package entries from the frontmatter. An empty changeset passes, as does deleting a changeset when no entry is required. Findings fail the check with an error. The Changesets release branch is exempt, and the ignored-package rule is dormant without an `ignore` list or config file.
 
 ## Quoted-command staleness
 
