@@ -553,7 +553,15 @@ Logs never reach a tracker or a code host, in any form — not as an Issue or pu
 
 The `<!-- vinaya:log:… -->` marker convention, the `FORGE_COMMENT_MAX_CHARS` chunk limit, and any test of the removed commands do not exist. The schema keeps every `forge_write` operation (`validated`/`refused`/`written`) so an already-posted comment line still parses — reading old evidence is still supported, only writing new evidence is not — but no producer emits them any more; `harness/processes/vinaya-strict/integration/log/client/log-callers.test.ts`'s producer-coverage table carries them as an explicit exemption, the same `LOG_COVERAGE_EXEMPTIONS` shape already used for any declared pair with no real caller.
 
-**The webhook drain is the only sender.** `drainOutboxToWebhook` (`harness/kernel/log/client/log-webhook-drain.ts`) has one caller, the live `logs.url` server destination's own per-event drain (below). There is no one-shot posting mode and no "flush" concept: the name says drain.
+**Delivery to the Log server.** Live delivery and `vinaya-log-send` use `drainOutboxToWebhook` (`harness/kernel/log/client/log-webhook-drain.ts`) for the `logs.url` destination.
+
+## Sending the SDK's OpenTelemetry local copy
+
+`vinaya log send` first drains any configured Log server backlog, then posts the SDK's completed JSON lines to the independent `logs.otlp.url` over OTLP/HTTP. It adds `/v1/traces` or `/v1/logs` to the base path and keeps the query string. Optional `logs.otlp.headers` values accept environment references such as `${TOKEN}`. An interactive command reads its working tree's address. Unattended commands and CI read the default branch, and CI requires every referenced header credential.
+
+The sender reads the repository subdirectory under `logs.folder` or `<runtimeDir>/logs`. It posts one complete line per request, with a 30-second request timeout. A 2xx records delivery in an atomic receipt beside the source files. A crash or overlapping sends can produce duplicates, which the receiver can collapse by trace and span ID or `vinaya.event.id`. Receipts track each line independently, so deleting acknowledged segments leaves newer segments eligible for delivery. Keep source files containing pending lines until delivery or rejection.
+
+Invalid JSON and individual refusals with other 4xx statuses are recorded in `.otlp-delivery` alongside their source line and a reason. Connection failures, 5xx, 401, 403, 404, 408 and 429 remain eligible for a later send. A final line without its newline waits for the writer to finish. The sender leaves the original files intact. Text and JSON reports include the OpenTelemetry outcome or the reason no address resolved. The command exits 1 when a delivery fails or when neither destination resolves.
 
 ## CI delivery: a server or nothing
 

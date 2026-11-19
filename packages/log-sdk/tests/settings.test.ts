@@ -25,6 +25,18 @@ const settingsOf = (repoRoot: string, passed = {}) => {
   return r.settings
 }
 
+test('reads the optional OTLP address independently of the live destination', () => {
+  const otlp = { url: 'https://collector.example', headers: { authorization: 'Bearer ${TOKEN}' } }
+  for (const filename of ['log.config.json', 'vinaya.config.json']) {
+    for (const destination of [{}, { folder: '/logs' }, { url: 'https://legacy.example' }]) {
+      const logs = { ...destination, otlp }
+      expect(settingsOf(root({ [filename]: { logs } })).logs).toEqual(logs)
+    }
+  }
+  const invalid = root({ 'log.config.json': { logs: { otlp: { headers: otlp.headers } } } })
+  expect(resolveSettings({ repoRoot: invalid })).toMatchObject({ ok: false })
+})
+
 test('passed values win, then log.config.json, then vinaya.config.json', () => {
   const dir = root({
     'vinaya.config.json': { logs: { url: 'https://v.example' }, runtimeDir: '/v' }

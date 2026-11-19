@@ -18,6 +18,16 @@ const logsObject = z
   .object({
     folder: absolutePath('logs.folder').optional(),
     url: z.string().url().optional(),
+    otlp: z
+      .object({
+        url: z
+          .string()
+          .url()
+          .regex(/^https?:\/\//i),
+        headers: z.record(z.string()).optional()
+      })
+      .strict()
+      .optional(),
     headers: z.record(z.string()).optional(),
     readHeaders: z.record(z.string()).optional(),
     events: z.unknown().optional()

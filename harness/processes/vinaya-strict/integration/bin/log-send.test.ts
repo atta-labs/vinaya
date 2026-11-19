@@ -8,14 +8,13 @@
  * (a module-level constant frozen at first import from `homedir()`), so a
  * scratch `$HOME` is the only way its reads and writes land somewhere the test
  * controls — the identical discipline `log-webhook-drain.test.ts` documents.
- * The child's own drain POSTs back to this process's `Bun.serve`, so the launch
- * is async (a synchronous spawn on Bun 1.4.2 would block the one thread that
- * server's handler needs).
+ * The child replaces fetch with a fake receiver that records each request
+ * body in its scratch directory.
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture'
@@ -68,17 +67,7 @@ function runIdsOf(body: string): string[] {
     .map((l) => (JSON.parse(l) as { meta: { run_id: string } }).meta.run_id)
 }
 
-function startWebhookServer(status = 200): { url: string; requests: string[]; stop: () => void } {
-  const requests: string[] = []
-  const server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      requests.push(await req.text())
-      return new Response(status === 200 ? 'ok' : 'error', { status })
-    }
-  })
-  return { url: `http://127.0.0.1:${server.port}/ingest`, requests, stop: () => server.stop() }
-}
+const legacyUrl = 'https://legacy.example/ingest'
 
 function folderFile(home: string, issue: number | null): string {
   return join(home, '.vinaya', 'runtime', OWNER_REPO_DIR, 'logs', OWNER_REPO_DIR, `${issue ?? 'none'}.ndjson`)
@@ -99,15 +88,25 @@ type SendJson = {
   tasks?: Array<{ issue: number | null; moved: number; delivered: number }>
 }
 
-async function runSend(cwd: string, home: string): Promise<{ status: number; json: SendJson; stdout: string }> {
+async function runSend(cwd: string, home: string) {
   const script = join(cwd, 'run-log-send.ts')
+  const requestsFile = join(home, 'legacy-requests')
+  writeFileSync(requestsFile, '')
   writeFileSync(
     script,
-    `import { logSendCommand } from ${JSON.stringify(COMMAND_PATH)}\nawait logSendCommand(['--json'])\n`
+    `import { appendFileSync } from 'node:fs'
+import { logSendCommand } from ${JSON.stringify(COMMAND_PATH)}
+globalThis.fetch = async (url, init) => {
+  if (String(url) !== ${JSON.stringify(legacyUrl)}) throw new Error('unexpected destination')
+  appendFileSync(${JSON.stringify(requestsFile)}, JSON.stringify(init.body) + '\\n')
+  return new Response('ok')
+}
+await logSendCommand(['--json'])
+`
   )
   const { status, stdout, stderr } = await spawnBudgetedAsync(
     ['bun', script],
-    { cwd, env: { ...stripVinayaEnv(), HOME: home } },
+    { cwd, env: { ...stripVinayaEnv(), HOME: home, CI: '', GITHUB_ACTIONS: '' } },
     20000,
     'log-send'
   )
@@ -117,7 +116,11 @@ async function runSend(cwd: string, home: string): Promise<{ status: number; jso
   } catch {
     throw new Error(`log send did not print JSON\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`)
   }
-  return { status, json, stdout }
+  const requests = readFileSync(requestsFile, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as string)
+  return { status, json, requests }
 }
 
 describe('vinaya log send — delivers a repository’s local events to the configured server (O4, #832)', () => {
@@ -126,8 +129,7 @@ describe('vinaya log send — delivers a repository’s local events to the conf
     initGitRepo(cwd)
     writeFileSync(join(cwd, 'vinaya.config.json'), '')
     const home = tempDir('log-send-home-')
-    const server = startWebhookServer(200)
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logs: { url: server.url } }))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logs: { url: legacyUrl } }))
 
     // Folder events for task 804 (the fallback wrote them there), plus a stale
     // outbox draining file for task 810 a dead drain left behind (O3, via send).
@@ -135,34 +137,29 @@ describe('vinaya log send — delivers a repository’s local events to the conf
     seed(outboxSibling(home, 810, '.draining.ndjson'), [ndjsonLine('stranded-1', 810)])
 
     const first = await runSend(cwd, home)
-    server.stop()
 
     expect(first.status).toBe(0)
     expect(first.json.sent).toBe(true)
     expect(first.json.totals?.delivered).toBe(3)
     // Every event reached the server, and nothing is left on local disk.
-    const delivered = server.requests.flatMap(runIdsOf).sort()
+    const delivered = first.requests.flatMap(runIdsOf).sort()
     expect(delivered).toEqual(['folder-1', 'folder-2', 'stranded-1'])
     expect(existsSync(folderFile(home, 804))).toBe(false)
     expect(existsSync(outboxSibling(home, 810, '.draining.ndjson'))).toBe(false)
 
     // Idempotent: a second run finds nothing to send and contacts no server.
-    const server2 = startWebhookServer(200)
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logs: { url: server2.url } }))
     const second = await runSend(cwd, home)
-    server2.stop()
 
     expect(second.status).toBe(0)
     expect(second.json.totals?.delivered).toBe(0)
-    expect(server2.requests).toHaveLength(0)
+    expect(second.requests).toHaveLength(0)
   }, 30000)
 
   it('delivers the named unattributed streams (the CLI’s operation events, a check run’s gate events) as unattributed, beside none.ndjson', async () => {
     const cwd = tempDir('log-send-cwd-')
     initGitRepo(cwd)
     const home = tempDir('log-send-home-')
-    const server = startWebhookServer(200)
-    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logs: { url: server.url } }))
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logs: { url: legacyUrl } }))
     const folder = dirname(folderFile(home, null))
     const stream = join(folder, 'none-cli-operations.ndjson')
     seed(stream, [ndjsonLine('cli-1', null)])
@@ -173,10 +170,9 @@ describe('vinaya log send — delivers a repository’s local events to the conf
     seed(join(folder, 'none-X.ndjson'), [ndjsonLine('not-a-stream', null)])
 
     const result = await runSend(cwd, home)
-    server.stop()
 
     expect(result.status).toBe(0)
-    expect(server.requests.flatMap(runIdsOf).sort()).toEqual(['cli-0', 'cli-1', 'gate-1', 'shared-1'])
+    expect(result.requests.flatMap(runIdsOf).sort()).toEqual(['cli-0', 'cli-1', 'gate-1', 'shared-1'])
     expect(existsSync(join(folder, 'none-gates.ndjson'))).toBe(false)
     expect(result.json.tasks?.every((t) => t.issue === null)).toBe(true)
     expect(existsSync(stream)).toBe(false)
@@ -197,7 +193,75 @@ describe('vinaya log send — delivers a repository’s local events to the conf
     expect(result.status).toBe(1)
     expect(result.json.sent).toBe(false)
     expect(result.json.reason).toContain('no server destination')
+    expect(result.json).toMatchObject({ otlp: { reason: 'no logs.otlp address' } })
     // Nothing was touched — the local file is left exactly where it was.
     expect(existsSync(folderFile(home, 804))).toBe(true)
   }, 20000)
 })
+
+it('reports a failed OTLP request after the legacy drain and retries it on the next command', async () => {
+  const cwd = tempDir('log-send-cwd-')
+  const home = tempDir('log-send-home-')
+  initGitRepo(cwd)
+  writeFileSync(
+    join(cwd, 'vinaya.config.json'),
+    JSON.stringify({
+      logs: {
+        url: 'https://legacy.example/ingest',
+        otlp: { url: 'https://collector.example/base?tenant=test', headers: { 'x-test': '${TEST_TOKEN}' } }
+      }
+    })
+  )
+  const source = join(dirname(folderFile(home, 804)), 'run~writer~000000000000.logs.jsonl')
+  seed(source, ['{"resourceLogs":[]}'])
+  seed(folderFile(home, 804), [ndjsonLine('legacy', 804)])
+  const script = join(cwd, 'run-otlp-send.ts')
+  const requests = join(home, 'requests')
+  writeFileSync(
+    script,
+    `import { appendFileSync } from 'node:fs'
+import { logSendCommand } from ${JSON.stringify(COMMAND_PATH)}
+globalThis.fetch = async (url, init) => {
+  appendFileSync(${JSON.stringify(requests)}, String(url) + '\\n')
+  if (String(url).startsWith('https://legacy.example')) return new Response('ok')
+  if (new Headers(init.headers).get('x-test') !== 'resolved') return new Response(null, { status: 403 })
+  return new Response(null, { status: Number(process.env.TEST_STATUS) })
+}
+await logSendCommand(process.argv.slice(2))
+`
+  )
+  const run = (status: number, args: string[] = []) =>
+    spawnBudgetedAsync(
+      ['bun', script, ...args],
+      {
+        cwd,
+        env: {
+          ...stripVinayaEnv(),
+          HOME: home,
+          CI: '',
+          GITHUB_ACTIONS: '',
+          TEST_TOKEN: 'resolved',
+          TEST_STATUS: String(status)
+        }
+      },
+      20000,
+      'log-send with OpenTelemetry'
+    )
+  const json = await run(503, ['--json'])
+  expect(json.status).toBe(1)
+  expect(JSON.parse(json.stdout).data).toMatchObject({
+    totals: { delivered: 1 },
+    otlp: { sent: 0, failures: [{ reason: 'HTTP 503' }] }
+  })
+  expect(readFileSync(requests, 'utf8').split('\n').filter(Boolean)).toEqual([
+    'https://legacy.example/ingest',
+    'https://collector.example/base/v1/logs?tenant=test'
+  ])
+  const text = await run(503)
+  expect(text.status).toBe(1)
+  expect(text.stderr).toContain('HTTP 503')
+  const retry = await run(204, ['--json'])
+  expect(retry.status).toBe(0)
+  expect(JSON.parse(retry.stdout).data.otlp).toMatchObject({ sent: 1, failures: [] })
+  expect(existsSync(source)).toBe(true)
+}, 30000)

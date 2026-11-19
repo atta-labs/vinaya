@@ -30,6 +30,15 @@ const issues = (value: unknown) => {
   return parsed.success ? [] : parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`)
 }
 
+test('accepts an OTLP address independent of the legacy destination and requires its own URL', () => {
+  const otlp = { url: 'https://collector.example', headers: { authorization: 'Bearer ${TOKEN}' } }
+  for (const destination of [{}, { folder: '/logs' }, { url: 'https://legacy.example' }]) {
+    const logs = { ...destination, otlp }
+    expect(schema.parse({ logs }).logs).toEqual(logs)
+  }
+  expect(issues({ logs: { url: 'https://legacy.example', otlp: { headers: otlp.headers } } })).not.toEqual([])
+})
+
 describe('the kernel configuration schema', () => {
   test('declares exactly the kernel keys', () => {
     expect(Object.keys(fragment)).toEqual([...KERNEL_CONFIG_KEYS])

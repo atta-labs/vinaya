@@ -20,7 +20,7 @@
 // harmless — the second run finds the folder emptied and the queue drained.
 
 import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
-import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, realpathSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
 import { loadConfig, loadTrustAnchorConfigAsync } from '../config/compose.js'
@@ -36,7 +36,14 @@ import {
   withDeadline
 } from '../../../../kernel/log/log-sink.js'
 import { drainOutboxToWebhook, type WebhookDrainOutcome } from '../../../../kernel/log/client/log-webhook-drain.js'
-import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../../../../kernel/run-paths.js'
+import {
+  isInsideRepo,
+  isUnattendedProcess,
+  repoRootSync,
+  runtimeDirForRepoAsync
+} from '../../../../kernel/run-paths.js'
+import { resolveOtlpAddress } from '../../../../kernel/log/otlp-address.js'
+import { sendLocalCopy } from '../../../../../packages/log-sdk/src/sender/send.js'
 
 type RepoRef = { owner: string; repo: string } | null
 
@@ -98,6 +105,12 @@ type SendReport = {
   failures: Array<{ issue: number | null; reason: string }>
 }
 
+function localCopyFolder(configured: string | undefined, fallback: string, root: string | null): string {
+  if (!configured || isInsideRepo(configured, root)) return fallback
+  if (root && existsSync(configured) && isInsideRepo(realpathSync(configured), realpathSync(root))) return fallback
+  return configured
+}
+
 export async function logSendCommand(args: string[]): Promise<void> {
   const jsonOutput = args.includes('--json')
   const repo = await resolveRepo()
@@ -110,7 +123,8 @@ export async function logSendCommand(args: string[]): Promise<void> {
   // sink uses so the two can never disagree about where events go.
   const localConfig = loadConfig()
   const unattended = isUnattendedProcess(process.env)
-  const trustAnchorConfig = unattended
+  const otlpAnchored = unattended || Boolean(process.env.GITHUB_ACTIONS || process.env.CI)
+  const trustAnchorConfig = otlpAnchored
     ? await withDeadline(
         loadTrustAnchorConfigAsync(undefined, { quiet: true }),
         LOG_DESTINATION_ANCHOR_DEADLINE_MS,
@@ -118,30 +132,66 @@ export async function logSendCommand(args: string[]): Promise<void> {
       )
     : null
   const defaultFolder = join(await runtimeDirForRepoAsync(repo), 'logs')
+  const repoRoot = repoRootSync()
   const destination = resolveLogDestinationFrom({
     localConfig,
-    trustAnchorConfig,
+    trustAnchorConfig: unattended ? trustAnchorConfig : null,
     unattended,
     env: process.env,
     defaultFolder,
-    repoRoot: repoRootSync()
+    repoRoot
   })
 
-  if (destination.kind !== 'server') {
-    // Nothing to send TO. Name why, using the sink's own words for a fallback
-    // so this command and the one-line warning a run prints say the same thing.
-    const why =
-      destination.kind === 'none'
+  const legacy = destination.kind === 'server' ? await deliverServerLogs(repo, defaultFolder, destination) : undefined
+  const serverReason =
+    destination.kind === 'server'
+      ? undefined
+      : destination.kind === 'none'
         ? destination.reason
         : destination.fallbackReason
           ? describeFolderFallback(destination.fallbackReason)
           : 'this repository is configured to write log events to a local folder, not a server'
-    const message = `vinaya log send: no server destination to deliver to — ${why}.`
-    if (jsonOutput) printJson({ sent: false, reason: message })
-    else process.stderr.write(`${message}\n`)
-    process.exit(1)
-  }
+  const reason = serverReason ? `vinaya log send: no server destination to deliver to — ${serverReason}.` : undefined
+  const address = resolveOtlpAddress({ localConfig, trustAnchorConfig, unattended, env: process.env })
+  const settings = otlpAnchored ? trustAnchorConfig?.logs : localConfig?.logs
+  const otlp =
+    address.kind === 'address'
+      ? await sendLocalCopy({
+          folder: localCopyFolder((settings || undefined)?.folder, defaultFolder, repoRoot),
+          repository: repo ? `${repo.owner}/${repo.repo}` : undefined,
+          url: address.url,
+          headers: address.headers
+        })
+      : { reason: address.reason }
+  const failed =
+    (!legacy && address.kind === 'none') ||
+    Boolean(legacy?.failures.length) ||
+    ('failures' in otlp && otlp.failures.length > 0)
 
+  if (jsonOutput) printJson({ sent: Boolean(legacy) || address.kind === 'address', reason, ...legacy, otlp })
+  else {
+    if (legacy) printServerReport(legacy)
+    else if (reason) process.stderr.write(`${reason}\n`)
+    if ('reason' in otlp) process.stdout.write(`OpenTelemetry: ${otlp.reason}.\n`)
+    else {
+      process.stdout.write(
+        `OpenTelemetry: sent ${otlp.sent} line(s), set aside ${otlp.setAside.length}, failed ${otlp.failures.length}.\n`
+      )
+      for (const item of [...otlp.setAside, ...otlp.failures]) {
+        const location =
+          item.file === undefined ? '' : ` ${item.file}${item.offset === undefined ? '' : `@${item.offset}`}`
+        process.stderr.write(`OpenTelemetry${location}: ${item.reason}\n`)
+      }
+    }
+  }
+  if (failed) process.exit(1)
+}
+
+async function deliverServerLogs(
+  repo: RepoRef,
+  defaultFolder: string,
+  destination: Extract<ReturnType<typeof resolveLogDestinationFrom>, { kind: 'server' }>
+): Promise<SendReport> {
   const segment = repoSegment(repo)
   const folderDir = join(defaultFolder, segment)
   const outboxDir = join(telemetryOutboxRoot(), segment)
@@ -187,11 +237,10 @@ export async function logSendCommand(args: string[]): Promise<void> {
     }
   }
 
-  if (jsonOutput) {
-    printJson({ sent: true, ...report })
-    process.exit(report.failures.length > 0 ? 1 : 0)
-  }
+  return report
+}
 
+function printServerReport(report: SendReport): void {
   process.stdout.write(`vinaya-log-send → ${report.destination}\n\n`)
   if (report.tasks.length === 0 && report.failures.length === 0) {
     process.stdout.write('Nothing to send — the local folder and the retry queue hold no undelivered events.\n')
@@ -213,7 +262,6 @@ export async function logSendCommand(args: string[]): Promise<void> {
     `\nSent ${report.totals.delivered} line(s) across ${report.tasks.length} task(s). ` +
       'The server deduplicates by event id, so nothing was posted twice.\n'
   )
-  if (report.failures.length > 0) process.exit(1)
 }
 
 // `log send` deliberately composes several lib helpers rather than routing
