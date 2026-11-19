@@ -281,3 +281,21 @@ test('a dispatch links to the round span the converter actually emits', () => {
   expect(round?.spanId).toBeDefined()
   expect(agent?.parentSpanId).toBe(round?.spanId)
 })
+
+test('a custom field cannot spoof a stamp, and a later agent record keeps its usage', () => {
+  const custom = fixtures.find((event) => event.kind === 'custom')!
+  // The schema already rejects dotted field names; the converter holds the line on its own too.
+  const spoofed = { ...custom, fields: { 'vinaya.event.id': 'fake', 'vinaya.writer.id': 'fake' } } as typeof custom
+  const record = createLiveEarlierConverter(runId).convert(spoofed).record
+  for (const key of [A.eventId, A.writerId]) {
+    expect(record.attributes.filter((attr) => attr.key === key)).toHaveLength(1)
+    expect(record.attributes.find((attr) => attr.key === key)?.value).not.toEqual({ stringValue: 'fake' })
+  }
+  const failure = fixtures.find((event) => event.event === 'dispatch_failed')!
+  const attempt = fixtures.find((event) => event.kind === 'role_attempt')!
+  const live = createLiveEarlierConverter(runId)
+  live.convert(LogEventSchema.parse({ ...failure, effect_id: 'e9' }))
+  const later = live.convert(LogEventSchema.parse({ ...attempt, effect_id: 'e9', usage: { input: 3, output: 4 } }))
+  expect(later.record.attributes.some((attr) => attr.key === 'vinaya.earlier.usage')).toBe(true)
+  expect(later.record.attributes.some((attr) => attr.key === A.usageInputTokens)).toBe(false)
+})

@@ -21,6 +21,16 @@ const agentKey = (effectId: string) => `agent:${effectId}`
 const people = { authority: S.personAuthority, strategy: S.personStrategy, product: S.personProduct }
 const checks = { hook: S.checkHook, cli: S.checkLocal, loop: S.checkLocal, ci: S.checkCi }
 
+/** A team's field may not take a name the converter stamps or the catalogue owns; such a key is moved under the earlier namespace. */
+function teamFields(fields: Fields): Fields {
+  return Object.fromEntries(
+    Object.entries(fields).map(([key, value]) => [
+      key.startsWith('vinaya.') || key.startsWith('gen_ai.') ? `${EARLIER_EVENT_PREFIX}${key}` : key,
+      value
+    ])
+  )
+}
+
 export function agentSpanIdFor(runId: string, effectId: string): string {
   return spanIdFor(runId, agentKey(effectId))
 }
@@ -285,10 +295,10 @@ export function mapEarlierEvent(event: LogEvent): Mapping {
     case 'custom':
       return event.name.startsWith(`${CUSTOM_EVENT_RESERVED_NAMESPACE}.`)
         ? point(`${EARLIER_EVENT_PREFIX}custom.recorded`, {
-            ...event.fields,
+            ...teamFields(event.fields),
             [`${EARLIER_EVENT_PREFIX}name`]: event.name
           })
-        : point(event.name, event.fields)
+        : point(event.name, teamFields(event.fields))
   }
   const unhandled: never = event
   throw new Error(`Unhandled earlier event: ${JSON.stringify(unhandled)}`)

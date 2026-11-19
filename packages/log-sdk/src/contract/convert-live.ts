@@ -73,7 +73,7 @@ function attributesOf(fields: Fields, home: string): Attribute[] {
     .map(([key, value]) => ({ key, value: encodeAnyValue(value, home) }))
 }
 
-function earlierFields(event: LogEvent): Fields {
+function earlierFields(event: LogEvent, keepUsage: boolean): Fields {
   const { meta, subject, kind, event: name, payload, ...fields } = event
   if (kind === 'custom') {
     return event.duration_ms === undefined ? {} : { [`${EARLIER_EVENT_PREFIX}duration_ms`]: event.duration_ms }
@@ -90,7 +90,7 @@ function earlierFields(event: LogEvent): Fields {
   // Effect-bearing usage is encoded exactly once as GenAI attributes.
   return Object.fromEntries(
     Object.entries(fields)
-      .filter(([key]) => key !== 'prompt_hash' && (key !== 'usage' || event.event === 'dispatch_failed'))
+      .filter(([key]) => key !== 'prompt_hash' && (key !== 'usage' || keepUsage || event.event === 'dispatch_failed'))
       .map(([key, value]) => [`${EARLIER_EVENT_PREFIX}${key}`, value])
   )
 }
@@ -174,7 +174,7 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
       }
       const attributes = attributesOf(
         {
-          ...earlierFields(event),
+          ...earlierFields(event, laterAgentRecord),
           ...mapping.attributes,
           ...tokenAttributes,
           ...(event.kind === 'custom' ? {} : { [A.runId]: runId }),
