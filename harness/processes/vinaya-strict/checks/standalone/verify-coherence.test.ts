@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, mock } from 'bun:test'
 import { PROVENANCE_HEADING } from '../../tools/legacy-markers'
@@ -181,13 +183,12 @@ describe('fetchProvenance — Part 2: null-closer fallback', () => {
  * fetches each tranche's Issues exactly once, `FORGE_FETCH_CONCURRENCY` at a
  * time.
  *
- * Post-fix figures, stated as what they actually measure. THIS test's own
- * wall-clock (`atta-labs/vinaya`, 6 Milestones): 10.1 / 10.2 / 11.1 s idle,
- * and 12.1 / 11.9 s with the machine deliberately loaded — against the same
- * 120,000 ms. The bare script the subprocess runs is faster than the test
- * around it (9.5-9.9 s idle); the numbers above are the ones this budget is
- * actually judged against. The margin is now the order of magnitude a timeout
- * of this kind should have, and it comes from the workload, not the constant.
+ * The subprocess runs with a `gh` on its PATH that refuses every call and
+ * with no GitHub token in its environment, so it never reads the live forge:
+ * a live run read every tranche label in the repository on each test run,
+ * and with dozens of tranches the loops and CI shards running this test spent
+ * the account's GraphQL budget. Every forge read failing is also the path
+ * that writes the most `gh` noise, so it is the stricter purity case.
  */
 describe('CLI --json mode produces pure JSON on stdout (PR #378 review)', () => {
   it('parses as JSON with no leading/trailing noise, regardless of exit code', () => {
@@ -196,11 +197,17 @@ describe('CLI --json mode produces pure JSON on stdout (PR #378 review)', () => 
     // error. Read stdout from the thrown error in that case too (mirrors
     // `verify-dispatch.ts`'s `captureStreams`), so this test asserts
     // JSON purity independent of the repo's current coherence state.
+    const offlineBin = mkdtempSync(join(tmpdir(), 'coherence-offline-gh-'))
+    writeFileSync(join(offlineBin, 'gh'), '#!/bin/sh\necho "gh: offline in this test" >&2\nexit 1\n')
+    chmodSync(join(offlineBin, 'gh'), 0o755)
+    const env = { ...process.env, PATH: `${offlineBin}:${process.env.PATH ?? ''}`, GH_TOKEN: '', GITHUB_TOKEN: '' }
     let out: string
     try {
-      out = execFileSync('bun', [scriptPath, '--json'], { encoding: 'utf8', timeout: 120_000 })
+      out = execFileSync('bun', [scriptPath, '--json'], { encoding: 'utf8', timeout: 120_000, env })
     } catch (err) {
       out = (err as { stdout?: string }).stdout ?? ''
+    } finally {
+      rmSync(offlineBin, { recursive: true, force: true })
     }
     expect(() => JSON.parse(out)).not.toThrow()
     const parsed = JSON.parse(out)

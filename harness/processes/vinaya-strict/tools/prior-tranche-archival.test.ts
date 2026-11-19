@@ -5,7 +5,9 @@ import { createGhMock } from './test-support/mock-gh'
 
 mock.module('../../../kernel/adapters/code-host/github/gh', () => createGhMock())
 
-const { ghApiGetAllPagesAsync, ghIssueListByLabelAsync } = await import('../../../kernel/adapters/code-host/github/gh')
+const { ghApiGetAllPagesAsync, ghIssueListByLabelAsync, ghLabelIssueCountsAsync } = await import(
+  '../../../kernel/adapters/code-host/github/gh'
+)
 const { defaultPriorTrancheArchivalDeps, resolvePriorTrancheArchival } = await import('./prior-tranche-archival')
 type PriorTrancheArchivalDeps = import('./prior-tranche-archival').PriorTrancheArchivalDeps
 type PriorTrancheArchivalFact = import('./prior-tranche-archival').PriorTrancheArchivalFact
@@ -144,7 +146,7 @@ describe('the default read lists each tranche label once and retries a failed re
     return counts
   }
 
-  it('reads every tranche label at most once in a whole resolution, candidates included', async () => {
+  it('reads every active tranche label at most once in a whole resolution, candidates included, and no other', async () => {
     mockForge()
     const result = await resolvePriorTrancheArchival(['cli', 'sources', 'vinaya'], 'own-tranche-v1', REPO)
     expect(result).toEqual({
@@ -156,7 +158,11 @@ describe('the default read lists each tranche label once and retries a failed re
       infraFailure: null
     })
     const counts = readsPerLabel()
-    expect([...counts.keys()].sort()).toEqual(Object.keys(ISSUES).sort())
+    expect([...counts.keys()].sort()).toEqual(
+      Object.keys(ISSUES)
+        .filter((label) => label !== 'vinaya/tranche:planned-v1')
+        .sort()
+    )
     for (const count of counts.values()) expect(count).toBe(1)
     expect(mocked(ghApiGetAllPagesAsync)).toHaveBeenCalledTimes(2)
   })
@@ -170,15 +176,19 @@ describe('the default read lists each tranche label once and retries a failed re
 
   it('a label read that fails twice is the infrastructure failure, never a pass', async () => {
     mockForge()
+    mocked(ghLabelIssueCountsAsync).mockResolvedValueOnce([
+      { name: 'vinaya/tranche:label-only-v1', open: 1, total: 1 },
+      { name: 'vinaya/tranche:planned-v1', open: 0, total: 0 }
+    ])
     mocked(ghIssueListByLabelAsync).mockImplementation(async (_o, _r, label: string) => {
-      if (label === 'vinaya/tranche:planned-v1') throw new Error('read: connection reset by peer')
+      if (label === 'vinaya/tranche:label-only-v1') throw new Error('read: connection reset by peer')
       return ISSUES[label] ?? []
     })
     const result = await resolvePriorTrancheArchival(['cli'], 'own-tranche-v1', REPO)
     expect(result.facts).toEqual([])
     expect(result.infraFailure).toContain('severity:infra')
     expect(result.infraFailure).toContain('could not read the active tranches')
-    expect(readsPerLabel().get('vinaya/tranche:planned-v1')).toBe(2)
+    expect(readsPerLabel().get('vinaya/tranche:label-only-v1')).toBe(2)
   })
 
   it('the default deps hand back each active candidate with the Issues the index read for it', async () => {
