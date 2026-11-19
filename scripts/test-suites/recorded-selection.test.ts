@@ -335,8 +335,8 @@ describe('no rule outside the static fallback names a path, folder, owner or ext
 })
 
 describe('a lockfile change reaches the tests that read a changed package', () => {
-  const lockOf = (zod: string) =>
-    `{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "fx" } },\n  "packages": {\n    "react": ["react@18.0.0", "", {}, "sha-r"],\n    "zod": ["zod@${zod}", "", {}, "sha-${zod}"],\n  },\n}\n`
+  const lockOf = (zod: string, overrides = '') =>
+    `{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "fx" } },\n  "packages": {\n    "react": ["react@18.0.0", "", {}, "sha-r"],\n    "zod": ["zod@${zod}", "", {}, "sha-${zod}"],\n  },\n${overrides}}\n`
   const base = { ...BASE_FILES, 'bun.lock': lockOf('3.0.0') }
   const record = recordOf({
     [T.double]: [CORE, 'bun.lock#zod'],
@@ -365,8 +365,14 @@ describe('a lockfile change reaches the tests that read a changed package', () =
     expect(select({ ...base, 'bun.lock': lockOf('3.1.0') }, true)).toEqual([T.double, T.process].sort())
   })
 
+  it('selects the same readers without a caller parser', () => {
+    expect(select({ ...base, 'bun.lock': lockOf('3.1.0') }, false)).toEqual([T.double, T.process].sort())
+  })
+
   it('selects every package reader when the lockfile cannot be compared package by package', () => {
-    expect(select({ ...base, 'bun.lock': lockOf('3.1.0') }, false)).toEqual([T.double, T.process, T.triple].sort())
+    expect(select({ ...base, 'bun.lock': lockOf('3.1.0', '  "overrides": { "zod": "3.1.0" },\n') }, false)).toEqual(
+      [T.double, T.process, T.triple].sort()
+    )
   })
 })
 

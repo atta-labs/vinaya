@@ -51,6 +51,16 @@ function run(command: string, args: string[], cwd: string, home: string, timeout
   return result
 }
 
+function expectHelp(command: string, args: string[], home: string, usage: string, flags: string[]): void {
+  const help = spawnSync('node', [command, ...args], { cwd: home, encoding: 'utf8', env: bareEnv(home) })
+  expect(help.status).toBe(0)
+  expect(help.stderr).toBe('')
+  const [firstLine, ...details] = help.stdout.split('\n')
+  expect(firstLine).toBe(usage)
+  const documented = details.map((line) => line.trimStart().split(/[ ,]/)[0])
+  for (const flag of flags) expect(documented).toContain(flag)
+}
+
 /** The README's one runnable example, verbatim. */
 function readmeExample(): string {
   const readme = readFileSync(join(PACKAGE_DIR, 'README.md'), 'utf8')
@@ -225,6 +235,16 @@ describe('a fresh repository installs the packed package and selects with it', (
         expect(refused.stderr.trim().split('\n')).toHaveLength(1)
       }
 
+      for (const args of [['--help'], ['--base', 'HEAD~1', '--head', 'HEAD', '--config', '-h']]) {
+        expectHelp(
+          command,
+          args,
+          home,
+          'usage: test-selection --base <commit> --head <commit> [--record <file> | --fetch-record] [--config <file>] [--help]',
+          ['--base', '--head', '--record', '--fetch-record', '--config', '--help']
+        )
+      }
+
       // The command with a read record and a consumer config, in a fresh repository whose head commit changes only
       // a data file one test reads without importing it, and whose next commit adds a test with its own data file.
       const cfg = join(home, 'cfg')
@@ -311,6 +331,72 @@ describe('a fresh repository installs the packed package and selects with it', (
       const recorded = select(cfgBase, cfgHead, '--record', readRecord)
       expect(recorded.tests).toEqual(['packages/app/tests/a.test.ts'])
       expect(recorded.fallbacks).toEqual([])
+      // --fetch-record, with a stand-in `gh` first on the PATH that serves the record from files the test wrote.
+      const ghDir = join(home, 'gh-stand-in')
+      mkdirSync(ghDir)
+      writeFileSync(
+        join(ghDir, 'gh'),
+        `#!/bin/sh
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+echo "$*" >>"$here/calls"
+case "$1 $2" in
+  "repo view") echo '{"defaultBranchRef":{"name":"main"}}' ;;
+  "run list") if [ -f "$here/fail" ]; then echo 'gh: HTTP 401' >&2; exit 1; fi; echo '[{"databaseId":1}]' ;;
+  "run download")
+    while [ $# -gt 0 ]; do if [ "$1" = "--dir" ]; then dir=$2; fi; shift; done
+    cp "$here/record.json" "$dir/read-record.json" ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o755 }
+      )
+      cpSync(readRecord, join(ghDir, 'record.json'))
+      const withGh = { ...bareEnv(home), PATH: `${ghDir}:${process.env.PATH}` }
+      const callsOf = () => (existsSync(join(ghDir, 'calls')) ? readFileSync(join(ghDir, 'calls'), 'utf8') : '')
+      const fetching = (...flags: string[]) =>
+        spawnSync('node', [command, '--base', cfgBase, '--head', cfgHead, ...flags], {
+          cwd: cfg,
+          encoding: 'utf8',
+          env: withGh
+        })
+      const cfgStatus = () => run('git', ['status', '--porcelain', '--untracked-files=all'], cfg, home).stdout
+      const treeBefore = cfgStatus()
+      const keptDir = join(cfg, '.git/test-selection/read-records')
+      // No flag: no `gh`, no kept file, no record line.
+      const plain = fetching()
+      expect(plain.status).toBe(0)
+      expect(plain.stderr).toBe('')
+      expect(callsOf()).toBe('')
+      expect(existsSync(keptDir)).toBe(false)
+      // The flag: the plan equals the `--record` plan, the record is kept, the line is on standard error only.
+      const fetched = fetching('--fetch-record')
+      expect(fetched.status).toBe(0)
+      expect(fetched.stderr).toBe(`test-selection: record: ${cfgBase} fetched\n`)
+      expect(JSON.parse(fetched.stdout)).toEqual(recorded)
+      expect(existsSync(join(keptDir, `${cfgBase}.json`))).toBe(true)
+      expect(cfgStatus()).toBe(treeBefore)
+      // A second run uses the kept record and starts `gh` no more.
+      const callsAfterFirst = callsOf()
+      const keptRun = fetching('--fetch-record')
+      expect(keptRun.stderr).toBe(`test-selection: record: ${cfgBase} kept\n`)
+      expect(JSON.parse(keptRun.stdout)).toEqual(recorded)
+      expect(callsOf()).toBe(callsAfterFirst)
+      // A failing `gh` with nothing kept: the plan without a record, exit 0, one `no record` line.
+      rmSync(keptDir, { recursive: true, force: true })
+      writeFileSync(join(ghDir, 'fail'), '')
+      const failed = fetching('--fetch-record')
+      expect(failed.status).toBe(0)
+      expect(failed.stderr).toMatch(/^test-selection: no record: .+\n$/)
+      expect(failed.stderr.trim().split('\n')).toHaveLength(1)
+      expect(JSON.parse(failed.stdout)).toEqual(unflagged)
+      // Both record flags: one message, exit 2, nothing printed.
+      const both = fetching('--fetch-record', '--record', readRecord)
+      expect(both.status).toBe(2)
+      expect(both.stdout).toBe('')
+      expect(both.stderr.trim().split('\n')).toHaveLength(1)
+      expect(both.stderr).toContain('--fetch-record and --record cannot be used together')
+      expect(cfgStatus()).toBe(treeBefore)
+
       // A declared input reaches its reader.
       expect(select(cfgBase, cfgHead, '--config', inputsConfig).tests).toEqual(['packages/app/tests/a.test.ts'])
       // An always-run obligation and a whole-suite policy add their tests, with no fallback scope behind them.
@@ -348,6 +434,15 @@ describe('a fresh repository installs the packed package and selects with it', (
       const usage = spawnSync('node', [recorder], { cwd: mono, encoding: 'utf8', env: bareEnv(home) })
       expect(usage.status).toBe(2)
       expect(usage.stderr.startsWith('usage: test-selection-record --out <dir>')).toBe(true)
+      for (const args of [['-h'], ['--shard', 'invalid', '--out', '--help']]) {
+        expectHelp(
+          recorder,
+          args,
+          home,
+          'usage: test-selection-record --out <dir> [--commit <sha>] [--concurrency <n>] [--shard <i>/<n>] [--only <test,test>] [--expect <test>=<path>] [--summary <file>] [--help]',
+          ['--out', '--commit', '--concurrency', '--shard', '--merge', '--only', '--expect', '--summary', '--help']
+        )
+      }
       const out = join(home, 'record')
       const recording = spawnSync('node', [recorder, '--out', out, '--only', 'packages/app/tests/none.test.ts'], {
         cwd: mono,

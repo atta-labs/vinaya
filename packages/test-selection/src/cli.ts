@@ -3,21 +3,34 @@
  * The `test-selection` command: the tests a change between two commits
  * requires, printed as one JSON document and grouped by the runner start that
  * serves them. It is the one place in the package that builds a git reader
- * itself; it starts no test and writes no file.
+ * itself; it starts no test. It writes no file, except that with `--fetch-record` it keeps a fetched read record
+ * under the repository's common git directory, and it starts `gh` only with that flag.
  *
- * Usage: `test-selection --base <commit> --head <commit> [--record <file>] [--config <file>]`.
- * It reads no file but the two the optional flags name.
+ * Usage: `test-selection --base <commit> --head <commit> [--record <file> | --fetch-record] [--config <file>] [--help]`.
+ * For selection it reads the committed trees and the files named by the optional flags.
+ * With `--help` or `-h` it prints help without reading a repository or either file.
  */
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { type ConsumerConfig, ConsumerConfigError, parseConsumerConfig, withDeclaredInputs } from './consumer-config.js'
 import { groupNativeTests } from './native.js'
+import { findReadRecord } from './record-fetch.js'
 import { isReadRecord, type ReadRecord } from './recorded-reads.js'
 import { gitRepository, plannedTests, selectTests } from './selector.js'
 import { workspaceInventory } from './workspace-inventory.js'
 
-const USAGE = 'usage: test-selection --base <commit> --head <commit> [--record <file>] [--config <file>]'
+const USAGE =
+  'usage: test-selection --base <commit> --head <commit> [--record <file> | --fetch-record] [--config <file>]'
+
+const HELP = `${USAGE} [--help]
+  --base <commit>  Base commit to compare from.
+  --head <commit>  Head commit to compare to.
+  --record <file>  JSON read record from a previous run.
+  --fetch-record   Find the base commit's read record with gh, or use a kept one.
+  --config <file>  JSON consumer config for selection.
+  --help, -h       Print help.
+`
 
 class CommandError extends Error {}
 
@@ -29,10 +42,16 @@ function git(cwd: string, args: string[]): string | null {
   }
 }
 
-type Arguments = { base: string; head: string; record: string | null; config: string | null }
+type Arguments = {
+  base: string
+  head: string
+  record: string | null
+  fetchRecord: boolean
+  config: string | null
+}
 
 function argumentsOf(argv: readonly string[]): Arguments {
-  let values: { base?: string; head?: string; record?: string; config?: string }
+  let values: { base?: string; head?: string; record?: string; 'fetch-record'?: boolean; config?: string }
   try {
     values = parseArgs({
       args: [...argv],
@@ -40,6 +59,7 @@ function argumentsOf(argv: readonly string[]): Arguments {
         base: { type: 'string' },
         head: { type: 'string' },
         record: { type: 'string' },
+        'fetch-record': { type: 'boolean' },
         config: { type: 'string' }
       },
       strict: true,
@@ -52,7 +72,15 @@ function argumentsOf(argv: readonly string[]): Arguments {
   if (!values.head) throw new CommandError(`--head is missing; ${USAGE}`)
   if (values.record === '') throw new CommandError(`--record names no file; ${USAGE}`)
   if (values.config === '') throw new CommandError(`--config names no file; ${USAGE}`)
-  return { base: values.base, head: values.head, record: values.record ?? null, config: values.config ?? null }
+  if (values['fetch-record'] && values.record !== undefined)
+    throw new CommandError(`--fetch-record and --record cannot be used together; ${USAGE}`)
+  return {
+    base: values.base,
+    head: values.head,
+    record: values.record ?? null,
+    fetchRecord: values['fetch-record'] === true,
+    config: values.config ?? null
+  }
 }
 
 /** The parsed JSON document of a file a flag names, or a usage error naming the flag. */
@@ -89,9 +117,9 @@ function configOf(file: string | null): ConsumerConfig {
 }
 
 /** The plan document for the repository around `cwd`. */
-function planDocument(cwd: string, argv: readonly string[]): unknown {
+function planDocument(cwd: string, argv: readonly string[], notes: string[]): unknown {
   const args = argumentsOf(argv)
-  const record = args.record === null ? null : recordOf(args.record)
+  let record = args.record === null ? null : recordOf(args.record)
   const config = configOf(args.config)
   const root = git(cwd, ['rev-parse', '--show-toplevel'])
   if (!root) throw new CommandError(`${cwd} is not inside a git repository`)
@@ -103,6 +131,13 @@ function planDocument(cwd: string, argv: readonly string[]): unknown {
   }
   const base = commit(args.base)
   const head = commit(args.head)
+  if (args.fetchRecord) {
+    const found = findReadRecord(root, base)
+    if (found.record) {
+      record = found.record
+      notes.push(`test-selection: record: ${found.commit} ${found.source}\n`)
+    } else notes.push(`test-selection: no record: ${found.reason.split('\n')[0]}\n`)
+  }
 
   const repo = gitRepository(root)
   const headInventory = workspaceInventory(repo, head)
@@ -151,8 +186,16 @@ function planDocument(cwd: string, argv: readonly string[]): unknown {
 }
 
 function main(): number {
+  const argv = process.argv.slice(2)
+  if (argv.includes('--help') || argv.includes('-h')) {
+    process.stdout.write(HELP)
+    return 0
+  }
   try {
-    process.stdout.write(`${JSON.stringify(planDocument(process.cwd(), process.argv.slice(2)), null, 2)}\n`)
+    const notes: string[] = []
+    const document = planDocument(process.cwd(), argv, notes)
+    for (const note of notes) process.stderr.write(note)
+    process.stdout.write(`${JSON.stringify(document, null, 2)}\n`)
     return 0
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

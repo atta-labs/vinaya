@@ -38,10 +38,11 @@ export type PriorTrancheArchivalDeps = {
 }
 
 /**
- * The default read: the async Milestone index, which lists every tranche
- * label's Issues once to decide which tranches are active, and hands those
- * same lists back so no candidate's label is listed a second time. Each of its
- * reads is made once more when it fails.
+ * The default read: the async Milestone index, which decides which tranches
+ * are active from one query for every tranche label's Issue counts, lists the
+ * Issues of the active tranches only, and hands those lists back so no
+ * candidate's label is listed a second time. Each of its reads is made once
+ * more when it fails.
  */
 export function defaultPriorTrancheArchivalDeps(): PriorTrancheArchivalDeps {
   return {

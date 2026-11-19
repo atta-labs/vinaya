@@ -18,7 +18,9 @@ import {
   nameStems,
   newFolderOf,
   readsOfTrace,
+  readBunLockIdentity,
   recordReach,
+  stableHash,
   stableJson,
   startsThread,
   type TraceOptions,
@@ -36,10 +38,113 @@ import {
   READ_RECORD_VERSION,
   type ReadRecord,
   type RecordedTest,
-  selectTests
+  selectTests,
+  type SelectionPolicy
 } from '../src/index.js'
 import { OUTPUT_TAIL_CHARS, outputTail, recordReads } from '../src/recorder.js'
 import { fixture, type Scenario, scenarioInput, viewOf } from './fixture-repos.js'
+
+describe('reading text Bun lockfiles', () => {
+  it('matches the dependency identity of Bun-parsed text with trailing commas and escaped strings', () => {
+    const text = String.raw`{
+      "packages": { "local": ["local@file:./local",], },
+      "note": "quote: \" then [,] and ,} and backslash: \\",
+      "workspaces": { "local": { "name": "local", }, },
+    }`
+    expect(readBunLockIdentity(text)).toEqual(bunLockIdentity(Bun.JSONC.parse(text)))
+  })
+
+  it.each(['null', '[]', '1', '{,}', '{"packages":[,]}', '{"packages":[1,,]}', '{"packages":{ /* comment */ }}'])(
+    'rejects %s',
+    (text) => expect(() => readBunLockIdentity(text)).toThrow()
+  )
+})
+
+describe('selection from recorded dependency reads', () => {
+  const fx = fixture('workspaces-repo.json')
+  const zod = 'packages/app/tests/add.test.ts'
+  const react = 'packages/app/tests/tree.test.ts'
+  const direct = 'packages/app/tests/opaque.test.ts'
+  const lock = (version: string) => `{"packages":{"zod":["zod@${version}",], "react":["react@18",],},}`
+  const before = lock('3')
+  const after = lock('4')
+
+  function select(path: string, base: string | null, head: string | null, policy: Partial<SelectionPolicy> = {}) {
+    const files = { ...fx.files }
+    if (base !== null) files[path] = base
+    const input = scenarioInput(
+      { ...fx, files },
+      { name: 'lockfile', depth: 'transitive', change: { [path]: head }, policy, required: [], fallbacks: [] }
+    )
+    const reads: Record<string, string> = { [zod]: `${path}#zod`, [react]: `${path}#react`, [direct]: path }
+    const tests = Object.fromEntries(
+      input.inventory.head.tests.map(({ id }) => [id, { reads: [id, ...(reads[id] ? [reads[id]] : [])], listed: [] }])
+    )
+    const plan = selectTests({
+      ...input,
+      records: {
+        record: { schema: READ_RECORD_SCHEMA, schemaVersion: 1, commit: 'base', platform: 'linux', tests },
+        platform: 'linux'
+      }
+    })
+    expect(plan.fallbacks).toEqual([])
+    return { required: plan.required.map((test) => test.test).sort(), policyHash: plan.context.policy }
+  }
+
+  it('selects the changed package and direct lockfile readers with the existing policy hash', () => {
+    expect(select('bun.lock', before, after)).toEqual({
+      required: [zod, direct],
+      policyHash: stableHash({
+        depth: 'transitive',
+        scanners: fx.policy.scanners ?? [],
+        spawnPrograms: fx.policy.spawnPrograms ?? [],
+        dataFolders: ['fixtures'],
+        obligations: [],
+        wholeSuites: [],
+        fileLevel: { realSandbox: [], outsideCall: [] },
+        parsers: [],
+        resolver: null
+      })
+    })
+  })
+
+  it.each(['bun.lock', 'package-lock.json'])('uses a caller parser for %s', (path) => {
+    const parser = (text: string) => bunLockIdentity({ packages: { react: [text] } })
+    expect(select(path, before, after, { parsers: { 'bun-lock': parser } }).required).toEqual([direct, react])
+  })
+
+  it.each(['bun.lockb', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'])(
+    'selects every package reader for %s without a caller parser',
+    (path) => expect(select(path, before, after).required).toEqual([zod, direct, react])
+  )
+
+  it.each<[string, string | null, string | null]>([
+    ['added', null, after],
+    ['deleted', before, null],
+    ['malformed', before, '{"packages":'],
+    ['missing packages', before, '{}'],
+    ['overrides changed', before, '{"packages":{},"overrides":{"zod":"4"}}'],
+    [
+      'an own __proto__ field changed',
+      '{"packages":{},"__proto__":{"mode":1}}',
+      '{"packages":{},"__proto__":{"mode":2}}'
+    ],
+    ['a null field was added', '{"packages":{}}', '{"packages":{},"overrides":null}'],
+    ['a null field was removed', '{"packages":{},"overrides":null}', '{"packages":{}}'],
+    [
+      'a field changed to an overflowing number',
+      '{"packages":{},"configVersion":null}',
+      '{"packages":{},"configVersion":1e400}'
+    ],
+    [
+      'a nested value changed to an overflowing number',
+      '{"packages":{},"extra":[null]}',
+      '{"packages":{},"extra":[-1e400]}'
+    ]
+  ])('selects every package reader when the lockfile is %s', (_case, base, head) => {
+    expect(select('bun.lock', base, head).required).toEqual([zod, direct, react])
+  })
+})
 
 const ROOT = '/work/repo'
 
@@ -587,6 +692,24 @@ describe('the shipped recorder', () => {
     })
     expect(status).toBe(2)
     expect(written).toEqual(['test-selection-record: the recorder runs on Linux only (strace)\n'])
+  })
+
+  it('writes custom usage and flag help on a non-Linux host before validating arguments', async () => {
+    const written: string[] = []
+    const help: string[] = []
+    const usage = 'usage: custom-recorder --out <dir>'
+    const status = await recordCommand(['--shard', 'invalid', '--out', '-h'], {
+      name: 'custom-recorder',
+      platform: 'darwin',
+      usage,
+      write: (text) => written.push(text),
+      writeHelp: (text) => help.push(text)
+    })
+    expect(status).toBe(0)
+    expect(written).toEqual([])
+    expect(help).toHaveLength(1)
+    expect(help[0]).toStartWith(`${usage}\n  --out <dir>`)
+    expect(help[0]).toContain('  --help, -h')
   })
 
   it('launches a plain runner in the suite’s folder, and confirms the one file by its exit status alone', () => {
