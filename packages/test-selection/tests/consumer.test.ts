@@ -17,6 +17,8 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -132,7 +134,21 @@ function checkSetup(command: string, home: string): void {
       refused(setup(nested), '--branch')
       refused(setup(nested, '--branch', 'main'), '--package-manager')
       expect(existsSync(join(repo, '.github'))).toBe(false)
+      run('git', ['commit', '--allow-empty', '-qm', 'initial'], repo, home)
+      run('git', ['branch', 'origin/main'], repo, home)
+      run('git', ['update-ref', 'refs/remotes/origin/main', 'HEAD'], repo, home)
       run('git', ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'], repo, home)
+
+      const outside = join(home, 'outside-workflows')
+      mkdirSync(outside)
+      symlinkSync(outside, join(repo, '.github'), 'dir')
+      refused(setup(nested, '--package-manager', 'bun'), '.github')
+      unlinkSync(join(repo, '.github'))
+      mkdirSync(join(repo, '.github'))
+      symlinkSync(outside, join(repo, '.github/workflows'), 'dir')
+      refused(setup(nested, '--package-manager', 'bun'), '.github/workflows')
+      expect(readdirSync(outside)).toEqual([])
+      unlinkSync(join(repo, '.github/workflows'))
     }
     writeFileSync(join(repo, lock), '')
     if (name === 'yarn-modern') writeFileSync(join(repo, '.yarnrc.yml'), '')

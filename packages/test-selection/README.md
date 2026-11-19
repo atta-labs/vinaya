@@ -718,6 +718,8 @@ The command exits `0` and prints the repository-relative path when it writes
 the file. A byte-for-byte match prints that the file is unchanged and also
 exits `0`, as does help. A refusal exits `2` with one message on standard
 error. If the file already has different content, setup leaves it intact.
+Setup refuses symbolic links at `.github`, `.github/workflows`, or the
+workflow file itself.
 To take the workflow from a later package version, delete the file and
 run setup again.
 
@@ -727,11 +729,15 @@ For Bun and the branch `main`, setup writes:
 on:
   push:
     branches: ['main']
+permissions:
+  contents: read
 jobs:
   record-reads:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

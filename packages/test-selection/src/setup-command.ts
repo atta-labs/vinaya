@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Writes the default-branch recording workflow. Never imported by the entrypoint. */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { RECORD_ARTIFACT_PREFIX, RECORD_WORKFLOW_FILE } from './record-fetch.js'
 import { RECORD_FILE } from './recorder.js'
@@ -45,11 +45,15 @@ function workflow(root: string, branch: string, manager: PackageManager): string
     'on:',
     '  push:',
     `    branches: ['${pattern}']`,
+    'permissions:',
+    '  contents: read',
     'jobs:',
     '  record-reads:',
     '    runs-on: ubuntu-latest',
     '    steps:',
     '      - uses: actions/checkout@v4',
+    '        with:',
+    '          persist-credentials: false',
     '      - uses: actions/setup-node@v4',
     '        with:',
     "          node-version: '22'",
@@ -95,11 +99,12 @@ function setup(args: string[]): void {
   if (repo.status !== 0) throw new Error('start this command inside a git repository')
   const root = repo.stdout.replace(/\r?\n$/, '')
   if (branch === undefined) {
-    const remote = git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], root)
-    if (remote.status !== 0 || !remote.stdout.startsWith('origin/')) {
+    const prefix = 'refs/remotes/origin/'
+    const remote = git(['symbolic-ref', `${prefix}HEAD`], root)
+    if (remote.status !== 0 || !remote.stdout.startsWith(prefix)) {
       throw new Error('no default branch from origin/HEAD; pass --branch')
     }
-    branch = remote.stdout.replace(/\r?\n$/, '').slice('origin/'.length)
+    branch = remote.stdout.replace(/\r?\n$/, '').slice(prefix.length)
   }
   if (git(['check-ref-format', `refs/heads/${branch}`], root).status !== 0) {
     throw new Error(`invalid --branch value ${JSON.stringify(branch)}`)
@@ -108,11 +113,20 @@ function setup(args: string[]): void {
   const text = workflow(root, branch, manager ?? inferPackageManager(root))
   const relative = `.github/workflows/${RECORD_WORKFLOW_FILE}`
   const file = join(root, relative)
-  mkdirSync(join(root, '.github', 'workflows'), { recursive: true })
+  for (const dir of ['.github', '.github/workflows']) {
+    const path = join(root, dir)
+    try {
+      mkdirSync(path)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      if (!lstatSync(path).isDirectory()) throw new Error(`${dir} must be a directory inside the repository`)
+    }
+  }
   try {
     writeFileSync(file, text, { flag: 'wx' })
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    if (!lstatSync(file).isFile()) throw new Error(`${relative} already exists and is not a regular file`)
     if (!readFileSync(file).equals(Buffer.from(text))) throw new Error(`${relative} already exists with different text`)
     process.stdout.write(`${relative} is unchanged\n`)
     return
