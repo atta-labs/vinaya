@@ -68,7 +68,7 @@ Reuse the handle for the life of a run. Call `flush()` to flush processors durin
 | Forge, action and command | `forge.validated`, `forge.refused`, `forge.written`, `action.verified`, `command.completed` |
 | Custom | `custom.recorded(name, fields)` |
 
-Use the package's TypeScript declarations for each method's payload. Use `writeSpan()` on the handle or the exported `writeWholeSpan()` helper when you already have a span's start and end times. The package also exports the event catalogue, schema, custom-event validation, ID, redaction, stored-line and earlier-event conversion helpers.
+Use the package's TypeScript declarations for each method's payload. Call `log.writeSpan()` when you already have a span's start and end times. The package also exports the event catalogue, schema, custom-event validation, ID, redaction, stored-line and earlier-event conversion helpers.
 
 ## Local copy and delivery
 
