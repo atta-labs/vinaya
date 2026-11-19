@@ -90,6 +90,13 @@ function checkSetup(command: string, home: string): void {
       ['--branch', '--package-manager', '--help']
     )
   }
+  expectHelp(
+    command,
+    ['--branch', 'main', '--help', '--package-manager', 'bun'],
+    home,
+    'usage: test-selection-setup [--branch <name>] [--package-manager <bun|npm|pnpm|yarn>] [--help]',
+    ['--branch', '--package-manager', '--help']
+  )
   refused(setup(home), 'git repository')
   refused(setup(home, '--unknown'), 'unknown flag')
   refused(setup(home, '--package-manager', 'other'), '--package-manager')
