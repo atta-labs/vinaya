@@ -23,7 +23,7 @@
 // every caller (`harness/kernel/log/log.md` § Attribution).
 
 import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
-import { readFields } from '../../../../../packages/log-sdk/src/bin/args.js'
+import { EMIT_USAGE, readFields } from '../../../../../packages/log-sdk/src/bin/args.js'
 import { join } from 'node:path'
 import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
 import { loadConfig, loadTrustAnchorConfigAsync } from '../config/compose.js'
@@ -36,10 +36,6 @@ import {
   type ResolvedLogDestination
 } from '../../../../kernel/log/log-sink.js'
 import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../../../../kernel/run-paths.js'
-
-const USAGE =
-  "Usage: vinaya-log-emit <event> --json '<json object>' (or pipe the JSON object on standard input)\n" +
-  'Use vinaya-log emit to record from any loop without Vinaya.\n'
 
 export type LogEmitDeps = {
   /** Records the event through the one chokepoint every custom event goes through — `emitCustomEvent`. */
@@ -116,7 +112,7 @@ export function realLogEmitDeps(): LogEmitDeps {
 export async function logEmitCommand(args: string[], deps: LogEmitDeps = realLogEmitDeps()): Promise<number> {
   const parsed = await readFields(args, deps.readStdin)
   if (!parsed.ok) {
-    deps.stderr((parsed.message === undefined ? '' : 'vinaya log emit: ' + parsed.message + '\n') + USAGE)
+    deps.stderr((parsed.message === undefined ? '' : 'vinaya log emit: ' + parsed.message + '\n') + EMIT_USAGE)
     return 2
   }
 

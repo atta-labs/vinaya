@@ -64,6 +64,8 @@ export type AgentFailed = {
 }
 
 export type UsageRecorded = {
+  /** The started record's nanosecond timestamp when the span lives in another writer. */
+  spanStart?: string
   inputTokens?: number
   outputTokens?: number
   cacheReadInputTokens?: number
@@ -115,10 +117,14 @@ export function sent(core: WriterCore, options: AgentSent): SpanParent {
 export function usageRecorded(core: WriterCore, usage: UsageRecorded): void {
   const ref = usage.agent ?? core.current.agent
   if (ref === undefined) throw new Error('no agent is open')
+  if (usage.spanStart !== undefined && !core.open.has(ref.spanId)) {
+    emitEvent(core, E.usageRecorded, { ...usageAttributes(usage), [A.usageSpanStart]: usage.spanStart }, ref)
+    return
+  }
   setOpenAttributes(core, ref, usageAttributes(usage))
 }
 
-export function usageAttributes(usage: UsageRecorded): Attrs {
+function usageAttributes(usage: UsageRecorded): Attrs {
   // A reason for unknown usage and a figure never ride together: the reason wins.
   const unknown = usage.unknownReason !== undefined
   return {

@@ -19,6 +19,7 @@ test('emit records a declaration and reports usage errors and field-only refusal
       expect(bad.stderr.toString()).not.toContain('private-value')
     }
     expect(repo.call(args).exitCode).toBe(2)
+    expect(repo.call([...args, 'acme.deploy', '--json', '{"count":1}', '--task']).exitCode).toBe(2)
     expect(repo.call([...args, 'acme.deploy', '--json', '{']).exitCode).toBe(2)
     expect((await repo.read()).records.map((r) => r.name)).toEqual(['acme.deploy'])
   } finally {

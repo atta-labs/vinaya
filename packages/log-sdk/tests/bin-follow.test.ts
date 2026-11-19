@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { readdirSync, renameSync } from 'node:fs'
+import { readdirSync, renameSync, symlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { narrate } from '../src/narration/narrate.js'
 import { fixture } from './bin-fixture.js'
@@ -29,6 +29,38 @@ test('follow narrates local records and gaps even with a server destination conf
         output += decoder.decode(chunk.value, { stream: true })
       }
       expect(output.trimEnd().split('\n')).toHaveLength(2)
+    } finally {
+      child.kill()
+      await child.exited
+      reader.releaseLock()
+    }
+  } finally {
+    repo.clean()
+  }
+})
+
+test('task follow includes unstamped writers and sanitizes narration', async () => {
+  const repo = fixture()
+  try {
+    expect(repo.call(['run', 'started', '--run', 'test-run', '--json', '{"work":{"ref":"task-a"}}']).exitCode).toBe(0)
+    expect(
+      repo.call(['agent', 'sent', '--run', 'test-run', '--json', JSON.stringify({ seat: 'builder\u001b[2J' })]).exitCode
+    ).toBe(0)
+    symlinkSync(join(repo.cwd, 'log.config.json'), join(repo.folder, 'test-run~linked~000000000000.logs.jsonl'))
+    const child = repo.follow(['--task', 'task-a'])
+    const reader = child.stdout.getReader()
+    try {
+      const expired = new Promise<never>((_, reject) =>
+        AbortSignal.timeout(3000).addEventListener('abort', () => reject(new Error('follow did not print')))
+      )
+      let output = ''
+      while (!output.includes('Log gap') || !output.includes('Builder [2J is working.')) {
+        const chunk = await Promise.race([reader.read(), expired])
+        if (chunk.done) throw new Error('follow exited early')
+        output += new TextDecoder().decode(chunk.value)
+      }
+      expect(output).not.toContain('\u001b')
+      expect(output.trimEnd().split('\n')).toHaveLength(3)
     } finally {
       child.kill()
       await child.exited

@@ -286,10 +286,16 @@ A repository records events Vinaya does not know about by declaring them in its 
 
 ### Recording one from the command line: `vinaya-log-emit`
 
-Loops using the Log SDK can run `vinaya-log emit <event> --run <id>` without
-Vinaya. Both commands read the JSON through the same argument reader. The
-SDK command writes the run's local copy, and `bun apps/cli/src/index.ts log emit`
-uses the harness sink and its configured destination.
+Loops using the Log SDK can record without Vinaya:
+
+```sh
+vinaya-log emit acme.deploy --run deploy-42 --json '{"env":"prod","count":1,"note":"done","ok":true}'
+```
+
+The SDK reports `folder` for the run's local copy or `none` when recording
+is disabled. Both commands read the JSON through the same argument reader.
+`bun apps/cli/src/index.ts log emit` uses the harness sink and reports its
+configured destination.
 
 `vinaya-log-emit <event>` (`harness/processes/vinaya-strict/integration/bin/log-emit.ts`) is `emitCustomEvent` for a caller that is not Vinaya code at all — a script, a CI step, another agent runtime. The field values are read as ONE JSON object — `--json '<json>'` or piped on standard input — never positional arguments, since the declared fields are flat and typed.
 

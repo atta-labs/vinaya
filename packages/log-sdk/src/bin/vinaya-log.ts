@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { checkCustomEvent } from '../contract/custom.js'
 import { connect } from '../writer/connect.js'
 import { resolveSettings } from '../writer/settings.js'
-import { readFields, takeOption } from './args.js'
+import { EMIT_USAGE, readFields, takeOption } from './args.js'
 import { commands, invoke, MissingStart } from './commands.js'
 import { follow, localFolder } from './follow.js'
 
@@ -28,9 +28,7 @@ async function stdin(): Promise<string> {
 function usage(command?: string, message?: string): number {
   if (message !== undefined) console.error('vinaya log emit: %s', message)
   if (command === 'emit') {
-    console.error(
-      "Usage: vinaya-log emit <event> --run <id> --json '<json object>' (or pipe the JSON object on standard input)"
-    )
+    process.stderr.write(EMIT_USAGE)
   } else {
     console.error("Usage: vinaya-log <command> --run <id> --json '<json object>' (or use standard input)")
     console.error('       vinaya-log follow [--run <id> | --task <ref>]')
@@ -45,6 +43,7 @@ export async function main(argv: string[]): Promise<number> {
   const task = takeOption(args, '--task')
   const subject = args.shift()
   const command = subject === 'emit' || subject === 'follow' ? subject : subject + ' ' + args.shift()
+  if (runId === null || task === null) return usage(command)
   if (
     runId !== undefined &&
     (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(runId) || runId.includes('..') || runId.length > 190)

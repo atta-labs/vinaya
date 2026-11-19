@@ -1,4 +1,5 @@
-import { open, readdir } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { open, readdir, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createLineReader } from './lines.js'
 import type { OtelRecord } from './records.js'
@@ -18,6 +19,8 @@ export type FolderSourceOptions = {
   home?: string
   /** Runs after the folder is listed and before any file is opened; a test's way to let a writer move in between. */
   afterListing?: () => void | Promise<void>
+  /** The caller already resolved the folder and expects it to remain at this path. */
+  canonicalFolder?: boolean
 }
 
 /** A writer's place: the index of the file it was reading and the byte offset after the last whole line read there. */
@@ -63,9 +66,13 @@ function writePosition(places: Map<string, Place>): string {
 type Segment = { writer: string; index: number; file: string }
 
 async function bytesFrom(path: string, offset: number): Promise<{ bytes: Buffer; size: number }> {
-  const handle = await open(path, 'r')
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
   try {
-    const size = Number((await handle.stat()).size)
+    const stat = await handle.stat()
+    if (!stat.isFile() || stat.nlink !== 1 || (await realpath(path)) !== path) {
+      throw new Error('Unsafe local Log segment')
+    }
+    const size = stat.size
     if (size <= offset) return { bytes: Buffer.alloc(0), size }
     const bytes = Buffer.alloc(size - offset)
     let filled = 0
@@ -127,6 +134,9 @@ export function createFolderSource(options: FolderSourceOptions): RecordSource {
       const places = readPosition(position)
       const records: OtelRecord[] = []
       const problems: SourceProblem[] = []
+      const folder = options.canonicalFolder
+        ? options.folder
+        : await realpath(options.folder).catch(() => options.folder)
       const byWriter = await segments()
       await options.afterListing?.()
 
@@ -149,7 +159,7 @@ export function createFolderSource(options: FolderSourceOptions): RecordSource {
             }
             expected = segment.index + 1
           }
-          const path = join(options.folder, segment.file)
+          const path = join(folder, segment.file)
           const offset = place !== undefined && segment.index === place[0] ? place[1] : 0
           let read: { bytes: Buffer; size: number }
           try {

@@ -28,7 +28,11 @@ export async function localFolder(settings: ResolvedSettings, root: string, repo
     configured && !inside(root, configured) && !inside(await physical(root), await physical(configured))
       ? configured
       : join(settings.runtimeDir, 'logs')
-  return join(folder, repoSegment(repository))
+  const target = join(await physical(folder), repoSegment(repository))
+  if ((await physical(target)) !== target || inside(await physical(root), target)) {
+    throw new Error('Unsafe local Log directory')
+  }
+  return target
 }
 
 async function listRuns(folder: string): Promise<Set<string>> {
@@ -44,22 +48,37 @@ async function listRuns(folder: string): Promise<Set<string>> {
   return runs
 }
 
+function terminalLine(text: string): string {
+  return text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, ' ')
+}
+
+function runReader(folder: string, runId: string): Reader {
+  return createReader(createFolderSource({ folder, runId, canonicalFolder: true }), { position: '{}' })
+}
+
 export async function follow(folder: string, selection: { run?: string; task?: string }): Promise<void> {
   const readers = new Map<string, Reader>()
+  const matched = new Set<string>()
   for (;;) {
     const runs = selection.run === undefined ? await listRuns(folder) : [selection.run]
     for (const runId of runs) {
       // SDK writers count from one. File-level gaps still come from the source.
-      if (!readers.has(runId))
-        readers.set(runId, createReader(createFolderSource({ folder, runId }), { position: '{}' }))
+      if (!readers.has(runId)) readers.set(runId, runReader(folder, runId))
     }
     for (const [runId, reader] of readers) {
-      const { records, gaps } = await reader.pull()
-      for (const record of records) {
-        if (selection.task !== undefined && record.attributes[A.workRef] !== selection.task) continue
-        console.log((narrate(record)?.text ?? record.name).replace(/[\r\n]+/g, ' '))
+      let update = await reader.pull()
+      if (selection.task !== undefined && !matched.has(runId)) {
+        if (!update.records.some((record) => record.attributes[A.workRef] === selection.task)) continue
+        matched.add(runId)
+        const replay = runReader(folder, runId)
+        readers.set(runId, replay)
+        update = await replay.pull()
       }
-      for (const gap of gaps) console.log('Log gap in %s: %s', runId, gap.detail.replace(/[\r\n]+/g, ' '))
+      const { records, gaps } = update
+      for (const record of records) {
+        console.log(terminalLine(narrate(record)?.text ?? record.name))
+      }
+      for (const gap of gaps) console.log('Log gap in %s: %s', terminalLine(runId), terminalLine(gap.detail))
     }
     await setTimeout(250)
   }

@@ -1,4 +1,6 @@
 import { expect, test } from 'bun:test'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { ATTRIBUTE_NAMES as A } from '../src/contract/catalogue.js'
 import { fixture } from './bin-fixture.js'
 
@@ -40,6 +42,15 @@ test('each separate start and end writes one whole span with the original identi
       expect(span?.startTime).toBe(started?.time)
       expect(span?.time).toBe(String(BigInt(startTime + 100) * 1_000_000n))
       expect(span?.writerId).not.toBe(started?.writerId)
+      if (end === 'agent failed') {
+        const file = readdirSync(repo.folder).find(
+          (name) => name.startsWith(run + '~') && name.endsWith('.traces.jsonl')
+        )
+        if (!file) throw new Error('missing traces file')
+        expect(
+          JSON.parse(readFileSync(join(repo.folder, file), 'utf8')).resourceSpans[0].scopeSpans[0].spans[0].status.code
+        ).toBe(2)
+      }
     }
   } finally {
     repo.clean()
@@ -80,7 +91,10 @@ test('agent usage joins the completed span from a separate invocation', async ()
     ).toBe(0)
     expect(repo.call(['agent', 'returned', '--run', 'test-run', '--json', '{}']).exitCode).toBe(0)
     const { records } = await repo.read()
-    expect(records).toHaveLength(2)
+    expect(records).toHaveLength(3)
+    const usage = records.find((r) => r.name === 'vinaya.usage.recorded')
+    expect(usage?.seq).toBe(1)
+    expect(new Set(records.map((r) => r.writerId)).size).toBe(3)
     expect(records.find((r) => r.kind === 'span')?.attributes).toMatchObject({
       [A.usageInputTokens]: 20,
       [A.usageOutputTokens]: 8

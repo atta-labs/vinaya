@@ -1,15 +1,11 @@
 import type { TimeInput } from '@opentelemetry/api'
-import { constants } from 'node:fs'
-import { open, readdir, realpath } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import { ATTRIBUTE_NAMES as A, EVENT_NAMES as E, SPAN_NAMES as S, spanName } from '../contract/catalogue.js'
 import { spanIdFor, type SpanParent } from '../contract/ids.js'
 import { createFolderSource } from '../reader/folder-source.js'
 import type { OtelRecord } from '../reader/records.js'
 import { createReader } from '../reader/source.js'
-import { type UsageRecorded, usageAttributes } from '../writer/agent.js'
-import { type Attrs, sanitize } from '../writer/attributes.js'
+import type { UsageRecorded } from '../writer/agent.js'
+import type { Attrs } from '../writer/attributes.js'
 import type { LogHandle } from '../writer/connect.js'
 import type { Fields } from './args.js'
 
@@ -146,8 +142,13 @@ function attribute(value: unknown): Attrs[string] {
   return undefined
 }
 
-async function findStart(event: string, handle: LogHandle, fields: Fields, folder: string): Promise<OtelRecord> {
-  const reader = createReader(createFolderSource({ folder, runId: handle.runId }))
+async function findStart(
+  event: string,
+  handle: LogHandle,
+  fields: Fields,
+  folder: string
+): Promise<{ start: OtelRecord; records: OtelRecord[] }> {
+  const reader = createReader(createFolderSource({ folder, runId: handle.runId, canonicalFolder: true }))
   const { records } = await reader.readAll()
   const finished = new Map<string, bigint>()
   for (const record of records) {
@@ -169,72 +170,45 @@ async function findStart(event: string, handle: LogHandle, fields: Fields, folde
       undefined
     )
   if (start === undefined) throw new MissingStart('missing start: ' + event)
-  return start
+  return { start, records }
 }
 
-// Usage is stored on the finished agent span. A separate invocation leaves
-// its contribution beside the local records, keyed to this particular start.
-function usagePrefix(start: OtelRecord): string {
-  if (!/^[a-f0-9]{32}$/.test(start.traceId) || !/^[a-f0-9]{16}$/.test(start.spanId)) {
-    throw new Error('invalid start identity')
-  }
-  return [start.traceId, start.spanId, start.time, 'usage'].join('~') + '~'
-}
-
-async function saveUsage(folder: string, handle: LogHandle, start: OtelRecord, fields: Fields): Promise<void> {
-  const prefix = usagePrefix(start)
-  const attrs = usageAttributes(fields as UsageRecorded)
-  for (const key of Object.keys(attrs)) attrs[key] = attribute(attrs[key])
-  const payload = JSON.stringify(sanitize({ home: homedir() }, attrs))
-  const target = await realpath(folder)
-  const name = prefix + Date.now() + '-' + handle.writerId
-  const file = await open(
-    join(target, name),
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-    0o600
-  )
-  try {
-    await file.writeFile(payload + '\n')
-  } finally {
-    await file.close()
-  }
-}
-
-async function readUsage(folder: string, start: OtelRecord, attrs: Attrs): Promise<void> {
-  const prefix = usagePrefix(start)
-  const keys = Object.keys(usageAttributes({}))
-  for (const name of (await readdir(folder)).filter((name) => name.startsWith(prefix)).sort()) {
-    const file = await open(join(folder, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-    try {
-      const stat = await file.stat()
-      if (!stat.isFile() || stat.size > 64 * 1024) continue
-      const raw = await file.readFile('utf8')
-      if (!raw.endsWith('\n')) continue
-      const entry: unknown = JSON.parse(raw)
-      if (typeof entry === 'object' && entry !== null) {
-        for (const key of keys) attrs[key] = attribute((entry as Fields)[key])
-      }
-    } finally {
-      await file.close()
-    }
-  }
-}
+const usageKeys = [
+  A.usageInputTokens,
+  A.usageOutputTokens,
+  A.usageCacheReadInputTokens,
+  A.usageCost,
+  A.usageCostKind,
+  A.usageUnknownReason
+]
 
 export async function invoke(command: string, handle: LogHandle, fields: Fields, folder: string): Promise<void> {
   if (command === 'usage recorded') {
-    const start = await findStart(E.agentStarted, handle, fields, folder)
-    await saveUsage(folder, handle, start, fields)
+    if (!handle.enabled) return
+    const { start } = await findStart(E.agentStarted, handle, fields, folder)
+    handle.usage.recorded({ ...(fields as UsageRecorded), agent: start, spanStart: start.time })
     return
   }
   if (Object.hasOwn(completions, command)) {
     const [event, base, suffix, endFields] = completions[command as keyof typeof completions]
-    const start = await findStart(event, handle, fields, folder)
+    const { start, records } = await findStart(event, handle, fields, folder)
 
     const attrs: Attrs = {}
     for (const key of Object.values(A)) attrs[key] = attribute(start.attributes[key])
     delete attrs[A.eventId]
     for (const [field, key] of Object.entries(endFields)) attrs[key] = attribute(fields[field])
-    if (event === E.agentStarted) await readUsage(folder, start, attrs)
+    if (event === E.agentStarted) {
+      const usage = [...records]
+        .reverse()
+        .find(
+          (record) =>
+            record.name === E.usageRecorded &&
+            record.traceId === start.traceId &&
+            record.spanId === start.spanId &&
+            record.attributes[A.usageSpanStart] === start.time
+        )
+      if (usage !== undefined) for (const key of usageKeys) attrs[key] = attribute(usage.attributes[key])
+    }
 
     const part = suffix === undefined ? undefined : attrs[suffix]
     const name = spanName(base, typeof part === 'string' || typeof part === 'number' ? part : undefined)
