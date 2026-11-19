@@ -20,8 +20,40 @@ export {
 } from './writer/connect.js'
 export type { LogsSetting } from './writer/settings.js'
 export { writeWholeSpan } from './writer/whole-span.js'
-export type { Change } from './writer/change.js'
-export type { CheckResult, EndChecks, StartChecks } from './writer/checks.js'
-export type { OutsideAction } from './writer/outside.js'
-export type { AnswerPerson, AskPerson } from './writer/person.js'
+export type {
+  ActionVerified,
+  CommandCompleted,
+  ForgeRefusal,
+  ForgeWrite
+} from './writer/outside.js'
+export type {
+  AgentFailed,
+  AgentReturned,
+  AgentSent,
+  ConfidenceStated,
+  StepEnded,
+  StepStarted,
+  UsageRecorded
+} from './writer/agent.js'
+export type { InputVersions, Work } from './writer/attributes.js'
+export type {
+  ChangeConflicted,
+  ChangeIncident,
+  ChangeMerged,
+  ChangeOpened,
+  ChangePushed,
+  ChangeReverted,
+  ChangeSaved
+} from './writer/change.js'
+export type {
+  CheckNotPassed,
+  ChecksCi,
+  ChecksLocal,
+  ChecksRan,
+  ChecksRead,
+  ChecksRerun
+} from './writer/checks.js'
+export type { PersonAnswered, PersonAsked, PersonKind } from './writer/person.js'
 export type { FindingsCompared, ReviewVerdicts } from './writer/review.js'
+export type { EndRun, ExitKind, Pause, Resume, Stage, StartRun, StopRule, Timers } from './writer/run.js'
+export type { EndRound, PhaseEnded, StartRound } from './writer/round.js'

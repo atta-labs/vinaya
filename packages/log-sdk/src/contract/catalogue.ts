@@ -10,27 +10,35 @@ export const GENAI_CONVENTIONS_VERSION = 'semantic-conventions-genai@main-2026-1
 /** The SDK's own version, recorded on every handle's resource. */
 export const SDK_VERSION = '0.0.0'
 
+/**
+ * The base of every span name. A span's full name adds the part the product
+ * table fills in after a space: `vinaya.round 3`, `invoke_agent reviewer`,
+ * `execute_tool Bash`, `vinaya.checks ci`, `vinaya.person strategy`,
+ * `vinaya.phase review`.
+ */
 export const SPAN_NAMES = {
   run: 'invoke_workflow',
   round: 'vinaya.round',
   phase: 'vinaya.phase',
   agent: 'invoke_agent',
   step: 'execute_tool',
-  checkHook: 'vinaya.checks.hook',
-  checkLocal: 'vinaya.checks.local',
-  checkPush: 'vinaya.checks.push',
-  checkCi: 'vinaya.checks.ci',
-  personAuthority: 'vinaya.person.authority',
-  personStrategy: 'vinaya.person.strategy',
-  personProduct: 'vinaya.person.product'
+  checks: 'vinaya.checks',
+  person: 'vinaya.person',
+  pause: 'vinaya.pause'
 } as const
+
+/** A span's full name: the base, then the filled-in part when there is one. */
+export function spanName(base: (typeof SPAN_NAMES)[keyof typeof SPAN_NAMES], part?: string | number): string {
+  return part === undefined || part === '' ? base : `${base} ${part}`
+}
 
 export const EVENT_NAMES = {
   runStarted: 'vinaya.run.started',
   roundStarted: 'vinaya.round.started',
-  phaseStarted: 'vinaya.phase.started',
   agentStarted: 'vinaya.agent.started',
   stepStarted: 'vinaya.step.started',
+  pauseStarted: 'vinaya.pause.started',
+  personAsked: 'vinaya.person.asked',
   alive: 'vinaya.run.alive',
   stageChanged: 'vinaya.run.stage_changed',
   cancelled: 'vinaya.run.cancelled',
@@ -40,13 +48,13 @@ export const EVENT_NAMES = {
   confidenceStated: 'vinaya.agent.confidence_stated',
   reviewVerdicts: 'vinaya.review.verdicts',
   findingsCompared: 'vinaya.review.findings_compared',
-  checksStarted: 'vinaya.checks.started',
   checkNotPassed: 'vinaya.checks.not_passed',
-  checkResultRead: 'vinaya.checks.result_read',
-  personAsked: 'vinaya.person.asked',
-  forgeAction: 'vinaya.outside.forge',
-  verifiedAction: 'vinaya.outside.verified',
-  commandCompleted: 'vinaya.outside.command_completed',
+  checkRead: 'vinaya.checks.read',
+  forgeValidated: 'vinaya.forge.validated',
+  forgeRefused: 'vinaya.forge.refused',
+  forgeWritten: 'vinaya.forge.written',
+  actionVerified: 'vinaya.action.verified',
+  commandCompleted: 'vinaya.command.completed',
   changeSaved: 'vinaya.change.saved',
   changePushed: 'vinaya.change.pushed',
   changeOpened: 'vinaya.change.opened',
@@ -62,38 +70,87 @@ export const ATTRIBUTE_NAMES = {
   operationName: 'gen_ai.operation.name',
   agentName: 'gen_ai.agent.name',
   agentId: 'gen_ai.agent.id',
+  providerName: 'gen_ai.provider.name',
+  requestModel: 'gen_ai.request.model',
+  responseModel: 'gen_ai.response.model',
   toolName: 'gen_ai.tool.name',
-  toolType: 'gen_ai.tool.type',
+  toolCallId: 'gen_ai.tool.call.id',
   usageInputTokens: 'gen_ai.usage.input_tokens',
   usageOutputTokens: 'gen_ai.usage.output_tokens',
   usageCacheReadInputTokens: 'gen_ai.usage.cache_read.input_tokens',
-  usageCacheWriteInputTokens: 'gen_ai.usage.cache_write.input_tokens',
   errorType: 'error.type',
   // Resource
   serviceName: 'service.name',
   serviceVersion: 'service.version',
   hostId: 'host.id',
-  // Stamps
+  repository: 'vinaya.repository',
+  sdkVersion: 'vinaya.sdk.version',
+  semconvVersion: 'vinaya.semconv.version',
+  // Stamps every record carries
   seq: 'vinaya.seq',
   spanKey: 'vinaya.span.key',
   writerId: 'vinaya.writer.id',
   provenance: 'vinaya.provenance',
+  trust: 'vinaya.trust',
   eventId: 'vinaya.event.id',
   workRef: 'vinaya.work.ref',
-  // Vinaya namespace
-  repository: 'vinaya.repository',
-  sdkVersion: 'vinaya.sdk.version',
-  semconvVersion: 'vinaya.semconv.version',
+  workTitle: 'vinaya.work.title',
+  workChange: 'vinaya.work.change',
+  workCommit: 'vinaya.work.commit',
+  round: 'vinaya.round',
+  seat: 'vinaya.seat',
+  inputBrief: 'vinaya.input.brief',
+  inputObjectives: 'vinaya.input.objectives',
+  inputRuling: 'vinaya.input.ruling',
+  inputPolicy: 'vinaya.input.policy',
+  // Run
   runId: 'vinaya.run.id',
-  roundNumber: 'vinaya.round.number',
-  phaseName: 'vinaya.phase.name',
+  processName: 'vinaya.process.name',
+  processVersion: 'vinaya.process.version',
+  roundLimit: 'vinaya.run.round_limit',
+  runSeats: 'vinaya.run.seats',
+  runSeatModels: 'vinaya.run.seat_models',
+  runRounds: 'vinaya.run.rounds',
+  runTotalMs: 'vinaya.run.total_ms',
+  runTimeToGreenMs: 'vinaya.run.time_to_green_ms',
+  runFilesChanged: 'vinaya.run.files_changed',
+  runOutcome: 'vinaya.run.outcome',
   stageFrom: 'vinaya.stage.from',
   stageTo: 'vinaya.stage.to',
-  reason: 'vinaya.reason',
+  pauseWhy: 'vinaya.pause.why',
+  pauseBy: 'vinaya.pause.by',
+  actor: 'vinaya.actor',
+  retryFailed: 'vinaya.retry.failed',
+  retryTries: 'vinaya.retry.tries',
+  retryRecovered: 'vinaya.retry.recovered',
   rule: 'vinaya.rule',
-  attempt: 'vinaya.attempt',
   exitCode: 'vinaya.exit.code',
+  exitKind: 'vinaya.exit.kind',
+  // Round and phase
+  roundNumber: 'vinaya.round.number',
+  roundStartCommit: 'vinaya.round.start_commit',
+  roundFilesChanged: 'vinaya.round.files_changed',
+  roundLinesAdded: 'vinaya.round.lines_added',
+  roundLinesRemoved: 'vinaya.round.lines_removed',
+  roundOutcome: 'vinaya.round.outcome',
+  phaseName: 'vinaya.phase.name',
+  phaseStep: 'vinaya.phase.step',
+  // Agent
+  codingAgent: 'vinaya.agent.coding_agent',
+  codingAgentVersion: 'vinaya.agent.coding_agent_version',
+  agentOutcome: 'vinaya.agent.outcome',
+  agentResetAt: 'vinaya.agent.reset_at',
+  attempt: 'vinaya.attempt',
+  stepKind: 'vinaya.step.kind',
+  stepTarget: 'vinaya.step.target',
+  stepErrorLine: 'vinaya.step.error_line',
   confidence: 'vinaya.confidence',
+  confidenceReason: 'vinaya.confidence.reason',
+  confidenceAfterExtraTurn: 'vinaya.confidence.after_extra_turn',
+  usageCost: 'vinaya.usage.cost',
+  usageCostKind: 'vinaya.usage.cost_kind',
+  usageUnknownReason: 'vinaya.usage.unknown_reason',
+  // Review
   seats: 'vinaya.review.seats',
   verdicts: 'vinaya.review.verdicts',
   blockingCount: 'vinaya.review.blocking_count',
@@ -105,6 +162,7 @@ export const ATTRIBUTE_NAMES = {
   findingsResolved: 'vinaya.review.resolved',
   findingsNew: 'vinaya.review.new',
   findingsRecurring: 'vinaya.review.recurring',
+  // Checks
   checkWhere: 'vinaya.checks.where',
   checksRan: 'vinaya.checks.ran',
   checksPassed: 'vinaya.checks.passed',
@@ -112,17 +170,32 @@ export const ATTRIBUTE_NAMES = {
   checksSkipped: 'vinaya.checks.skipped',
   failedNames: 'vinaya.checks.failed_names',
   waitMs: 'vinaya.checks.wait_ms',
-  reruns: 'vinaya.checks.reruns',
   checkName: 'vinaya.checks.name',
+  checkVersion: 'vinaya.checks.version',
+  checksGreen: 'vinaya.checks.green',
+  rerunFailed: 'vinaya.checks.rerun_failed',
+  rerunAffected: 'vinaya.checks.rerun_affected',
+  rerunTotal: 'vinaya.checks.rerun_total',
   result: 'vinaya.result',
+  reason: 'vinaya.reason',
+  // Change
   change: 'vinaya.change.id',
   branch: 'vinaya.change.branch',
   commit: 'vinaya.change.commit',
-  actor: 'vinaya.actor',
+  changeTestsPicked: 'vinaya.change.tests_picked',
+  changeTestsFailed: 'vinaya.change.tests_failed',
+  changePushMs: 'vinaya.change.push_ms',
+  changeReentry: 'vinaya.change.reentry',
+  changeLink: 'vinaya.change.link',
   severity: 'vinaya.severity',
+  // Person
   questionKind: 'vinaya.person.kind',
   questionKey: 'vinaya.person.key',
+  personWhy: 'vinaya.person.why',
+  personDecision: 'vinaya.person.decision',
+  personAnswer: 'vinaya.person.answer',
   answeredBy: 'vinaya.person.answered_by',
+  // Outside actions
   target: 'vinaya.outside.target',
   action: 'vinaya.outside.action'
 } as const
@@ -132,6 +205,9 @@ export type EventName = (typeof EVENT_NAMES)[keyof typeof EVENT_NAMES]
 export type AttributeName = (typeof ATTRIBUTE_NAMES)[keyof typeof ATTRIBUTE_NAMES]
 
 export type RecordProvenance = 'governed' | 'reported'
+
+/** How far a record's origin is trusted: the earlier Log's four levels. */
+export type RecordTrust = 'parent_attributed' | 'env_correlated' | 'self_reported' | 'unavailable'
 
 /** GenAI content attributes the Log never records: no prompt, reasoning or tool content. */
 export const FORBIDDEN_CONTENT_ATTRIBUTES: readonly string[] = [
@@ -146,6 +222,11 @@ export const FORBIDDEN_CONTENT_ATTRIBUTES: readonly string[] = [
 export const ALL_SPAN_NAMES: readonly string[] = Object.values(SPAN_NAMES)
 export const ALL_EVENT_NAMES: readonly string[] = Object.values(EVENT_NAMES)
 export const ALL_ATTRIBUTE_NAMES: readonly string[] = Object.values(ATTRIBUTE_NAMES)
+
+/** Whether `name` is a catalogue span base, or a base followed by its filled-in part. */
+export function isSpanName(name: string): boolean {
+  return ALL_SPAN_NAMES.some((base) => name === base || (name.startsWith(`${base} `) && name.length > base.length + 1))
+}
 
 /** Reserved namespace for earlier-format events and fields. */
 export const EARLIER_EVENT_PREFIX = 'vinaya.earlier.'

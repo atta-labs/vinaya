@@ -180,7 +180,21 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
           ...(event.kind === 'custom' ? {} : { [A.runId]: runId }),
           [A.seq]: meta.seq,
           [A.provenance]: event.kind === 'custom' ? 'reported' : 'governed',
-          [A.workRef]: workRef
+          [A.trust]: 'provenance' in meta ? meta.provenance : 'unavailable',
+          [A.workRef]: workRef,
+          [A.workChange]: 'work' in meta ? (meta.work.change ?? undefined) : undefined,
+          [A.workCommit]: 'work' in meta ? (meta.work.revision ?? undefined) : undefined,
+          [A.round]: ('round' in event ? event.round : undefined) ?? subject.round,
+          [A.seat]: agent ? mapping.attributes[A.agentName] : undefined,
+          ...('input_versions' in meta
+            ? {
+                [A.inputBrief]: meta.input_versions.brief_hash ?? undefined,
+                [A.inputObjectives]: meta.input_versions.objectives_version ?? undefined,
+                [A.inputRuling]:
+                  meta.input_versions.ruling_ordinal === null ? undefined : String(meta.input_versions.ruling_ordinal),
+                [A.inputPolicy]: meta.input_versions.policy_digest ?? undefined
+              }
+            : {})
         },
         home
       )
@@ -210,6 +224,11 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
       const start = mapping.mode === 'end' || agent ? open.get(openKey) : undefined
       if (start !== undefined) open.delete(openKey)
       const pairedStart = start?.started
+      // A pause names why it began only on its start; the span that ends it carries the reason too.
+      const carried = (pairedStart?.record.attributes ?? []).filter(
+        ({ key }) => key === A.pauseWhy && !attributes.some((own) => own.key === key)
+      )
+      attributes.push(...carried)
       const converted: ConvertedEarlierRecord = {
         type: 'span',
         resource,

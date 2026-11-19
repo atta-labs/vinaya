@@ -50,7 +50,7 @@ test('a follower can seed a cross-process start from the emitted key and time', 
     const end = fixtures.find((event) => event.kind === kind && event.event === endName)!
     const first = createLiveEarlierConverter(runId).convert(start)
     if (first.type !== 'log') throw new Error('Expected an immediate started event')
-    expect(first.record.eventName).toBe(E.personAsked)
+    expect(first.record.eventName).toBe(kind === 'handoff' ? E.personAsked : E.pauseStarted)
     const key = first.record.attributes.find((attr) => attr.key === A.spanKey)?.value
     if (key === undefined || !('stringValue' in key)) throw new Error('Expected a span key')
     const seed = { spanKey: key.stringValue, startTimeUnixNano: first.record.timeUnixNano }
@@ -239,12 +239,12 @@ test('a dispatch outcome has the same agent span and parent live and whole-run, 
     const whole = convertEarlierEvents(events)
     const wholeAgent = whole.traces.resourceSpans
       .flatMap((group) => group.scopeSpans.flatMap((scope) => scope.spans))
-      .find((span) => span.name === 'invoke_agent')
+      .find((span) => span.name.startsWith('invoke_agent'))
     const live = createLiveEarlierConverter(runId)
     const liveAgent = events
       .map((event) => live.convert(event))
       .flatMap((item) => (item.type === 'span' ? [item.record] : []))
-      .find((span) => span.name === 'invoke_agent')
+      .find((span) => span.name.startsWith('invoke_agent'))
     expect(wholeAgent?.parentSpanId).toBeDefined()
     expect(liveAgent).toEqual(wholeAgent)
   }
@@ -276,8 +276,8 @@ test('a dispatch links to the round span the converter actually emits', () => {
   const dispatch = fixtures.find((event) => event.event === 'outcome_received')!
   const { traces } = convertEarlierEvents([start, dispatch, end])
   const spans = traces.resourceSpans.flatMap((group) => group.scopeSpans.flatMap((scope) => scope.spans))
-  const agent = spans.find((span) => span.name === 'invoke_agent')
-  const round = spans.find((span) => span.name === 'vinaya.round')
+  const agent = spans.find((span) => span.name.startsWith('invoke_agent'))
+  const round = spans.find((span) => span.name.startsWith('vinaya.round'))
   expect(round?.spanId).toBeDefined()
   expect(agent?.parentSpanId).toBe(round?.spanId)
 })

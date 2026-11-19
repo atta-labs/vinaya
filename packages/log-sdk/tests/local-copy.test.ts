@@ -87,13 +87,13 @@ test('the local copy is synchronous OTLP JSON in record order', () => {
               ]
             })
         })
-    handle.startRun()
+    handle.run.started()
     expect(read()).toEqual([[1, 'vinaya.run.started']])
-    handle.alive()
+    handle.run.alive()
     expect(read()).toHaveLength(2)
-    handle.endRun()
+    handle.run.ended()
     expect(read()).toHaveLength(3)
-    handle.stageChanged({ to: 'done' })
+    handle.run.stageChanged({ to: 'done' })
     expect(read()).toEqual([
       [1, 'vinaya.run.started'],
       [2, 'vinaya.run.alive'],
@@ -112,9 +112,9 @@ test('recording off creates no local copy', () => {
   const runtimeDir = mkdtempSync(join(tmpdir(), 'log-sdk-off-'))
   try {
     const handle = connect({ runId: 'off', repoRoot: join(runtimeDir, 'repo'), runtimeDir, destination: false })
-    handle.startRun()
-    handle.alive()
-    handle.endRun()
+    handle.run.started()
+    handle.run.alive()
+    handle.run.ended()
     expect(existsSync(join(runtimeDir, 'logs'))).toBe(false)
   } finally {
     rmSync(runtimeDir, { recursive: true, force: true })

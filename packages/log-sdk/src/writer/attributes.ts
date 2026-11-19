@@ -11,10 +11,11 @@ import type { Logger } from '@opentelemetry/api-logs'
 import {
   ALL_ATTRIBUTE_NAMES,
   ALL_EVENT_NAMES,
-  ALL_SPAN_NAMES,
   ATTRIBUTE_NAMES,
   FORBIDDEN_CONTENT_ATTRIBUTES,
-  type RecordProvenance
+  isSpanName,
+  type RecordProvenance,
+  type RecordTrust
 } from '../contract/catalogue.js'
 import { redact } from '../contract/redact.js'
 import type { CustomFieldValue } from '../contract/custom.js'
@@ -25,6 +26,25 @@ export type Attrs = Record<string, AttributeValue>
 
 type OpenSpan = { span: Span; ref: SpanParent }
 
+/** The work a run is for; each part is carried on every record once it is named. */
+export type Work = {
+  ref?: string | undefined
+  title?: string | undefined
+  change?: string | undefined
+  commit?: string | undefined
+}
+
+/** The versions of what the run was given; each is carried on every record once it is named. */
+export type InputVersions = {
+  brief?: string | number | undefined
+  objectives?: string | number | undefined
+  ruling?: string | number | undefined
+  policy?: string | number | undefined
+}
+
+/** What the handle knows about the moment: the open round, the open agent's seat, the run's last stage. */
+export type Moment = { round?: number; seat?: string; stage?: string }
+
 /** The writer's shared state: one per `connect()`, handed to every writing function. */
 export type WriterCore = {
   readonly enabled: boolean
@@ -32,13 +52,21 @@ export type WriterCore = {
   readonly traceId: string
   readonly writerId: string
   readonly provenance: RecordProvenance
-  readonly workRef: string | undefined
+  readonly trust: RecordTrust
+  readonly work: Work
+  readonly inputs: InputVersions
+  readonly moment: Moment
+  /** The handle's clock, in milliseconds; the time of the last record written is kept in `lastWrite`. */
+  readonly now: () => number
+  lastWrite: number
   readonly home: string
   readonly idGenerator: RunIdGenerator
   readonly tracer: Tracer | undefined
   readonly logger: Logger | undefined
   readonly open: Map<string, OpenSpan>
   readonly current: { run?: SpanParent; round?: SpanParent; phase?: SpanParent; agent?: SpanParent }
+  /** Pauses begun by this handle and not yet resumed, by key. */
+  readonly pauses: Map<string, { ref: SpanParent; startTime: TimeInput; round?: number; why?: string }>
   seq: number
   report(error: unknown): void
 }
@@ -87,13 +115,33 @@ function contextFor(ref: SpanParent | undefined) {
   })
 }
 
-function stamps(core: WriterCore, seq: number): Attrs {
+/** What every record carries, filled from the handle's own context and never passed per call. */
+function contextStamps(core: WriterCore): Attrs {
+  const { work, inputs, moment } = core
   return {
-    [ATTRIBUTE_NAMES.seq]: seq,
     [ATTRIBUTE_NAMES.writerId]: core.writerId,
     [ATTRIBUTE_NAMES.provenance]: core.provenance,
-    [ATTRIBUTE_NAMES.workRef]: core.workRef
+    [ATTRIBUTE_NAMES.trust]: core.trust,
+    [ATTRIBUTE_NAMES.workRef]: work.ref,
+    [ATTRIBUTE_NAMES.workTitle]: work.title,
+    [ATTRIBUTE_NAMES.workChange]: work.change,
+    [ATTRIBUTE_NAMES.workCommit]: work.commit,
+    [ATTRIBUTE_NAMES.round]: moment.round,
+    [ATTRIBUTE_NAMES.seat]: moment.seat,
+    [ATTRIBUTE_NAMES.inputBrief]: inputText(inputs.brief),
+    [ATTRIBUTE_NAMES.inputObjectives]: inputText(inputs.objectives),
+    [ATTRIBUTE_NAMES.inputRuling]: inputText(inputs.ruling),
+    [ATTRIBUTE_NAMES.inputPolicy]: inputText(inputs.policy)
   }
+}
+
+function inputText(value: string | number | undefined): string | undefined {
+  return value === undefined ? undefined : String(value)
+}
+
+function stamps(core: WriterCore, seq: number): Attrs {
+  core.lastWrite = core.now()
+  return { [ATTRIBUTE_NAMES.seq]: seq, ...contextStamps(core) }
 }
 
 /** The span a run-level moment belongs to: the run span, whose id every process derives alike. */
@@ -153,13 +201,14 @@ export function startSpan(core: WriterCore, input: StartSpanInput): SpanParent {
   if (!core.enabled || core.tracer === undefined) {
     return { traceId: core.traceId, spanId: spanId ?? '0000000000000000' }
   }
-  if (!ALL_SPAN_NAMES.includes(input.name)) throw new Error(`span "${input.name}" is not in the catalogue`)
-  const attrs = sanitize(core, input.attrs)
+  if (!isSpanName(input.name)) throw new Error(`span "${input.name}" is not in the catalogue`)
+  const attrs = sanitize(core, { ...contextStamps(core), ...input.attrs })
+  core.lastWrite = core.now()
   if (spanId !== undefined) core.idGenerator.useNextSpanId(spanId)
   let span: Span
   try {
     span = core.tracer.startSpan(
-      input.name,
+      redact(input.name, core.home),
       { attributes: attrs, ...(input.startTime !== undefined ? { startTime: input.startTime } : {}) },
       contextFor(input.parent)
     )
@@ -197,7 +246,11 @@ export function endSpan(
   if (errorType !== undefined) open.span.setStatus({ code: SpanStatusCode.ERROR })
   open.span.end(endTime)
   for (const k of ['run', 'round', 'phase', 'agent'] as const) {
-    if (core.current[k]?.spanId === ref.spanId) delete core.current[k]
+    if (core.current[k]?.spanId === ref.spanId) {
+      delete core.current[k]
+      if (k === 'round') delete core.moment.round
+      if (k === 'agent') delete core.moment.seat
+    }
   }
 }
 
@@ -207,4 +260,24 @@ export function setOpenAttributes(core: WriterCore, ref: SpanParent, attrs: Attr
   const open = core.open.get(ref.spanId)
   if (open === undefined) throw new Error(`span ${ref.spanId} is not open`)
   open.span.setAttributes(sanitize(core, attrs))
+}
+
+/** Writes one span whole under a random id: it starts and ends in this call, at the times given or now. */
+export function wholeSpan(
+  core: WriterCore,
+  name: string,
+  parent: SpanParent | undefined,
+  attrs: Attrs,
+  times: { startTime?: TimeInput | undefined; endTime?: TimeInput | undefined; errorType?: string | undefined } = {}
+): SpanParent {
+  const ref = startSpan(core, {
+    name,
+    startedEvent: '',
+    attrs,
+    parent,
+    startTime: times.startTime,
+    emitStarted: false
+  })
+  endSpan(core, ref, {}, times.endTime, times.errorType)
+  return ref
 }

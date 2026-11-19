@@ -56,10 +56,10 @@ test('logs false gives a handle that records nothing', () => {
   const dir = root({ 'vinaya.config.json': { logs: false } })
   const h = harness({ repoRoot: dir })
   expect(h.handle.enabled).toBe(false)
-  h.handle.startRun()
-  h.handle.alive()
-  h.handle.startAgent({ name: 'a' })
-  h.handle.endRun()
+  h.handle.run.started()
+  h.handle.run.alive()
+  h.handle.agent.sent({ seat: 'a' })
+  h.handle.run.ended()
   expect(h.spans.getFinishedSpans()).toEqual([])
   expect(h.logs.getFinishedLogRecords()).toEqual([])
   expect(h.errors).toEqual([])
@@ -78,7 +78,7 @@ test('a bad log.config.json is reported, not thrown, and the handle records noth
     const h = harness({ repoRoot: dir })
     expect(h.errors.length, label).toBe(1)
     expect(h.handle.enabled, label).toBe(false)
-    expect(() => h.handle.startRun(), label).not.toThrow()
+    expect(() => h.handle.run.started(), label).not.toThrow()
     expect(h.spans.getFinishedSpans(), label).toEqual([])
   }
 })
@@ -86,7 +86,7 @@ test('a bad log.config.json is reported, not thrown, and the handle records noth
 test('connect without custom processors does not throw', () => {
   const h = connect({ runId: 'r', repoRoot: root({}), runtimeDir: root({}) })
   expect(() => {
-    h.startRun()
-    h.endRun()
+    h.run.started()
+    h.run.ended()
   }).not.toThrow()
 })

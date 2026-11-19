@@ -17,7 +17,7 @@ test('an oversized repository component falls back in both default directories',
       vinayaHome,
       onError: (error) => errors.push(error)
     })
-    handle.alive()
+    handle.run.alive()
     expect(errors).toEqual([])
     expect(readdirSync(join(vinayaHome, 'runtime', 'unresolved', 'logs', 'unresolved'))).toEqual([
       `long-repo~${handle.writerId}~000000000000.logs.jsonl`
@@ -31,8 +31,8 @@ test('a run ID that leaves no room for the file suffix falls back to unresolved'
   const runtimeDir = mkdtempSync(join(tmpdir(), 'log-sdk-long-run-'))
   try {
     const handle = connect({ runId: 'a'.repeat(200), runtimeDir, repoRoot: join(runtimeDir, 'repo') })
-    handle.startRun()
-    handle.endRun()
+    handle.run.started()
+    handle.run.ended()
     const files = readdirSync(join(runtimeDir, 'logs', 'unresolved')).sort()
     expect(files).toEqual([
       `unresolved~${handle.writerId}~000000000000.logs.jsonl`,
@@ -56,11 +56,11 @@ test('configured folders win unless they resolve inside the repository', () => {
     const errors: unknown[] = []
     const base = { repository: 'acme/widgets', repoRoot, runtimeDir, onError: (error: unknown) => errors.push(error) }
     writeFileSync(join(repoRoot, 'log.config.json'), JSON.stringify({ logs: { folder: configured } }))
-    connect({ ...base, runId: 'configured' }).alive()
+    connect({ ...base, runId: 'configured' }).run.alive()
     expect(readdirSync(join(configured, 'acme-widgets'))).toHaveLength(1)
-    connect({ ...base, runId: 'inside', destination: { folder: inside } }).alive()
-    connect({ ...base, runId: 'alias', destination: { folder: join(alias, 'new') } }).alive()
-    connect({ ...base, runId: 'default', destination: {} }).alive()
+    connect({ ...base, runId: 'inside', destination: { folder: inside } }).run.alive()
+    connect({ ...base, runId: 'alias', destination: { folder: join(alias, 'new') } }).run.alive()
+    connect({ ...base, runId: 'default', destination: {} }).run.alive()
     expect(
       readdirSync(join(runtimeDir, 'logs', 'acme-widgets'))
         .sort()
@@ -79,9 +79,9 @@ test('unsafe segments use unresolved or report the unsafe writer', () => {
     const repoRoot = join(runtimeDir, 'repo')
     const errors: unknown[] = []
     const base = { runtimeDir, repoRoot, onError: (error: unknown) => errors.push(error) }
-    connect({ ...base, runId: 'bad-owner', repository: '../widgets' }).alive()
-    connect({ ...base, runId: 'bad-repo', repository: 'acme/a..b' }).alive()
-    connect({ ...base, runId: '../run', repository: 'acme/widgets' }).alive()
+    connect({ ...base, runId: 'bad-owner', repository: '../widgets' }).run.alive()
+    connect({ ...base, runId: 'bad-repo', repository: 'acme/a..b' }).run.alive()
+    connect({ ...base, runId: '../run', repository: 'acme/widgets' }).run.alive()
     expect(
       readdirSync(join(runtimeDir, 'logs', 'unresolved'))
         .sort()
@@ -111,7 +111,7 @@ test('unsafe segments use unresolved or report the unsafe writer', () => {
         }
       ]
     })
-    handle.alive()
+    handle.run.alive()
     expect(errors).toEqual([expect.objectContaining({ message: 'Unsafe Log writer identifier' })])
     expect(existsSync(join(runtimeDir, 'logs', 'unsafe-writer'))).toBe(false)
   } finally {

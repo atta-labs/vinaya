@@ -24,26 +24,26 @@ test('a span written whole carries the given id, parent, times, stamps and work 
 test('a step given a parent span context is exported under that parent', () => {
   const { handle, spans } = harness()
   const remoteAgent: SpanParent = { traceId: trace, spanId: spanIdFor('run-1', 'agent-elsewhere') }
-  const step = handle.startStep({ tool: 'bash', parent: remoteAgent })
-  handle.endStep(step)
+  const step = handle.agent.stepStarted({ tool: 'bash', parent: remoteAgent })
+  handle.agent.stepEnded(step)
   expect(spans.getFinishedSpans()[0]?.parentSpanContext?.spanId).toBe(remoteAgent.spanId)
 })
 
 test('two handles of one run given the same key write the same span id', () => {
   const a = harness()
   const b = harness()
-  const ra = a.handle.startAgent({ name: 'x', key: 'agent-1' })
-  const rb = b.handle.startAgent({ name: 'x', key: 'agent-1' })
+  const ra = a.handle.agent.sent({ seat: 'x', key: 'agent-1' })
+  const rb = b.handle.agent.sent({ seat: 'x', key: 'agent-1' })
   expect(ra.spanId).toBe(rb.spanId)
   expect(ra.spanId).toBe(spanIdFor('run-1', 'agent-1'))
 })
 
 test('a caller-supplied span id wins over a key, and none gives a random id', () => {
   const { handle } = harness()
-  const given = handle.startRound({ number: 1, spanId: 'ffffffffffffffff', key: 'k' })
+  const given = handle.round.started({ number: 1, spanId: 'ffffffffffffffff', key: 'k' })
   expect(given.spanId).toBe('ffffffffffffffff')
-  const r1 = handle.startPhase({ name: 'a' })
-  const r2 = handle.startPhase({ name: 'b' })
+  const r1 = handle.agent.stepStarted({ tool: 'a' })
+  const r2 = handle.agent.stepStarted({ tool: 'b' })
   expect(r1.spanId).not.toBe(r2.spanId)
 })
 

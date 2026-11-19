@@ -18,7 +18,7 @@ function connectWithFileDeclaration(name: string) {
 
 test('a destination override retains declarations from the config file', () => {
   const { handle, logs, errors } = connectWithFileDeclaration('team.checked')
-  handle.custom('team.checked', { count: 2 })
+  handle.custom.recorded('team.checked', { count: 2 })
   const [event] = logs.getFinishedLogRecords()
   expect(event?.eventName).toBe('team.checked')
   expect(event?.attributes.count).toBe(2)
@@ -27,7 +27,7 @@ test('a destination override retains declarations from the config file', () => {
 
 test('a destination override cannot hide a reserved declaration from the config file', () => {
   const { handle, logs, errors } = connectWithFileDeclaration('vinaya.mine')
-  handle.alive()
+  handle.run.alive()
   expect(errors).toHaveLength(1)
   expect(String(errors[0])).toContain('namespace is reserved')
   expect(logs.getFinishedLogRecords()).toEqual([])
@@ -36,7 +36,7 @@ test('a destination override cannot hide a reserved declaration from the config 
 test('custom validation and emission use the same snapshot of field values', () => {
   const { handle, logs, errors } = connectWithFileDeclaration('team.checked')
   let reads = 0
-  handle.custom('team.checked', {
+  handle.custom.recorded('team.checked', {
     get count() {
       return ++reads
     }
@@ -55,9 +55,9 @@ test('structural refusals take precedence without reading any field values', () 
       throw new Error('private value')
     }
   }
-  handle.custom('team.undeclared', fields)
-  handle.custom('team.checked', fields)
-  handle.custom('team.checked', {
+  handle.custom.recorded('team.undeclared', fields)
+  handle.custom.recorded('team.checked', fields)
+  handle.custom.recorded('team.checked', {
     count: 1,
     get extra() {
       return fields.extra
@@ -74,7 +74,7 @@ test('structural refusals take precedence without reading any field values', () 
 
 test('unreadable custom fields produce value-free refusals', () => {
   const { handle, logs, errors } = connectWithFileDeclaration('team.checked')
-  handle.custom('team.checked', {
+  handle.custom.recorded('team.checked', {
     get count() {
       throw new Error('private value')
     }
@@ -88,12 +88,12 @@ test('custom records use the declared name and refuse invalid fields without dis
     destination: { events: { 'team.checked': { fields: { path: 'text', count: 'number' } } } },
     home: '/private-home'
   })
-  handle.custom('team.checked', { path: '/private-home/work', count: 1 })
-  handle.custom('team.undeclared', { path: 'private value' })
-  handle.custom('team.checked', { path: 'private value' })
-  handle.custom('team.checked', { path: 'private value', count: 1, extra: 'private value' })
-  handle.custom('team.checked', { path: 'private value', count: 'private value' })
-  handle.custom('team.checked', { path: 'private value'.repeat(100), count: 1 })
+  handle.custom.recorded('team.checked', { path: '/private-home/work', count: 1 })
+  handle.custom.recorded('team.undeclared', { path: 'private value' })
+  handle.custom.recorded('team.checked', { path: 'private value' })
+  handle.custom.recorded('team.checked', { path: 'private value', count: 1, extra: 'private value' })
+  handle.custom.recorded('team.checked', { path: 'private value', count: 'private value' })
+  handle.custom.recorded('team.checked', { path: 'private value'.repeat(100), count: 1 })
   const records = logs.getFinishedLogRecords()
   expect(records.map((e) => e.eventName)).toEqual(['team.checked'])
   expect(records[0]?.attributes).toMatchObject({ path: '~/work', count: 1 })
@@ -108,7 +108,7 @@ test('custom records use the declared name and refuse invalid fields without dis
 
 test('connecting with a Vinaya event declaration fails through the callback', () => {
   const { handle, errors, logs } = harness({ destination: { events: { 'vinaya.mine': { fields: {} } } } })
-  handle.alive()
+  handle.run.alive()
   expect(handle.settings).toBeUndefined()
   expect(errors).toHaveLength(1)
   expect(String(errors[0])).toContain('namespace is reserved')
