@@ -187,6 +187,10 @@ const SITES: Record<string, number> = {
   'harness/processes/vinaya-strict/integration/log/log-sink.test.ts installVinayaLogSinkFactory embedded': 1,
   'harness/processes/vinaya-strict/tests/integration/log/log-sink-factory.test.ts installVinayaLogSinkFactory embedded': 1,
   'harness/processes/vinaya-strict/tests/lib/task-tools/cancel.test.ts installVinayaLogSinkFactory embedded': 2,
+  // The Log sink's own tests, which build sinks of their own to read both formats' files.
+  'harness/kernel/log/local-copy-exit.test.ts createLogSink code': 1,
+  'harness/kernel/log/local-copy-sending.test.ts createLogSink code': 1,
+  'harness/kernel/log/local-copy-writer.test.ts createLogSink code': 4,
   // A taskless check run beside a test process, appending its gate events as any check run on the host does.
   'harness/processes/vinaya-strict/integration/conformance/unit/real-runtime-guard.test.ts installVinayaLogSinkFactory embedded': 1,
   'harness/processes/vinaya-strict/integration/gates/checks/fixtures/run-and-hang.ts installVinayaLogSinkFactory code': 1,

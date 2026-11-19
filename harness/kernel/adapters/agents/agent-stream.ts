@@ -20,6 +20,45 @@ const TRANSLATORS = { claude: translateClaudeEvent, codex: translateCodexEvent }
 const DETAIL_LINES_MAX = 20
 const DETAIL_LINE_MAX = 400
 
+/**
+ * One agent step as the translators reduce it, handed to an observer: a call starting, and its result. It carries
+ * the tool's name, the call's kind and short target, and the outcome. Never a tool's input or output, and never the
+ * agent's words.
+ */
+export type AgentStep =
+  | { type: 'start'; id: string; tool: string; kind: string; target: string; at: number }
+  | {
+      type: 'result'
+      id: string
+      kind: string
+      target: string
+      ok: boolean
+      durationMs: number
+      at: number
+      error?: string
+      failedTests?: number
+    }
+
+/** Receives each agent step as the stream renders; never able to change the rendered lines. */
+export type AgentStepObserver = (step: AgentStep) => void
+
+/** The tool a call used, by call id: Claude's tool name, Codex's item type or its MCP tool. Names only. */
+function toolsById(agent: keyof typeof TRANSLATORS, event: Json): Map<string, string> {
+  const out = new Map<string, string>()
+  if (agent === 'claude') {
+    const content = record(event.message).content
+    for (const raw of Array.isArray(content) ? content : []) {
+      const block = record(raw)
+      if (block.type === 'tool_use' && str(block.id) !== '' && str(block.name) !== '')
+        out.set(str(block.id), str(block.name))
+    }
+  } else {
+    const item = record(event.item)
+    if (str(item.id) !== '') out.set(str(item.id), str(item.type === 'mcp_tool_call' ? item.tool : item.type))
+  }
+  return out
+}
+
 export interface AgentStreamRenderer {
   /** One parsed stream event as zero or more primary lines with their marks and detail lines. */
   render(event: Json): AgentLineParts[]
@@ -84,6 +123,39 @@ function isEventName(text: string): boolean {
   return /^[a-z_]+(?:\.[a-z_]+)+$/.test(text.trim())
 }
 
+/** Hands one translated update to the observer as a step; an observer that throws changes nothing. */
+function observeStep(onStep: AgentStepObserver, update: NarratedUpdate, tools: Map<string, string>, at: number): void {
+  try {
+    if (update.id === null) return
+    if (update.type === 'action') {
+      // The agent's own words are not a call.
+      if (update.kind === 'message') return
+      onStep({
+        type: 'start',
+        id: update.id,
+        tool: tools.get(update.id.split('#')[0] ?? '') ?? '',
+        kind: update.kind,
+        target: update.subject,
+        at: update.at
+      })
+      return
+    }
+    onStep({
+      type: 'result',
+      id: update.id,
+      kind: update.kind,
+      target: update.subject,
+      ok: update.ok,
+      durationMs: update.durationMs,
+      at,
+      ...(update.error === undefined ? {} : { error: update.error }),
+      ...(update.failedTests === undefined ? {} : { failedTests: update.failedTests })
+    })
+  } catch {
+    // An observer never changes the rendering it watches.
+  }
+}
+
 /**
  * Each agent's live stream through its own translator, into the lines the
  * Readable Task Log specifies. An event the translator does not handle falls
@@ -94,7 +166,8 @@ export function createAgentStreamRenderer(
   agent: keyof typeof TRANSLATORS,
   context: { worktree: string; home: string },
   renderEvent: (event: Json) => string | null,
-  now: () => number = Date.now
+  now: () => number = Date.now,
+  onStep?: AgentStepObserver
 ): AgentStreamRenderer {
   const state = createNarrationState()
   const translate: Translate = TRANSLATORS[agent]
@@ -106,6 +179,10 @@ export function createAgentStreamRenderer(
       if (words.trim() !== '') lines.push({ words: 'Writing', mark: 'working', details: textLines(words, ctx) })
       const updates = translate(event, state, ctx)
       const commands = commandsById(agent, event)
+      if (onStep !== undefined && updates.length > 0) {
+        const tools = toolsById(agent, event)
+        for (const update of updates) observeStep(onStep, update, tools, ctx.now)
+      }
       for (const update of updates) {
         const parts = renderNarratedUpdate(update)
         const command = update.type === 'action' && update.id !== null ? commands.get(update.id) : undefined
