@@ -224,6 +224,16 @@ export function logsSchema<Events extends z.ZodTypeAny>(events: Events) {
         .refine((v) => isAbsolute(v), { message: 'logs.folder: must be an absolute path' })
         .optional(),
       url: z.string().url().optional(),
+      otlp: z
+        .object({
+          url: z
+            .string()
+            .url()
+            .regex(/^https?:\/\//i),
+          headers: z.record(z.string()).optional()
+        })
+        .strict()
+        .optional(),
       // Header values may reference `${VAR_NAME}`, resolved at delivery time
       // (`resolveLogsHeaderValues`), so a credential never sits in the file.
       headers: z.record(z.string()).optional(),

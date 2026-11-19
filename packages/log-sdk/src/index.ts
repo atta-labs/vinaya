@@ -11,6 +11,7 @@ export * from './contract/ids.js'
 export * from './contract/redact.js'
 export * from './contract/schema.js'
 export * from './contract/store.js'
+export { type LocalCopyReport, type SendLocalCopyOptions, sendLocalCopy } from './sender/send.js'
 export {
   type ConnectOptions,
   connect,
