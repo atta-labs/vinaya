@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
+import { type CustomEventDeclarations, CustomEventDeclarationsSchema } from '../contract/custom.js'
 
 /*
  * The settings reader mirrors the harness schema's rules for the `logs` and
@@ -59,7 +60,9 @@ export type ResolvedSettings = {
   runtimeDir: string
 }
 
-export type SettingsResult = { ok: true; settings: ResolvedSettings } | { ok: false; error: Error }
+export type SettingsResult =
+  | { ok: true; settings: ResolvedSettings; declarations: CustomEventDeclarations }
+  | { ok: false; error: Error }
 
 export const MAX_COMPONENT_BYTES = 255
 const SAFE_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
@@ -134,6 +137,14 @@ export function resolveSettings(input: {
     fileRuntimeDir = parsed.data.runtimeDir
   }
 
+  const fileEvents = CustomEventDeclarationsSchema.optional().safeParse(fileLogs ? fileLogs.events : undefined)
+  if (!fileEvents.success) return fail(zodMessage('logs.events', fileEvents.error))
+  const passedEvents = CustomEventDeclarationsSchema.optional().safeParse(
+    passed.destination ? passed.destination.events : undefined
+  )
+  if (!passedEvents.success) return fail(zodMessage('logs.events', passedEvents.error))
+  const declarations = passedEvents.data ?? fileEvents.data ?? {}
+
   let logs: LogsSetting | undefined = passed.destination !== undefined ? passed.destination : fileLogs
   if (passed.headers !== undefined) {
     if (logs === false) {
@@ -153,5 +164,5 @@ export function resolveSettings(input: {
     if (!checked.success) return fail(zodMessage('runtimeDir', checked.error))
   }
   const runtimeDir = passedDir ?? fileRuntimeDir ?? defaultRuntimeDir(input.repository, input.vinayaHome)
-  return { ok: true, settings: { logs, runtimeDir } }
+  return { ok: true, settings: { logs, runtimeDir }, declarations }
 }
