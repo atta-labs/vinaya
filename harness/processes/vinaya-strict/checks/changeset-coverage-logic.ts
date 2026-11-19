@@ -114,7 +114,7 @@ export function isShippedPath(member: FixedGroupMember, repoRelativePath: string
 
 /** `.changeset/*.md`, excluding `.changeset/README.md` — the fixed exemption the predicate names (brief §2). */
 export function isChangesetFile(repoRelativePath: string): boolean {
-  return /^\.changeset\/(?!README\.md$).+\.md$/.test(repoRelativePath)
+  return /^\.changeset\/(?!README\.md$).+\.md$/s.test(repoRelativePath)
 }
 
 /**

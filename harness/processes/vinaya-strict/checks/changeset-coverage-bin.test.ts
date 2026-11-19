@@ -110,7 +110,7 @@ describe('check-changeset-coverage (bin) — ignored packages', () => {
     }
   )
 
-  it.each(['add', 'edit', 'delete', 'release branch', 'no ignore list', 'no config', 'quoted path'])(
+  it.each(['add', 'edit', 'delete', 'release branch', 'no ignore list', 'no config', 'quoted path', 'line break'])(
     'grades the changed changeset for %s',
     async (scenario) => {
       const root = newRoot('ignored-package')
@@ -122,7 +122,8 @@ describe('check-changeset-coverage (bin) — ignored packages', () => {
         writeFileSync(config, JSON.stringify({ ignore: ['@fixture/portal', '@other/*'] }))
       }
       git(root, ['config', 'core.quotePath', 'true'])
-      const filename = scenario === 'quoted path' ? 'café.md' : 'portal.md'
+      const filename =
+        scenario === 'quoted path' ? 'café.md' : scenario === 'line break' ? 'portal\nupdate.md' : 'portal.md'
       const changeset = join(root, '.changeset', filename)
       const ignored = "---\n'@fixture/portal': patch\n'@other/tool': minor\n---\n"
       if (scenario === 'delete') writeFileSync(changeset, ignored)
@@ -138,7 +139,8 @@ describe('check-changeset-coverage (bin) — ignored packages', () => {
       git(root, ['commit', '-qm', 'Fix(portal): update fixture'])
 
       const { exitCode, stderr } = await runBin(root)
-      const refused = scenario === 'add' || scenario === 'edit' || scenario === 'quoted path'
+      const refused =
+        scenario === 'add' || scenario === 'edit' || scenario === 'quoted path' || scenario === 'line break'
       expect(exitCode).toBe(refused ? 1 : 0)
       const findings = parseFindings(stderr)
       expect(findings).toHaveLength(refused ? 1 : 0)
@@ -150,6 +152,31 @@ describe('check-changeset-coverage (bin) — ignored packages', () => {
       }
     }
   )
+
+  it('skips a deleted changeset restored byte-for-byte in the index', async () => {
+    const root = newRoot('restored-changeset')
+    initRepo(root)
+    scaffoldFixedGroup(root)
+    writeFileSync(join(root, '.changeset', 'config.json'), JSON.stringify({ ignore: ['@fixture/portal'] }))
+    const changeset = join(root, '.changeset', 'portal.md')
+    const ignored = "---\n'@fixture/portal': patch\n---\n"
+    writeFileSync(changeset, ignored)
+    git(root, ['add', '.'])
+    git(root, ['commit', '-qm', 'Chore: initial scaffold'])
+    git(root, ['checkout', '-qb', 'fix/portal'])
+    git(root, ['rm', '.changeset/portal.md'])
+    git(root, ['commit', '-qm', 'Fix(portal): remove changeset'])
+    writeFileSync(changeset, ignored)
+    writeFileSync(join(root, 'README.md'), '# Other staged change\n')
+    git(root, ['add', '.'])
+
+    const { exitCode, stderr } = await runBin(root, {
+      VINAYA_COMMIT_HOOK: '1',
+      GIT_INDEX_FILE: join(root, '.git', 'index')
+    })
+    expect(exitCode).toBe(0)
+    expect(parseFindings(stderr)).toEqual([])
+  })
 
   it.each([true, false])('reads the ignore list from the index when indexed config is %s', async (hasConfig) => {
     const root = newRoot('changeset-config-snapshot')

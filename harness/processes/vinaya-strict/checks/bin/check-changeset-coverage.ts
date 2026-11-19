@@ -81,9 +81,10 @@ function changedPaths(staged: boolean): string[] | null {
   if (!diff) return null
 
   const options = { cwd: diff.root, encoding: 'utf8' as const, stdio: 'pipe' as const }
-  const committed = execFileSync('git', ['diff', '--name-only', '-z', `${diff.base}...HEAD`], options)
-  const indexed = staged ? execFileSync('git', ['diff', '--cached', '--name-only', '-z'], options) : ''
-  return [...new Set((committed + indexed).split('\0').filter(Boolean))]
+  const args = staged ? ['--cached', '--merge-base', diff.base] : [`${diff.base}...HEAD`]
+  return execFileSync('git', ['diff', '--name-only', '-z', ...args], options)
+    .split('\0')
+    .filter(Boolean)
 }
 
 type PackageJsonView = { name?: unknown; files?: unknown; workspaces?: unknown }
