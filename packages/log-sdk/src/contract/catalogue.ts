@@ -75,6 +75,7 @@ export const ATTRIBUTE_NAMES = {
   hostId: 'host.id',
   // Stamps
   seq: 'vinaya.seq',
+  spanKey: 'vinaya.span.key',
   writerId: 'vinaya.writer.id',
   provenance: 'vinaya.provenance',
   eventId: 'vinaya.event.id',
@@ -145,3 +146,7 @@ export const FORBIDDEN_CONTENT_ATTRIBUTES: readonly string[] = [
 export const ALL_SPAN_NAMES: readonly string[] = Object.values(SPAN_NAMES)
 export const ALL_EVENT_NAMES: readonly string[] = Object.values(EVENT_NAMES)
 export const ALL_ATTRIBUTE_NAMES: readonly string[] = Object.values(ATTRIBUTE_NAMES)
+
+/** Reserved namespace for earlier-format events and fields. */
+export const EARLIER_EVENT_PREFIX = 'vinaya.earlier.'
+export const EARLIER_WRITER_PREFIX = 'earlier:'
