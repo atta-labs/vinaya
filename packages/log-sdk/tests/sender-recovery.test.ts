@@ -33,16 +33,18 @@ const trace = '{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"f00d","spa
 const event =
   '{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"attributes":[{"key":"vinaya.event.id","value":{"stringValue":"event1"}}]}]}]}]}'
 
-test.each(['before', 'during', 'after'])('recovers after a sender is killed %s a request', async (phase) => {
-  const { options, fetch, segment, observed } = fixture()
-  segment(0, trace, trace.replace('beef', 'cafe'))
-  segment(1, event)
-  const moduleUrl = new URL('../src/sender/send.ts', import.meta.url).href
-  const child = Bun.spawn(
-    [
-      process.execPath,
-      '-e',
-      `import { writeSync } from 'node:fs';
+test.each(['before', 'during', 'after', 'between the answer and its receipt for'])(
+  'recovers after a sender is killed %s a request',
+  async (phase) => {
+    const { options, fetch, segment, observed } = fixture()
+    segment(0, trace, trace.replace('beef', 'cafe'))
+    segment(1, event)
+    const moduleUrl = new URL('../src/sender/send.ts', import.meta.url).href
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        '-e',
+        `import { writeSync } from 'node:fs';
        import { sendLocalCopy } from ${JSON.stringify(moduleUrl)};
        const phase = ${JSON.stringify(phase)};
        let requests = 0;
@@ -51,18 +53,20 @@ test.each(['before', 'during', 'after'])('recovers after a sender is killed %s a
          if (phase === 'after' && requests++ > 0) process.kill(process.pid, 'SIGKILL');
          writeSync(1, init.body + '\\n');
          if (phase === 'during') process.kill(process.pid, 'SIGKILL');
+         if (phase.startsWith('between')) queueMicrotask(() => process.kill(process.pid, 'SIGKILL'));
          return new Response();
        }});`
-    ],
-    { stdout: 'pipe', stderr: 'inherit' }
-  )
-  const output = await new Response(child.stdout).text()
-  await child.exited
-  expect(child.signalCode).toBe('SIGKILL')
-  for (const record of output.trim().split('\n').filter(Boolean)) observed.add(record)
-  expect((await sendLocalCopy({ ...options, fetch })).failures).toEqual([])
-  expect(observed).toEqual(new Set([trace, trace.replace('beef', 'cafe'), event]))
-})
+      ],
+      { stdout: 'pipe', stderr: 'inherit' }
+    )
+    const output = await new Response(child.stdout).text()
+    await child.exited
+    expect(child.signalCode).toBe('SIGKILL')
+    for (const record of output.trim().split('\n').filter(Boolean)) observed.add(record)
+    expect((await sendLocalCopy({ ...options, fetch })).failures).toEqual([])
+    expect(observed).toEqual(new Set([trace, trace.replace('beef', 'cafe'), event]))
+  }
+)
 
 test('retries staged records after their source segment is removed', async () => {
   const { options, fetch, segment, observed } = fixture()
@@ -84,7 +88,7 @@ test('reports a missing writer segment and still sends the later segment', async
   expect(result.failures).toEqual([
     expect.objectContaining({
       file: expect.stringContaining('run~writer~000000000000'),
-      reason: 'lost segment from writer writer'
+      reason: 'lost segment from writer writer (a pattern: the signal is unknown)'
     })
   ])
   expect(observed).toEqual(new Set([event]))

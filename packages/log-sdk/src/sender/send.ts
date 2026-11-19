@@ -270,7 +270,11 @@ export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<Loca
         if (index > expected) {
           const slot = (value: number) => String(value).padStart(12, '0')
           const range = index === expected + 1 ? slot(expected) : `${slot(expected)}–${slot(index - 1)}`
-          await lost(`${prefix}~${range}.{traces,logs}.jsonl`, prefix.split('~')[1] ?? prefix)
+          // The missing file's signal is unknown, so the path is a pattern, not a real file.
+          await lost(
+            `${prefix}~${range}.{traces,logs}.jsonl`,
+            `${prefix.split('~')[1] ?? prefix} (a pattern: the signal is unknown)`
+          )
         }
         expected = index + 1
       }
