@@ -2435,16 +2435,22 @@ function selectChange(input: SelectTestsInput): ChangePlan {
     if (facts.files.size === 0 && facts.packages.size === 0) return
     const pathsByPackage = new Map<string, readonly string[]>()
     for (const test of tests) {
-      const hit = reaches(`${ALL_PREFIX}${join(root, test)}`, graph.edges, facts, maxDepth)
-      if (!hit) continue
-      const target = side === 'base' ? (renames.get(test) ?? test) : test
-      const reason: PlanReason = {
-        kind: hit.kind === 'always-run' ? 'declared-input' : hit.kind,
-        detail: hit.detail,
-        via: hit.via.startsWith(`${root}/`) ? hit.via.slice(root.length + 1) : hit.via,
-        revision: side
-      }
-      if (policy.installLayout === 'hoisted' && hit.kind === 'conservative-fallback') {
+      // The walk returns one hit. Under the hoisted layout a whole-package hit may later be dropped because only
+      // a manifest's dependency lists changed there, so keep walking with that package removed: a hit it masked
+      // must still be seen.
+      let walkFacts = facts
+      for (;;) {
+        const hit = reaches(`${ALL_PREFIX}${join(root, test)}`, graph.edges, walkFacts, maxDepth)
+        if (!hit) break
+        const target = side === 'base' ? (renames.get(test) ?? test) : test
+        const reason: PlanReason = {
+          kind: hit.kind === 'always-run' ? 'declared-input' : hit.kind,
+          detail: hit.detail,
+          via: hit.via.startsWith(`${root}/`) ? hit.via.slice(root.length + 1) : hit.via,
+          revision: side
+        }
+        addReason(target, reason)
+        if (policy.installLayout !== 'hoisted' || hit.kind !== 'conservative-fallback') break
         let paths = pathsByPackage.get(hit.via)
         if (!paths) {
           const owners = graph.packages.filter((pkg) => pkg.name === hit.via)
@@ -2452,8 +2458,10 @@ function selectChange(input: SelectTestsInput): ChangePlan {
           pathsByPackage.set(hit.via, paths)
         }
         packageHitPaths.set(reason, paths)
+        const remaining = new Set(walkFacts.packages)
+        remaining.delete(hit.via)
+        walkFacts = { ...walkFacts, packages: remaining }
       }
-      addReason(target, reason)
     }
   }
   walk(

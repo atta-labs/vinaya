@@ -639,6 +639,29 @@ describe('workspace manifest dependency-list changes', () => {
     expect(plan.records.leftOut).toEqual([])
   })
 
+  it('keeps a later whole-package fallback that an omitted manifest hit came before', () => {
+    const otherSource = 'packages/other/src/index.ts'
+    const mainBefore = '{"name":"example","main":"./src/main.ts","dependencies":{"external":"^1"}}'
+    const mainAfter = '{"name":"example","main":"./src/main.ts","dependencies":{"external":"^2"}}'
+    const lockWithOther =
+      '{"workspaces":{"":{"name":"root"},"packages/example":{"name":"example",},"packages/other":{"name":"@fixture/other",},},"packages":{}}'
+    const plan = compare({
+      base: {
+        'package.json': '{"workspaces":["packages/*"]}',
+        'bun.lock': lockWithOther,
+        [manifest]: mainBefore,
+        'packages/other/package.json': '{"name":"@fixture/other","main":"./src/index.ts"}',
+        [otherSource]: 'export const value = 1\n',
+        [TEST]:
+          "import example = require('example')\nimport other = require('@fixture/other')\nconsole.log(example, other)\n"
+      },
+      head: { [manifest]: mainAfter, [otherSource]: 'export const value = 2\n' }
+    })
+    expect(plan.required.find((test) => test.test === TEST)?.reasons).toContainEqual(
+      expect.objectContaining({ kind: 'conservative-fallback', via: '@fixture/other' })
+    )
+  })
+
   it('ignores unvalidated version-one evidence in selection and drift', () => {
     const legacy = { ...entry, childOpens: {} } as unknown as RecordedTest
     expect(isReadRecord(recordOf({ [TEST]: legacy }, 1))).toBe(true)
