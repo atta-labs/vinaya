@@ -1,7 +1,6 @@
 /**
- * What `vinaya task status --follow` shows: the task's driver log, turned line
- * by line into one readable line per actor. The driver log on disk is never
- * changed by any of this — the view only chooses what to show and how.
+ * The task follow view shares its renderer between local-copy records and
+ * the driver-log fallback.
  *
  * The renderer (`createFollowView`) is pure: it is handed the file's lines and
  * the current time, reads no clock and no file, and returns the lines to print.
@@ -24,6 +23,9 @@ import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { repoSegment, resolveSettings } from '../../../../packages/log-sdk/src/writer/settings.js'
+import { isInsideRepo, isUnattendedProcess, repoRootSync, RUNTIME_DIR_ENV_KEY } from '../../../kernel/run-paths.js'
+import { createRecordFollow, readTaskRuns } from './follow-records.js'
 import type { Role } from '../../../kernel/log/schema'
 import { type AgentLineMark, formatAgentLine, parseLineMeta } from '../../../kernel/adapters/agents/agent-line.js'
 import { ANSI_RESET, colourEnabled, LOOP_ANSI, ROLE_ANSI } from '../loops/dev-review/dispatch/dispatch.js'
@@ -113,6 +115,9 @@ export type DriverLogLine =
       mark: AgentLineMark
       label: string
       words: string
+      role?: Role
+      details?: string[]
+      endsStage?: boolean
     }
   | { kind: 'detail'; at: number; meta: Record<string, string | true>; text: string }
   /** The runner's own narration: an ISO time and plain words, no mark. */
@@ -121,6 +126,8 @@ export type DriverLogLine =
   | { kind: 'copy' }
   | { kind: 'untimed'; text: string }
   | { kind: 'blank' }
+  | { kind: 'step-detail'; text: string; role?: Role }
+  | { kind: 'reset' }
 
 export function parseDriverLogLine(line: string): DriverLogLine {
   if (line.trim() === '') return { kind: 'blank' }
@@ -337,6 +344,15 @@ interface OpenStage extends StageChange {
 }
 
 export function createFollowView(options: FollowViewOptions): FollowView {
+  const renderer = createFollowRenderer(options)
+  return {
+    backlog: (lines, now) => renderer.render(lines.map(parseDriverLogLine), now, true),
+    push: (lines, now) => renderer.render(lines.map(parseDriverLogLine), now, false),
+    tick: renderer.tick
+  }
+}
+
+export function createFollowRenderer(options: FollowViewOptions) {
   const history = options.history ?? {}
   const roots = [...(options.roots ?? [])].filter((r) => r.length > 1).sort((a, b) => b.length - a.length)
   const open = new Map<string, OpenAction>()
@@ -361,8 +377,8 @@ export function createFollowView(options: FollowViewOptions): FollowView {
     return `${dim ? DIM : ''}${role === null ? LOOP_ANSI : ROLE_ANSI[role]}${text}${ANSI_RESET}`
   }
 
-  const primaryLine = (at: number, mark: AgentLineMark, label: string, words: string): string =>
-    paint(`${clock(at)}  ${VIEW_MARKS[mark]} ${label}   ${relative(words)}`, LABEL_ROLES[label] ?? null)
+  const primaryLine = (at: number, mark: AgentLineMark, label: string, words: string, role?: Role): string =>
+    paint(`${clock(at)}  ${VIEW_MARKS[mark]} ${label}   ${relative(words)}`, role ?? LABEL_ROLES[label] ?? null)
 
   const loopLine = (at: number, words: string, mark: AgentLineMark = 'working'): string =>
     paint(`${clock(at)}  ${VIEW_MARKS[mark]} Loop   ${relative(words)}`, null)
@@ -391,7 +407,9 @@ export function createFollowView(options: FollowViewOptions): FollowView {
       stage = { ...change, reported: 0, overTypical: false }
       return banner(change)
     }
-    if (stage !== null && (isEnding(line) || isRunStart(line))) stage = null
+    if (isEnding(line) || isRunStart(line) || line.kind === 'reset' || (line.kind === 'primary' && line.endsStage)) {
+      stage = null
+    }
     return null
   }
 
@@ -399,7 +417,9 @@ export function createFollowView(options: FollowViewOptions): FollowView {
   const plain = (line: DriverLogLine, now: Date): string[] => {
     switch (line.kind) {
       case 'primary':
-        return [primaryLine(line.at, line.mark, line.label, line.words)]
+        return [primaryLine(line.at, line.mark, line.label, line.words, line.role), ...stepDetails(line)]
+      case 'step-detail':
+        return options.details ? [recordDetail(line.text, line.role)] : []
       case 'runner':
         return [loopLine(line.at, line.text)]
       case 'untimed':
@@ -413,14 +433,19 @@ export function createFollowView(options: FollowViewOptions): FollowView {
   const detail = (line: DriverLogLine & { kind: 'detail' }, owner: string | null): string[] =>
     options.details && line.meta.command !== true ? [detailLine(line.text, owner)] : []
 
+  const recordDetail = (text: string, role: Role | undefined): string =>
+    paint(`${DETAIL_INDENT}· ${relative(text)}`, role ?? null, true)
+
+  const stepDetails = (line: DriverLogLine & { kind: 'primary' }): string[] =>
+    options.details ? (line.details ?? []).map((text) => recordDetail(text, line.role)) : []
+
   const callOf = (line: DriverLogLine): string | null =>
     line.kind === 'primary' && typeof line.meta.call === 'string' ? line.meta.call : null
 
   const isFinish = (line: DriverLogLine): boolean =>
     line.kind === 'primary' && (line.mark === 'done' || line.mark === 'failed')
 
-  const render = (lines: readonly string[], now: Date, backlog: boolean): string[] => {
-    const parsed = lines.map(parseDriverLogLine)
+  const render = (parsed: readonly DriverLogLine[], now: Date, backlog: boolean): string[] => {
     // A line with no time of its own (the launch's header) takes the time of the line before it, or else the next.
     if (lastAt === null) {
       const first = parsed.find((line) => 'at' in line)
@@ -467,7 +492,11 @@ export function createFollowView(options: FollowViewOptions): FollowView {
         const finishIndex = finishOf.get(index)
         if (finishIndex !== undefined) {
           const finish = parsed[finishIndex] as DriverLogLine & { kind: 'primary' }
-          out.push(primaryLine(line.at, finish.mark, line.label, finish.words))
+          out.push(
+            primaryLine(line.at, finish.mark, line.label, finish.words, line.role),
+            ...stepDetails(line),
+            ...stepDetails(finish)
+          )
           // The finish's own details (a failure's first line) follow the one line, in place of the start's.
           const after = parsed.slice(finishIndex + 1)
           for (const next of after) {
@@ -480,7 +509,10 @@ export function createFollowView(options: FollowViewOptions): FollowView {
         else if (isFinish(line) && open.has(call)) {
           const started = open.get(call) as OpenAction
           open.delete(call)
-          out.push(primaryLine(line.at, line.mark, line.label, `${line.words} (started ${clock(started.at)})`))
+          out.push(
+            primaryLine(line.at, line.mark, line.label, `${line.words} (started ${clock(started.at)})`, line.role),
+            ...stepDetails(line)
+          )
           return
         }
       }
@@ -490,9 +522,8 @@ export function createFollowView(options: FollowViewOptions): FollowView {
   }
 
   return {
-    backlog: (lines, now) => render(lines, now, true),
-    push: (lines, now) => render(lines, now, false),
-    tick(now) {
+    render,
+    tick(now: Date) {
       if (stage === null) return []
       const elapsedMs = now.getTime() - stage.at
       if (elapsedMs < 0) return []
@@ -557,17 +588,71 @@ function followRoots(): string[] {
  */
 export async function followTaskLog(repo: LoopLogRepo, issue: number, options: { quiet: boolean }): Promise<void> {
   const root = loopsRoot()
-  const view = createFollowView({
+  const viewOptions = {
     colour: colourEnabled(process.stdout),
     details: !options.quiet,
     roots: followRoots(),
     history: readStageHistory(root, issue)
-  })
+  }
   const print = (lines: string[]): void => {
     if (lines.length > 0) process.stdout.write(`${lines.join('\n')}\n`)
   }
+  const path = loopLogPathFor(repo, issue, root)
+  const repository = repo === null ? undefined : `${repo.owner}/${repo.repo}`
+  const repoRoot = repoRootSync() ?? process.cwd()
+  const settings = resolveSettings({ repoRoot, ...(repository === undefined ? {} : { repository }) })
+  const configured = settings.ok && settings.settings.logs ? settings.settings.logs.folder : undefined
+  const folder = join(
+    configured !== undefined &&
+      !process.env[RUNTIME_DIR_ENV_KEY] &&
+      !isUnattendedProcess() &&
+      !isInsideRepo(configured, repoRoot)
+      ? configured
+      : join(
+          !process.env[RUNTIME_DIR_ENV_KEY] && !isUnattendedProcess() && settings.ok
+            ? settings.settings.runtimeDir
+            : root,
+          'logs'
+        ),
+    repoSegment(repository)
+  )
+  await followTaskSources(path, folder, issue, viewOptions, print)
+}
+
+/** Selects the task's source and feeds its records to the console renderer. */
+export async function followTaskSources(
+  path: string,
+  folder: string,
+  issue: number,
+  viewOptions: FollowViewOptions,
+  print: (lines: string[]) => void,
+  follow = followLoopLog
+): Promise<void> {
+  const runs = readTaskRuns(folder, issue, homedir())
+  const first = await runs.pull()
   const split = lineSplitter()
-  await followLoopLog(loopLogPathFor(repo, issue, root), {
+  if (first !== null) {
+    const records = createRecordFollow(viewOptions)
+    let rawDetails: string[] = []
+    let initial = true
+    await follow(path, {
+      write: (chunk) => {
+        if (viewOptions.details) rawDetails.push(...split(chunk))
+      },
+      sleep: async (ms) => {
+        if (!initial) await new Promise((resolve) => setTimeout(resolve, ms))
+        const update = initial ? first : await runs.pull()
+        const now = new Date()
+        if (update !== null) print(records.render(update, rawDetails, now, initial))
+        rawDetails = []
+        if (!initial) print(records.tick(now))
+        initial = false
+      }
+    })
+    return
+  }
+  const view = createFollowView(viewOptions)
+  await follow(path, {
     writeBacklog: (chunk) => print(view.backlog(split(chunk), new Date())),
     write: (chunk) => print(view.push(split(chunk), new Date())),
     tick: () => print(view.tick(new Date()))

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { colourEnabled } from '../loops/dev-review/dispatch/dispatch'
 import {
   createFollowView,
+  followTaskSources,
   type FollowViewOptions,
   formatStageLine,
   lineSplitter,
@@ -32,6 +33,53 @@ const NOW = new Date('2026-10-29T10:00:00Z')
 
 const view = (overrides: Partial<FollowViewOptions> = {}) =>
   createFollowView({ colour: false, details: true, roots: ROOTS, timeZone: 'UTC', history: HISTORY, ...overrides })
+
+test('task follow selects local records by work reference and falls back for a task without a copy', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'vinaya-follow-'))
+  try {
+    const stage = JSON.stringify({
+      resourceLogs: [
+        {
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  eventName: 'vinaya.run.stage_changed',
+                  timeUnixNano: String(BigInt(NOW.getTime()) * 1_000_000n),
+                  attributes: [
+                    { key: 'vinaya.work.ref', value: { stringValue: '404' } },
+                    { key: 'vinaya.stage.to', value: { stringValue: 'review' } },
+                    { key: 'vinaya.round.number', value: { intValue: '1' } }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    })
+    writeFileSync(join(folder, 'run-a~writer~000000000000.logs.jsonl'), `${stage}\n${stage}\n`)
+    const driver = Buffer.from('2026-10-29T10:00:00Z  Driver narration\n')
+    const follow = async (
+      _path: string,
+      deps: Partial<import('../../../kernel/log/client/loop-log.js').FollowLoopLogDeps> = {}
+    ) => {
+      ;(deps.writeBacklog ?? deps.write)?.(driver)
+      await deps.sleep?.(0)
+    }
+    const output: string[] = []
+    const options = { colour: false, details: false, timeZone: 'UTC' }
+    const print = (lines: string[]) => {
+      output.push(...lines)
+    }
+    await followTaskSources('driver.log', folder, 404, options, print, follow)
+    expect(output.splice(0)).toEqual(['10:00:00  ◆ Loop   ━━ Round 1 · review · typical unavailable ━━'])
+    await followTaskSources('driver.log', folder, 405, options, print, follow)
+    expect(output).toEqual(['10:00:00  ▸ Loop   Driver narration'])
+  } finally {
+    rmSync(folder, { recursive: true, force: true })
+  }
+})
 
 // The one fixed colour per role, the loop's grey, and dimmed notes beneath their actor.
 const RESET = '\x1b[0m'
