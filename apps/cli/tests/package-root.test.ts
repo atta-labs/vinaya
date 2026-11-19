@@ -1,16 +1,7 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
-import {
-  copyFileSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { packageRoot } from '../src/lib/package-root'
@@ -159,24 +150,7 @@ describe('vinaya: an installed build defers to this repo’s own source (Issue #
   const CLI_ROOT = join(import.meta.dir, '..')
   const REPO_ROOT = join(CLI_ROOT, '..', '..')
   const SRC_INDEX = join(CLI_ROOT, 'src', 'index.ts')
-  let buildRoot: string
-
-  beforeAll(() => {
-    // Other tests can change the permissions of fixtures in the checkout's dist tree.
-    buildRoot = mkdtempSync(join(tmpdir(), 'vinaya-package-root-build-'))
-    const result = spawnSyncBudgeted(
-      'bun',
-      ['run', 'build', '--out', buildRoot],
-      { cwd: CLI_ROOT, encoding: 'utf8', env: stripVinayaEnv() },
-      60_000,
-      'apps/cli build'
-    )
-    expect(result.status, `apps/cli build failed:\n${result.stdout}\n${result.stderr}`).toBe(0)
-  }, 60_000)
-
-  afterAll(() => {
-    if (buildRoot !== undefined) rmSync(buildRoot, { recursive: true, force: true })
-  })
+  const DIST_INDEX = join(CLI_ROOT, 'dist', 'index.js')
 
   // Issue #660, O3 (round 5 review, MAJOR) — this process's own VINAYA_*
   // environment is stripped before `extraEnv` is applied, and the
@@ -193,6 +167,18 @@ describe('vinaya: an installed build defers to this repo’s own source (Issue #
   }
 
   it('an installed dist build, run from this repo, prints the same stdout as running the source directly, via exactly one stderr deferral line', () => {
+    // Issue #660, O3 — bounded by an explicit budget (60s, generous for a
+    // ~1s build on a quiet host) that throws with the child's own captured
+    // stdout/stderr on expiry, rather than a bare test-framework timeout.
+    const buildResult = spawnSyncBudgeted(
+      'bun',
+      ['run', 'build'],
+      { cwd: CLI_ROOT, encoding: 'utf8' },
+      60_000,
+      'apps/cli build'
+    )
+    expect(buildResult.status, `apps/cli build failed:\n${buildResult.stdout}\n${buildResult.stderr}`).toBe(0)
+
     // Nested inside THIS repo's own real `node_modules` (rather than an
     // unrelated tmp dir) so the bundle's externalized npm dependencies
     // (workspace deps are inlined; real npm deps are not, per
@@ -207,7 +193,7 @@ describe('vinaya: an installed build defers to this repo’s own source (Issue #
     // bundle is emitted as ESM (`import`/`export`), and Node picks CJS vs
     // ESM parsing from the nearest ancestor package.json's `type` field.
     writeFileSync(join(installedPkgDir, 'package.json'), JSON.stringify({ name: '@attalabs/vinaya', type: 'module' }))
-    copyFileSync(join(buildRoot, 'dist', 'index.js'), join(installedPkgDir, 'dist', 'index.js'))
+    copyFileSync(DIST_INDEX, join(installedPkgDir, 'dist', 'index.js'))
 
     try {
       const direct = run('bun', [SRC_INDEX, 'version'], REPO_ROOT, { VINAYA_NO_DEFER: '1' })
@@ -228,7 +214,16 @@ describe('vinaya: an installed build defers to this repo’s own source (Issue #
   })
 
   it('built files carry no Bun pragma line, so Bun reads the title pattern’s em dash as UTF-8', () => {
-    const distDir = join(buildRoot, 'dist')
+    const buildResult = spawnSyncBudgeted(
+      'bun',
+      ['run', 'build'],
+      { cwd: CLI_ROOT, encoding: 'utf8' },
+      60_000,
+      'apps/cli build'
+    )
+    expect(buildResult.status, `apps/cli build failed:\n${buildResult.stdout}\n${buildResult.stderr}`).toBe(0)
+
+    const distDir = join(CLI_ROOT, 'dist')
     const jsFiles = (readdirSync(distDir, { recursive: true }) as string[]).filter((f) => f.endsWith('.js'))
     expect(jsFiles.length).toBeGreaterThan(0)
     const pragmaFiles = jsFiles.filter((f) =>
