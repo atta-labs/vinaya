@@ -1,5 +1,6 @@
 import { ATTRIBUTE_NAMES as A, EARLIER_EVENT_PREFIX, EVENT_NAMES as E, SPAN_NAMES as S } from './catalogue.js'
 import { spanIdFor } from './ids.js'
+import { CUSTOM_EVENT_RESERVED_NAMESPACE } from './custom.js'
 import type { LogEvent } from './schema.js'
 import { recordIdentity } from './store.js'
 
@@ -215,7 +216,9 @@ export function mapEarlierEvent(event: LogEvent): Mapping {
               [A.result]: event.event === 'outcome_received' ? event.outcome.type : event.reason,
               [A.errorType]: event.event === 'dispatch_failed' ? event.reason : undefined
             })
-      if (event.usage !== null) result.usage = { effectId: event.effect_id, ...event.usage }
+      if (event.event !== 'dispatch_failed' && event.usage !== null) {
+        result.usage = { effectId: event.effect_id, ...event.usage }
+      }
       return result
     }
     case 'forge_write':
@@ -259,10 +262,15 @@ export function mapEarlierEvent(event: LogEvent): Mapping {
         [A.errorType]: event.error_class ?? undefined
       })
     case 'handoff':
-      return person(event.class, `handoff:${event.class}:${event.subject.issue ?? ''}`, event.event === 'raised', {
-        [A.reason]: event.reason,
-        [A.answeredBy]: event.event === 'resolved' ? (event.resolved_by ?? undefined) : undefined
-      })
+      return person(
+        event.class,
+        `handoff:${spanIdFor(event.meta.run_id, JSON.stringify([event.class, event.subject.issue, event.reason]))}`,
+        event.event === 'raised',
+        {
+          [A.reason]: event.reason,
+          [A.answeredBy]: event.event === 'resolved' ? (event.resolved_by ?? undefined) : undefined
+        }
+      )
     case 'effect':
       return point(E.verifiedAction, {
         [A.action]: event.target.kind,
@@ -272,7 +280,12 @@ export function mapEarlierEvent(event: LogEvent): Mapping {
     case 'usage':
       return point(`${EARLIER_EVENT_PREFIX}usage.observed`)
     case 'custom':
-      return point(event.name, event.fields)
+      return event.name.startsWith(`${CUSTOM_EVENT_RESERVED_NAMESPACE}.`)
+        ? point(`${EARLIER_EVENT_PREFIX}custom.recorded`, {
+            ...event.fields,
+            [`${EARLIER_EVENT_PREFIX}name`]: event.name
+          })
+        : point(event.name, event.fields)
   }
   const unhandled: never = event
   throw new Error(`Unhandled earlier event: ${JSON.stringify(unhandled)}`)

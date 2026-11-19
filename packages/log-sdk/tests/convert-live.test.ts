@@ -66,3 +66,93 @@ test('a follower can seed a cross-process start from the emitted key and time', 
     expect(repeatedEnd.record.startTimeUnixNano).toBe(repeatedEnd.record.endTimeUnixNano)
   }
 })
+
+test('keeps exact IDs and dispatch keys while redacting content', () => {
+  const start = fixtures.find((event) => event.event === 'dispatched')!
+  const end = fixtures.find((event) => event.event === 'outcome_received')!
+  const opaque = ['gh', 'p_opaque123'].join('')
+  const meta = {
+    ...start.meta,
+    schema: 4,
+    process_id: opaque,
+    event_id: opaque,
+    actor_id: null,
+    lineage: { run: null, attempt: null, parent: null },
+    input_versions: { objectives_version: null, brief_hash: null, ruling_ordinal: null, policy_digest: null },
+    provenance: 'unavailable',
+    process: { id: 'external', version: '9.1', digest: null },
+    runner: { id: 'test', version: null },
+    runtime: null,
+    source: null,
+    work: { ref: null, repo: null, change: null, revision: null },
+    flow: { id: null, version: null }
+  }
+  const live = createLiveEarlierConverter(runId)
+  const raised = live.convert(LogEventSchema.parse({ ...start, meta, effect_id: opaque, prompt_hash: opaque }))
+  if (raised.type !== 'log') throw new Error('Expected a dispatch start')
+  const key = `agent:${opaque}`
+  for (const [attribute, value] of [
+    [A.spanKey, key],
+    [A.eventId, opaque],
+    [A.writerId, `earlier:${opaque}`],
+    ['vinaya.earlier.prompt_hash', '<redacted>']
+  ] as const)
+    expect(raised.record.attributes).toContainEqual({ key: attribute, value: { stringValue: value } })
+  expect(raised.resource.attributes).toContainEqual({ key: A.serviceVersion, value: { stringValue: '9.1' } })
+  const seeded = createLiveEarlierConverter(runId, [{ spanKey: key, startTimeUnixNano: raised.record.timeUnixNano }])
+  const completed = seeded.convert(LogEventSchema.parse({ ...end, effect_id: opaque }))
+  if (completed.type !== 'span') throw new Error('Expected a dispatch span')
+  expect(completed.record.startTimeUnixNano).toBe(raised.record.timeUnixNano)
+  expect(completed.record.spanId).toBe(raised.record.spanId)
+})
+
+test('matches out-of-order hand-off resolutions to the recorded reason', () => {
+  const raised = fixtures.find((event) => event.kind === 'handoff' && event.event === 'raised')!
+  const resolved = fixtures.find((event) => event.kind === 'handoff' && event.event === 'resolved')!
+  const second = LogEventSchema.parse({
+    ...raised,
+    reason: 'other question',
+    meta: {
+      ...raised.meta,
+      seq: raised.meta.seq + 1,
+      ts: '2026-08-01T00:00:55.000Z'
+    }
+  })
+  const end = LogEventSchema.parse({ ...resolved, reason: 'other question' })
+  const live = createLiveEarlierConverter(runId)
+  const seeds = [raised, second].map((event) => {
+    const start = live.convert(event)
+    if (start.type !== 'log') throw new Error('Expected a started event')
+    const key = start.record.attributes.find((attr) => attr.key === A.spanKey)?.value
+    if (key === undefined || !('stringValue' in key)) throw new Error('Expected a span key')
+    return { spanKey: key.stringValue, startTimeUnixNano: start.record.timeUnixNano }
+  })
+  const seed = seeds[1]!
+  for (const follower of [live, createLiveEarlierConverter(runId, seeds)]) {
+    const completed = follower.convert(end)
+    if (completed.type !== 'span') throw new Error('Expected a hand-off span')
+    expect(completed.record.startTimeUnixNano).toBe(seed.startTimeUnixNano)
+    expect(completed.record.spanId).toBe(spanIdFor(runId, seed.spanKey))
+  }
+})
+
+test('failures leave token accounting to the role attempt and reserved custom names stay reported', () => {
+  const failure = fixtures.find((event) => event.event === 'dispatch_failed')!
+  const attempt = fixtures.find((event) => event.kind === 'role_attempt')!
+  const custom = fixtures.find((event) => event.kind === 'custom')!
+  const live = createLiveEarlierConverter(runId)
+  const failed = live.convert(LogEventSchema.parse({ ...failure, effect_id: 'e1', usage: { input: 7, output: 8 } }))
+  expect(failed.record.attributes.some((attr) => attr.key === A.usageInputTokens)).toBe(false)
+  expect(live.convert(attempt).record.attributes).toContainEqual({
+    key: A.usageInputTokens,
+    value: { intValue: '100' }
+  })
+  const reported = live.convert(LogEventSchema.parse({ ...custom, name: E.runStarted }))
+  if (reported.type !== 'log') throw new Error('Expected a custom log record')
+  expect(reported.record.eventName).toBe('vinaya.earlier.custom.recorded')
+  expect(reported.record.attributes).toContainEqual({
+    key: 'vinaya.earlier.name',
+    value: { stringValue: E.runStarted }
+  })
+  expect(reported.record.attributes).toContainEqual({ key: A.provenance, value: { stringValue: 'reported' } })
+})

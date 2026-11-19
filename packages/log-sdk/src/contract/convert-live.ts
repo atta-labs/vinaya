@@ -81,7 +81,7 @@ function earlierFields(event: LogEvent): Fields {
   // Effect-bearing usage is encoded exactly once as GenAI attributes.
   return Object.fromEntries(
     Object.entries(fields)
-      .filter(([key]) => key !== 'usage')
+      .filter(([key]) => key !== 'usage' || event.event === 'dispatch_failed')
       .map(([key, value]) => [`${EARLIER_EVENT_PREFIX}${key}`, value])
   )
 }
@@ -111,13 +111,14 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
       if (meta.run_id !== runId) throw new Error('Earlier event belongs to a different run')
       const mapping = mapEarlierEvent(event)
       const identity = recordIdentity(event)
+      if (identity === null) throw new Error('Earlier event has no record identity')
       const time = unixNano(meta.ts)
       const timeUnixNano = String(time)
       const started = mapping.mode === 'start'
       let key = mapping.key
       if (mapping.repeatable) {
         const prefix = `${mapping.key}#`
-        key = prefix + spanIdFor(runId, identity ?? '')
+        key = prefix + spanIdFor(runId, identity)
         if (!started) {
           // The earlier format identifies the pause or question but carries
           // no instance id on its resolution. Use the oldest open instance.
@@ -136,7 +137,7 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
         attributes: attributesOf(
           {
             [A.serviceName]: meta.schema === 4 ? meta.process.id : 'vinaya',
-            [A.serviceVersion]: meta.vinaya,
+            [A.serviceVersion]: meta.schema === 4 ? (meta.process.version ?? meta.vinaya) : meta.vinaya,
             [A.hostId]: meta.machine,
             [A.repository]: meta.repo ?? undefined,
             [A.sdkVersion]: SDK_VERSION,
@@ -162,17 +163,23 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
           ...earlierFields(event),
           ...mapping.attributes,
           ...tokenAttributes,
-          ...(mapping.repeatable ? { [A.questionKey]: key } : {}),
-          ...(started ? { [A.spanKey]: key } : {}),
           ...(event.kind === 'custom' ? {} : { [A.runId]: runId }),
           [A.seq]: meta.seq,
-          [A.writerId]: EARLIER_WRITER_PREFIX + ('process_id' in meta ? meta.process_id : runId),
           [A.provenance]: event.kind === 'custom' ? 'reported' : 'governed',
-          [A.eventId]: identity,
           [A.workRef]: workRef
         },
         home
       )
+      // Identity and correlation values must round trip exactly across writers.
+      attributes.push(
+        { key: A.eventId, value: { stringValue: identity } },
+        {
+          key: A.writerId,
+          value: { stringValue: EARLIER_WRITER_PREFIX + ('process_id' in meta ? meta.process_id : runId) }
+        }
+      )
+      if (mapping.repeatable) attributes.push({ key: A.questionKey, value: { stringValue: key } })
+      if (started) attributes.push({ key: A.spanKey, value: { stringValue: key } })
       if (mapping.mode === 'event' || started) {
         const converted: StartedRecord = {
           type: 'log',
