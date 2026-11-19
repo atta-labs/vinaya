@@ -32,9 +32,9 @@
 
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
 import { CHANGESET_RELEASE_BRANCH } from '../../tools/review-gate'
-import { repoRoot, resolveChangedFiles } from '../../../../../harness/kernel/connectors/git/diff-evidence'
+import { repoRoot, resolveDiff } from '../../../../../harness/kernel/connectors/git/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
 import {
   evaluateChangesetCoverage,
@@ -54,7 +54,7 @@ function git(args: string[]): string {
 }
 
 /** Read only regular blobs from the snapshot used for diff evidence. */
-function readChangeset(root: string, path: string, staged: boolean): string | null {
+function readSnapshotFile(root: string, path: string, staged: boolean): string | null {
   const args = staged ? ['ls-files', '--stage'] : ['ls-tree', 'HEAD']
   const options = { cwd: root, encoding: 'utf8' as const, stdio: 'pipe' as const }
   const entry = execFileSync('git', ['--literal-pathspecs', ...args, '-z', '--', path], options)
@@ -76,8 +76,14 @@ function defaultBranch(): string {
   return ref.startsWith('origin/') ? ref.slice('origin/'.length) : ''
 }
 
-function toPosix(p: string): string {
-  return p.split('\\').join('/')
+function changedPaths(staged: boolean): string[] | null {
+  const diff = resolveDiff()
+  if (!diff) return null
+
+  const options = { cwd: diff.root, encoding: 'utf8' as const, stdio: 'pipe' as const }
+  const committed = execFileSync('git', ['diff', '--name-only', '-z', `${diff.base}...HEAD`], options)
+  const indexed = staged ? execFileSync('git', ['diff', '--cached', '--name-only', '-z'], options) : ''
+  return [...new Set((committed + indexed).split('\0').filter(Boolean))]
 }
 
 type PackageJsonView = { name?: unknown; files?: unknown; workspaces?: unknown }
@@ -166,7 +172,8 @@ function main(): void {
     process.exit(0)
   }
 
-  const changedAbs = resolveChangedFiles()
+  const staged = process.env.VINAYA_COMMIT_HOOK === '1' && Boolean(process.env.GIT_INDEX_FILE)
+  const changedFiles = changedPaths(staged)
   // `null` (indeterminate — a shallow clone, no merge base, an orphan or
   // bare/single-commit history) is NOT the same fact as `[]` (a real,
   // resolved, genuinely empty diff) — collapsing the two into the same
@@ -177,7 +184,7 @@ function main(): void {
   // "report everything unfiltered" fallback), so the loud direction here is
   // a `warning` finding naming the ambiguity — never a bypass, and still
   // exit `0` always, same report-only contract as every other outcome.
-  if (changedAbs === null) {
+  if (changedFiles === null) {
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
@@ -189,10 +196,9 @@ function main(): void {
     })
     process.exit(0)
   }
-  if (changedAbs.length === 0) {
+  if (changedFiles.length === 0) {
     process.exit(0)
   }
-  const changedFiles = changedAbs.map((p) => toPosix(relative(root, p)))
 
   // Always self-computed via git, never `process.env.BRANCH` — this check
   // declares `env: {}` (registry.ts) and the runner's env allowlist already
@@ -203,15 +209,23 @@ function main(): void {
   const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'])
   const isReleaseBranch = branch === CHANGESET_RELEASE_BRANCH
 
-  const config = readPackageJson(join(root, '.changeset', 'config.json')) as ChangesetsConfigView | null
-  const ignore = Array.isArray(config?.ignore)
-    ? config.ignore.filter((entry): entry is string => typeof entry === 'string')
+  const config = readPackageJson(join(root, '.changeset', 'config.json')) as { fixed?: unknown } | null
+  const snapshotConfig = isReleaseBranch ? null : readSnapshotFile(root, '.changeset/config.json', staged)
+  let snapshotIgnore: unknown
+  if (snapshotConfig !== null) {
+    try {
+      snapshotIgnore = (JSON.parse(snapshotConfig) as ChangesetsConfigView | null)?.ignore
+    } catch {
+      // A malformed configuration has no usable ignore list.
+    }
+  }
+  const ignore = Array.isArray(snapshotIgnore)
+    ? snapshotIgnore.filter((entry): entry is string => typeof entry === 'string')
     : []
-  const staged = process.env.VINAYA_COMMIT_HOOK === '1' && Boolean(process.env.GIT_INDEX_FILE)
   const changedChangesets =
     ignore.length > 0 && !isReleaseBranch
       ? changedFiles.filter(isChangesetFile).flatMap((path) => {
-          const text = readChangeset(root, path, staged)
+          const text = readSnapshotFile(root, path, staged)
           return text === null ? [] : [{ path, text }]
         })
       : []
