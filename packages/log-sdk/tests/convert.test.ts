@@ -6,7 +6,12 @@ import {
   EVENT_NAMES as E,
   LogEventSchema,
   type LogEvent,
+  ALL_ATTRIBUTE_NAMES,
+  ALL_EVENT_NAMES,
+  EARLIER_EVENT_PREFIX,
+  isSpanName,
   SPAN_NAMES as S,
+  spanName,
   traceIdFor
 } from '../src/index.js'
 
@@ -15,47 +20,54 @@ const fixtures = (await Bun.file(new URL('./fixtures/earlier-events.jsonl', impo
   .split('\n')
   .map((line) => LogEventSchema.parse(JSON.parse(line)))
 
-const expected: Record<string, string> = {
-  'dev_review_loop.loop_started': E.runStarted,
-  'dev_review_loop.round_started': E.roundStarted,
-  'dev_review_loop.gate_result_read': E.checkResultRead,
-  'dev_review_loop.verdicts_read': E.reviewVerdicts,
-  'dev_review_loop.findings_compared': E.findingsCompared,
-  'dev_review_loop.stop_condition_met': E.stopRuleMet,
-  'dev_review_loop.paused': E.personAsked,
-  'dev_review_loop.resumed': S.personStrategy,
-  'dev_review_loop.cancelled': E.cancelled,
-  'dev_review_loop.unpushed_work_resume': E.changeRecovered,
-  'dev_review_loop.infrastructure_retry': E.retried,
-  'dev_review_loop.driver_heartbeat': E.alive,
-  'dev_review_loop.conflict_reentry': E.changeConflicted,
-  'dev_review_loop.storage_push': E.changePushed,
-  'dev_review_loop.local_checks_run': S.checkLocal,
-  'dev_review_loop.ready_push': S.checkPush,
-  'dev_review_loop.failed_tests_rerun': E.retried,
-  'dev_review_loop.pr_opened': E.changeOpened,
-  'dev_review_loop.ci_result_read': E.checkResultRead,
-  'dev_review_loop.phase_time': S.phase,
-  'dev_review_loop.driver_exited': E.exited,
-  'dev_review_loop.round_ended': S.round,
-  'dev_review_loop.journal_finalized': S.run,
-  'dispatch.dispatched': E.agentStarted,
-  'dispatch.outcome_received': S.agent,
-  'dispatch.dispatch_failed': S.agent,
-  'role_attempt.attempted': S.agent,
-  'usage.observed': 'vinaya.earlier.usage.observed',
-  'forge_write.validated': E.forgeAction,
-  'forge_write.refused': E.forgeAction,
-  'forge_write.written': E.forgeAction,
-  'gate.checked': E.checkNotPassed,
-  'gate.summary': S.checkLocal,
-  'operation.completed': E.commandCompleted,
-  'handoff.raised': E.personAsked,
-  'handoff.resolved': S.personStrategy,
-  'effect.attempted': E.verifiedAction,
-  'effect.observed': E.verifiedAction,
-  'effect.verified': E.verifiedAction,
-  'custom.recorded': 'team.shipped'
+const fieldOf = (event: LogEvent, key: string): string | undefined =>
+  String((event as unknown as Record<string, unknown>)[key])
+const processOf = (event: LogEvent) => (event.meta.schema === 4 ? event.meta.process.id : undefined)
+const whereOf = (event: LogEvent) =>
+  ({ hook: 'hook', cli: 'local', loop: 'local', ci: 'ci' })[event.meta.host as string]
+
+/** The span or event name the Log SDK's own handle writes for what each earlier event records. */
+const expected: Record<string, (event: LogEvent) => string> = {
+  'dev_review_loop.loop_started': () => E.runStarted,
+  'dev_review_loop.round_started': () => E.roundStarted,
+  'dev_review_loop.gate_result_read': () => E.checkRead,
+  'dev_review_loop.verdicts_read': () => E.reviewVerdicts,
+  'dev_review_loop.findings_compared': () => E.findingsCompared,
+  'dev_review_loop.stop_condition_met': () => E.stopRuleMet,
+  'dev_review_loop.paused': () => E.pauseStarted,
+  'dev_review_loop.resumed': () => S.pause,
+  'dev_review_loop.cancelled': () => E.cancelled,
+  'dev_review_loop.unpushed_work_resume': () => E.changeRecovered,
+  'dev_review_loop.infrastructure_retry': () => E.retried,
+  'dev_review_loop.driver_heartbeat': () => E.alive,
+  'dev_review_loop.conflict_reentry': () => E.changeConflicted,
+  'dev_review_loop.storage_push': () => E.changeSaved,
+  'dev_review_loop.local_checks_run': () => spanName(S.checks, 'local'),
+  'dev_review_loop.ready_push': () => E.changePushed,
+  'dev_review_loop.failed_tests_rerun': () => spanName(S.checks, 'rerun'),
+  'dev_review_loop.pr_opened': () => E.changeOpened,
+  'dev_review_loop.ci_result_read': () => spanName(S.checks, 'ci'),
+  'dev_review_loop.phase_time': (e) => spanName(S.phase, fieldOf(e, 'phase')),
+  'dev_review_loop.driver_exited': () => E.exited,
+  'dev_review_loop.round_ended': (e) => spanName(S.round, fieldOf(e, 'round')),
+  'dev_review_loop.journal_finalized': (e) => spanName(S.run, processOf(e)),
+  'dispatch.dispatched': () => E.agentStarted,
+  'dispatch.outcome_received': (e) => spanName(S.agent, fieldOf(e, 'target_role')),
+  'dispatch.dispatch_failed': (e) => spanName(S.agent, fieldOf(e, 'target_role')),
+  'role_attempt.attempted': (e) => spanName(S.agent, e.subject.role),
+  'usage.observed': () => 'vinaya.earlier.usage.observed',
+  'forge_write.validated': () => E.forgeValidated,
+  'forge_write.refused': () => E.forgeRefused,
+  'forge_write.written': () => E.forgeWritten,
+  'gate.checked': () => E.checkNotPassed,
+  'gate.summary': (e) => spanName(S.checks, whereOf(e)),
+  'operation.completed': () => E.commandCompleted,
+  'handoff.raised': () => E.personAsked,
+  'handoff.resolved': (e) => spanName(S.person, fieldOf(e, 'class')),
+  'effect.attempted': () => E.actionVerified,
+  'effect.observed': () => E.actionVerified,
+  'effect.verified': () => E.actionVerified,
+  'custom.recorded': () => 'team.shipped'
 }
 
 function records(events: readonly LogEvent[]) {
@@ -69,7 +81,7 @@ function records(events: readonly LogEvent[]) {
 test('each literal fixture converts to the expected record and carries its earlier identity', () => {
   for (const event of fixtures) {
     const pair = `${event.kind}.${event.event}`
-    const name = expected[pair]
+    const name = expected[pair]?.(event)
     if (name === undefined) throw new Error(`Missing expected record for ${pair}`)
     const { spans, logs } = records([event])
     const emitted = [...spans, ...logs]
@@ -90,7 +102,7 @@ test('each literal fixture converts to the expected record and carries its earli
 
 test('completed pairs keep both times and input tokens occur once per effect', () => {
   const { spans, logs } = records(fixtures)
-  const run = spans.find((span) => span.name === S.run)
+  const run = spans.find((span) => span.name === S.run || span.name.startsWith(`${S.run} `))
   expect(run?.startTimeUnixNano).toBe('1785542400000000000')
   expect(run?.endTimeUnixNano).toBe('1785542422000000000')
   const dispatch = spans.find((span) => span.spanId === agentSpanIdFor('run-historical', 'e1'))
@@ -122,6 +134,46 @@ test('completed pairs keep both times and input tokens occur once per effect', (
   })
   expect(logs.some((event) => event.eventName === E.agentStarted)).toBe(false)
   expect(JSON.stringify(convertEarlierEvents(fixtures))).toBe(JSON.stringify(convertEarlierEvents(fixtures)))
+})
+
+test('an earlier pause and its resume become one vinaya.pause span', () => {
+  const pause = fixtures.find((e) => e.event === 'paused')!
+  const resume = fixtures.find((e) => e.event === 'resumed')!
+  const { spans, logs } = records([pause, resume])
+  expect(spans.map((s) => s.name)).toEqual([S.pause])
+  expect(logs).toEqual([])
+  const get = (key: string) => spans[0]?.attributes.find((a) => a.key === key)?.value
+  expect(get(A.roundNumber)).toEqual({ intValue: '1' })
+  expect(get(A.pauseWhy)).toEqual({ stringValue: 'escalation' })
+  expect(get(A.pauseBy)).toEqual({ stringValue: 'person' })
+  expect(spans[0]?.events?.[0]?.name).toBe(E.pauseStarted)
+})
+
+test('each earlier forge write is the forge event the handle writes for what happened', () => {
+  const names = fixtures
+    .filter((e) => e.kind === 'forge_write')
+    .map((e) => `${e.event}:${records([e]).logs[0]?.eventName}`)
+  expect(names.sort()).toEqual([
+    `refused:${E.forgeRefused}`,
+    `validated:${E.forgeValidated}`,
+    `written:${E.forgeWritten}`
+  ])
+})
+
+test('every converted name and attribute is one the handle writes', () => {
+  const { spans, logs } = records(fixtures)
+  for (const span of spans) {
+    expect(isSpanName(span.name), span.name).toBe(true)
+  }
+  for (const log of logs) {
+    const own = log.eventName.startsWith(EARLIER_EVENT_PREFIX) || log.eventName === 'team.shipped'
+    expect(own || ALL_EVENT_NAMES.includes(log.eventName), log.eventName).toBe(true)
+  }
+  const catalogued = (key: string) => key.startsWith(EARLIER_EVENT_PREFIX) || ALL_ATTRIBUTE_NAMES.includes(key)
+  for (const record of [...spans, ...logs]) {
+    if ('eventName' in record && record.eventName === 'team.shipped') continue
+    for (const attribute of record.attributes) expect(catalogued(attribute.key), attribute.key).toBe(true)
+  }
 })
 
 test('writer stamps follow the header process id with a run id fallback', () => {

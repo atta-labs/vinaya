@@ -1,27 +1,32 @@
 import type { TimeInput } from '@opentelemetry/api'
-import { ATTRIBUTE_NAMES, EVENT_NAMES, SPAN_NAMES } from '../contract/catalogue.js'
+import { ATTRIBUTE_NAMES as A, EVENT_NAMES as E, SPAN_NAMES as S, spanName } from '../contract/catalogue.js'
 import type { SpanParent } from '../contract/ids.js'
 import { emitEvent, endSpan, runSpanRef, setOpenAttributes, startSpan, type WriterCore } from './attributes.js'
-import type { EndOptions } from './run.js'
 
-export type TokenUsage = {
-  inputTokens?: number
-  outputTokens?: number
-  cacheReadInputTokens?: number
-  cacheWriteInputTokens?: number
-}
-
-export type StartAgentOptions = {
-  name: string
+export type AgentSent = {
+  /** The seat the agent sits in; the span name and `gen_ai.agent.name` carry it. */
+  seat: string
+  provider?: string
+  model?: string
+  codingAgent?: string
+  codingAgentVersion?: string
+  /** Defaults to the open round. */
+  round?: number
   id?: string
+  /** The span the agent belongs to, which another process may have started; with none, the open round, else the run. */
+  parent?: SpanParent
   spanId?: string
   key?: string
   startTime?: TimeInput
 }
 
-export type StartStepOptions = {
+export type StepStarted = {
   tool: string
-  toolType?: string
+  callId?: string
+  /** reading, searching, editing, creating, removing, running tests, type-checking, git, GitHub, tool request, skill, fetching, delegating, reporting, running, writing, checking or publishing */
+  kind?: string
+  /** The file or command the step works on. */
+  target?: string
   spanId?: string
   key?: string
   startTime?: TimeInput
@@ -29,74 +34,153 @@ export type StartStepOptions = {
   parent?: SpanParent
 }
 
-function usageAttributes(usage: TokenUsage) {
-  return {
-    [ATTRIBUTE_NAMES.usageInputTokens]: usage.inputTokens,
-    [ATTRIBUTE_NAMES.usageOutputTokens]: usage.outputTokens,
-    [ATTRIBUTE_NAMES.usageCacheReadInputTokens]: usage.cacheReadInputTokens,
-    [ATTRIBUTE_NAMES.usageCacheWriteInputTokens]: usage.cacheWriteInputTokens
+export type StepEnded = { errorType?: string; errorLine?: string; endTime?: TimeInput }
+
+export type AgentReturned = {
+  /** change opened, round pushed, verdict, escalation, plan or done */
+  outcome?: string
+  attempt?: number
+  responseModel?: string
+  agent?: SpanParent
+  endTime?: TimeInput
+}
+
+export type AgentFailed = {
+  /** timeout, crash, refused, wrote outside its place or usage limit */
+  errorType: string
+  /** When a usage limit resets, as an ISO time. */
+  resetAt?: string
+  attempt?: number
+  agent?: SpanParent
+  endTime?: TimeInput
+}
+
+export type UsageRecorded = {
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadInputTokens?: number
+  cost?: { amount: number; kind: 'exact' | 'estimated' }
+  /** Why usage is unknown, as a short code; with it no figure is recorded. */
+  unknownReason?: string
+  agent?: SpanParent
+}
+
+export type ConfidenceStated = {
+  /** 0 to 100; absent when the agent gave none. */
+  confidence?: number
+  reason?: string
+  afterExtraTurn?: boolean
+  agent?: SpanParent
+}
+
+/** An agent turn is an `invoke_agent {seat}` span under the open round, else the run. */
+export function sent(core: WriterCore, options: AgentSent): SpanParent {
+  core.moment.seat = options.seat
+  try {
+    const ref = startSpan(core, {
+      name: spanName(S.agent, options.seat),
+      startedEvent: E.agentStarted,
+      attrs: {
+        [A.operationName]: 'invoke_agent',
+        [A.agentName]: options.seat,
+        [A.agentId]: options.id,
+        [A.providerName]: options.provider,
+        [A.requestModel]: options.model,
+        [A.codingAgent]: options.codingAgent,
+        [A.codingAgentVersion]: options.codingAgentVersion,
+        [A.roundNumber]: options.round ?? core.moment.round
+      },
+      parent: options.parent ?? core.current.round ?? runSpanRef(core),
+      spanId: options.spanId,
+      key: options.key,
+      startTime: options.startTime
+    })
+    core.current.agent = ref
+    return ref
+  } catch (e) {
+    delete core.moment.seat
+    throw e
   }
 }
 
-/** An agent turn is an `invoke_agent` span under the current phase, round or run. */
-export function startAgent(core: WriterCore, options: StartAgentOptions): SpanParent {
-  const ref = startSpan(core, {
-    name: SPAN_NAMES.agent,
-    startedEvent: EVENT_NAMES.agentStarted,
-    attrs: {
-      [ATTRIBUTE_NAMES.operationName]: 'invoke_agent',
-      [ATTRIBUTE_NAMES.agentName]: options.name,
-      [ATTRIBUTE_NAMES.agentId]: options.id
-    },
-    parent: core.current.phase ?? core.current.round ?? runSpanRef(core),
-    spanId: options.spanId,
-    key: options.key,
-    startTime: options.startTime
+/** Token usage goes on the agent span as GenAI usage attributes; it is the one place for tokens. */
+export function usageRecorded(core: WriterCore, usage: UsageRecorded): void {
+  const ref = usage.agent ?? core.current.agent
+  if (ref === undefined) throw new Error('no agent is open')
+  // A reason for unknown usage and a figure never ride together: the reason wins.
+  const unknown = usage.unknownReason !== undefined
+  setOpenAttributes(core, ref, {
+    [A.usageInputTokens]: unknown ? undefined : usage.inputTokens,
+    [A.usageOutputTokens]: unknown ? undefined : usage.outputTokens,
+    [A.usageCacheReadInputTokens]: unknown ? undefined : usage.cacheReadInputTokens,
+    [A.usageCost]: unknown ? undefined : usage.cost?.amount,
+    [A.usageCostKind]: unknown ? undefined : usage.cost?.kind,
+    [A.usageUnknownReason]: usage.unknownReason
   })
-  core.current.agent = ref
-  return ref
 }
 
-/** Token usage goes on the agent span as GenAI usage attributes; the figures are the turn's totals. */
-export function recordUsage(core: WriterCore, usage: TokenUsage, agent?: SpanParent): void {
-  const ref = agent ?? core.current.agent
+/** The agent span ends with what came out of the turn. */
+export function returned(core: WriterCore, options: AgentReturned = {}): void {
+  const ref = options.agent ?? core.current.agent
   if (ref === undefined) throw new Error('no agent is open')
-  setOpenAttributes(core, ref, usageAttributes(usage))
+  endSpan(
+    core,
+    ref,
+    {
+      [A.agentOutcome]: options.outcome,
+      [A.attempt]: options.attempt,
+      [A.responseModel]: options.responseModel
+    },
+    options.endTime
+  )
 }
 
-export function endAgent(core: WriterCore, options: EndOptions & { usage?: TokenUsage } = {}): void {
-  const ref = core.current.agent
+/** The agent span ends with an error type. */
+export function failed(core: WriterCore, options: AgentFailed): void {
+  const ref = options.agent ?? core.current.agent
   if (ref === undefined) throw new Error('no agent is open')
-  endSpan(core, ref, options.usage ? usageAttributes(options.usage) : {}, options.endTime, options.errorType)
+  endSpan(
+    core,
+    ref,
+    { [A.agentResetAt]: options.resetAt, [A.attempt]: options.attempt },
+    options.endTime,
+    options.errorType
+  )
 }
 
-/** An agent step is an `execute_tool` span under its agent. */
-export function startStep(core: WriterCore, options: StartStepOptions): SpanParent {
+/** An agent step is an `execute_tool {tool}` span under its agent. */
+export function stepStarted(core: WriterCore, options: StepStarted): SpanParent {
   return startSpan(core, {
-    name: SPAN_NAMES.step,
-    startedEvent: EVENT_NAMES.stepStarted,
+    name: spanName(S.step, options.tool),
+    startedEvent: E.stepStarted,
     attrs: {
-      [ATTRIBUTE_NAMES.operationName]: 'execute_tool',
-      [ATTRIBUTE_NAMES.toolName]: options.tool,
-      [ATTRIBUTE_NAMES.toolType]: options.toolType
+      [A.operationName]: 'execute_tool',
+      [A.toolName]: options.tool,
+      [A.toolCallId]: options.callId,
+      [A.stepKind]: options.kind,
+      [A.stepTarget]: options.target
     },
-    parent: options.parent ?? core.current.agent ?? core.current.phase ?? core.current.round ?? runSpanRef(core),
+    parent: options.parent ?? core.current.agent ?? core.current.round ?? runSpanRef(core),
     spanId: options.spanId,
     key: options.key,
     startTime: options.startTime
   })
 }
 
-export function endStep(core: WriterCore, step: SpanParent, options: EndOptions = {}): void {
-  endSpan(core, step, {}, options.endTime, options.errorType)
+export function stepEnded(core: WriterCore, step: SpanParent, options: StepEnded = {}): void {
+  endSpan(core, step, { [A.stepErrorLine]: options.errorLine }, options.endTime, options.errorType)
 }
 
 /** The agent states how confident it is, as an event on its span. */
-export function confidenceStated(core: WriterCore, detail: { confidence: number; agent?: SpanParent }): void {
+export function confidenceStated(core: WriterCore, detail: ConfidenceStated = {}): void {
   emitEvent(
     core,
-    EVENT_NAMES.confidenceStated,
-    { [ATTRIBUTE_NAMES.confidence]: detail.confidence },
+    E.confidenceStated,
+    {
+      [A.confidence]: detail.confidence,
+      [A.confidenceReason]: detail.reason,
+      [A.confidenceAfterExtraTurn]: detail.afterExtraTurn
+    },
     detail.agent ?? core.current.agent ?? runSpanRef(core)
   )
 }

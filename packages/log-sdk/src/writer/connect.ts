@@ -13,16 +13,16 @@ import {
 } from '@opentelemetry/sdk-trace-base'
 import {
   ATTRIBUTE_NAMES,
-  EVENT_NAMES,
   GENAI_CONVENTIONS_VERSION,
   type RecordProvenance,
+  type RecordTrust,
   SDK_VERSION
 } from '../contract/catalogue.js'
 import type { CustomEventDeclarations } from '../contract/custom.js'
 import { createRunIdGenerator, type SpanParent, traceIdFor } from '../contract/ids.js'
 import { createFileExporters } from '../local-copy/file-exporters.js'
 import * as agent from './agent.js'
-import { type Attrs, guard, type WriterCore } from './attributes.js'
+import { type Attrs, guard, type InputVersions, type Work, type WriterCore } from './attributes.js'
 import * as change from './change.js'
 import * as checks from './checks.js'
 import { custom } from './custom.js'
@@ -46,8 +46,16 @@ export type ConnectOptions = {
   headers?: Record<string, string>
   /** Carried on every record as vinaya.work.ref. */
   workRef?: string
+  /** The work the run is for; each part named is carried on every record. */
+  work?: Work
+  /** The versions of what the run was given; each named one is carried on every record. */
+  inputs?: InputVersions
   /** `governed` only when the caller says so; the default is `reported`. */
   provenance?: RecordProvenance
+  /** How far the records' origin is trusted; `unavailable` when not given. */
+  trust?: RecordTrust
+  /** The handle's clock and timers; a test supplies its own. */
+  timers?: run.Timers
   processName?: string
   serviceVersion?: string
   /** Additional processors for spans written to the local copy. */
@@ -64,40 +72,74 @@ export type ConnectOptions = {
 
 const NO_SPAN_ID = '0000000000000000'
 
-export type LogHandle = WriterCore & {
+export type LogHandle = {
+  readonly runId: string
+  readonly traceId: string
+  readonly writerId: string
+  /** Whether the handle records anything. */
+  readonly enabled: boolean
   /** The resolved settings; `undefined` when the handle records nothing. */
   readonly settings: ResolvedSettings | undefined
-  startRun(options?: run.StartRunOptions): SpanParent
-  endRun(options?: run.EndOptions): void
-  alive(): void
-  stageChanged(change: { from?: string; to: string }): void
-  cancelled(detail?: { reason?: string }): void
-  retried(detail?: { attempt?: number; reason?: string }): void
-  stopRuleMet(detail: { rule: string; reason?: string }): void
-  exited(detail?: { code?: number; reason?: string }): void
-  startRound(options: round.StartRoundOptions): SpanParent
-  endRound(options?: run.EndOptions): void
-  startPhase(options: round.StartPhaseOptions): SpanParent
-  endPhase(options?: run.EndOptions): void
-  startAgent(options: agent.StartAgentOptions): SpanParent
-  recordUsage(usage: agent.TokenUsage, agentRef?: SpanParent): void
-  endAgent(options?: run.EndOptions & { usage?: agent.TokenUsage }): void
-  startStep(options: agent.StartStepOptions): SpanParent
-  endStep(step: SpanParent, options?: run.EndOptions): void
-  confidenceStated(detail: { confidence: number; agent?: SpanParent }): void
-  reviewVerdicts(d: review.ReviewVerdicts): void
-  findingsCompared(d: review.FindingsCompared): void
-  startChecks(d: checks.StartChecks): SpanParent
-  endChecks(ref: SpanParent, d: checks.EndChecks): void
-  checkNotPassed(d: checks.CheckResult): void
-  checkResultRead(d: checks.CheckResult): void
-  recordChange(d: change.Change): void
-  askPerson(d: person.AskPerson): SpanParent
-  answerPerson(d: person.AnswerPerson): void
-  forgeAction(d: outside.OutsideAction): void
-  verifiedAction(d: outside.OutsideAction): void
-  commandCompleted(d: outside.OutsideAction): void
-  custom(name: string, fields: Readonly<Record<string, unknown>>): void
+  readonly run: {
+    started(options?: run.StartRun): SpanParent
+    ended(options?: run.EndRun): void
+    alive(): void
+    stageChanged(change: { from?: run.Stage; to: run.Stage }): void
+    paused(options?: run.Pause): SpanParent
+    resumed(options: run.Resume): void
+    cancelled(detail?: { round?: number; by?: string }): void
+    retried(detail?: { failed?: string; tries?: number; recovered?: boolean }): void
+    stopRuleMet(detail: { rule: run.StopRule }): void
+    exited(detail: { kind: run.ExitKind; code?: number; errorType?: string }): void
+  }
+  readonly round: {
+    started(options: round.StartRound): SpanParent
+    ended(options?: round.EndRound): void
+  }
+  readonly phase: { ended(options: round.PhaseEnded): void }
+  readonly agent: {
+    sent(options: agent.AgentSent): SpanParent
+    stepStarted(options: agent.StepStarted): SpanParent
+    stepEnded(step: SpanParent, options?: agent.StepEnded): void
+    returned(options?: agent.AgentReturned): void
+    failed(options: agent.AgentFailed): void
+    confidenceStated(detail?: agent.ConfidenceStated): void
+  }
+  readonly usage: { recorded(usage: agent.UsageRecorded): void }
+  readonly review: {
+    verdicts(d: review.ReviewVerdicts): void
+    findingsCompared(d: review.FindingsCompared): void
+  }
+  readonly checks: {
+    ran(d: checks.ChecksRan): void
+    notPassed(d: checks.CheckNotPassed): void
+    read(d: checks.ChecksRead): void
+    local(d: checks.ChecksLocal): void
+    ci(d: checks.ChecksCi): void
+    rerun(d: checks.ChecksRerun): void
+  }
+  readonly change: {
+    saved(d?: change.ChangeSaved): void
+    pushed(d: change.ChangePushed): void
+    opened(d: change.ChangeOpened): void
+    conflicted(d?: change.ChangeConflicted): void
+    recovered(): void
+    merged(d?: change.ChangeMerged): void
+    reverted(d?: change.ChangeReverted): void
+    incident(d?: change.ChangeIncident): void
+  }
+  readonly person: {
+    asked(d: person.PersonAsked): SpanParent
+    answered(d: person.PersonAnswered): void
+  }
+  readonly forge: {
+    validated(d: outside.ForgeWrite): void
+    refused(d: outside.ForgeRefusal): void
+    written(d: outside.ForgeWrite): void
+  }
+  readonly action: { verified(d: outside.ActionVerified): void }
+  readonly command: { completed(d: outside.CommandCompleted): void }
+  readonly custom: { recorded(name: string, fields: Readonly<Record<string, unknown>>): void }
   writeSpan(
     name: string,
     own: SpanParent,
@@ -263,22 +305,30 @@ export function connect(options: ConnectOptions): LogHandle {
     }
   }
 
+  const timers = options.timers ?? run.SYSTEM_TIMERS
   const core: WriterCore = {
     enabled: tracer !== undefined && logger !== undefined,
     runId,
     traceId: traceIdFor(runId),
     writerId,
     provenance: options.provenance === 'governed' ? 'governed' : 'reported',
-    workRef: options.workRef,
+    trust: options.trust ?? 'unavailable',
+    work: { ...options.work, ...(options.workRef !== undefined ? { ref: options.workRef } : {}) },
+    inputs: { ...options.inputs },
+    moment: {},
+    now: () => timers.now(),
+    lastWrite: timers.now(),
     home: options.home ?? homedir(),
     idGenerator,
     tracer,
     logger,
     open: new Map(),
     current: {},
+    pauses: new Map(),
     seq: 0,
     report
   }
+  const heartbeat = run.createHeartbeat(core, timers)
 
   const noSpan: SpanParent = { traceId: core.traceId, spanId: NO_SPAN_ID }
   const g =
@@ -290,6 +340,7 @@ export function connect(options: ConnectOptions): LogHandle {
     (...a: A): SpanParent =>
       guard(core, () => fn(...a), noSpan)
   const flushAll = async (which: 'forceFlush' | 'shutdown'): Promise<void> => {
+    if (which === 'shutdown') heartbeat.stop()
     try {
       await tracerProvider?.[which]()
       await loggerProvider?.[which]()
@@ -300,37 +351,75 @@ export function connect(options: ConnectOptions): LogHandle {
 
   const methods = {
     settings,
-    startRun: s((o?: run.StartRunOptions) => run.startRun(core, o)),
-    endRun: g((o?: run.EndOptions) => run.endRun(core, o)),
-    alive: g(() => run.alive(core)),
-    stageChanged: g((c: { from?: string; to: string }) => run.stageChanged(core, c)),
-    cancelled: g((d?: { reason?: string }) => run.cancelled(core, d)),
-    retried: g((d?: { attempt?: number; reason?: string }) => run.retried(core, d)),
-    stopRuleMet: g((d: { rule: string; reason?: string }) => run.stopRuleMet(core, d)),
-    exited: g((d?: { code?: number; reason?: string }) => run.exited(core, d)),
-    startRound: s((o: round.StartRoundOptions) => round.startRound(core, o)),
-    endRound: g((o?: run.EndOptions) => round.endRound(core, o)),
-    startPhase: s((o: round.StartPhaseOptions) => round.startPhase(core, o)),
-    endPhase: g((o?: run.EndOptions) => round.endPhase(core, o)),
-    startAgent: s((o: agent.StartAgentOptions) => agent.startAgent(core, o)),
-    recordUsage: g((u: agent.TokenUsage, a?: SpanParent) => agent.recordUsage(core, u, a)),
-    endAgent: g((o?: run.EndOptions & { usage?: agent.TokenUsage }) => agent.endAgent(core, o)),
-    startStep: s((o: agent.StartStepOptions) => agent.startStep(core, o)),
-    endStep: g((step: SpanParent, o?: run.EndOptions) => agent.endStep(core, step, o)),
-    confidenceStated: g((d: { confidence: number; agent?: SpanParent }) => agent.confidenceStated(core, d)),
-    reviewVerdicts: g((d: review.ReviewVerdicts) => review.reviewVerdicts(core, d)),
-    findingsCompared: g((d: review.FindingsCompared) => review.findingsCompared(core, d)),
-    startChecks: s((d: checks.StartChecks) => checks.startChecks(core, d)),
-    endChecks: g((ref: SpanParent, d: checks.EndChecks) => checks.endChecks(core, ref, d)),
-    checkNotPassed: g((d: checks.CheckResult) => checks.checkResult(core, EVENT_NAMES.checkNotPassed, d)),
-    checkResultRead: g((d: checks.CheckResult) => checks.checkResult(core, EVENT_NAMES.checkResultRead, d)),
-    recordChange: g((d: change.Change) => change.recordChange(core, d)),
-    askPerson: s((d: person.AskPerson) => person.askPerson(core, d)),
-    answerPerson: g((d: person.AnswerPerson) => person.answerPerson(core, d)),
-    forgeAction: g((d: outside.OutsideAction) => outside.outsideAction(core, EVENT_NAMES.forgeAction, d)),
-    verifiedAction: g((d: outside.OutsideAction) => outside.outsideAction(core, EVENT_NAMES.verifiedAction, d)),
-    commandCompleted: g((d: outside.OutsideAction) => outside.outsideAction(core, EVENT_NAMES.commandCompleted, d)),
-    custom: g((name: string, fields: Readonly<Record<string, unknown>>) => custom(core, declarations, name, fields)),
+    run: {
+      started: s((o?: run.StartRun) => {
+        const ref = run.started(core, o)
+        if (core.enabled) heartbeat.start()
+        return ref
+      }),
+      ended: g((o?: run.EndRun) => {
+        heartbeat.stop()
+        run.ended(core, o)
+      }),
+      alive: g(() => run.alive(core)),
+      stageChanged: g((c: { from?: run.Stage; to: run.Stage }) => run.stageChanged(core, c)),
+      paused: s((o?: run.Pause) => run.paused(core, o)),
+      resumed: g((o: run.Resume) => run.resumed(core, o)),
+      cancelled: g((d?: { round?: number; by?: string }) => run.cancelled(core, d)),
+      retried: g((d?: { failed?: string; tries?: number; recovered?: boolean }) => run.retried(core, d)),
+      stopRuleMet: g((d: { rule: run.StopRule }) => run.stopRuleMet(core, d)),
+      exited: g((d: { kind: run.ExitKind; code?: number; errorType?: string }) => run.exited(core, d))
+    },
+    round: {
+      started: s((o: round.StartRound) => round.started(core, o)),
+      ended: g((o?: round.EndRound) => round.ended(core, o))
+    },
+    phase: { ended: g((o: round.PhaseEnded) => round.phaseEnded(core, o)) },
+    agent: {
+      sent: s((o: agent.AgentSent) => agent.sent(core, o)),
+      stepStarted: s((o: agent.StepStarted) => agent.stepStarted(core, o)),
+      stepEnded: g((step: SpanParent, o?: agent.StepEnded) => agent.stepEnded(core, step, o)),
+      returned: g((o?: agent.AgentReturned) => agent.returned(core, o)),
+      failed: g((o: agent.AgentFailed) => agent.failed(core, o)),
+      confidenceStated: g((d?: agent.ConfidenceStated) => agent.confidenceStated(core, d))
+    },
+    usage: { recorded: g((u: agent.UsageRecorded) => agent.usageRecorded(core, u)) },
+    review: {
+      verdicts: g((d: review.ReviewVerdicts) => review.reviewVerdicts(core, d)),
+      findingsCompared: g((d: review.FindingsCompared) => review.findingsCompared(core, d))
+    },
+    checks: {
+      ran: g((d: checks.ChecksRan) => checks.ran(core, d)),
+      notPassed: g((d: checks.CheckNotPassed) => checks.notPassed(core, d)),
+      read: g((d: checks.ChecksRead) => checks.read(core, d)),
+      local: g((d: checks.ChecksLocal) => checks.local(core, d)),
+      ci: g((d: checks.ChecksCi) => checks.ci(core, d)),
+      rerun: g((d: checks.ChecksRerun) => checks.rerun(core, d))
+    },
+    change: {
+      saved: g((d?: change.ChangeSaved) => change.saved(core, d)),
+      pushed: g((d: change.ChangePushed) => change.pushed(core, d)),
+      opened: g((d: change.ChangeOpened) => change.opened(core, d)),
+      conflicted: g((d?: change.ChangeConflicted) => change.conflicted(core, d)),
+      recovered: g(() => change.recovered(core)),
+      merged: g((d?: change.ChangeMerged) => change.merged(core, d)),
+      reverted: g((d?: change.ChangeReverted) => change.reverted(core, d)),
+      incident: g((d?: change.ChangeIncident) => change.incident(core, d))
+    },
+    person: {
+      asked: s((d: person.PersonAsked) => person.asked(core, d)),
+      answered: g((d: person.PersonAnswered) => person.answered(core, d))
+    },
+    forge: {
+      validated: g((d: outside.ForgeWrite) => outside.forgeValidated(core, d)),
+      refused: g((d: outside.ForgeRefusal) => outside.forgeRefused(core, d)),
+      written: g((d: outside.ForgeWrite) => outside.forgeWritten(core, d))
+    },
+    action: { verified: g((d: outside.ActionVerified) => outside.actionVerified(core, d)) },
+    command: { completed: g((d: outside.CommandCompleted) => outside.commandCompleted(core, d)) },
+    custom: {
+      recorded: g((name: string, fields: Readonly<Record<string, unknown>>) => custom(core, declarations, name, fields))
+    },
     writeSpan: g(
       (
         name: string,
@@ -344,5 +433,11 @@ export function connect(options: ConnectOptions): LogHandle {
     flush: () => flushAll('forceFlush'),
     shutdown: () => flushAll('shutdown')
   }
-  return Object.assign(core, methods) as LogHandle
+  return {
+    runId: core.runId,
+    traceId: core.traceId,
+    writerId: core.writerId,
+    enabled: core.enabled,
+    ...methods
+  } as LogHandle
 }

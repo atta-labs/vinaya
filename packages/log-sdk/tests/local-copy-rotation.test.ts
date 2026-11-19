@@ -45,7 +45,7 @@ test('a failed partial append is reported and seals the segment', async () => {
   const errors: unknown[] = []
   try {
     const handle = connect({ ...options, onError: (error) => errors.push(error) })
-    handle.stageChanged({ to: 'first' })
+    handle.run.stageChanged({ to: 'first' })
     const file = readdirSync(folder)[0]!
     const path = join(folder, file)
     const original = readFileSync(path)
@@ -57,7 +57,7 @@ test('a failed partial append is reported and seals the segment', async () => {
       })
     let partial: Buffer
     try {
-      expect(() => handle.stageChanged({ to: 'second' })).not.toThrow()
+      expect(() => handle.run.stageChanged({ to: 'second' })).not.toThrow()
       expect(errors).toEqual([expect.objectContaining({ message: 'simulated disk full' })])
       partial = readFileSync(path)
       expect(partial.length).toBe(original.length + 17)
@@ -68,7 +68,7 @@ test('a failed partial append is reported and seals the segment', async () => {
     }
     await handle.flush()
     expect(readFileSync(path).equals(partial)).toBe(true)
-    handle.stageChanged({ to: 'third' })
+    handle.run.stageChanged({ to: 'third' })
     await handle.shutdown()
     const files = readdirSync(folder).sort()
     expect(files).toHaveLength(2)
@@ -95,7 +95,7 @@ test('three size rollovers preserve each record and seal earlier files', () => {
     const stages = Array.from({ length: 8 }, (_, i) => `${i} ${payload}`)
     const sealed = new Map<string, Buffer>()
     for (const stage of stages) {
-      handle.stageChanged({ to: stage })
+      handle.run.stageChanged({ to: stage })
       const files = readdirSync(folder).sort()
       for (const file of files.slice(0, -1)) {
         if (!sealed.has(file)) sealed.set(file, readFileSync(join(folder, file)))
@@ -122,7 +122,7 @@ test('writers in the same process and in child processes keep independent files'
           '--eval',
           `import { connect } from ${JSON.stringify(moduleUrl)}
        const handle = connect(${JSON.stringify(options)})
-       for (let i = 0; i < 10; i++) handle.stageChanged({ to: ${JSON.stringify(label)} + '-' + i })
+       for (let i = 0; i < 10; i++) handle.run.stageChanged({ to: ${JSON.stringify(label)} + '-' + i })
        console.log(handle.writerId)`
         ],
         { stdout: 'pipe', stderr: 'inherit' }
@@ -132,8 +132,8 @@ test('writers in the same process and in child processes keep independent files'
     const first = connect(options)
     const second = connect(options)
     for (let i = 0; i < 10; i++) {
-      first.stageChanged({ to: `parent-a-${i}` })
-      second.stageChanged({ to: `parent-b-${i}` })
+      first.run.stageChanged({ to: `parent-a-${i}` })
+      second.run.stageChanged({ to: `parent-b-${i}` })
     }
     const childIds = await Promise.all(
       children.map(async (child) => {
@@ -175,19 +175,19 @@ test('a replaced active file and a non-regular new target are refused', () => {
   const onError = (error: unknown) => errors.push(error)
   try {
     const handle = connect({ ...options, onError })
-    handle.alive()
+    handle.run.alive()
     const path = join(folder, readdirSync(folder)[0]!)
     const victim = join(options.runtimeDir, 'victim')
     writeFileSync(victim, 'keep')
     renameSync(path, join(options.runtimeDir, 'saved'))
     symlinkSync(victim, path)
-    expect(() => handle.alive()).not.toThrow()
+    expect(() => handle.run.alive()).not.toThrow()
     expect(readFileSync(victim, 'utf8')).toBe('keep')
     expect(errors).toHaveLength(1)
 
     const second = connect({ ...options, onError })
     mkdirSync(join(folder, `run~${second.writerId}~000000000000.logs.jsonl`))
-    expect(() => second.alive()).not.toThrow()
+    expect(() => second.run.alive()).not.toThrow()
     expect(errors).toHaveLength(2)
   } finally {
     rmSync(options.runtimeDir, { recursive: true, force: true })

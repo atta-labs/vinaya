@@ -8,7 +8,9 @@ import {
   EVENT_NAMES,
   FORBIDDEN_CONTENT_ATTRIBUTES,
   GENAI_CONVENTIONS_VERSION,
-  SPAN_NAMES
+  isSpanName,
+  SPAN_NAMES,
+  spanName
 } from '../src/contract/catalogue.js'
 import { harness } from './helpers.js'
 
@@ -26,58 +28,60 @@ test('GenAI names match the conventions spelling', () => {
 
 test('every name a handle function writes is in the catalogue', () => {
   const { handle, spans, logs, errors } = harness()
-  handle.startRun()
-  handle.alive()
-  handle.stageChanged({ from: 'a', to: 'b' })
-  handle.startRound({ number: 1 })
-  handle.startPhase({ name: 'build' })
-  handle.startAgent({ name: 'dev', id: 'x' })
-  const step = handle.startStep({ tool: 'bash', toolType: 'function' })
-  handle.endStep(step, { errorType: 'timeout' })
-  handle.confidenceStated({ confidence: 80 })
-  handle.recordUsage({ inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3, cacheWriteInputTokens: 4 })
-  handle.endAgent()
-  handle.endPhase()
-  handle.endRound()
-  handle.retried({ attempt: 2, reason: 'x' })
-  handle.stopRuleMet({ rule: 'r' })
-  handle.cancelled({ reason: 'c' })
-  handle.exited({ code: 0 })
-  handle.reviewVerdicts({ seats: [], blockingCount: 0, findings: [] })
-  handle.findingsCompared({ open: [], resolved: [], new: [], recurring: [] })
+  const start = new Date(1_000)
+  handle.run.started({ process: 'acme', seats: [{ seat: 'dev', model: 'm' }] })
+  handle.run.alive()
+  handle.run.stageChanged({ from: 'develop', to: 'review' })
+  handle.round.started({ number: 1 })
+  handle.phase.ended({ phase: 'review' })
+  handle.agent.sent({ seat: 'dev', id: 'x' })
+  const step = handle.agent.stepStarted({ tool: 'bash' })
+  handle.agent.stepEnded(step, { errorType: 'timeout' })
+  handle.agent.confidenceStated({ confidence: 80 })
+  handle.usage.recorded({ inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3 })
+  handle.agent.returned()
+  handle.round.ended()
+  handle.run.retried({ failed: 'x', tries: 2 })
+  handle.run.stopRuleMet({ rule: 'approved' })
+  handle.run.cancelled({ by: 'person' })
+  handle.run.paused({ why: 'escalation', startTime: start })
+  handle.run.resumed({ by: 'person' })
+  handle.run.exited({ kind: 'finished', code: 0 })
+  handle.review.verdicts({ seats: [], blockingCount: 0, findings: [] })
+  handle.review.findingsCompared({ open: [], resolved: [], new: [], recurring: [] })
   for (const where of ['hook', 'local', 'push', 'ci'] as const) {
-    const check = handle.startChecks({ where })
-    handle.endChecks(check, { ran: 0, passed: 0, failed: 0, skipped: 0, failedNames: [] })
+    handle.checks.ran({ where, ran: 0, passed: 0, failed: 0, skipped: 0, failedNames: [] })
   }
-  handle.checkNotPassed({ name: 'lint', result: 'failed' })
-  handle.checkResultRead({ name: 'lint', result: 'passed' })
-  for (const kind of [
-    'saved',
-    'pushed',
-    'opened',
-    'conflicted',
-    'recovered',
-    'merged',
-    'reverted',
-    'incident'
-  ] as const) {
-    handle.recordChange({ kind, change: 'pr-1' })
-  }
+  handle.checks.local({ passed: true })
+  handle.checks.ci({ result: 'green' })
+  handle.checks.rerun({ failed: 0, affected: 0, total: 0 })
+  handle.checks.notPassed({ name: 'lint', result: 'failed' })
+  handle.checks.read({ green: true })
+  handle.change.saved()
+  handle.change.pushed({ result: 'passed' })
+  handle.change.opened({ change: 'pr-1' })
+  handle.change.conflicted()
+  handle.change.recovered()
+  handle.change.merged()
+  handle.change.reverted()
+  handle.change.incident()
   for (const kind of ['authority', 'strategy', 'product'] as const) {
-    const startTime = new Date(1_000)
-    const ref = handle.askPerson({ kind, key: kind, startTime })
-    handle.answerPerson({ kind, spanId: ref.spanId, startTime, by: 'principal' })
+    const ref = handle.person.asked({ kind, key: kind, startTime: start })
+    handle.person.answered({ kind, spanId: ref.spanId, startTime: start, by: 'principal' })
   }
-  const action = { action: 'write', result: 'success', target: 'pr-1' }
-  handle.forgeAction(action)
-  handle.verifiedAction(action)
-  handle.commandCompleted(action)
-  handle.endRun()
+  const action = { action: 'write', target: 'pr-1' }
+  handle.forge.validated(action)
+  handle.forge.refused({ ...action, why: 'x' })
+  handle.forge.written(action)
+  handle.action.verified({ ...action, result: 'success' })
+  handle.command.completed({ ...action, result: 'ok' })
+  handle.run.ended()
   expect(errors).toEqual([])
   const finished = spans.getFinishedSpans()
-  expect(new Set(finished.map((span) => span.name))).toEqual(new Set(ALL_SPAN_NAMES))
+  const base = (name: string) => ALL_SPAN_NAMES.find((b) => name === b || name.startsWith(`${b} `))
+  expect(new Set(finished.map((span) => base(span.name)))).toEqual(new Set(ALL_SPAN_NAMES))
   for (const s of finished) {
-    expect(ALL_SPAN_NAMES).toContain(s.name)
+    expect(isSpanName(s.name)).toBe(true)
     for (const k of Object.keys(s.attributes)) expect(ALL_ATTRIBUTE_NAMES).toContain(k)
   }
   const events = logs.getFinishedLogRecords()
@@ -85,6 +89,16 @@ test('every name a handle function writes is in the catalogue', () => {
   for (const name of seen) expect(ALL_EVENT_NAMES).toContain(name as string)
   expect(seen.size).toBe(Object.values(EVENT_NAMES).length)
   for (const e of events) for (const k of Object.keys(e.attributes)) expect(ALL_ATTRIBUTE_NAMES).toContain(k)
+})
+
+test('a span name is its base with the filled-in part, and nothing else is a span name', () => {
+  expect(spanName(SPAN_NAMES.round, 3)).toBe('vinaya.round 3')
+  expect(spanName(SPAN_NAMES.agent, 'reviewer')).toBe('invoke_agent reviewer')
+  expect(spanName(SPAN_NAMES.run)).toBe('invoke_workflow')
+  expect(isSpanName('vinaya.checks ci')).toBe(true)
+  expect(isSpanName('vinaya.checks')).toBe(true)
+  expect(isSpanName('vinaya.checkscloud')).toBe(false)
+  expect(isSpanName('vinaya.invented 1')).toBe(false)
 })
 
 test('the catalogue file imports nothing', () => {
