@@ -8,7 +8,10 @@ caller has one, a record of what each test actually read.
 The package knows no hook, CI job, forge or process. Its library touches git,
 the file system or the network only through the reader its caller passes. The
 exceptions are the two commands, which find the repository they are started
-in through `git`, and the read recorder, which runs and traces its tests.
+in through `git`, and the read recorder, which runs and traces its tests. The
+exported search `findReadRecord`, and the `test-selection` command given
+`--fetch-record`, start `gh` and so reach GitHub; nothing else in the library
+does.
 
 ## Install
 
@@ -404,12 +407,13 @@ npx test-selection --base origin/main --head HEAD
 Started in any folder of a git repository, it selects for that whole
 repository. It resolves both arguments to commit ids first, builds each
 commit's view with `workspaceInventory`, and calls `selectTests`. It then
-groups the planned tests with `groupNativeTests`. It starts no test and writes
-no file. It reads no file but the two its optional flags name, and no
+groups the planned tests with `groupNativeTests`. It starts no test. It writes
+no file, except that with `--fetch-record` it keeps record files under the git
+directory (below). It reads no file but the two its optional flags name, and no
 environment variable of its own; git's own settings still apply.
 
 ```sh
-npx test-selection --base <commit> --head <commit> [--record <file>] [--config <file>]
+npx test-selection --base <commit> --head <commit> [--record <file> | --fetch-record] [--config <file>]
 npx test-selection --help
 ```
 
@@ -418,6 +422,34 @@ npx test-selection --help
   `process.platform` as the platform. A test with a valid record is decided by
   what it read; every other test, and every test when the record's commit
   cannot be compared with the base, by static selection.
+- `--fetch-record` — finds a read record itself and passes it as `--record`
+  would. Given together with `--record` it is refused (exit 2). It needs the
+  GitHub CLI `gh` on the `PATH`, a login or a `GH_TOKEN`, and, inside a
+  workflow, the `actions: read` permission. It walks the base commit and the
+  nine before it on its first-parent line, nearest first, and stops at the first
+  that gives a record. A commit whose record is kept is served without
+  starting `gh`; otherwise `gh` (started in the repository root, without any
+  `GIT_` variable, with a limit of 20 seconds a call) names the default branch,
+  once a run, then lists the runs of `test-selection-record.yml` that a push
+  to the default branch started for the commit, and downloads from the first
+  that holds it the artifact `read-record-<commit>`. A record is used only when
+  `isReadRecord` accepts it and it names that very commit. A fetched record
+  that is used is kept as `<commit>.json` in `test-selection/read-records`
+  under the repository's common git directory, which every worktree shares; a
+  later run uses it with no call. Nothing is written in the working tree. The
+  search reads no environment variable by name; it hands its own environment,
+  less the `GIT_` variables, to `gh`, which reads its login from it.
+  One line goes to standard error: `test-selection: record: <commit> kept` or
+  `fetched`, or `test-selection: no record: <reason>`. The plan on standard
+  output is the same either way.
+  The search never fails the command: with no record it selects as it does
+  with no record flag and exits 0. The cases that end with no record are: no
+  `gh` (it cannot be started); a `gh` that fails when asked for the default
+  branch or a commit's runs (no login, no `actions: read`, no network) — after
+  which `gh` is started no more and only kept records are used; a commit with
+  no run; a run with no such artifact (expired, never uploaded, or a download
+  that fails or runs out of time); and a file that is not a read record of
+  that commit.
 - `--config <file>` — a consumer config: a JSON document stating the rest of
   what a selection takes.
 
@@ -483,13 +515,11 @@ npx test-selection --base HEAD~1 --head HEAD --config selection.json
 The record comes from a recording job on the default branch, documented with
 the package's record command (see "The `test-selection-record` command"
 below); that job keeps each record as an artifact named for its commit. A
-pull-request job downloads the record of the base commit and passes it with
-`--record`; with no record found it selects without one. It takes only a run
-of the recording workflow that a push to the default branch started, so a
-record from another branch or event never narrows the selection. The workflow file
-name below (`record.yml`) is the one your recording job lives in; the artifact
-(`read-record-<commit>`) and file (`read-record.json`) names are the ones that
-job's example uses:
+pull-request job passes `--fetch-record`, which downloads the record of the
+base commit, or of the nearest earlier one that has one; with no record found
+it selects without one. It takes only a run of the recording workflow that a
+push to the default branch started, so a record from another branch or event
+never narrows the selection:
 
 ```yaml
 name: tests
@@ -508,30 +538,20 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - name: Download the base commit's read record
+      - name: Select
         env:
           GH_TOKEN: ${{ github.token }}
           BASE: ${{ github.event.pull_request.base.sha }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          run_id=$(gh run list --workflow record.yml --branch "$DEFAULT_BRANCH" --event push --commit "$BASE" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          if [ -n "$run_id" ]; then gh run download "$run_id" --name "read-record-$BASE" --dir .record; fi
-      - name: Select
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          record=()
-          if [ -f .record/read-record.json ]; then record=(--record .record/read-record.json); fi
-          npx test-selection --base "$BASE" --head "$HEAD" "${record[@]}" --config selection.json > plan.json
+        run: npx test-selection --base "$BASE" --head "$HEAD" --fetch-record --config selection.json > plan.json
 ```
 
 It exits 0 when it prints a plan. With `--help` or `-h` anywhere in the
 arguments, it prints help on standard output and exits 0, even outside a git
 repository. A missing argument, a folder outside a git
 repository, an argument that names no commit, a `--record` file that is
-missing or not a read record, or a `--config` file that is missing or not a
-valid consumer config prints one message on standard error and exits 2; any
+missing or not a read record, `--fetch-record` together with `--record`, or a
+`--config` file that is missing or not a valid consumer config prints one message on standard error and exits 2; any
 other failure exits 1.
 
 The document:
@@ -679,7 +699,13 @@ jobs:
 
 A selection for a change then downloads the artifact of its base commit and
 passes the parsed record to `selectTests`, or the file to the `test-selection`
-command with `--record`.
+command with `--record`. The command's `--fetch-record` does the download
+itself, and `findReadRecord(repoRoot, base)` is the same search from code. It
+finds only a recording workflow whose file is `test-selection-record.yml` in
+the `.github/workflows` folder and whose artifact is named
+`read-record-<commit>` (`RECORD_WORKFLOW_FILE`, `RECORD_ARTIFACT_PREFIX`),
+holding `read-record.json`; a recording job of another file or artifact name
+is not found.
 
 From code, `recordReads` records the same way and returns the record; a
 caller with its own inventory, runner launch, run-outcome check, time limit or
@@ -698,6 +724,7 @@ command itself with those injected.
 | `src/workspace-inventory.ts` | an inventory view built from one commit's package manifests |
 | `src/cli.ts` | the `test-selection` command, never imported by the entrypoint |
 | `src/consumer-config.ts` | the command's consumer config: its validation, and its declared inputs as edges |
+| `src/record-fetch.ts` | the search for a read record: kept copies, and `gh` for a commit's recording run |
 | `src/record-command.ts` | the `test-selection-record` command, never imported by the entrypoint |
 | `src/recorder.ts` | the read recorder: traced runs, the record entry each builds, shards and their merge |
 | `src/listing-probe.ts` | the listing probe a recorded Bun run preloads, never imported by the entrypoint |
@@ -721,10 +748,11 @@ command itself with those injected.
 - Bun, only inside a recorded Bun run: the listing probe wraps `Bun`'s own functions and `bun:ffi` there
 - `typescript` — an optional peer, loaded at runtime through `createRequire` and imported only as types; without it the selection falls back to its text-scan graph, and `classifyHunks`, which takes the API as its `ts` input, reports every hunk unclassified
 - `git` — the executable, only for `gitRepository` and the two commands
+- `gh` — the GitHub CLI, only for `findReadRecord` and the `test-selection` command given `--fetch-record`
 - `strace` — the executable, only for the read recorder, on Linux
 
 The tests also use `bun:test` (`bun test`). Outside the recorder's own runs (the probe reads `VINAYA_LISTING_PROBE_LOG`), no preload, global, configuration
-file or environment variable is read.
+file or environment variable is read by name; the record search hands its own environment, less the `GIT_` variables, to `gh`, which reads its login from it.
 
 `tests/isolation.test.ts` fails if anything in the package imports from outside
 its folder or names a module `package.json` does not declare, and if anything
