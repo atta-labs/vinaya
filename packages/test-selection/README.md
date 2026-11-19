@@ -5,13 +5,13 @@ revisions alone, through the TypeScript compiler's own module graph, a
 validated inventory of every test and every non-import input, and, when the
 caller has one, a record of what each test actually read.
 
-The package knows no hook, CI job, forge or process. Its library touches git,
-the file system or the network only through the reader its caller passes. The
-exceptions are the installed commands, which find the repository they are started
-in through `git`, and the read recorder, which runs and traces its tests. The
-exported search `findReadRecord`, and the `test-selection` command given
-`--fetch-record`, start `gh` and so reach GitHub; nothing else in the library
-does.
+The selection library knows no hook, CI job or process: it touches git, the
+file system or the network only through the reader its caller passes. The
+installed commands find the repository they are started in through `git`, and
+the read recorder runs and traces its tests. Two parts reach GitHub: the
+exported search `findReadRecord`, which the `test-selection` command runs when
+given `--fetch-record`, starts `gh`; and the `test-selection-setup` command
+writes a GitHub Actions workflow. Nothing else in the package does.
 
 ## Install
 
@@ -602,7 +602,7 @@ and writes the read record `selectTests` takes as `records`. It runs on Linux
 only, with `strace` installed, since it traces every test at the syscall:
 
 ```sh
-sudo apt-get install -y strace
+sudo apt-get update && sudo apt-get install -y strace
 npx test-selection-record --out read-record
 ```
 
@@ -743,6 +743,7 @@ jobs:
           node-version: '22'
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      - run: sudo apt-get update
       - run: sudo apt-get install -y strace
       - run: npx test-selection-record --out "$RUNNER_TEMP/read-record" --summary "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

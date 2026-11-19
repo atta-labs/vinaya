@@ -54,6 +54,11 @@ function firstLine(err: unknown): string {
   return (err instanceof Error ? err.message : String(err)).split('\n')[0] as string
 }
 
+/** Whether a runner error is the per-call time limit running out (`execFileSync` reports it as `ETIMEDOUT`). */
+function timedOut(err: unknown): boolean {
+  return (err as { code?: unknown } | null)?.code === 'ETIMEDOUT'
+}
+
 function gitOutput(repoRoot: string, args: string[]): string | null {
   try {
     return execFileSync('git', args, {
@@ -93,8 +98,9 @@ function recordFor(text: string, commit: string): ReadRecord | null {
 /**
  * The record of the nearest commit at or before `base`, among ten on its first-parent line, that is kept or can be
  * fetched. `run` starts `gh` (and only `gh`); a test passes its own. After a `gh` that cannot be started, or that fails
- * when asked for the default branch, for a commit's runs, or when a download runs out of time, `gh` is started no
- * more and only kept records are used.
+ * when asked for the default branch, for a commit's runs, or when a download runs out of time, and when no download
+ * folder can be made, `gh` is started no more and only kept records are used. The search never throws for any of
+ * these: it returns no record with the first reason.
  */
 export function findReadRecord(repoRoot: string, base: string, run: CommandRunner = defaultRunner): RecordSearch {
   const kept = keptFolder(repoRoot)
@@ -167,7 +173,15 @@ export function findReadRecord(repoRoot: string, base: string, run: CommandRunne
     }
 
     const name = `${RECORD_ARTIFACT_PREFIX}${commit}`
-    const dir = mkdtempSync(join(tmpdir(), 'test-selection-record-'))
+    let dir: string
+    try {
+      dir = mkdtempSync(join(tmpdir(), 'test-selection-record-'))
+    } catch (err) {
+      // No folder to download into: no download can succeed, so only kept records are used from here on.
+      ghUsable = false
+      reasons.push(`no download folder can be made: ${firstLine(err)}`)
+      continue
+    }
     let text: string | null = null
     try {
       for (const found of runs) {
@@ -175,13 +189,20 @@ export function findReadRecord(repoRoot: string, base: string, run: CommandRunne
           gh(['run', 'download', String(found.databaseId), '--name', name, '--dir', dir])
           text = readFileSync(join(dir, RECORD_FILE), 'utf8')
           break
-        } catch {
+        } catch (err) {
+          if (timedOut(err)) {
+            // A download that runs out of time stops the search's use of gh: a slow forge costs one limit, not fifty.
+            ghUsable = false
+            reasons.push(`the download of ${name} ran out of time`)
+            break
+          }
           // this run holds no such artifact, or the download failed: try the next run
         }
       }
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+    if (!ghUsable) continue
     if (text === null) {
       reasons.push(`no run for ${commit} holds the ${name} artifact`)
       continue
