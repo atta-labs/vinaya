@@ -11,6 +11,45 @@ export * from './contract/ids.js'
 export * from './contract/redact.js'
 export * from './contract/schema.js'
 export * from './contract/store.js'
+export { narrate, type NarratableRecord, type SeatNames } from './narration/narrate.js'
+export {
+  NARRATION_KINDS,
+  type NarrationKind,
+  type NarrationLine,
+  reasonWaitsOn
+} from './narration/wording.js'
+export { createFolderSource, type FolderSourceOptions } from './reader/folder-source.js'
+export {
+  createLineReader,
+  type LineProblem,
+  type LineReader,
+  type LineResult,
+  readOtlpDocument
+} from './reader/lines.js'
+export {
+  createOtlpSource,
+  type OtlpPage,
+  type OtlpSourceOptions,
+  type OtlpSupplier
+} from './reader/otlp-source.js'
+export { createOrdering, type Ordered, type ReadGap } from './reader/order.js'
+export {
+  type AttributeValue,
+  type Attributes,
+  identityOf,
+  type OtelRecord,
+  type RecordKind
+} from './reader/records.js'
+export {
+  createReader,
+  type Reader,
+  type ReaderOptions,
+  type ReaderUpdate,
+  type RecordSource,
+  type SourceBatch,
+  type SourceProblem
+} from './reader/source.js'
+export { applyTrust } from './reader/trust.js'
 export { type LocalCopyReport, type SendLocalCopyOptions, sendLocalCopy } from './sender/send.js'
 export {
   type ConnectOptions,
