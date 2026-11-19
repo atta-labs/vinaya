@@ -32,6 +32,15 @@ const JSON_WHITESPACE = /[ \t\r\n]/
 
 /** Read the dependency identity of a text bun.lock, including Bun's trailing commas. */
 export function readBunLockIdentity(text: string): unknown {
+  return parseBunLock(text, true)
+}
+
+/** Read the workspace folders and other fields as written in the lockfile. */
+export function readRawBunLock(text: string): unknown {
+  return parseBunLock(text, false)
+}
+
+function parseBunLock(text: string, identity: boolean): unknown {
   let json = ''
   let start = 0
   let inString = false
@@ -58,6 +67,7 @@ export function readBunLockIdentity(text: string): unknown {
     }
     previousToken = char
   }
+  if (!identity) return JSON.parse(json + text.slice(start))
   return bunLockIdentity(JSON.parse(json + text.slice(start)))
 }
 
