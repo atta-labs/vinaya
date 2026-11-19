@@ -18,6 +18,7 @@ import {
   SDK_VERSION
 } from '../contract/catalogue.js'
 import { createRunIdGenerator, type SpanParent, traceIdFor } from '../contract/ids.js'
+import { createFileExporters } from '../local-copy/file-exporters.js'
 import * as agent from './agent.js'
 import { type Attrs, guard, type WriterCore } from './attributes.js'
 import * as round from './round.js'
@@ -41,9 +42,9 @@ export type ConnectOptions = {
   provenance?: RecordProvenance
   processName?: string
   serviceVersion?: string
-  /** Where spans go; with none passed they go nowhere. */
+  /** Additional processors for spans written to the local copy. */
   spanProcessors?: SpanProcessor[]
-  /** Where events go; with none passed they go nowhere. */
+  /** Additional processors for events written to the local copy. */
   logRecordProcessors?: LogRecordProcessor[]
   /** Called once per failure; no handle function ever throws. */
   onError?: (error: unknown) => void
@@ -147,7 +148,7 @@ function safeLogProcessor(p: LogRecordProcessor, report: (e: unknown) => void): 
   }
 }
 
-export type { ReadableLogRecord }
+export type { ReadableLogRecord, ReadableSpan }
 
 /** Builds a Log handle. Never throws: a failure goes to `onError` and the handle records nothing. */
 export function connect(options: ConnectOptions): LogHandle {
@@ -180,13 +181,13 @@ export function connect(options: ConnectOptions): LogHandle {
 
   const runId = String(options.runId)
   const idGenerator = createRunIdGenerator(runId)
-  const enabled = settings !== undefined && settings.logs !== false
+  const writerId = randomUUID()
 
   let tracerProvider: BasicTracerProvider | undefined
   let loggerProvider: LoggerProvider | undefined
   let tracer: WriterCore['tracer']
   let logger: WriterCore['logger']
-  if (enabled) {
+  if (settings !== undefined && settings.logs !== false) {
     try {
       const resource = resourceFromAttributes({
         [ATTRIBUTE_NAMES.serviceName]: options.processName ?? basename(process.argv[1] ?? 'vinaya'),
@@ -196,15 +197,40 @@ export function connect(options: ConnectOptions): LogHandle {
         [ATTRIBUTE_NAMES.sdkVersion]: SDK_VERSION,
         [ATTRIBUTE_NAMES.semconvVersion]: GENAI_CONVENTIONS_VERSION
       })
+      const files = createFileExporters({
+        runId,
+        writerId,
+        repository: options.repository,
+        repoRoot: options.repoRoot ?? process.cwd(),
+        settings
+      })
+      const reportExport = (result: { error?: Error }) => {
+        if (result.error) report(result.error)
+      }
       tracerProvider = new BasicTracerProvider({
         resource,
         idGenerator,
         sampler: new AlwaysOnSampler(),
-        spanProcessors: (options.spanProcessors ?? []).map((p) => safeSpanProcessor(p, report))
+        spanProcessors: [
+          {
+            onStart() {},
+            onEnd: (span) => files.spans.export([span], reportExport),
+            forceFlush: () => files.spans.forceFlush?.() ?? Promise.resolve(),
+            shutdown: () => files.spans.shutdown()
+          },
+          ...(options.spanProcessors ?? []).map((p) => safeSpanProcessor(p, report))
+        ]
       })
       loggerProvider = new LoggerProvider({
         resource,
-        processors: (options.logRecordProcessors ?? []).map((p) => safeLogProcessor(p, report))
+        processors: [
+          {
+            onEmit: (record) => files.logs.export([record], reportExport),
+            forceFlush: () => files.logs.forceFlush(),
+            shutdown: () => files.logs.shutdown()
+          },
+          ...(options.logRecordProcessors ?? []).map((p) => safeLogProcessor(p, report))
+        ]
       })
       tracer = tracerProvider.getTracer('@attalabs/vinaya-log-sdk', SDK_VERSION)
       logger = loggerProvider.getLogger('@attalabs/vinaya-log-sdk', SDK_VERSION)
@@ -214,10 +240,10 @@ export function connect(options: ConnectOptions): LogHandle {
   }
 
   const core: WriterCore = {
-    enabled: enabled && tracer !== undefined && logger !== undefined,
+    enabled: tracer !== undefined && logger !== undefined,
     runId,
     traceId: traceIdFor(runId),
-    writerId: randomUUID(),
+    writerId,
     provenance: options.provenance === 'governed' ? 'governed' : 'reported',
     workRef: options.workRef,
     home: options.home ?? homedir(),

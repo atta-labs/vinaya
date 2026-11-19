@@ -57,9 +57,9 @@ export function walkFiles(root: string): string[] {
 }
 
 /**
- * The root manifest's `workspaces` entries — the array form, or the `packages`
- * array of the object form — or `null` when the manifest is missing or not
- * JSON.
+ * Workspace entries from the root manifest's `workspaces` field and the
+ * `packages` list of `pnpm-workspace.yaml`. Returns `null` when the root
+ * manifest is missing or unreadable as JSON.
  */
 export function readWorkspacePatterns(repoRoot: string): string[] | null {
   return readTreeWorkspacePatterns(diskTree(repoRoot))

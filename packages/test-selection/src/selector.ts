@@ -743,10 +743,97 @@ function deriveEntrypoints(dir: string, pkg: PackageManifest, knownFiles: Set<st
   return out
 }
 
+const yamlEscapes = new Map([
+  ['0', '\0'],
+  ['a', '\x07'],
+  ['b', '\b'],
+  ['t', '\t'],
+  ['\t', '\t'],
+  ['n', '\n'],
+  ['v', '\v'],
+  ['f', '\f'],
+  ['r', '\r'],
+  ['e', '\x1b'],
+  [' ', ' '],
+  ['"', '"'],
+  ['/', '/'],
+  ['\\', '\\'],
+  ['N', '\u0085'],
+  ['_', '\u00a0'],
+  ['L', '\u2028'],
+  ['P', '\u2029']
+])
+
+function decodeDoubleQuotedPattern(text: string): string | null {
+  let pattern = ''
+  let offset = 0
+  for (const match of text.matchAll(/\\(?:x([\da-fA-F]{2})|u([\da-fA-F]{4})|U([\da-fA-F]{8})|([^\n])?)/g)) {
+    pattern += text.slice(offset, match.index)
+    const hex = match[1] ?? match[2] ?? match[3]
+    if (hex !== undefined) {
+      const codePoint = Number.parseInt(hex, 16)
+      if (codePoint > 0x10ffff) return null
+      pattern += String.fromCodePoint(codePoint)
+    } else {
+      const decoded = yamlEscapes.get(match[4] ?? '')
+      if (decoded === undefined) return null
+      pattern += decoded
+    }
+    offset = match.index + match[0].length
+  }
+  return pattern + text.slice(offset)
+}
+
+function workspacePatternScalar(text: string, inline: boolean): { pattern: string; rest: string } | null {
+  if (text.startsWith("'") || text.startsWith('"')) {
+    const quoted = /^(?:'((?:[^']|'')*)'|"((?:[^"\\]|\\.)*)")/.exec(text)
+    if (!quoted) return null
+    const pattern = quoted[1]?.replace(/''/g, "'") ?? decodeDoubleQuotedPattern(quoted[2] ?? '')
+    if (pattern === null) return null
+    return { pattern, rest: text.slice(quoted[0].length).trimStart() }
+  }
+
+  const scalar = inline ? (/^[^,[\]]*/.exec(text)?.[0] ?? '') : text
+  const comment = /(?:^|\s)#/.exec(scalar)
+  const pattern = scalar.slice(0, comment?.index ?? scalar.length).trimEnd()
+  if (!pattern || /:(?:\s|$)/.test(pattern) || /^(?:[[{|>]|[-?:](?:\s|$))/.test(pattern)) return null
+  return { pattern, rest: comment ? scalar.slice(comment.index).trimStart() : text.slice(scalar.length) }
+}
+
+function pnpmWorkspacePatterns(content: string): string[] {
+  const lines = content.split(/\r?\n/)
+  const index = lines.findIndex((line) => /^packages:(?:\s|$)/.test(line))
+  if (index === -1) return []
+  const value = lines[index]?.slice('packages:'.length).trim() ?? ''
+
+  const patterns: string[] = []
+  if (value.startsWith('[')) {
+    let rest = value.slice(1).trimStart()
+    while (!/^\]\s*(?:#.*)?$/.test(rest)) {
+      const item = workspacePatternScalar(rest, true)
+      if (!item) return []
+      patterns.push(item.pattern)
+      if (item.rest.startsWith(']')) rest = item.rest
+      else if (item.rest.startsWith(',')) rest = item.rest.slice(1).trimStart()
+      else return []
+    }
+  } else if (value === '' || value.startsWith('#')) {
+    for (const line of lines.slice(index + 1)) {
+      if (/^\s*(?:#.*)?$/.test(line)) continue
+      const entry = /^\s*-\s+/.exec(line)
+      if (!entry) break
+      const item = workspacePatternScalar(line.slice(entry[0].length), false)
+      if (!item || (item.rest && !item.rest.startsWith('#'))) break
+      patterns.push(item.pattern)
+    }
+  }
+  return patterns
+}
+
 /**
- * The root manifest's `workspaces` entries — the array form, or the `packages`
- * array of the object form — or `null` when the manifest is missing or not
- * JSON.
+ * The root manifest's workspace entries, followed by entries from the
+ * `packages` list in `pnpm-workspace.yaml` that the manifest did not list.
+ * Returns `null` when the root manifest is missing or unreadable as JSON.
  */
 export function readWorkspacePatterns(tree: SourceTree): string[] | null {
   try {
@@ -754,7 +841,9 @@ export function readWorkspacePatterns(tree: SourceTree): string[] | null {
       workspaces?: string[] | { packages?: string[] }
     }
     const declared = Array.isArray(rootPkg.workspaces) ? rootPkg.workspaces : (rootPkg.workspaces?.packages ?? [])
-    return declared.filter((entry): entry is string => typeof entry === 'string')
+    const manifestPatterns = declared.filter((entry): entry is string => typeof entry === 'string')
+    const pnpmPatterns = pnpmWorkspacePatterns(tree.readFile(join(tree.root, 'pnpm-workspace.yaml')) ?? '')
+    return [...manifestPatterns, ...pnpmPatterns.filter((entry) => !manifestPatterns.includes(entry))]
   } catch {
     return null
   }
@@ -772,7 +861,7 @@ function escapeForRegex(text: string): string {
 }
 
 /**
- * Expands workspace patterns to the repository-relative directories they
+ * Expands manifest and pnpm workspace patterns to the repository-relative directories they
  * name, in declaration order and each once: a literal directory (`harness`),
  * a glob in the last segment (`apps/*`) or in any segment
  * (`harness/processes/*`). A `!`-prefixed pattern removes what it matches. A
@@ -819,10 +908,8 @@ export function expandWorkspacePatterns(tree: SourceTree, patterns: readonly str
 
 /**
  * The repository-relative directories of every workspace member with a real,
- * named `package.json`, found from the root manifest's own `workspaces`
- * entries ({@link expandWorkspacePatterns}) — never a fixed list of folders,
- * so a member moved under a new parent (`harness/kernel`,
- * `harness/processes/<name>`) is found the moment the manifest names it.
+ * named `package.json`, found by expanding patterns from the root manifest's
+ * `workspaces` field and the `packages` list of `pnpm-workspace.yaml`.
  */
 export function discoverWorkspaceDirs(tree: SourceTree): string[] {
   const patterns = readWorkspacePatterns(tree)
@@ -838,8 +925,8 @@ export function discoverWorkspaceDirs(tree: SourceTree): string[] {
 }
 
 /**
- * Reads the tree root's `package.json` `workspaces` entries and returns every
- * member with a real `package.json` ({@link discoverWorkspaceDirs}). A member
+ * Returns every workspace member with a real `package.json`
+ * ({@link discoverWorkspaceDirs}). A member
  * nested inside another (`harness/kernel` inside `harness`) owns its own
  * files: they are left out of the enclosing member's `sourceFiles`, so no file
  * belongs to two packages.

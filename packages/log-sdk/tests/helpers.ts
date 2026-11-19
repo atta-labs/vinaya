@@ -1,9 +1,16 @@
+import { afterAll } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { InMemoryLogRecordExporter, SimpleLogRecordProcessor } from '@opentelemetry/sdk-logs'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { type ConnectOptions, connect } from '../src/index.js'
 
 /** A directory with no settings files, so a test never reads the real repository's. */
 export const NO_SETTINGS_ROOT = '/nonexistent-log-sdk-test-root'
+
+const runtimeDir = mkdtempSync(join(tmpdir(), 'log-sdk-writer-'))
+afterAll(() => rmSync(runtimeDir, { recursive: true, force: true }))
 
 export function harness(options: Partial<ConnectOptions> = {}) {
   const spans = new InMemorySpanExporter()
@@ -13,6 +20,7 @@ export function harness(options: Partial<ConnectOptions> = {}) {
     runId: 'run-1',
     repository: 'acme/widgets',
     repoRoot: NO_SETTINGS_ROOT,
+    runtimeDir,
     spanProcessors: [new SimpleSpanProcessor(spans)],
     logRecordProcessors: [new SimpleLogRecordProcessor({ exporter: logs })],
     onError: (e) => errors.push(e),
