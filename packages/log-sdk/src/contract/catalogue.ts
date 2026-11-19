@@ -89,6 +89,7 @@ export const ATTRIBUTE_NAMES = {
   // Stamps every record carries
   seq: 'vinaya.seq',
   spanKey: 'vinaya.span.key',
+  parentSpanId: 'vinaya.span.parent_id',
   writerId: 'vinaya.writer.id',
   provenance: 'vinaya.provenance',
   trust: 'vinaya.trust',

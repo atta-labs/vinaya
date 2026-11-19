@@ -286,6 +286,11 @@ A repository records events Vinaya does not know about by declaring them in its 
 
 ### Recording one from the command line: `vinaya-log-emit`
 
+Loops using the Log SDK can run `vinaya-log emit <event> --run <id>` without
+Vinaya. Both commands read the JSON through the same argument reader. The
+SDK command writes the run's local copy, and `bun apps/cli/src/index.ts log emit`
+uses the harness sink and its configured destination.
+
 `vinaya-log-emit <event>` (`harness/processes/vinaya-strict/integration/bin/log-emit.ts`) is `emitCustomEvent` for a caller that is not Vinaya code at all — a script, a CI step, another agent runtime. The field values are read as ONE JSON object — `--json '<json>'` or piped on standard input — never positional arguments, since the declared fields are flat and typed.
 
 A declared event with every field present and of its declared type exits `0` and prints the event name and the kind of destination it landed on — `folder`, `server`, or `none` (`log()`'s own sanctioned "nothing configured" outcome, e.g. a CI job holding no delivery credential) — resolved the SAME way a live event is (`resolveLogDestinationFrom`, trust-anchor-gated for an unattended caller, exactly as `vinaya-log-send` already resolves it; never forced unattended the way `log selftest` deliberately is, so a human running it by hand gets the attended resolution). A refused event (the same five reasons § Custom events names, above) exits `1` and prints the reason class and the field names — never a value. A missing event name, unreadable JSON, or JSON that is not a flat object is a usage error, caught before anything is recorded: exit `2` with a usage message.

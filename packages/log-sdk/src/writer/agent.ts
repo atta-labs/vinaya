@@ -1,7 +1,15 @@
 import type { TimeInput } from '@opentelemetry/api'
 import { ATTRIBUTE_NAMES as A, EVENT_NAMES as E, SPAN_NAMES as S, spanName } from '../contract/catalogue.js'
 import type { SpanParent } from '../contract/ids.js'
-import { emitEvent, endSpan, runSpanRef, setOpenAttributes, startSpan, type WriterCore } from './attributes.js'
+import {
+  type Attrs,
+  emitEvent,
+  endSpan,
+  runSpanRef,
+  setOpenAttributes,
+  startSpan,
+  type WriterCore
+} from './attributes.js'
 
 export type AgentSent = {
   /** The seat the agent sits in; the span name and `gen_ai.agent.name` carry it. */
@@ -107,16 +115,20 @@ export function sent(core: WriterCore, options: AgentSent): SpanParent {
 export function usageRecorded(core: WriterCore, usage: UsageRecorded): void {
   const ref = usage.agent ?? core.current.agent
   if (ref === undefined) throw new Error('no agent is open')
+  setOpenAttributes(core, ref, usageAttributes(usage))
+}
+
+export function usageAttributes(usage: UsageRecorded): Attrs {
   // A reason for unknown usage and a figure never ride together: the reason wins.
   const unknown = usage.unknownReason !== undefined
-  setOpenAttributes(core, ref, {
+  return {
     [A.usageInputTokens]: unknown ? undefined : usage.inputTokens,
     [A.usageOutputTokens]: unknown ? undefined : usage.outputTokens,
     [A.usageCacheReadInputTokens]: unknown ? undefined : usage.cacheReadInputTokens,
     [A.usageCost]: unknown ? undefined : usage.cost?.amount,
     [A.usageCostKind]: unknown ? undefined : usage.cost?.kind,
     [A.usageUnknownReason]: usage.unknownReason
-  })
+  }
 }
 
 /** The agent span ends with what came out of the turn. */

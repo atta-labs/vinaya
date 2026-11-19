@@ -220,7 +220,17 @@ export function startSpan(core: WriterCore, input: StartSpanInput): SpanParent {
   const ref = { traceId: ctx.traceId, spanId: ctx.spanId }
   core.open.set(ref.spanId, { span, ref })
   if (input.emitStarted !== false) {
-    emitEvent(core, input.startedEvent, { [ATTRIBUTE_NAMES.runId]: core.runId }, ref, input.startTime)
+    emitEvent(
+      core,
+      input.startedEvent,
+      {
+        ...input.attrs,
+        [ATTRIBUTE_NAMES.runId]: core.runId,
+        [ATTRIBUTE_NAMES.parentSpanId]: input.parent?.spanId
+      },
+      ref,
+      input.startTime
+    )
   }
   return ref
 }

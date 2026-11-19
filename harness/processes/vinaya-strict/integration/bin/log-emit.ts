@@ -23,6 +23,7 @@
 // every caller (`harness/kernel/log/log.md` § Attribution).
 
 import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
+import { readFields } from '../../../../../packages/log-sdk/src/bin/args.js'
 import { join } from 'node:path'
 import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
 import { loadConfig, loadTrustAnchorConfigAsync } from '../config/compose.js'
@@ -36,7 +37,9 @@ import {
 } from '../../../../kernel/log/log-sink.js'
 import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../../../../kernel/run-paths.js'
 
-const USAGE = "Usage: vinaya-log-emit <event> --json '<json object>' (or pipe the JSON object on standard input)\n"
+const USAGE =
+  "Usage: vinaya-log-emit <event> --json '<json object>' (or pipe the JSON object on standard input)\n" +
+  'Use vinaya-log emit to record from any loop without Vinaya.\n'
 
 export type LogEmitDeps = {
   /** Records the event through the one chokepoint every custom event goes through — `emitCustomEvent`. */
@@ -104,20 +107,6 @@ export function realLogEmitDeps(): LogEmitDeps {
   }
 }
 
-/** The event name and the raw JSON text, or `null` when the shape itself is wrong (O2's usage case) — before any JSON parsing is attempted. */
-async function parseArgs(
-  args: string[],
-  readStdin: () => Promise<string>
-): Promise<{ name: string; raw: string } | null> {
-  const name = args[0]
-  if (!name || name.startsWith('-')) return null
-  const flagIndex = args.indexOf('--json')
-  if (flagIndex === -1) return { name, raw: await readStdin() }
-  const value = args[flagIndex + 1]
-  if (value === undefined) return null
-  return { name, raw: value }
-}
-
 /**
  * `vinaya log emit <event>` — exit 0 with the name and destination kind
  * (O1), exit 1 with the refusal reason and field names (O2's refusal case),
@@ -125,25 +114,13 @@ async function parseArgs(
  * value in any of the three.
  */
 export async function logEmitCommand(args: string[], deps: LogEmitDeps = realLogEmitDeps()): Promise<number> {
-  const parsedArgs = await parseArgs(args, deps.readStdin)
-  if (parsedArgs === null) {
-    deps.stderr(USAGE)
+  const parsed = await readFields(args, deps.readStdin)
+  if (!parsed.ok) {
+    deps.stderr((parsed.message === undefined ? '' : 'vinaya log emit: ' + parsed.message + '\n') + USAGE)
     return 2
   }
 
-  let fields: unknown
-  try {
-    fields = JSON.parse(parsedArgs.raw)
-  } catch {
-    deps.stderr(`vinaya log emit: the JSON could not be read.\n${USAGE}`)
-    return 2
-  }
-  if (typeof fields !== 'object' || fields === null || Array.isArray(fields)) {
-    deps.stderr(`vinaya log emit: the field values must be a JSON object.\n${USAGE}`)
-    return 2
-  }
-
-  const result = deps.emit(parsedArgs.name, fields as Record<string, unknown>)
+  const result = deps.emit(parsed.name, parsed.fields)
   if (!result.ok) {
     const fieldsNote = result.fieldNames.length > 0 ? ` (fields: ${result.fieldNames.join(', ')})` : ''
     deps.stderr(`vinaya log emit: refused — ${result.reason}${fieldsNote}\n`)
