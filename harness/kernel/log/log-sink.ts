@@ -33,6 +33,11 @@ import { type Host, type LogEvent, LogEventSchema, type Provenance } from './sch
 import { type OverflowDiagnostic, recordIdentity } from './store'
 import { redact } from './redact'
 import { loadDeferredLogSinkFactory } from './deferred-sink-factory.js'
+import { createLocalCopyWriter, type OtlpAddressDecision } from './local-copy-writer.js'
+import {
+  defaultRuntimeDir as sdkDefaultRuntimeDir,
+  resolveSettings as sdkResolveSettings
+} from '../../../packages/log-sdk/src/writer/settings.js'
 import { configProvider, type ProvidedConfig } from '../config/loader/config-provider.js'
 import {
   type LogsDestination,
@@ -246,6 +251,17 @@ export type LogSinkDeps = {
    * read (`unresolvedLogDestination`). Never a folder on a CI host.
    */
   unresolvedLogDestination: (env: NodeJS.ProcessEnv) => ResolvedLogDestination
+  /**
+   * How the OpenTelemetry side of this sink sends and decides where: `address` answers the harness's address
+   * rule for this process, `fetch` sends the local copy, and the two numbers bound the sink's drain and space
+   * its sends. Each defaults to the real one.
+   */
+  otlp?: {
+    address?: () => Promise<OtlpAddressDecision> | OtlpAddressDecision
+    fetch?: (url: string, init: RequestInit) => Promise<Response>
+    sendBoundMs?: number
+    sendIntervalMs?: number
+  }
 }
 
 // Quiet: the fallback warning goes to stdout, and every process that logs —
@@ -1550,6 +1566,61 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
   /** The tail of this sink's serialized writes — see `log()`'s own comment on why order is held here rather than by the shared context. */
   let writeChain: Promise<void> = Promise.resolve()
 
+  // The OpenTelemetry side: every recorded event also goes, converted, to this process's own files of the run's
+  // local copy, and the local copy is sent to the address the harness's address rule resolves.
+  const localCopy = createLocalCopyWriter({
+    warn: (message) => warnOnce(message),
+    home: () => deps.home(),
+    address:
+      deps.otlp?.address ??
+      (async () => {
+        const { resolveOtlpAddress } = await import('./otlp-address.js')
+        const unattended = isUnattendedProcess(process.env)
+        return resolveOtlpAddress({
+          localConfig: deps.readConfig(),
+          trustAnchorConfig: unattended ? await processTrustAnchor(repoRootSync()) : null,
+          unattended,
+          env: deps.env()
+        })
+      }),
+    fetch: deps.otlp?.fetch,
+    ...(deps.otlp?.sendBoundMs === undefined ? {} : { sendBoundMs: deps.otlp.sendBoundMs }),
+    ...(deps.otlp?.sendIntervalMs === undefined ? {} : { sendIntervalMs: deps.otlp.sendIntervalMs })
+  })
+  // The sink's one report per process, shared with its other warnings: a failure here adds no second line.
+  const warnLocalCopyOnce = (err: unknown): void =>
+    warnOnce(`vinaya: the OpenTelemetry local copy failed — ${err instanceof Error ? err.message : String(err)}\n`)
+  // The local copy sits where `vinaya log send` reads it: the SDK settings' `logs.folder`, else `<runtimeDir>/logs`,
+  // never the destination's own folder, which holds today's per-Issue files. An unattended process reads no working
+  // tree setting for it, and the runtime directory the process was handed wins, as for today's default folder.
+  const localCopyFolders = new Map<string, string | undefined>()
+  const localFolderFor = (repository: string | undefined): string | undefined => {
+    const memo = repository ?? ''
+    if (localCopyFolders.has(memo)) return localCopyFolders.get(memo)
+    const vinayaHome = join(deps.home(), '.vinaya')
+    const handed = deps.env()[RUNTIME_DIR_ENV_KEY]
+    let folder: string | undefined
+    if (handed) folder = join(handed, 'logs')
+    else if (isUnattendedProcess(process.env)) folder = join(sdkDefaultRuntimeDir(repository, vinayaHome), 'logs')
+    else {
+      const resolved = sdkResolveSettings({
+        repoRoot: deps.cwd(),
+        ...(repository === undefined ? {} : { repository }),
+        vinayaHome
+      })
+      if (resolved.ok && resolved.settings.logs !== false) {
+        const configured = (resolved.settings.logs || undefined)?.folder
+        // A configured folder inside the working tree is never used; the runtime directory's is.
+        folder =
+          configured !== undefined && !isInsideRepo(configured, deps.cwd())
+            ? configured
+            : join(resolved.settings.runtimeDir, 'logs')
+      }
+    }
+    localCopyFolders.set(memo, folder)
+    return folder
+  }
+
   const scheduleWebhookDrain = (
     issue: number | null,
     url: string,
@@ -1707,7 +1778,8 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
       warnOnce(`vinaya: log() refused an invalid payload — ${parsed.error.issues[0]?.message ?? 'schema violation'}\n`)
       return
     }
-    const line = `${JSON.stringify(redact(parsed.data, deps.home()))}\n`
+    const redacted = redact(parsed.data, deps.home())
+    const line = `${JSON.stringify(redacted)}\n`
     if (destination.kind === 'server') {
       // The local outbox is the retry queue for a server destination
       // (O2) — appended first, synchronously with every other
@@ -1724,6 +1796,17 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
         line,
         warnOnce
       )
+    }
+    // The same redacted event, converted for the OpenTelemetry local copy. Today's line has landed; nothing
+    // here can change or lose it, and a failure is one report per process.
+    try {
+      const folder = localFolderFor(redacted.meta.repo ?? undefined)
+      if (folder !== undefined) {
+        if (deliver) localCopy.record(redacted, folder)
+        else localCopy.recordSync(redacted, folder)
+      }
+    } catch (err) {
+      warnLocalCopyOnce(err)
     }
   }
 
@@ -1864,6 +1947,8 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
   const drain = async (): Promise<void> => {
     if (pendingWrites.size > 0) await Promise.allSettled(Array.from(pendingWrites))
     await drainChain.catch(() => undefined)
+    // Every record written so far is in the local copy before this resolves; sending it waits no longer than the bound.
+    await localCopy.drain().catch(() => undefined)
   }
 
   return { log, logSync, runId, warmup, drain, resetContext }

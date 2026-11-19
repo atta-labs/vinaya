@@ -736,8 +736,11 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // Raised 39 → 41: the command line's configuration forwarder was deleted, so the tests that imported it now import
 // `harness/processes/vinaya-strict/integration/config/compose.ts` directly, and two of them now sit one import from
 // this change set. The selection rule is unchanged.
+//
+// Raised 41 → 44: the sink's writer, exit and sending tests each build a sink and import `log-sink.ts` directly, so a
+// change to the sink selects those three extra suites. Same rule.
 describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings (Issue #707, O1)', () => {
-  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 41 files', () => {
+  it('a change to the log sink (log-sink.ts/config.ts/run-paths.ts) selects at most 44 files', () => {
     const changed = [
       join(REPO_ROOT, 'harness/kernel/log/log-sink.ts'),
       join(REPO_ROOT, 'harness/processes/vinaya-strict/integration/config/compose.ts'),
@@ -746,7 +749,7 @@ describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings
     const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { depth: 'one' })
     // Runner selection and disabled-recording suites directly consume these modules too, and so does the
     // standalone and Engine Log replay, which records both runners through the sink's own overrides.
-    expect(selected.length).toBeLessThanOrEqual(41)
+    expect(selected.length).toBeLessThanOrEqual(44)
   }, 30_000)
 
   it('a change to a widely imported export of the shared core package selects at most 25 files', () => {

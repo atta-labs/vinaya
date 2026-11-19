@@ -95,6 +95,7 @@ import {
 import type { TranscriptSummary } from '../../../../../kernel/adapters/agents/claude-code/transcript-summary'
 import type { Role, RoleAttemptOutcome } from '../../../../../kernel/log/schema'
 import { drainLogSpool } from '../../../../../kernel/log/log-sink.js'
+import { runRecorder } from '../../../../../kernel/log/run-recorder.js'
 import { createVinayaLogSink, resolveVinayaLogAppendPath } from '../../../integration/log/log-sink-factory.js'
 // The command line installs the process's sink factory through the dispatch module it already loads.
 export { installVinayaLogSinkFactory } from '../../../integration/log/log-sink-factory.js'
@@ -5560,10 +5561,14 @@ export async function dispatchRole(
     // is line-delimited but a chunk can split one, so a partial tail is held
     // back rather than parsed and discarded.
     let renderCarry = ''
+    // Each step the stream shows is also recorded on the OpenTelemetry side, under this dispatch's agent span.
+    const stepRecording = runRecorder().steps(effectId, runId)
     const streamRenderer = createAgentStreamRenderer(
       agent,
       { worktree: opts.cwd ?? process.cwd(), home: homedir() },
-      vendor.renderEvent
+      vendor.renderEvent,
+      Date.now,
+      stepRecording.observe
     )
     child.stdout.on('data', (chunk: Buffer) => {
       // Teed off the SAME chunk the parser below consumes, never taken from
@@ -6131,6 +6136,7 @@ export async function dispatchRole(
       // which also clears this timer) complete.
       childExited = true
       clearInterval(heartbeatTimer)
+      stepRecording.close()
       void handleChildExit(code, Date.now() - start).finally(() => {
         // `exit` deliberately does not wait for stdio `close`, but Node will
         // still keep these local pipe handles referenced when a vendor's

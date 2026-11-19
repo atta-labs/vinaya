@@ -84,7 +84,7 @@ export type LogHandle = {
     started(options?: run.StartRun): SpanParent
     ended(options?: run.EndRun): void
     alive(): void
-    stageChanged(change: { from?: run.Stage; to: run.Stage }): void
+    stageChanged(change: { from?: run.Stage; to: run.Stage; round?: number }): void
     paused(options?: run.Pause): SpanParent
     resumed(options: run.Resume): void
     cancelled(detail?: { round?: number; by?: string }): void
@@ -362,7 +362,7 @@ export function connect(options: ConnectOptions): LogHandle {
         run.ended(core, o)
       }),
       alive: g(() => run.alive(core)),
-      stageChanged: g((c: { from?: run.Stage; to: run.Stage }) => run.stageChanged(core, c)),
+      stageChanged: g((c: { from?: run.Stage; to: run.Stage; round?: number }) => run.stageChanged(core, c)),
       paused: s((o?: run.Pause) => run.paused(core, o)),
       resumed: g((o: run.Resume) => run.resumed(core, o)),
       cancelled: g((d?: { round?: number; by?: string }) => run.cancelled(core, d)),

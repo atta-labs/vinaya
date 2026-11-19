@@ -143,6 +143,7 @@ import {
 import { briefHash as briefHashOf, policyDigest as policyDigestOf } from '../tools/task-contract/review-input-manifest'
 import { extractSourceRevision } from '../tools/task-contract/brief-render'
 
+import { runRecorder } from '../../../kernel/log/run-recorder'
 import { reviewerDevToolContext, type DevToolContext, type DevToolResult } from '../../../kernel/tools/dev-tools-server'
 import { createReadSourceTool } from '../../../kernel/tools/read-source'
 import {
@@ -867,14 +868,26 @@ export function stageOfPause(reason: string, detail: string | undefined): Stage 
   return 'paused_principal'
 }
 
-/** Writes one stage-change line each time the run moves to another stage or round; a repeat writes nothing. */
-export function createStageNarrator(write: (line: string) => void, now: () => Date = () => new Date()) {
+/**
+ * Writes one stage-change line each time the run moves to another stage or round; a repeat writes nothing. Each
+ * change is also handed to `record`, beside the line and after it, and a record that fails changes nothing.
+ */
+export function createStageNarrator(
+  write: (line: string) => void,
+  now: () => Date = () => new Date(),
+  record?: (change: StageChange) => void
+) {
   let current: string | null = null
   return (change: StageChange): void => {
     const key = `${change.stage}:${change.round}`
     if (key === current) return
     current = key
     write(formatStageLine(change, now()))
+    try {
+      record?.(change)
+    } catch {
+      // The OpenTelemetry side never changes the driver log it sits beside.
+    }
   }
 }
 
@@ -1015,7 +1028,10 @@ const standaloneRendererFor: AgentRendererFor = (agent, worktree) =>
   createAgentStreamRenderer(
     agent,
     { worktree, home: homedir() },
-    agent === 'claude' ? renderClaudeEvent : renderCodexEvent
+    agent === 'claude' ? renderClaudeEvent : renderCodexEvent,
+    Date.now,
+    // A launch of this runner has no dispatch effect, so no agent span to place a step under: nothing is recorded.
+    runRecorder().steps(undefined).observe
   )
 
 /**
@@ -1663,7 +1679,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   // the published watch each move the run to its stage, and a repeat of the current stage writes nothing.
   const narrateStage =
     options.process.flowKey === 'v2'
-      ? createStageNarrator((line) => appendLoopLogLine(logPath, line), lifecycle.now)
+      ? createStageNarrator(
+          (line) => appendLoopLogLine(logPath, line),
+          lifecycle.now,
+          (change) => runRecorder().stageChanged({ stage: change.stage, round: change.round })
+        )
       : () => {}
   const stageRound = (): number => options.taskInput?.reviewRound?.() ?? 1
   options.registerFocusedChecks?.(() => narrateStage({ round: stageRound(), stage: 'focused_checks' }))

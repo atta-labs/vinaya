@@ -135,8 +135,13 @@ export function alive(core: WriterCore): void {
   emitEvent(core, E.alive, { [A.roundNumber]: core.moment.round, [A.phaseName]: core.moment.stage }, runSpanRef(core))
 }
 
-export function stageChanged(core: WriterCore, change: { from?: Stage; to: Stage }): void {
-  emitEvent(core, E.stageChanged, { [A.stageFrom]: change.from, [A.stageTo]: change.to }, runSpanRef(core))
+export function stageChanged(core: WriterCore, change: { from?: Stage; to: Stage; round?: number }): void {
+  emitEvent(
+    core,
+    E.stageChanged,
+    { [A.stageFrom]: change.from, [A.stageTo]: change.to, [A.roundNumber]: change.round },
+    runSpanRef(core)
+  )
   core.moment.stage = change.to
 }
 

@@ -115,6 +115,10 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
   const writtenEffects = new Set<string>()
 
   return {
+    /** Adds starts another process wrote; a start this state already holds is kept as it is. */
+    learn(starts: readonly EarlierOpenStart[]): void {
+      for (const start of starts) if (!open.has(start.spanKey)) open.set(start.spanKey, { ...start })
+    },
     accept(event: LogEvent): { converted: ConvertedEarlierRecord; pairedStart?: StartedRecord } {
       const { meta, subject } = event
       if (meta.run_id !== runId) throw new Error('Earlier event belongs to a different run')
@@ -266,6 +270,7 @@ export function createLiveEarlierConverter(runId: string, openStarts: readonly E
   return {
     convert(event: LogEvent): ConvertedEarlierRecord {
       return state.accept(event).converted
-    }
+    },
+    learn: state.learn
   }
 }
