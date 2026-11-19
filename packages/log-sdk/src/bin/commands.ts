@@ -182,6 +182,13 @@ const usageKeys = [
   A.usageUnknownReason
 ]
 
+function endTimeOf(value: unknown): TimeInput {
+  if (value === undefined) return Date.now()
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value
+  if (typeof value === 'string' && Number.isFinite(Date.parse(value))) return new Date(value)
+  throw new Error('endTime must be a non-negative number of milliseconds or a date string')
+}
+
 export async function invoke(command: string, handle: LogHandle, fields: Fields, folder: string): Promise<void> {
   if (command === 'usage recorded') {
     if (!handle.enabled) return
@@ -220,19 +227,13 @@ export async function invoke(command: string, handle: LogHandle, fields: Fields,
         : event === E.runStarted
           ? undefined
           : { traceId: start.traceId, spanId: spanIdFor(handle.runId, 'run') }
-    handle.writeSpan(
-      name,
-      start,
-      parent,
-      timeInput(start.time),
-      (fields.endTime as TimeInput | undefined) ?? Date.now(),
-      attrs
-    )
+    handle.writeSpan(name, start, parent, timeInput(start.time), endTimeOf(fields.endTime), attrs)
     return
   }
 
   const entry = commands.get(command)
   if (entry === undefined) throw new Error('unknown command')
+  if (fields.endTime !== undefined) endTimeOf(fields.endTime)
   const group = handle[entry.group] as Record<string, (input: Fields) => unknown>
   group[entry.method]?.(fields)
 }
