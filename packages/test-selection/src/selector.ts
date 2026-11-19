@@ -2866,6 +2866,9 @@ function selectChange(input: SelectTestsInput): ChangePlan {
       const index = decided.get(test)
       for (const reason of independentReasons.get(test) ?? []) {
         const paths = packageHitPaths.get(reason) ?? [reason.via]
+        // The record already answers a per-package input through each installed package the test read: the suite-wide
+        // declaration of the lockfile would bring back every test this rule left out, on every dependency change.
+        if (reason.kind === 'declared-input' && dependencyInputs.has(reason.via)) continue
         // Recorded reads already decide paths they reach, including the two existing narrowing rules.
         if (
           reason.kind === 'declared-input' ||

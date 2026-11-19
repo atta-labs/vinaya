@@ -612,6 +612,51 @@ describe('workspace manifest dependency-list changes', () => {
     )
   })
 
+  it('leaves the lockfile to the per-package reads when a suite declares it', () => {
+    const withPackages = (packages: string) => lock.replace('"packages":{}', `"packages":{${packages}}`)
+    const declarations: InventoryDeclarations = {
+      ...DECLARATIONS,
+      edges: [
+        {
+          input: 'bun.lock',
+          kind: 'lockfile',
+          readerKind: 'semantic',
+          format: 'bun-lock',
+          readers: [TEST],
+          source: 'lockfile'
+        }
+      ]
+    }
+    const base = { 'bun.lock': withPackages('"external":["external@1"]') }
+    const reader = { ...entry, reads: [...entry.reads, 'bun.lock#external'] }
+    // Another package was installed: the test read `external` alone, so neither the manifest nor the lockfile selects it.
+    const untouched = compare({
+      declarations,
+      base,
+      entry: reader,
+      head: { [manifest]: after, 'bun.lock': withPackages('"external":["external@1"],"other":["other@1"]') }
+    })
+    expect(untouched.required).toEqual([])
+    expect(untouched.records.leftOut[0]?.files[0]?.rule).toBe('manifest-dependency-lists')
+    // The package it read changed: its own per-package read selects it.
+    const touched = compare({
+      declarations,
+      base,
+      entry: reader,
+      head: { [manifest]: after, 'bun.lock': withPackages('"external":["external@2"]') }
+    })
+    expect(touched.required.find((test) => test.test === TEST)?.reasons).toContainEqual(
+      expect.objectContaining({ kind: 'recorded-read', via: 'bun.lock#external' })
+    )
+    // A record with no per-package read cannot answer the lockfile, so the declaration still selects the test.
+    const unanswered = compare({
+      declarations,
+      base,
+      head: { [manifest]: after, 'bun.lock': withPackages('"external":["external@2"]') }
+    })
+    expect(unanswered.required.map((test) => test.test)).toContain(TEST)
+  })
+
   it('keeps a static dependency on another changed file missing from the record', () => {
     const plan = compare({
       base: { [TEST]: "import { other } from '../src/other.js'\nother()\n" },
