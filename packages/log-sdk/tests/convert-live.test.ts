@@ -67,7 +67,7 @@ test('a follower can seed a cross-process start from the emitted key and time', 
   }
 })
 
-test('keeps exact IDs and dispatch keys while redacting content', () => {
+test('keeps exact IDs and uses an opaque dispatch seed key without exporting the prompt hash', () => {
   const start = fixtures.find((event) => event.event === 'dispatched')!
   const end = fixtures.find((event) => event.event === 'outcome_received')!
   const opaque = ['gh', 'p_opaque123'].join('')
@@ -84,20 +84,21 @@ test('keeps exact IDs and dispatch keys while redacting content', () => {
     runner: { id: 'test', version: null },
     runtime: null,
     source: null,
-    work: { ref: null, repo: null, change: null, revision: null },
+    work: { ref: 'different-work', repo: null, change: null, revision: null },
     flow: { id: null, version: null }
   }
   const live = createLiveEarlierConverter(runId)
   const raised = live.convert(LogEventSchema.parse({ ...start, meta, effect_id: opaque, prompt_hash: opaque }))
   if (raised.type !== 'log') throw new Error('Expected a dispatch start')
-  const key = `agent:${opaque}`
+  const key = `span:${spanIdFor(runId, `agent:${opaque}`)}`
   for (const [attribute, value] of [
     [A.spanKey, key],
     [A.eventId, opaque],
     [A.writerId, `earlier:${opaque}`],
-    ['vinaya.earlier.prompt_hash', '<redacted>']
+    [A.workRef, '412']
   ] as const)
     expect(raised.record.attributes).toContainEqual({ key: attribute, value: { stringValue: value } })
+  expect(raised.record.attributes.some(({ key }) => key === 'vinaya.earlier.prompt_hash')).toBe(false)
   expect(raised.resource.attributes).toContainEqual({ key: A.serviceVersion, value: { stringValue: '9.1' } })
   const seeded = createLiveEarlierConverter(runId, [{ spanKey: key, startTimeUnixNano: raised.record.timeUnixNano }])
   const completed = seeded.convert(LogEventSchema.parse({ ...end, effect_id: opaque }))
@@ -155,4 +156,74 @@ test('failures leave token accounting to the role attempt and reserved custom na
     value: { stringValue: E.runStarted }
   })
   expect(reported.record.attributes).toContainEqual({ key: A.provenance, value: { stringValue: 'reported' } })
+})
+
+test('replayed starts preserve original times and distinct loops have distinct spans', () => {
+  for (const [startName, endName] of [
+    ['loop_started', 'journal_finalized'],
+    ['round_started', 'round_ended']
+  ]) {
+    const start = fixtures.find((event) => event.event === startName)!
+    const end = fixtures.find((event) => event.event === endName)!
+    const replay = LogEventSchema.parse({ ...start, meta: { ...start.meta, seq: 90, ts: '2026-08-01T00:00:10.000Z' } })
+    const otherStart = LogEventSchema.parse({ ...replay, loop_id: 'other-loop' })
+    const otherEnd = LogEventSchema.parse({ ...end, loop_id: 'other-loop' })
+    const whole = convertEarlierEvents([start, replay, otherStart, end, otherEnd])
+    const spans = whole.traces.resourceSpans.flatMap((group) => group.scopeSpans.flatMap((scope) => scope.spans))
+    expect(spans).toHaveLength(2)
+    expect(spans[0]?.spanId).not.toBe(spans[1]?.spanId)
+    expect(spans[0]?.startTimeUnixNano).not.toBe(spans[1]?.startTimeUnixNano)
+    const first = createLiveEarlierConverter(runId).convert(start)
+    if (first.type !== 'log') throw new Error('Expected started record')
+    const key = first.record.attributes.find((attr) => attr.key === A.spanKey)?.value
+    if (key === undefined || !('stringValue' in key)) throw new Error('Expected a start key')
+    const seeded = createLiveEarlierConverter(runId, [
+      { spanKey: key.stringValue, startTimeUnixNano: first.record.timeUnixNano }
+    ])
+    seeded.convert(replay)
+    const completed = seeded.convert(end)
+    if (completed.type !== 'span') throw new Error('Expected completed span')
+    expect(completed.record.startTimeUnixNano).toBe(first.record.timeUnixNano)
+    expect(spans[0]?.startTimeUnixNano).toBe(first.record.timeUnixNano)
+  }
+})
+
+test('a standalone role attempt anchors steps at the shared agent span id', () => {
+  const attempt = fixtures.find((event) => event.kind === 'role_attempt')!
+  const usage = fixtures.find((event) => event.kind === 'usage')!
+  if (attempt.kind !== 'role_attempt') throw new Error('Expected role attempt')
+  const { traces } = convertEarlierEvents([attempt, usage])
+  const span = traces.resourceSpans[0]?.scopeSpans[0]?.spans[0]
+  expect(span?.spanId).toBe(spanIdFor(runId, `agent:${attempt.effect_id}`))
+  expect(span?.parentSpanId).not.toBe(span?.spanId)
+})
+
+test('earlier finding metadata survives without finding descriptions', () => {
+  const description = 'private finding text'
+  const verdict = fixtures.find((event) => event.event === 'verdicts_read')!
+  const dispatch = fixtures.find((event) => event.event === 'outcome_received')!
+  const findings = [{ id: 'F1', severity: 'BLOCKER', description }]
+  const live = createLiveEarlierConverter(runId)
+  const records = [
+    live.convert(LogEventSchema.parse({ ...verdict, findings })),
+    live.convert(
+      LogEventSchema.parse({
+        ...dispatch,
+        outcome: {
+          type: 'verdict',
+          verdict: 'REQUEST CHANGES',
+          head: 'sha1',
+          comment_id: 7,
+          objectives: [],
+          findings
+        }
+      })
+    )
+  ]
+  for (const record of records) {
+    const encoded = JSON.stringify(record)
+    expect(encoded).not.toContain(description)
+    expect(encoded).toContain('F1')
+    expect(encoded).toContain('BLOCKER')
+  }
 })

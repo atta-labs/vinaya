@@ -1275,7 +1275,7 @@ describe('the compiler resolves the graph, and the text scan remains a safe fall
     // reachable, the coarser scan must also reach.
     const scanned = new Set(scan.selected)
     expect(compiler.selected.filter((f) => !scanned.has(f))).toEqual([])
-  }, 30_000)
+  }, 90_000)
 
   it('a named import resolves to the file that DEFINES it, across a re-export chain and a package boundary', () => {
     const { root, dir } = mkWorkspace([

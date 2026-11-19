@@ -14,6 +14,7 @@ type Mapping = {
   attributes: Fields
   durationMs?: number
   usage?: Usage
+  attempt?: { effectId: string; alternateKey: string }
   repeatable?: true
 }
 
@@ -27,8 +28,9 @@ export function agentSpanIdFor(runId: string, effectId: string): string {
 
 export function mapEarlierEvent(event: LogEvent): Mapping {
   const round = ('round' in event ? event.round : undefined) ?? event.subject.round
-  const roundKey = round === undefined ? 'run' : `round:${round}`
-  const point = (name: string, attributes: Fields = {}, key = 'run'): Mapping => ({
+  const runKey = event.kind === 'dev_review_loop' ? `loop:${spanIdFor(event.meta.run_id, event.loop_id)}` : 'run'
+  const roundKey = round === undefined ? runKey : `${runKey}:round:${round}`
+  const point = (name: string, attributes: Fields = {}, key = runKey): Mapping => ({
     mode: 'event',
     name,
     key,
@@ -57,7 +59,7 @@ export function mapEarlierEvent(event: LogEvent): Mapping {
       start ? E.personAsked : people[kind],
       key,
       { [A.questionKind]: kind, ...attributes },
-      'run'
+      runKey
     ),
     repeatable: true
   })
@@ -66,29 +68,29 @@ export function mapEarlierEvent(event: LogEvent): Mapping {
     case 'dev_review_loop':
       switch (event.event) {
         case 'loop_started':
-          return span('start', E.runStarted, 'run', { [A.operationName]: S.run }, '')
+          return span('start', E.runStarted, runKey, { [A.operationName]: S.run }, '')
         case 'journal_finalized':
           return span(
             'end',
             S.run,
-            'run',
+            runKey,
             { [A.operationName]: S.run, [A.result]: event.result, [A.commit]: event.final_head },
             ''
           )
         case 'round_started':
-          return span('start', E.roundStarted, roundKey, { [A.roundNumber]: round }, 'run')
+          return span('start', E.roundStarted, roundKey, { [A.roundNumber]: round }, runKey)
         case 'round_ended':
           return span(
             'end',
             S.round,
             roundKey,
             { [A.roundNumber]: round, [A.result]: event.outcome, [A.commit]: event.head },
-            'run'
+            runKey
           )
         case 'paused':
-          return person('strategy', `pause:${round}`, true, { [A.reason]: event.reason_code ?? event.reason })
+          return person('strategy', `${roundKey}:pause`, true, { [A.reason]: event.reason_code ?? event.reason })
         case 'resumed':
-          return person('strategy', `pause:${round}`, false, { [A.answeredBy]: event.by })
+          return person('strategy', `${roundKey}:pause`, false, { [A.answeredBy]: event.by })
         case 'cancelled':
           return point(E.cancelled, { [A.actor]: event.by })
         case 'gate_result_read':
@@ -201,14 +203,14 @@ export function mapEarlierEvent(event: LogEvent): Mapping {
           ? span(
               'span',
               S.agent,
-              `attempt:${event.effect_id}:${recordIdentity(event)}`,
+              key,
               {
                 ...attrs,
                 [A.result]: event.outcome,
                 [A.actor]: event.actor ?? undefined,
                 [A.attempt]: event.attempt ?? undefined
               },
-              key,
+              roundKey,
               event.duration_ms
             )
           : span('end', S.agent, key, {
@@ -218,6 +220,12 @@ export function mapEarlierEvent(event: LogEvent): Mapping {
             })
       if (event.event !== 'dispatch_failed' && event.usage !== null) {
         result.usage = { effectId: event.effect_id, ...event.usage }
+      }
+      if (event.kind === 'role_attempt') {
+        result.attempt = {
+          effectId: event.effect_id,
+          alternateKey: `attempt:${event.effect_id}:${recordIdentity(event)}`
+        }
       }
       return result
     }

@@ -78,10 +78,19 @@ function earlierFields(event: LogEvent): Fields {
   if (kind === 'custom') {
     return event.duration_ms === undefined ? {} : { [`${EARLIER_EVENT_PREFIX}duration_ms`]: event.duration_ms }
   }
+  if (kind === 'dispatch' && event.event === 'outcome_received' && event.outcome.type === 'verdict') {
+    const { outcome } = event
+    Object.assign(fields, {
+      outcome: { ...outcome, findings: outcome.findings.map(({ description, ...finding }) => finding) }
+    })
+  }
+  if (kind === 'dev_review_loop' && event.event === 'verdicts_read' && event.findings !== undefined) {
+    Object.assign(fields, { findings: event.findings.map(({ description, ...finding }) => finding) })
+  }
   // Effect-bearing usage is encoded exactly once as GenAI attributes.
   return Object.fromEntries(
     Object.entries(fields)
-      .filter(([key]) => key !== 'usage' || event.event === 'dispatch_failed')
+      .filter(([key]) => key !== 'prompt_hash' && (key !== 'usage' || event.event === 'dispatch_failed'))
       .map(([key, value]) => [`${EARLIER_EVENT_PREFIX}${key}`, value])
   )
 }
@@ -132,7 +141,13 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
           if (open.has(mapping.key)) key = mapping.key
         }
       }
+      let parent = mapping.parent
+      if (mapping.attempt && (open.has(`span:${spanIdFor(runId, key)}`) || usageGiven.has(mapping.attempt.effectId))) {
+        parent = key
+        key = mapping.attempt.alternateKey
+      }
       const spanId = spanIdFor(runId, key)
+      const openKey = event.kind === 'dispatch' ? `span:${spanId}` : key
       const resource = {
         attributes: attributesOf(
           {
@@ -150,7 +165,7 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
         ('task' in event ? event.task : undefined) ??
         subject.issue ??
         (event.kind === 'forge_write' ? event.target.issue : undefined)
-      const workRef = ('work' in meta ? meta.work.ref : null) ?? (task == null ? undefined : String(task))
+      const workRef = task == null ? ('work' in meta ? (meta.work.ref ?? undefined) : undefined) : String(task)
       const usage = mapping.usage
       const tokenAttributes: Fields = {}
       if (usage !== undefined && !usageGiven.has(usage.effectId)) {
@@ -179,19 +194,21 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
         }
       )
       if (mapping.repeatable) attributes.push({ key: A.questionKey, value: { stringValue: key } })
-      if (started) attributes.push({ key: A.spanKey, value: { stringValue: key } })
+      if (started) attributes.push({ key: A.spanKey, value: { stringValue: openKey } })
       if (mapping.mode === 'event' || started) {
         const converted: StartedRecord = {
           type: 'log',
           resource,
           record: { eventName: mapping.name, traceId, spanId, timeUnixNano, attributes, flags: 1 }
         }
-        if (started) open.set(key, { spanKey: key, startTimeUnixNano: timeUnixNano, started: converted })
+        if (started && !open.has(openKey)) {
+          open.set(openKey, { spanKey: openKey, startTimeUnixNano: timeUnixNano, started: converted })
+        }
         return { converted }
       }
 
-      const start = mapping.mode === 'end' ? open.get(key) : undefined
-      if (start !== undefined) open.delete(key)
+      const start = mapping.mode === 'end' ? open.get(openKey) : undefined
+      if (start !== undefined) open.delete(openKey)
       const pairedStart = start?.started
       const converted: ConvertedEarlierRecord = {
         type: 'span',
@@ -200,7 +217,7 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
           name: mapping.name,
           traceId,
           spanId,
-          ...(mapping.parent === undefined ? {} : { parentSpanId: spanIdFor(runId, mapping.parent) }),
+          ...(parent === undefined ? {} : { parentSpanId: spanIdFor(runId, parent) }),
           kind: 1,
           startTimeUnixNano: start?.startTimeUnixNano ?? String(startOfDuration(time, mapping.durationMs)),
           endTimeUnixNano: timeUnixNano,
