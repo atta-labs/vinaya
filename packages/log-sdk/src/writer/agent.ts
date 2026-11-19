@@ -107,12 +107,14 @@ export function sent(core: WriterCore, options: AgentSent): SpanParent {
 export function usageRecorded(core: WriterCore, usage: UsageRecorded): void {
   const ref = usage.agent ?? core.current.agent
   if (ref === undefined) throw new Error('no agent is open')
+  // A reason for unknown usage and a figure never ride together: the reason wins.
+  const unknown = usage.unknownReason !== undefined
   setOpenAttributes(core, ref, {
-    [A.usageInputTokens]: usage.inputTokens,
-    [A.usageOutputTokens]: usage.outputTokens,
-    [A.usageCacheReadInputTokens]: usage.cacheReadInputTokens,
-    [A.usageCost]: usage.cost?.amount,
-    [A.usageCostKind]: usage.cost?.kind,
+    [A.usageInputTokens]: unknown ? undefined : usage.inputTokens,
+    [A.usageOutputTokens]: unknown ? undefined : usage.outputTokens,
+    [A.usageCacheReadInputTokens]: unknown ? undefined : usage.cacheReadInputTokens,
+    [A.usageCost]: unknown ? undefined : usage.cost?.amount,
+    [A.usageCostKind]: unknown ? undefined : usage.cost?.kind,
     [A.usageUnknownReason]: usage.unknownReason
   })
 }

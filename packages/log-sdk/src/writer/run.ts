@@ -246,6 +246,12 @@ export function createHeartbeat(core: WriterCore, timers: Timers) {
       arm()
     } catch (e) {
       core.report(e)
+      // One failure must not end the heartbeat for the rest of the run.
+      try {
+        if (core.current.run !== undefined) arm()
+      } catch (again) {
+        core.report(again)
+      }
     }
   }
   return {

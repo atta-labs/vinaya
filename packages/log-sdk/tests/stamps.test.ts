@@ -175,3 +175,23 @@ test('resource attributes are recorded once per handle', () => {
   expect(res?.['vinaya.sdk.version']).toBeDefined()
   expect(res?.['vinaya.semconv.version']).toBeDefined()
 })
+
+test('a secret-shaped work title is redacted on events and spans', () => {
+  const h = harness()
+  const secret = ['gh', 'p_', 'abcdefghijklmnopqrstuvwxyz0123456789'].join('')
+  h.handle.run.started({ work: { title: `title ${secret}` } })
+  h.handle.run.alive()
+  h.handle.run.ended()
+  for (const a of all(h)) expect(String(a['vinaya.work.title'])).not.toContain(secret)
+})
+
+test('usage with an unknown reason records the reason and no figure', () => {
+  const h = harness()
+  h.handle.run.started()
+  h.handle.agent.sent({ seat: 'a' })
+  h.handle.usage.recorded({ unknownReason: 'not_reported', inputTokens: 5 })
+  h.handle.agent.returned()
+  const span = h.spans.getFinishedSpans().find((s) => s.name === 'invoke_agent a')
+  expect(span?.attributes['vinaya.usage.unknown_reason']).toBe('not_reported')
+  expect('gen_ai.usage.input_tokens' in (span?.attributes ?? {})).toBe(false)
+})
