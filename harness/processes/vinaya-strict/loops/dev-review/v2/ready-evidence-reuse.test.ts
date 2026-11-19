@@ -509,6 +509,97 @@ describe('`vinaya pr report` on a deferred head reuses the receipts the driver r
     }
   })
 
+  test('a later command that writes git-ignored files leaves every earlier command its receipt', async () => {
+    const dir = fixtureDir('deferred-report-ignored-')
+    const counter = join(fixtureDir('deferred-report-ignored-counter-'), 'runs')
+    const saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]))
+    const originalCwd = process.cwd()
+    const originalExit = process.exit
+    try {
+      const env = { ...process.env }
+      for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
+      const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, env, stdio: 'ignore' })
+      git('init', '-q', '-b', 'task/issue-1')
+      writeFileSync(join(dir, 'vinaya.config.json'), JSON.stringify({ prePush: { readyTests: POLICY } }))
+      writeFileSync(join(dir, '.gitignore'), 'cache/\n')
+      git('add', '.')
+      git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'base')
+      git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+      writeJsonUnderGit(dir, READY_TESTS_DEFERRED_RECORD, {
+        version: 1,
+        kind: 'ready',
+        head,
+        branch: 'task/issue-1',
+        runId: 'run-1',
+        workflow: POLICY.workflow,
+        check: POLICY.check,
+        recordedAt: new Date().toISOString()
+      })
+      useRuntimeDir(fixtureDir('deferred-report-ignored-runtime-'))
+      process.env.GITHUB_ACTIONS = 'true'
+      process.env.VINAYA_CI_CONFIG_PROBE_REF = 'origin/main'
+      delete process.env.GH_TOKEN
+      delete process.env.GITHUB_TOKEN
+      // The first command passes and leaves the tree as it was; the second writes a git-ignored cache file, as a
+      // typecheck that fills its build cache does.
+      const first = `cd . && printf x >> ${JSON.stringify(counter)}`
+      const second = 'mkdir -p cache && printf stamp > cache/stamp'
+      const body = [
+        '## Test plan',
+        '',
+        '```',
+        `${readyCiPlanCommand(POLICY)} → passes in required CI`,
+        `${first} → exits 0`,
+        `${second} → exits 0`,
+        '```',
+        ''
+      ].join('\n')
+      const driven = await runExplicitCommandsLive({
+        worktreePath: dir,
+        head,
+        branch: 'task/issue-1',
+        body,
+        commands: explicitTestPlanCommands(body),
+        deadlineAt: Date.now() + 60_000
+      })
+      expect(driven.outcome).toBe('passed')
+      const bodyPath = join(fixtureDir('deferred-report-ignored-body-'), 'body.md')
+      writeFileSync(bodyPath, body)
+      process.chdir(dir)
+      process.exit = ((code?: number) => {
+        throw new ReportExit(code)
+      }) as never
+      let code: number | undefined
+      try {
+        await prReportCommand(['--write', bodyPath], {
+          gateRunner: () => ({ failed: false, outcomes: [{ name: 'g', status: 'pass', errors: [] }] })
+        })
+      } catch (err) {
+        if (!(err instanceof ReportExit)) throw err
+        code = err.code
+      } finally {
+        process.exit = originalExit
+        process.chdir(originalCwd)
+      }
+      const written = readFileSync(bodyPath, 'utf8')
+      expect(code).toBe(0)
+      expect(written).toContain(`#### C2: \`${first}\``)
+      expect(written).toContain(`#### C3: \`${second}\``)
+      expect(written).not.toMatch(/\[exit /)
+      // The first command ran only the once the driver ran it.
+      expect(readFileSync(counter, 'utf8')).toBe('x')
+    } finally {
+      process.exit = originalExit
+      process.chdir(originalCwd)
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      useRuntimeDir(null)
+    }
+  })
+
   test('the driver’s Evidence refuses a deferred-tests record left by another run', async () => {
     const dir = fixtureDir('deferred-report-run-')
     const env = { ...process.env }
