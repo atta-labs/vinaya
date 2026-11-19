@@ -546,7 +546,12 @@ jobs:
         run: npx test-selection --base "$BASE" --head "$HEAD" --fetch-record --config selection.json > plan.json
 ```
 
-It exits 0 when it prints a plan. With `--help` or `-h` anywhere in the
+It exits 0 when it prints a plan, including when it prints a warning. After
+writing the plan to standard output, it writes one `test-selection: warning:`
+line to standard error if the head inventory left out any package with an
+unsupported test runner or any test-named file under no suite. The line gives
+both counts. Packages without a `test` script do not count toward the warning.
+With `--help` or `-h` anywhere in the
 arguments, it prints help on standard output and exits 0, even outside a git
 repository. A missing argument, a folder outside a git
 repository, an argument that names no commit, a `--record` file that is
@@ -587,7 +592,8 @@ The document:
 - `problems` — what `groupNativeTests` refused;
 - `fallbacks` — the plan's fallback scopes, whose tests are already in
   `tests`;
-- `leftOut` — what the head commit's inventory left out.
+- `leftOut` — names each package the head commit's inventory left out, with
+  its reason, and lists the path of each test-named file under no suite.
 
 ## The `test-selection-record` command
 
