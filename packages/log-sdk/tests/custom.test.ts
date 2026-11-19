@@ -46,6 +46,43 @@ test('custom validation and emission use the same snapshot of field values', () 
   expect(errors).toEqual([])
 })
 
+test('structural refusals take precedence without reading any field values', () => {
+  const { handle, logs, errors } = connectWithFileDeclaration('team.checked')
+  let reads = 0
+  const fields = {
+    get extra() {
+      reads += 1
+      throw new Error('private value')
+    }
+  }
+  handle.custom('team.undeclared', fields)
+  handle.custom('team.checked', fields)
+  handle.custom('team.checked', {
+    count: 1,
+    get extra() {
+      return fields.extra
+    }
+  })
+  expect(reads).toBe(0)
+  expect(errors.map(String)).toEqual([
+    'Error: custom event refused (undeclared) []',
+    'Error: custom event refused (missing_field) [count]',
+    'Error: custom event refused (extra_field) [extra]'
+  ])
+  expect(logs.getFinishedLogRecords()).toEqual([])
+})
+
+test('unreadable custom fields produce value-free refusals', () => {
+  const { handle, logs, errors } = connectWithFileDeclaration('team.checked')
+  handle.custom('team.checked', {
+    get count() {
+      throw new Error('private value')
+    }
+  })
+  expect(errors.map(String)).toEqual(['Error: custom event refused (wrong_type) [count]'])
+  expect(logs.getFinishedLogRecords()).toEqual([])
+})
+
 test('custom records use the declared name and refuse invalid fields without displaying values', () => {
   const { handle, logs, errors } = harness({
     destination: { events: { 'team.checked': { fields: { path: 'text', count: 'number' } } } },
