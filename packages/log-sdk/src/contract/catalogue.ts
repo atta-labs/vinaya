@@ -15,7 +15,14 @@ export const SPAN_NAMES = {
   round: 'vinaya.round',
   phase: 'vinaya.phase',
   agent: 'invoke_agent',
-  step: 'execute_tool'
+  step: 'execute_tool',
+  checkHook: 'vinaya.checks.hook',
+  checkLocal: 'vinaya.checks.local',
+  checkPush: 'vinaya.checks.push',
+  checkCi: 'vinaya.checks.ci',
+  personAuthority: 'vinaya.person.authority',
+  personStrategy: 'vinaya.person.strategy',
+  personProduct: 'vinaya.person.product'
 } as const
 
 export const EVENT_NAMES = {
@@ -30,7 +37,24 @@ export const EVENT_NAMES = {
   retried: 'vinaya.run.retried',
   stopRuleMet: 'vinaya.run.stop_rule_met',
   exited: 'vinaya.run.exited',
-  confidenceStated: 'vinaya.agent.confidence_stated'
+  confidenceStated: 'vinaya.agent.confidence_stated',
+  reviewVerdicts: 'vinaya.review.verdicts',
+  findingsCompared: 'vinaya.review.findings_compared',
+  checksStarted: 'vinaya.checks.started',
+  checkNotPassed: 'vinaya.checks.not_passed',
+  checkResultRead: 'vinaya.checks.result_read',
+  personAsked: 'vinaya.person.asked',
+  forgeAction: 'vinaya.outside.forge',
+  verifiedAction: 'vinaya.outside.verified',
+  commandCompleted: 'vinaya.outside.command_completed',
+  changeSaved: 'vinaya.change.saved',
+  changePushed: 'vinaya.change.pushed',
+  changeOpened: 'vinaya.change.opened',
+  changeConflicted: 'vinaya.change.conflicted',
+  changeRecovered: 'vinaya.change.recovered',
+  changeMerged: 'vinaya.change.merged',
+  changeReverted: 'vinaya.change.reverted',
+  changeIncident: 'vinaya.change.incident'
 } as const
 
 export const ATTRIBUTE_NAMES = {
@@ -68,7 +92,38 @@ export const ATTRIBUTE_NAMES = {
   rule: 'vinaya.rule',
   attempt: 'vinaya.attempt',
   exitCode: 'vinaya.exit.code',
-  confidence: 'vinaya.confidence'
+  confidence: 'vinaya.confidence',
+  seats: 'vinaya.review.seats',
+  verdicts: 'vinaya.review.verdicts',
+  blockingCount: 'vinaya.review.blocking_count',
+  findingIds: 'vinaya.review.finding_ids',
+  findingSeverities: 'vinaya.review.finding_severities',
+  findingPlaces: 'vinaya.review.finding_places',
+  findingBlocking: 'vinaya.review.finding_blocking',
+  findingsOpen: 'vinaya.review.open',
+  findingsResolved: 'vinaya.review.resolved',
+  findingsNew: 'vinaya.review.new',
+  findingsRecurring: 'vinaya.review.recurring',
+  checkWhere: 'vinaya.checks.where',
+  checksRan: 'vinaya.checks.ran',
+  checksPassed: 'vinaya.checks.passed',
+  checksFailed: 'vinaya.checks.failed',
+  checksSkipped: 'vinaya.checks.skipped',
+  failedNames: 'vinaya.checks.failed_names',
+  waitMs: 'vinaya.checks.wait_ms',
+  reruns: 'vinaya.checks.reruns',
+  checkName: 'vinaya.checks.name',
+  result: 'vinaya.result',
+  change: 'vinaya.change.id',
+  branch: 'vinaya.change.branch',
+  commit: 'vinaya.change.commit',
+  actor: 'vinaya.actor',
+  severity: 'vinaya.severity',
+  questionKind: 'vinaya.person.kind',
+  questionKey: 'vinaya.person.key',
+  answeredBy: 'vinaya.person.answered_by',
+  target: 'vinaya.outside.target',
+  action: 'vinaya.outside.action'
 } as const
 
 export type SpanName = (typeof SPAN_NAMES)[keyof typeof SPAN_NAMES]
