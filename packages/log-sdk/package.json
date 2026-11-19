@@ -17,6 +17,9 @@
     "./package.json": "./package.json"
   },
   "types": "./dist/index.d.ts",
+  "bin": {
+    "vinaya-log": "dist/bin/vinaya-log.js"
+  },
   "files": [
     "dist",
     "src",

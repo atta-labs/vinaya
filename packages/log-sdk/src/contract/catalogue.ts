@@ -36,6 +36,7 @@ export const EVENT_NAMES = {
   runStarted: 'vinaya.run.started',
   roundStarted: 'vinaya.round.started',
   agentStarted: 'vinaya.agent.started',
+  usageRecorded: 'vinaya.usage.recorded',
   stepStarted: 'vinaya.step.started',
   pauseStarted: 'vinaya.pause.started',
   personAsked: 'vinaya.person.asked',
@@ -76,6 +77,7 @@ export const ATTRIBUTE_NAMES = {
   toolName: 'gen_ai.tool.name',
   toolCallId: 'gen_ai.tool.call.id',
   usageInputTokens: 'gen_ai.usage.input_tokens',
+  usageSpanStart: 'vinaya.usage.span_start',
   usageOutputTokens: 'gen_ai.usage.output_tokens',
   usageCacheReadInputTokens: 'gen_ai.usage.cache_read.input_tokens',
   errorType: 'error.type',
@@ -89,6 +91,7 @@ export const ATTRIBUTE_NAMES = {
   // Stamps every record carries
   seq: 'vinaya.seq',
   spanKey: 'vinaya.span.key',
+  parentSpanId: 'vinaya.span.parent_id',
   writerId: 'vinaya.writer.id',
   provenance: 'vinaya.provenance',
   trust: 'vinaya.trust',

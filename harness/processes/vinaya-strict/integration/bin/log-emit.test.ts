@@ -119,6 +119,7 @@ describe('vinaya log emit — a usage error (O2)', () => {
     const code = await logEmitCommand([], d)
     expect(code).toBe(2)
     expect(err.join('')).toContain('Usage')
+    expect(err.join('')).toContain('vinaya-log emit')
   })
 
   it('exits 2 on JSON that cannot be read', async () => {
