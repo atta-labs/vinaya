@@ -3,7 +3,8 @@ import {
   ghApiGet,
   ghApiGetAllPagesAsync,
   ghIssueListByLabel,
-  ghIssueListByLabelAsync
+  ghIssueListByLabelAsync,
+  ghLabelIssueCountsAsync
 } from '../../../../../kernel/adapters/code-host/github/gh'
 import { trancheLabel, trancheSlugOf } from './labels'
 import { unwrapValue } from './list-tasks'
@@ -291,6 +292,30 @@ function lifecycleFromIssues(issues: GhIssue[]): Lifecycle {
 }
 
 /**
+ * `lifecycleFromIssues`'s rule from a label's Issue counts instead of its
+ * Issue list: `planned` with no Issues, `active` with any open, `complete`
+ * otherwise. The index reads counts for every tranche label in one query.
+ */
+function lifecycleFromCounts(open: number, total: number): Lifecycle {
+  if (total === 0) return 'planned'
+  return open > 0 ? 'active' : 'complete'
+}
+
+/** `resolveLegacyFacts` from the label's Issue counts — the same rule, the same closed-Milestone gate. */
+function resolveLegacyFactsFromCounts(milestone: GhMilestone, open: number, total: number): MilestoneFacts {
+  if (milestone.state === 'closed' && total > 0) {
+    return { goal: milestone.description ?? '', lifecycle: lifecycleFromCounts(open, total) }
+  }
+  return factsFromLegacyMilestone(milestone)
+}
+
+/** The label search that returns every `vinaya/tranche:<slug>` label; `trancheSlugOf` filters what it returns. */
+const TRANCHE_LABEL_QUERY = 'vinaya/tranche:'
+
+/** How many active tranches' Issue lists the index reads at once. */
+const ACTIVE_ISSUE_READ_CONCURRENCY = 4
+
+/**
  * The goal for a label-derived (non-legacy) tranche: the first matching
  * `### Tranche intents` line found across every fetched Milestone, in list
  * order — `''` when none declares one, exactly as an unmilestoned tranche
@@ -396,11 +421,11 @@ export type TrancheMilestoneIndex = {
    */
   legacySlugs: Set<string>
   /**
-   * Tranche slug → the `vinaya/tranche:<slug>`-labeled Issues the index read
-   * to derive that slug's facts, exactly as `gh issue list` returned them. A
-   * reader that needs a tranche's tasks or open Issues takes them from here
-   * instead of listing the same label again. Absent from an index built
-   * without them.
+   * Active tranche slug → its `vinaya/tranche:<slug>`-labeled Issues, exactly
+   * as `gh issue list` returned them. Only active tranches are listed: a
+   * reader that needs an active tranche's tasks or open Issues takes them
+   * from here instead of listing the same label again. Absent from an index
+   * built without them.
    */
   issuesBySlug?: Map<string, GhIssue[]>
 }
@@ -492,17 +517,17 @@ export function listArchivedTrancheSlugs(owner: string, repo: string): ActiveTra
  * `listArchivedTrancheSlugs` otherwise re-derive with their own full round
  * trips.
  *
- * Two calls are paid once regardless of tranche count — the Milestone list
- * and the label list, both paginated (`ghApiGetAllPagesAsync`, unlike the
+ * Three calls are paid once regardless of tranche count: the Milestone list,
+ * the label list (both paginated through `ghApiGetAllPagesAsync`, unlike the
  * three single-purpose sync readers above, which stay on the un-paginated
- * `ghApiGet` they always used). Both legacy AND label-derived slugs need
- * their own Issues fetch now — see `resolveLegacyFacts`'s doc comment for
- * why a legacy slug is no longer free: `milestone_adopt` closes the
- * old 1:1 Milestone without deleting it, so its title still legacy-matches
- * while the tranche's real Issues move to a different, still-open Milestone.
- * All fetches run concurrently (`Promise.all`), not one after another — the
- * same discipline `verify-coherence.ts`'s sweep already applies to its own
- * per-slug fetches.
+ * `ghApiGet` they always used), and every tranche label's open and total
+ * Issue counts from one GraphQL query (`ghLabelIssueCountsAsync`). Each
+ * slug's lifecycle comes from those counts, legacy slugs included — see
+ * `resolveLegacyFacts`'s doc comment for why a legacy slug's label still
+ * decides it once `milestone_adopt` has closed its old 1:1 Milestone. Full
+ * Issue lists are read only for the tranches that come out active, a few at
+ * a time, so the index's cost follows the number of active tranches, not
+ * the number of tranche labels the repository has ever carried.
  *
  * `retryFailedReads` makes each of those reads once more when it fails, so a
  * single transient failure among the many label reads does not fail the
@@ -519,10 +544,26 @@ export async function indexTrancheMilestonesAsync(
   // (labels are rarely deleted; closed Milestones never are), so a single
   // 100-item page is a countdown, not a bound, for the same reason
   // documented at `ghApiGetAllPagesAsync`'s own definition.
-  const [milestones, labels] = await Promise.all([
+  const [milestones, labels, counts] = await Promise.all([
     read(() => ghApiGetAllPagesAsync<GhMilestone>(`repos/${owner}/${repo}/milestones?state=all&per_page=100`)),
-    read(() => ghApiGetAllPagesAsync<GhLabel>(`repos/${owner}/${repo}/labels?per_page=100`))
+    read(() => ghApiGetAllPagesAsync<GhLabel>(`repos/${owner}/${repo}/labels?per_page=100`)),
+    read(() => ghLabelIssueCountsAsync(owner, repo, TRANCHE_LABEL_QUERY))
   ])
+  const countsByLabel = new Map(counts.map((c) => [c.name, c]))
+  // Every tranche label the label list names must come back from the counts
+  // query: a label the query missed would otherwise read as planned and drop
+  // an active tranche without a word, where a per-label Issue read would
+  // have failed loudly.
+  const uncounted = trancheSlugsFromLabels(labels)
+    .map((slug) => trancheLabel(slug))
+    .filter((label) => !countsByLabel.has(label))
+  if (uncounted.length > 0) {
+    throw new Error(`the label Issue-count query returned no count for ${uncounted.join(', ')}`)
+  }
+  const lifecycleOf = (slug: string): Lifecycle => {
+    const c = countsByLabel.get(trancheLabel(slug))
+    return lifecycleFromCounts(c?.open ?? 0, c?.total ?? 0)
+  }
 
   const active: ActiveTrancheRef[] = []
   const archived: ActiveTrancheRef[] = []
@@ -535,32 +576,18 @@ export async function indexTrancheMilestonesAsync(
   const newPathSlugs = trancheSlugsFromLabels(labels).filter((slug) => !legacySlugs.has(slug))
   const uniqueNewPathSlugs = [...new Set(newPathSlugs)]
 
-  const uniqueLegacySlugs = [...legacySlugs]
-  const [legacyIssuesBySlug, newPathIssuesBySlug] = await Promise.all([
-    Promise.all(uniqueLegacySlugs.map((slug) => read(() => ghIssueListByLabelAsync(owner, repo, trancheLabel(slug))))),
-    Promise.all(uniqueNewPathSlugs.map((slug) => read(() => ghIssueListByLabelAsync(owner, repo, trancheLabel(slug)))))
-  ])
-
-  const issuesBySlug = new Map<string, GhIssue[]>()
-  uniqueLegacySlugs.forEach((slug, i) => {
-    issuesBySlug.set(slug, legacyIssuesBySlug[i] ?? [])
-  })
-  uniqueNewPathSlugs.forEach((slug, i) => {
-    issuesBySlug.set(slug, newPathIssuesBySlug[i] ?? [])
-  })
-
-  uniqueLegacySlugs.forEach((slug, i) => {
+  for (const slug of legacySlugs) {
     const m = legacyMilestoneBySlug.get(slug)
-    if (!m) return
+    if (!m) continue
     const ref = { slug, goal: m.description ?? '' }
-    const f = resolveLegacyFacts(m, legacyIssuesBySlug[i] ?? [])
+    const c = countsByLabel.get(trancheLabel(slug))
+    const f = resolveLegacyFactsFromCounts(m, c?.open ?? 0, c?.total ?? 0)
     if (f.lifecycle === 'complete') archived.push(ref)
     else if (f.lifecycle === 'active') active.push(ref)
     facts.set(slug, f)
-  })
-  uniqueNewPathSlugs.forEach((slug, i) => {
-    const issues = newPathIssuesBySlug[i] ?? []
-    const lifecycle = lifecycleFromIssues(issues)
+  }
+  for (const slug of uniqueNewPathSlugs) {
+    const lifecycle = lifecycleOf(slug)
     const goal = goalFromMilestones(milestones, slug)
     const f: MilestoneFacts = { goal, lifecycle }
     facts.set(slug, f)
@@ -568,7 +595,22 @@ export async function indexTrancheMilestonesAsync(
     else if (lifecycle === 'complete') archived.push({ slug, goal })
     // 'planned' (zero Issues) appears in neither list — same degrade as
     // before this task, when a slug with no Milestone appeared in neither.
-  })
+  }
+
+  // Full Issue lists only for the tranches that came out active — the only
+  // ones a reader of `issuesBySlug` asks for — a few at a time, never one
+  // per tranche label all at once.
+  const issuesBySlug = new Map<string, GhIssue[]>()
+  const activeSlugs = active.map((r) => r.slug)
+  for (let i = 0; i < activeSlugs.length; i += ACTIVE_ISSUE_READ_CONCURRENCY) {
+    const batch = activeSlugs.slice(i, i + ACTIVE_ISSUE_READ_CONCURRENCY)
+    const lists = await Promise.all(
+      batch.map((slug) => read(() => ghIssueListByLabelAsync(owner, repo, trancheLabel(slug))))
+    )
+    batch.forEach((slug, j) => {
+      issuesBySlug.set(slug, lists[j] ?? [])
+    })
+  }
 
   return { active, archived, facts, legacySlugs, issuesBySlug }
 }

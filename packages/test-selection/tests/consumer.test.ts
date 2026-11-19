@@ -189,8 +189,10 @@ describe('a fresh repository installs the packed package and selects with it', (
       // Started in a member's folder, under Node, through the command npm linked.
       const command = join(mono, 'node_modules/.bin/test-selection')
       const status = run('git', ['status', '--porcelain', '--untracked-files=all'], mono, home).stdout
-      const printed = JSON.parse(
-        run('node', [command, '--base', 'HEAD~1', '--head', 'HEAD'], join(mono, 'packages/app'), home).stdout
+      const selection = run('node', [command, '--base', 'HEAD~1', '--head', 'HEAD'], join(mono, 'packages/app'), home)
+      const printed = JSON.parse(selection.stdout)
+      expect(selection.stderr).toBe(
+        'test-selection: warning: left out 0 package(s) with unsupported runners and 1 test file(s) under no suite\n'
       )
       expect(run('git', ['status', '--porcelain', '--untracked-files=all'], mono, home).stdout).toBe(status)
       expect(printed.tests).toEqual(['packages/app/tests/greet.test.ts', 'packages/web/tests/view.spec.ts'])
@@ -240,10 +242,17 @@ describe('a fresh repository installs the packed package and selects with it', (
           command,
           args,
           home,
-          'usage: test-selection --base <commit> --head <commit> [--record <file>] [--config <file>] [--help]',
-          ['--base', '--head', '--record', '--config', '--help']
+          'usage: test-selection --base <commit> --head <commit> [--record <file> | --fetch-record] [--config <file>] [--help]',
+          ['--base', '--head', '--record', '--fetch-record', '--config', '--help']
         )
       }
+
+      writeFileSync(join(mono, 'packages/docs/package.json'), '{ "name": "docs", "scripts": { "test": "jest" } }\n')
+      run('git', ['commit', '-q', '-am', 'use Jest for docs'], mono, home)
+      const jest = run('node', [command, '--base', 'HEAD~1', '--head', 'HEAD'], mono, home)
+      expect(jest.stderr).toBe(
+        'test-selection: warning: left out 1 package(s) with unsupported runners and 1 test file(s) under no suite\n'
+      )
 
       // The command with a read record and a consumer config, in a fresh repository whose head commit changes only
       // a data file one test reads without importing it, and whose next commit adds a test with its own data file.
@@ -331,6 +340,76 @@ describe('a fresh repository installs the packed package and selects with it', (
       const recorded = select(cfgBase, cfgHead, '--record', readRecord)
       expect(recorded.tests).toEqual(['packages/app/tests/a.test.ts'])
       expect(recorded.fallbacks).toEqual([])
+      // --fetch-record, with a stand-in `gh` first on the PATH that serves the record from files the test wrote.
+      const ghDir = join(home, 'gh-stand-in')
+      mkdirSync(ghDir)
+      writeFileSync(
+        join(ghDir, 'gh'),
+        `#!/bin/sh
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+echo "$*" >>"$here/calls"
+case "$1 $2" in
+  "repo view") echo '{"defaultBranchRef":{"name":"main"}}' ;;
+  "run list") if [ -f "$here/fail" ]; then echo 'gh: HTTP 401' >&2; exit 1; fi; echo '[{"databaseId":1}]' ;;
+  "run download")
+    while [ $# -gt 0 ]; do if [ "$1" = "--dir" ]; then dir=$2; fi; shift; done
+    cp "$here/record.json" "$dir/read-record.json" ;;
+  *) exit 1 ;;
+esac
+`,
+        { mode: 0o755 }
+      )
+      cpSync(readRecord, join(ghDir, 'record.json'))
+      const withGh = { ...bareEnv(home), PATH: `${ghDir}:${process.env.PATH}` }
+      const callsOf = () => (existsSync(join(ghDir, 'calls')) ? readFileSync(join(ghDir, 'calls'), 'utf8') : '')
+      const fetching = (...flags: string[]) =>
+        spawnSync('node', [command, '--base', cfgBase, '--head', cfgHead, ...flags], {
+          cwd: cfg,
+          encoding: 'utf8',
+          env: withGh
+        })
+      const cfgStatus = () => run('git', ['status', '--porcelain', '--untracked-files=all'], cfg, home).stdout
+      const treeBefore = cfgStatus()
+      const keptDir = join(cfg, '.git/test-selection/read-records')
+      // No flag: no `gh`, no kept file, no record line.
+      const plain = fetching()
+      expect(plain.status).toBe(0)
+      expect(plain.stderr).toBe('')
+      expect(JSON.parse(plain.stdout).leftOut).toEqual({
+        packages: [{ dir: '.', name: 'cfg', reason: 'no-test-script', script: null }],
+        tests: []
+      })
+      expect(callsOf()).toBe('')
+      expect(existsSync(keptDir)).toBe(false)
+      // The flag: the plan equals the `--record` plan, the record is kept, the line is on standard error only.
+      const fetched = fetching('--fetch-record')
+      expect(fetched.status).toBe(0)
+      expect(fetched.stderr).toBe(`test-selection: record: ${cfgBase} fetched\n`)
+      expect(JSON.parse(fetched.stdout)).toEqual(recorded)
+      expect(existsSync(join(keptDir, `${cfgBase}.json`))).toBe(true)
+      expect(cfgStatus()).toBe(treeBefore)
+      // A second run uses the kept record and starts `gh` no more.
+      const callsAfterFirst = callsOf()
+      const keptRun = fetching('--fetch-record')
+      expect(keptRun.stderr).toBe(`test-selection: record: ${cfgBase} kept\n`)
+      expect(JSON.parse(keptRun.stdout)).toEqual(recorded)
+      expect(callsOf()).toBe(callsAfterFirst)
+      // A failing `gh` with nothing kept: the plan without a record, exit 0, one `no record` line.
+      rmSync(keptDir, { recursive: true, force: true })
+      writeFileSync(join(ghDir, 'fail'), '')
+      const failed = fetching('--fetch-record')
+      expect(failed.status).toBe(0)
+      expect(failed.stderr).toMatch(/^test-selection: no record: .+\n$/)
+      expect(failed.stderr.trim().split('\n')).toHaveLength(1)
+      expect(JSON.parse(failed.stdout)).toEqual(unflagged)
+      // Both record flags: one message, exit 2, nothing printed.
+      const both = fetching('--fetch-record', '--record', readRecord)
+      expect(both.status).toBe(2)
+      expect(both.stdout).toBe('')
+      expect(both.stderr.trim().split('\n')).toHaveLength(1)
+      expect(both.stderr).toContain('--fetch-record and --record cannot be used together')
+      expect(cfgStatus()).toBe(treeBefore)
+
       // A declared input reaches its reader.
       expect(select(cfgBase, cfgHead, '--config', inputsConfig).tests).toEqual(['packages/app/tests/a.test.ts'])
       // An always-run obligation and a whole-suite policy add their tests, with no fallback scope behind them.
@@ -360,6 +439,18 @@ describe('a fresh repository installs the packed package and selects with it', (
         expect(refused.stderr.trim().split('\n')).toHaveLength(1)
         expect(refused.stderr).toContain(message)
       }
+
+      // The root uses Jest, while all test files still belong to member suites.
+      const cfgManifestPath = join(cfg, 'package.json')
+      const cfgManifest = JSON.parse(readFileSync(cfgManifestPath, 'utf8'))
+      cfgManifest.scripts = { test: 'jest' }
+      writeFileSync(cfgManifestPath, JSON.stringify(cfgManifest))
+      run('git', ['commit', '-q', '-am', 'use Jest at the root'], cfg, home)
+      const runnerOnly = run('node', [command, '--base', cfgAdded, '--head', 'HEAD'], cfg, home)
+      expect(runnerOnly.stderr).toBe(
+        'test-selection: warning: left out 1 package(s) with unsupported runners and 0 test file(s) under no suite\n'
+      )
+
       // The record command, linked by npm, under Node: the built `dist/`, with the probe's source shipped beside it.
       expect(listing).toContain('package/dist/record-command.js')
       expect(listing).toContain('package/src/listing-probe.ts')
