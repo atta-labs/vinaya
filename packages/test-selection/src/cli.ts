@@ -5,6 +5,7 @@
  * serves them. It is the one place in the package that builds a git reader
  * itself; it starts no test. It writes no file, except that with `--fetch-record` it keeps a fetched read record
  * under the repository's common git directory, and it starts `gh` only with that flag.
+ * After the plan, it warns on standard error about unsupported runners and test files under no suite.
  *
  * Usage: `test-selection --base <commit> --head <commit> [--record <file> | --fetch-record] [--config <file>] [--help]`.
  * For selection it reads the committed trees and the files named by the optional flags.
@@ -117,7 +118,7 @@ function configOf(file: string | null): ConsumerConfig {
 }
 
 /** The plan document for the repository around `cwd`. */
-function planDocument(cwd: string, argv: readonly string[], notes: string[]): unknown {
+function planDocument(cwd: string, argv: readonly string[], notes: string[]) {
   const args = argumentsOf(argv)
   let record = args.record === null ? null : recordOf(args.record)
   const config = configOf(args.config)
@@ -196,6 +197,13 @@ function main(): number {
     const document = planDocument(process.cwd(), argv, notes)
     for (const note of notes) process.stderr.write(note)
     process.stdout.write(`${JSON.stringify(document, null, 2)}\n`)
+    const { packages, tests } = document.leftOut
+    const otherRunners = packages.filter((pkg) => pkg.reason === 'other-runner').length
+    if (otherRunners > 0 || tests.length > 0) {
+      process.stderr.write(
+        `test-selection: warning: left out ${otherRunners} package(s) with unsupported runners and ${tests.length} test file(s) under no suite\n`
+      )
+    }
     return 0
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
