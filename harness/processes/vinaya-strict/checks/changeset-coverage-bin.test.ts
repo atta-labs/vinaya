@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CheckError } from '../../../kernel/gates/checks/contract'
@@ -62,6 +62,149 @@ async function runBin(
   const stdout = await new Response(proc.stdout).text()
   return { exitCode, stderr, stdout }
 }
+
+describe('check-changeset-coverage (bin) — ignored packages', () => {
+  it.each(['ignored in index', 'ignored only in worktree', 'symlink'])(
+    'reads regular snapshot blobs and reports both rules for %s',
+    async (scenario) => {
+      const root = newRoot('changeset-snapshot')
+      initRepo(root)
+      scaffoldFixedGroup(root)
+      writeFileSync(
+        join(root, '.changeset', 'config.json'),
+        JSON.stringify({ fixed: [['@fixture/pkg-a']], ignore: ['@fixture/portal'] })
+      )
+      git(root, ['add', '.'])
+      git(root, ['commit', '-qm', 'Chore: initial scaffold'])
+      git(root, ['checkout', '-qb', 'fix/pkg-a'])
+      writeFileSync(join(root, 'packages', 'pkg-a', 'src', 'index.ts'), 'export {}\n')
+      git(root, ['add', '.'])
+      git(root, ['commit', '-qm', 'Fix(pkg-a): update fixture'])
+
+      const changeset = join(root, '.changeset', 'portal.md')
+      const ignored = "---\n'@fixture/portal': patch\n---\n"
+      const empty = '---\n---\n'
+      if (scenario === 'symlink') {
+        const target = join(newRoot('changeset-target'), 'outside.md')
+        writeFileSync(target, ignored)
+        symlinkSync(target, changeset)
+      } else {
+        writeFileSync(changeset, scenario === 'ignored in index' ? ignored : empty)
+      }
+      git(root, ['add', '.'])
+      if (scenario !== 'symlink') writeFileSync(changeset, scenario === 'ignored in index' ? empty : ignored)
+      const { exitCode, stderr } = await runBin(root, {
+        VINAYA_COMMIT_HOOK: '1',
+        GIT_INDEX_FILE: join(root, '.git', 'index')
+      })
+      const findings = parseFindings(stderr)
+      if (scenario === 'ignored in index') {
+        expect(exitCode).toBe(1)
+        expect(findings.map(({ severity }) => severity)).toEqual(['error', 'error'])
+        expect(findings[0]?.message).toContain('packages/pkg-a/src/index.ts')
+        expect(findings[1]?.message).toContain('@fixture/portal')
+      } else {
+        expect(exitCode).toBe(0)
+        expect(findings).toEqual([])
+      }
+    }
+  )
+
+  it.each(['add', 'edit', 'delete', 'release branch', 'no ignore list', 'no config', 'quoted path', 'line break'])(
+    'grades the changed changeset for %s',
+    async (scenario) => {
+      const root = newRoot('ignored-package')
+      initRepo(root)
+      scaffoldFixedGroup(root)
+      const config = join(root, '.changeset', 'config.json')
+      if (scenario === 'no config') rmSync(config)
+      else if (scenario !== 'no ignore list') {
+        writeFileSync(config, JSON.stringify({ ignore: ['@fixture/portal', '@other/*'] }))
+      }
+      git(root, ['config', 'core.quotePath', 'true'])
+      const filename =
+        scenario === 'quoted path' ? 'café.md' : scenario === 'line break' ? 'portal\nupdate.md' : 'portal.md'
+      const changeset = join(root, '.changeset', filename)
+      const ignored = "---\n'@fixture/portal': patch\n'@other/tool': minor\n---\n"
+      if (scenario === 'delete') writeFileSync(changeset, ignored)
+      if (scenario === 'edit') writeFileSync(changeset, '---\n---\n')
+      git(root, ['add', '.'])
+      git(root, ['commit', '-qm', 'Chore: initial scaffold'])
+      git(root, ['checkout', '-qb', scenario === 'release branch' ? 'changeset-release/main' : 'fix/portal'])
+      mkdirSync(join(root, 'apps', 'portal'), { recursive: true })
+      writeFileSync(join(root, 'apps', 'portal', 'index.ts'), 'export {}\n')
+      if (scenario === 'delete') rmSync(changeset)
+      else writeFileSync(changeset, ignored)
+      git(root, ['add', '.'])
+      git(root, ['commit', '-qm', 'Fix(portal): update fixture'])
+
+      const { exitCode, stderr } = await runBin(root)
+      const refused =
+        scenario === 'add' || scenario === 'edit' || scenario === 'quoted path' || scenario === 'line break'
+      expect(exitCode).toBe(refused ? 1 : 0)
+      const findings = parseFindings(stderr)
+      expect(findings).toHaveLength(refused ? 1 : 0)
+      if (refused) {
+        expect(findings[0]?.severity).toBe('error')
+        expect(findings[0]?.message).toContain(`.changeset/${filename}`)
+        expect(findings[0]?.message).toContain('@fixture/portal')
+        expect(findings[0]?.message).toContain('@other/tool')
+      }
+    }
+  )
+
+  it('skips a deleted changeset restored byte-for-byte in the index', async () => {
+    const root = newRoot('restored-changeset')
+    initRepo(root)
+    scaffoldFixedGroup(root)
+    writeFileSync(join(root, '.changeset', 'config.json'), JSON.stringify({ ignore: ['@fixture/portal'] }))
+    const changeset = join(root, '.changeset', 'portal.md')
+    const ignored = "---\n'@fixture/portal': patch\n---\n"
+    writeFileSync(changeset, ignored)
+    git(root, ['add', '.'])
+    git(root, ['commit', '-qm', 'Chore: initial scaffold'])
+    git(root, ['checkout', '-qb', 'fix/portal'])
+    git(root, ['rm', '.changeset/portal.md'])
+    git(root, ['commit', '-qm', 'Fix(portal): remove changeset'])
+    writeFileSync(changeset, ignored)
+    writeFileSync(join(root, 'README.md'), '# Other staged change\n')
+    git(root, ['add', '.'])
+
+    const { exitCode, stderr } = await runBin(root, {
+      VINAYA_COMMIT_HOOK: '1',
+      GIT_INDEX_FILE: join(root, '.git', 'index')
+    })
+    expect(exitCode).toBe(0)
+    expect(parseFindings(stderr)).toEqual([])
+  })
+
+  it.each([true, false])('reads the ignore list from the index when indexed config is %s', async (hasConfig) => {
+    const root = newRoot('changeset-config-snapshot')
+    initRepo(root)
+    scaffoldFixedGroup(root)
+    const config = join(root, '.changeset', 'config.json')
+    rmSync(config)
+    git(root, ['add', '.'])
+    git(root, ['commit', '-qm', 'Chore: initial scaffold'])
+    git(root, ['checkout', '-qb', 'fix/portal'])
+    git(root, ['commit', '--allow-empty', '-qm', 'Chore: start branch'])
+    const policy = JSON.stringify({ ignore: ['@fixture/portal'] })
+    if (hasConfig) writeFileSync(config, policy)
+    writeFileSync(join(root, '.changeset', 'portal.md'), "---\n'@fixture/portal': patch\n---\n")
+    git(root, ['add', '.'])
+    if (hasConfig) writeFileSync(config, '{}')
+    else writeFileSync(config, policy)
+
+    const { exitCode, stderr } = await runBin(root, {
+      VINAYA_COMMIT_HOOK: '1',
+      GIT_INDEX_FILE: join(root, '.git', 'index')
+    })
+    expect(exitCode).toBe(hasConfig ? 1 : 0)
+    const findings = parseFindings(stderr)
+    expect(findings).toHaveLength(hasConfig ? 1 : 0)
+    if (hasConfig) expect(findings[0]?.message).toContain('@fixture/portal')
+  })
+})
 
 function parseFindings(stderr: string): CheckError[] {
   return stderr
