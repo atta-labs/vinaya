@@ -75,6 +75,7 @@ function specifiersOf(file: string, text: string): string[] {
 
 type Manifest = {
   name: string
+  repository?: { url?: string; directory?: string }
   dependencies?: Record<string, string>
   peerDependencies?: Record<string, string>
   devDependencies?: Record<string, string>
@@ -176,6 +177,11 @@ describe('the package is closed', () => {
     expect([...runtimeBare]).toEqual(['typescript'])
     expect(manifest.dependencies ?? {}).toEqual({})
     expect(Object.keys(manifest.peerDependencies ?? {})).toEqual(['typescript'])
+  })
+
+  it('names this repository as its source, at its own folder', () => {
+    expect(manifest.repository?.url).toBe('git+https://github.com/atta-labs/vinaya.git')
+    expect(manifest.repository?.directory).toBe('packages/test-selection')
   })
 
   it('is imported only by its package name, and this repository does import it', () => {
