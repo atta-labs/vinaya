@@ -141,7 +141,7 @@ describe('the search for a read record, with a runner of the test in place of gh
     JSON.stringify({ schema: 'vinaya.read-record', schemaVersion: 1, commit, platform: 'linux', tests: {}, ...extra })
 
   /** A stand-in for gh: `artifacts` maps a commit to the text of its record file; `fail` names a call that fails. */
-  function fakeGh(artifacts: Record<string, string>, fail?: 'branch' | 'list' | 'start') {
+  function fakeGh(artifacts: Record<string, string>, fail?: 'branch' | 'list' | 'start' | 'download-timeout') {
     const calls: string[][] = []
     const envs: NodeJS.ProcessEnv[] = []
     const run: CommandRunner = (file, args, options) => {
@@ -161,6 +161,7 @@ describe('the search for a read record, with a runner of the test in place of gh
         expect(args[args.indexOf('--event') + 1]).toBe('push')
         return JSON.stringify(commit in artifacts ? [{ databaseId: 7 }] : [])
       }
+      if (fail === 'download-timeout') throw Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' })
       const name = args[args.indexOf('--name') + 1] as string
       const commit = name.slice(RECORD_ARTIFACT_PREFIX.length)
       if (!name.startsWith(RECORD_ARTIFACT_PREFIX) || !(commit in artifacts)) throw new Error('no artifact')
@@ -240,6 +241,53 @@ describe('the search for a read record, with a runner of the test in place of gh
       expect(findReadRecord(repo, base, gh.run)).toMatchObject({ source: 'kept', commit: kept })
       expect(gh.calls).toHaveLength(2)
     } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('starts gh no more after a download runs out of time, and still uses a kept record', () => {
+    const { repo, commits } = line(5)
+    try {
+      const base = commits[4] as string
+      const all = Object.fromEntries(commits.map((c) => [c, recordOf(c)]))
+      const gh = fakeGh(all, 'download-timeout')
+      const found = findReadRecord(repo, base, gh.run)
+      expect(found).toEqual({
+        record: null,
+        reason: `the download of ${RECORD_ARTIFACT_PREFIX}${base} ran out of time`
+      })
+      // The default branch, one run list, one download; never another download or another commit's runs.
+      expect(gh.calls.map((c) => `${c[0]} ${c[1]}`)).toEqual(['repo view', 'run list', 'run download'])
+
+      mkdirSync(join(repo, '.git/test-selection/read-records'), { recursive: true })
+      const kept = commits[1] as string
+      writeFileSync(join(repo, '.git/test-selection/read-records', `${kept}.json`), recordOf(kept))
+      const again = fakeGh(all, 'download-timeout')
+      expect(findReadRecord(repo, base, again.run)).toMatchObject({ source: 'kept', commit: kept })
+      expect(again.calls.filter((c) => c[1] === 'download')).toHaveLength(1)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('returns no record with a reason, and never throws, when no download folder can be made', () => {
+    const { repo, commits } = line(3)
+    const saved = process.env.TMPDIR
+    try {
+      const base = commits[2] as string
+      const gh = fakeGh({ [base]: recordOf(base) })
+      process.env.TMPDIR = join(repo, 'no-such-folder', 'deeper')
+      let found: ReturnType<typeof findReadRecord> | undefined
+      expect(() => {
+        found = findReadRecord(repo, base, gh.run)
+      }).not.toThrow()
+      expect(found?.record).toBeNull()
+      expect(found).toMatchObject({ reason: expect.stringContaining('no download folder can be made') })
+      expect(gh.calls.filter((c) => c[1] === 'download')).toEqual([])
+      expect(gh.calls.filter((c) => c[1] === 'list')).toHaveLength(1)
+    } finally {
+      if (saved === undefined) delete process.env.TMPDIR
+      else process.env.TMPDIR = saved
       rmSync(repo, { recursive: true, force: true })
     }
   })

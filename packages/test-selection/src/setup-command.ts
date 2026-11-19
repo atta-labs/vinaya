@@ -65,6 +65,7 @@ function workflow(root: string, branch: string, manager: PackageManager): string
     "          node-version: '22'",
     '      - uses: oven-sh/setup-bun@v2',
     ...installs[manager].map((line) => `      - run: ${line}`),
+    '      - run: sudo apt-get update',
     '      - run: sudo apt-get install -y strace',
     `      - run: ${start[manager]} test-selection-record --out "$RUNNER_TEMP/read-record" --summary "$GITHUB_STEP_SUMMARY"`,
     '      - uses: actions/upload-artifact@v4',
