@@ -175,19 +175,15 @@ export function findReadRecord(repoRoot: string, base: string, run: CommandRunne
           gh(['run', 'download', String(found.databaseId), '--name', name, '--dir', dir])
           text = readFileSync(join(dir, RECORD_FILE), 'utf8')
           break
-        } catch (err) {
-          if ((err as { code?: unknown }).code === 'ETIMEDOUT') {
-            ghUsable = false
-            reasons.push(`the download of ${name} ran out of time`)
-            break
-          }
+        } catch {
+          // this run holds no such artifact, or the download failed: try the next run
         }
       }
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
     if (text === null) {
-      if (ghUsable) reasons.push(`no run for ${commit} holds the ${name} artifact`)
+      reasons.push(`no run for ${commit} holds the ${name} artifact`)
       continue
     }
     const record = recordFor(text, commit)

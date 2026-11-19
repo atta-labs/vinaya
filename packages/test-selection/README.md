@@ -430,8 +430,9 @@ npx test-selection --help
   `gh` (it cannot be started); a `gh` that fails when asked for the default
   branch or a commit's runs (no login, no `actions: read`, no network) — after
   which `gh` is started no more and only kept records are used; a commit with
-  no run; a run with no such artifact (expired, or never uploaded); a download
-  that runs out of time; and a file that is not a read record of that commit.
+  no run; a run with no such artifact (expired, never uploaded, or a download
+  that fails or runs out of time); and a file that is not a read record of
+  that commit.
 - `--config <file>` — a consumer config: a JSON document stating the rest of
   what a selection takes.
 
@@ -532,8 +533,8 @@ It exits 0 when it prints a plan. With `--help` or `-h` anywhere in the
 arguments, it prints help on standard output and exits 0, even outside a git
 repository. A missing argument, a folder outside a git
 repository, an argument that names no commit, a `--record` file that is
-missing or not a read record, `--fetch-record` together with `--record`, or a `--config` file that is missing or not a
-valid consumer config prints one message on standard error and exits 2; any
+missing or not a read record, `--fetch-record` together with `--record`, or a
+`--config` file that is missing or not a valid consumer config prints one message on standard error and exits 2; any
 other failure exits 1.
 
 The document:
