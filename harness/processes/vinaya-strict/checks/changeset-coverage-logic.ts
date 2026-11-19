@@ -114,7 +114,7 @@ export function isShippedPath(member: FixedGroupMember, repoRelativePath: string
 
 /** `.changeset/*.md`, excluding `.changeset/README.md` — the fixed exemption the predicate names (brief §2). */
 export function isChangesetFile(repoRelativePath: string): boolean {
-  return /^\.changeset\/(?!README\.md$).+\.md$/.test(repoRelativePath)
+  return /^\.changeset\/(?!README\.md$).+\.md$/s.test(repoRelativePath)
 }
 
 /**
@@ -135,4 +135,49 @@ export function evaluateChangesetCoverage(
   if (changedFiles.some(isChangesetFile)) return { status: 'pass' }
 
   return { status: 'finding', shippedPathsHit }
+}
+
+/** Read package keys from the line-oriented Changesets frontmatter. */
+function changesetPackageNames(text: string): string[] {
+  const lines = text.split(/\r?\n/)
+  const start = lines.findIndex((line) => line.trimEnd() === '---')
+  if (start < 0) return []
+  const end = lines.findIndex((line, index) => index > start && line.trimEnd() === '---')
+  if (end < 0) return []
+
+  const names = new Set<string>()
+  for (const line of lines.slice(start + 1, end)) {
+    const key = /^\s*(?:'((?:[^']|'')+)'|"((?:[^"\\]|\\.)+)"|([^\s:'"#]+))\s*:\s*\S/.exec(line)
+    const name = key?.[1]?.replaceAll("''", "'") ?? decodeDoubleQuotedKey(key?.[2]) ?? key?.[3]
+    if (name) names.add(name)
+  }
+  return [...names]
+}
+
+/** Decode YAML escapes that can represent characters in package names. */
+function decodeDoubleQuotedKey(key: string | undefined): string | undefined {
+  return key?.replace(
+    /\\(?:x([a-fA-F\d]{2})|u([a-fA-F\d]{4})|U([a-fA-F\d]{8})|(\/)|.)/g,
+    (sequence, short, medium, long, slash) => {
+      if (slash) return slash
+      const code = Number.parseInt(short ?? medium ?? long ?? '', 16)
+      return code <= 0x10ffff ? String.fromCodePoint(code) : sequence
+    }
+  )
+}
+
+export function evaluateIgnoredChangesets(
+  ignore: string[],
+  changedChangesets: { path: string; text: string }[],
+  isReleaseBranch: boolean
+): { path: string; packages: string[] }[] {
+  if (isReleaseBranch) return []
+
+  const patterns = ignore.filter((entry) => !entry.startsWith('!') && !/[?{}]/.test(entry)).map(filesGlobToRegex)
+  if (patterns.length === 0) return []
+
+  return changedChangesets.flatMap(({ path, text }) => {
+    const packages = changesetPackageNames(text).filter((name) => patterns.some((pattern) => pattern.test(name)))
+    return packages.length > 0 ? [{ path, packages }] : []
+  })
 }
