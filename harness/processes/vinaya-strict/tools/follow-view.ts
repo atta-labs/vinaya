@@ -637,23 +637,38 @@ export async function followTaskSources(
   const records = createRecordFollow(viewOptions)
   let update = await runs.pull()
   let raw: string[] = []
+  // The newest driver-log time printed as narration before a local copy appeared.
+  let printedThrough = Number.NEGATIVE_INFINITY
+  const notePrinted = (lines: string[]): void => {
+    for (const line of lines) {
+      const parsed = parseDriverLogLine(line)
+      if ((parsed.kind === 'primary' || parsed.kind === 'runner') && parsed.at > printedThrough)
+        printedThrough = parsed.at
+    }
+  }
   let recordBacklog = true
   let firstPoll = true
   await follow(path, {
     writeBacklog(chunk) {
       const lines = split(chunk)
       if (viewOptions.details) raw.push(...lines)
-      if (update === null) print(view.backlog(lines, new Date()))
+      if (update === null) {
+        notePrinted(lines)
+        print(view.backlog(lines, new Date()))
+      }
     },
     write(chunk) {
       const lines = split(chunk)
       if (viewOptions.details) raw.push(...lines)
-      if (update === null) print(view.push(lines, new Date()))
+      if (update === null) {
+        notePrinted(lines)
+        print(view.push(lines, new Date()))
+      }
     },
     // A legacy backlog prints immediately. Once a copy exists, flush its backlog before waiting.
     async sleep(ms) {
       if (firstPoll && update !== null) {
-        print(records.render(update, raw, new Date(), true))
+        print(records.render(update, raw, new Date(), true, printedThrough))
         raw = []
         recordBacklog = false
       }
@@ -667,7 +682,7 @@ export async function followTaskSources(
         print(view.tick(now))
         return
       }
-      print(records.render(update, raw, now, recordBacklog))
+      print(records.render(update, raw, now, recordBacklog, printedThrough))
       raw = []
       recordBacklog = false
       print(records.tick(now))

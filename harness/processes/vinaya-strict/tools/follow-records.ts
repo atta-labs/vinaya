@@ -186,6 +186,19 @@ export function createRecordFollow(options: FollowViewOptions) {
     const a = record.attributes
     const at = timeOf(record)
     const round = a[A.roundNumber] ?? a[A.round]
+    // A reported record is never governed loop activity: no banner, no loop narration, no run reset, only a marked line.
+    if (a[A.provenance] === 'reported') {
+      return {
+        line: {
+          kind: 'primary',
+          at,
+          mark: 'working',
+          label: 'Reported',
+          words: `${record.name} (reported, not governed)`,
+          meta: {}
+        }
+      }
+    }
     if (record.name === E.runStarted || record.name === E.cancelled) {
       return { line: { kind: 'reset', run: record.traceId } }
     }
@@ -277,7 +290,7 @@ export function createRecordFollow(options: FollowViewOptions) {
     }
   }
 
-  function attachDetails(raw: readonly string[], steps: Step[]): DriverLogLine[] {
+  function attachDetails(raw: readonly string[], steps: Step[], through: number): DriverLogLine[] {
     if (!options.details) return []
     poll += 1
     for (const text of raw) {
@@ -285,6 +298,8 @@ export function createRecordFollow(options: FollowViewOptions) {
       if (line.kind === 'primary') owner = line
       else if (line.kind === 'runner' || line.kind === 'untimed') owner = undefined
       else if (line.kind === 'detail' && owner) {
+        // A detail the driver-log view already printed is not shown again; its full command never was.
+        if (owner.at <= through && line.meta.command !== true) continue
         const call = word(line.meta.call) ?? word(owner.meta.call)
         pending.push({ at: owner.at, label: owner.label, text: line.text, poll, ...(call ? { call } : {}) })
       }
@@ -325,7 +340,14 @@ export function createRecordFollow(options: FollowViewOptions) {
   }
 
   return {
-    render(update: Pick<ReaderUpdate, 'records' | 'gaps'>, rawDetails: readonly string[], now: Date, backlog: boolean) {
+    /** `through` is the newest driver-log time already printed as narration: records at or before it are not printed again. */
+    render(
+      update: Pick<ReaderUpdate, 'records' | 'gaps'>,
+      rawDetails: readonly string[],
+      now: Date,
+      backlog: boolean,
+      through = Number.NEGATIVE_INFINITY
+    ) {
       const lines: DriverLogLine[] = update.gaps.map((gap) => ({
         kind: 'runner',
         at: now.getTime(),
@@ -333,6 +355,7 @@ export function createRecordFollow(options: FollowViewOptions) {
       }))
       const steps: Step[] = []
       for (const record of update.records) {
+        if (record.attributes[A.provenance] === 'reported') continue
         if (record.name !== E.agentStarted && !spanNamed(record, S.agent)) continue
         const id = word(record.attributes[A.agentId])
         const role = seat(record, undefined)
@@ -343,13 +366,20 @@ export function createRecordFollow(options: FollowViewOptions) {
         run.set(id, role)
         agents.set(record.traceId, run)
       }
+      const printed: DriverLogLine[] = []
       for (const record of update.records) {
         const translated = translate(record)
         if (!translated) continue
+        if (timeOf(record) <= through) {
+          printed.push(translated.line)
+          continue
+        }
         lines.push(translated.line)
         if (translated.step) steps.push(translated.step)
       }
-      lines.unshift(...attachDetails(rawDetails, steps))
+      // Lines the driver-log view already printed still feed the stage and open actions, but print nothing.
+      if (printed.length > 0) renderer.render(printed.map(escapeRecordLine), now, true)
+      lines.unshift(...attachDetails(rawDetails, steps, through))
       return renderer.render(lines.map(escapeRecordLine), now, backlog)
     },
     tick: renderer.tick

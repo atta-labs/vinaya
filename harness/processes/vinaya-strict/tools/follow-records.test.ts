@@ -231,3 +231,36 @@ test('action starts omit suffixes when the record has no counts or confidence', 
     '10:00:03  ▸ Developer   Reporting file'
   ])
 })
+
+test('a reported record is marked as reported and never draws a banner or loop narration', () => {
+  const reported = { [A.provenance]: 'reported', [A.stageTo]: 'review', [A.roundNumber]: 1 }
+  const lines = view(false).render(
+    {
+      records: [
+        record(E.stageChanged, 1000, reported),
+        record(E.runStarted, 2000, { [A.provenance]: 'reported' }),
+        record(E.stageChanged, 3000, { [A.stageTo]: 'develop', [A.roundNumber]: 1 })
+      ],
+      gaps: []
+    },
+    [],
+    now,
+    false
+  )
+  expect(lines).toEqual([
+    '10:00:01  ▸ Reported   vinaya.run.stage_changed (reported, not governed)',
+    '10:00:02  ▸ Reported   vinaya.run.started (reported, not governed)',
+    '10:00:03  ◆ Loop   ━━ Round 1 · develop · typical 8m ━━'
+  ])
+})
+
+test('records at or before the driver-log time already printed are not printed again', () => {
+  const records = [
+    record(E.stepStarted, 1000, step('a', 'first'), 'started', 'a'),
+    record(E.stepStarted, 2000, step('b', 'second'), 'started', 'b')
+  ]
+  const through = now.getTime() + 1000
+  expect(view(false).render({ records, gaps: [] }, [], now, true, through)).toEqual([
+    '10:00:02  ▸ Developer   Reading second'
+  ])
+})
