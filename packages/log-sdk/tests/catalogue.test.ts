@@ -76,6 +76,7 @@ test('every name a handle function writes is in the catalogue', () => {
   handle.action.verified({ ...action, result: 'success' })
   handle.command.completed({ ...action, result: 'ok' })
   handle.run.ended()
+  handle.usage.recorded({ agent: { traceId: handle.traceId, spanId: '1111111111111111' }, spanStart: '1000000' })
   expect(errors).toEqual([])
   const finished = spans.getFinishedSpans()
   const base = (name: string) => ALL_SPAN_NAMES.find((b) => name === b || name.startsWith(`${b} `))

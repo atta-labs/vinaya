@@ -1,4 +1,5 @@
 import type { TimeInput } from '@opentelemetry/api'
+import { ATTRIBUTE_NAMES } from '../contract/catalogue.js'
 import type { SpanParent } from '../contract/ids.js'
 import { type Attrs, endSpan, startSpan, type WriterCore } from './attributes.js'
 
@@ -30,5 +31,6 @@ export function writeWholeSpan(
     startTime,
     emitStarted: false
   })
-  endSpan(handle, ref, {}, endTime)
+  const errorType = attributes[ATTRIBUTE_NAMES.errorType]
+  endSpan(handle, ref, {}, endTime, typeof errorType === 'string' ? errorType : undefined)
 }

@@ -168,7 +168,7 @@ async function post(
   fetcher: NonNullable<SendLocalCopyOptions['fetch']>,
   url: string,
   headers: Headers,
-  body: BodyInit,
+  body: string | Uint8Array<ArrayBuffer>,
   deadline: number
 ): Promise<number | 'deadline reached' | 'request timed out' | 'no answer'> {
   const remaining = deadline - Date.now()

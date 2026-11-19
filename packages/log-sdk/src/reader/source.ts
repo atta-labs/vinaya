@@ -37,6 +37,8 @@ export type ReaderUpdate = {
 }
 
 export type ReaderOptions = {
+  /** First expected sequence for each writer when reading from the beginning. */
+  firstSequence?: number
   /** Where to read on from; omitted reads from the start. */
   position?: string
   /** The caller's home directory, shortened to `~` in strings. */
@@ -74,6 +76,7 @@ function wait(ms: number, signal: AbortSignal | undefined): Promise<void> {
 export function createReader(source: RecordSource, options: ReaderOptions = {}): Reader {
   const ordering = createOrdering({
     fromStart: options.position === undefined,
+    ...(options.firstSequence === undefined ? {} : { firstSequence: options.firstSequence }),
     ...(options.patience === undefined ? {} : { patience: options.patience })
   })
   let position = options.position

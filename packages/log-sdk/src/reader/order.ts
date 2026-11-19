@@ -48,7 +48,7 @@ function range(from: number, to: number): string {
  *   in arrival order and never claims a gap.
  */
 export function createOrdering(
-  options: { patience?: number; fromStart?: boolean; remember?: number; maxHeld?: number } = {}
+  options: { patience?: number; fromStart?: boolean; firstSequence?: number; remember?: number; maxHeld?: number } = {}
 ) {
   const patience = Math.max(1, options.patience ?? 2)
   const fromStart = options.fromStart ?? false
@@ -71,7 +71,7 @@ export function createOrdering(
     let writer = writers.get(key)
     if (writer === undefined) {
       // A run read from its start expects each writer's first number to be 0.
-      writer = { sequenced, next: fromStart ? 0 : null, held: [], age: 0 }
+      writer = { sequenced, next: fromStart ? (options.firstSequence ?? 0) : null, held: [], age: 0 }
       writers.set(key, writer)
     }
     return writer
