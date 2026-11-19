@@ -2,4 +2,4 @@
 '@attalabs/test-selection': minor
 ---
 
-The `test-selection` command warns on standard error when the head inventory leaves out packages with unsupported test runners or test files under no suite. The warning includes both counts, and a successful plan still exits with status zero.
+When the head inventory omits a package with an unsupported test runner or a test file outside any suite, `test-selection` prints both counts in a single warning on standard error. The command still exits with status zero after printing the plan.
