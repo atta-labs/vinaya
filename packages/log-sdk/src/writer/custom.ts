@@ -8,7 +8,7 @@ export function custom(
   fields: Readonly<Record<string, unknown>>
 ): void {
   if (!core.enabled) return
-  const checked = checkCustomEvent(declarations, name, fields)
+  const checked = checkCustomEvent(declarations, name, { ...fields })
   if (!checked.ok) {
     core.report(new Error(`custom event refused (${checked.reason}) [${checked.fieldNames.join(', ')}]`))
     return

@@ -18,7 +18,7 @@ import {
   type RecordProvenance,
   SDK_VERSION
 } from '../contract/catalogue.js'
-import { CustomEventDeclarationsSchema, type CustomEventDeclarations } from '../contract/custom.js'
+import type { CustomEventDeclarations } from '../contract/custom.js'
 import { createRunIdGenerator, type SpanParent, traceIdFor } from '../contract/ids.js'
 import { createFileExporters } from '../local-copy/file-exporters.js'
 import * as agent from './agent.js'
@@ -196,8 +196,7 @@ export function connect(options: ConnectOptions): LogHandle {
       passed
     })
     if (resolved.ok) {
-      const logs = resolved.settings.logs
-      if (logs && logs.events !== undefined) declarations = CustomEventDeclarationsSchema.parse(logs.events)
+      declarations = resolved.declarations
       settings = resolved.settings
     } else report(resolved.error)
   } catch (e) {

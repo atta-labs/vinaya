@@ -1,5 +1,50 @@
-import { expect, test } from 'bun:test'
+import { afterAll, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { harness } from './helpers.js'
+
+const temp = mkdtempSync(join(tmpdir(), 'log-sdk-custom-'))
+afterAll(() => rmSync(temp, { recursive: true, force: true }))
+
+function connectWithFileDeclaration(name: string) {
+  const repoRoot = mkdtempSync(join(temp, 'repo-'))
+  writeFileSync(
+    join(repoRoot, 'vinaya.config.json'),
+    JSON.stringify({ logs: { events: { [name]: { fields: { count: 'number' } } } } })
+  )
+  return harness({ repoRoot, destination: { folder: join(temp, 'logs') } })
+}
+
+test('a destination override retains declarations from the config file', () => {
+  const { handle, logs, errors } = connectWithFileDeclaration('team.checked')
+  handle.custom('team.checked', { count: 2 })
+  const [event] = logs.getFinishedLogRecords()
+  expect(event?.eventName).toBe('team.checked')
+  expect(event?.attributes.count).toBe(2)
+  expect(errors).toEqual([])
+})
+
+test('a destination override cannot hide a reserved declaration from the config file', () => {
+  const { handle, logs, errors } = connectWithFileDeclaration('vinaya.mine')
+  handle.alive()
+  expect(errors).toHaveLength(1)
+  expect(String(errors[0])).toContain('namespace is reserved')
+  expect(logs.getFinishedLogRecords()).toEqual([])
+})
+
+test('custom validation and emission use the same snapshot of field values', () => {
+  const { handle, logs, errors } = connectWithFileDeclaration('team.checked')
+  let reads = 0
+  handle.custom('team.checked', {
+    get count() {
+      return ++reads
+    }
+  })
+  expect(reads).toBe(1)
+  expect(logs.getFinishedLogRecords()[0]?.attributes.count).toBe(1)
+  expect(errors).toEqual([])
+})
 
 test('custom records use the declared name and refuse invalid fields without displaying values', () => {
   const { handle, logs, errors } = harness({
