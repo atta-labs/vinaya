@@ -118,6 +118,7 @@ export type DriverLogLine =
       role?: Role
       details?: string[]
       endsStage?: boolean
+      run?: string
     }
   | { kind: 'detail'; at: number; meta: Record<string, string | true>; text: string }
   /** The runner's own narration: an ISO time and plain words, no mark. */
@@ -127,7 +128,7 @@ export type DriverLogLine =
   | { kind: 'untimed'; text: string }
   | { kind: 'blank' }
   | { kind: 'step-detail'; text: string; role?: Role }
-  | { kind: 'reset' }
+  | { kind: 'reset'; run: string }
 
 export function parseDriverLogLine(line: string): DriverLogLine {
   if (line.trim() === '') return { kind: 'blank' }
@@ -356,7 +357,7 @@ export function createFollowRenderer(options: FollowViewOptions) {
   const history = options.history ?? {}
   const roots = [...(options.roots ?? [])].filter((r) => r.length > 1).sort((a, b) => b.length - a.length)
   const open = new Map<string, OpenAction>()
-  let stage: OpenStage | null = null
+  const stages = new Map<string, OpenStage>()
   let lastAt: number | null = null
 
   const clock = (ms: number): string =>
@@ -402,13 +403,14 @@ export function createFollowRenderer(options: FollowViewOptions) {
   /** Follows one parsed line's effect on the stage and the open actions; returns a banner for a stage change. */
   const track = (line: DriverLogLine): string | null => {
     if (isRunStart(line)) open.clear()
+    const run = line.kind === 'primary' || line.kind === 'reset' ? (line.run ?? '') : ''
     const change = stageOf(line)
     if (change !== null) {
-      stage = { ...change, reported: 0, overTypical: false }
+      stages.set(run, { ...change, reported: 0, overTypical: false })
       return banner(change)
     }
     if (isEnding(line) || isRunStart(line) || line.kind === 'reset' || (line.kind === 'primary' && line.endsStage)) {
-      stage = null
+      stages.delete(run)
     }
     return null
   }
@@ -523,32 +525,33 @@ export function createFollowRenderer(options: FollowViewOptions) {
 
   return {
     render,
-    tick(now: Date) {
-      if (stage === null) return []
-      const elapsedMs = now.getTime() - stage.at
-      if (elapsedMs < 0) return []
-      const minutes = Math.floor(elapsedMs / 60_000)
-      const out: string[] = []
-      const mark = Math.floor(minutes / STILL_IN_STAGE_EVERY_MINUTES)
-      if (mark >= 1 && mark > stage.reported) {
-        stage.reported = mark
-        out.push(
-          loopLine(now.getTime(), `Still in ${STAGES[stage.stage]} (round ${stage.round}) after ${minutes}m`, 'waiting')
-        )
-      }
-      const typical = typicalMinutes(history, stage.stage)
-      if (!stage.overTypical && typical !== null && typical > 0 && elapsedMs > 2 * typical * 60_000) {
-        stage.overTypical = true
-        out.push(
-          loopLine(
-            now.getTime(),
-            `Still in ${STAGES[stage.stage]} (round ${stage.round}) after ${minutes}m ${OVER_TYPICAL_MARK} past twice its typical ${Math.round(typical)}m`,
-            'waiting'
-          )
-        )
-      }
-      return out
+    tick: (now: Date) => [...stages.values()].flatMap((stage) => tickStage(stage, now))
+  }
+
+  function tickStage(stage: OpenStage, now: Date): string[] {
+    const elapsedMs = now.getTime() - stage.at
+    if (elapsedMs < 0) return []
+    const minutes = Math.floor(elapsedMs / 60_000)
+    const out: string[] = []
+    const mark = Math.floor(minutes / STILL_IN_STAGE_EVERY_MINUTES)
+    if (mark >= 1 && mark > stage.reported) {
+      stage.reported = mark
+      out.push(
+        loopLine(now.getTime(), `Still in ${STAGES[stage.stage]} (round ${stage.round}) after ${minutes}m`, 'waiting')
+      )
     }
+    const typical = typicalMinutes(history, stage.stage)
+    if (!stage.overTypical && typical !== null && typical > 0 && elapsedMs > 2 * typical * 60_000) {
+      stage.overTypical = true
+      out.push(
+        loopLine(
+          now.getTime(),
+          `Still in ${STAGES[stage.stage]} (round ${stage.round}) after ${minutes}m ${OVER_TYPICAL_MARK} past twice its typical ${Math.round(typical)}m`,
+          'waiting'
+        )
+      )
+    }
+    return out
   }
 }
 
@@ -638,12 +641,14 @@ export async function followTaskSources(
   let firstPoll = true
   await follow(path, {
     writeBacklog(chunk) {
-      if (update === null) print(view.backlog(split(chunk), new Date()))
-      else if (viewOptions.details) raw.push(...split(chunk))
+      const lines = split(chunk)
+      if (viewOptions.details) raw.push(...lines)
+      if (update === null) print(view.backlog(lines, new Date()))
     },
     write(chunk) {
-      if (update === null) print(view.push(split(chunk), new Date()))
-      else if (viewOptions.details) raw.push(...split(chunk))
+      const lines = split(chunk)
+      if (viewOptions.details) raw.push(...lines)
+      if (update === null) print(view.push(lines, new Date()))
     },
     // A legacy backlog prints immediately. Once a copy exists, flush its backlog before waiting.
     async sleep(ms) {

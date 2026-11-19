@@ -77,9 +77,29 @@ test('task follow selects local records by work reference and falls back for a t
     await followTaskSources('driver.log', folder, 405, options, print, follow)
     expect(output).toEqual(['10:00:00  ▸ Loop   Driver narration'])
     output.length = 0
-    await followTaskSources('driver.log', folder, 406, options, print, async (_path, deps) => {
-      deps?.writeBacklog?.(driver)
-      writeFileSync(join(folder, 'run-b~writer~000000000001.logs.jsonl'), `${stage.replace('404', '406')}\n`)
+    await followTaskSources('driver.log', folder, 406, { ...options, details: true }, print, async (_path, deps) => {
+      deps?.writeBacklog?.(
+        Buffer.concat([
+          driver,
+          Buffer.from(
+            '2026-10-29T10:00:00Z [call=read]  > Developer   Reading file\n' +
+              '2026-10-29T10:00:00Z [command]  · retained command\n'
+          )
+        ])
+      )
+      const step = JSON.parse(stage)
+      const event = step.resourceLogs[0].scopeLogs[0].logRecords[0]
+      event.eventName = 'vinaya.step.started'
+      event.attributes.push(
+        { key: 'gen_ai.tool.call.id', value: { stringValue: 'read' } },
+        { key: 'vinaya.step.kind', value: { stringValue: 'reading' } },
+        { key: 'vinaya.step.target', value: { stringValue: 'file' } },
+        { key: 'vinaya.seat', value: { stringValue: 'developer' } }
+      )
+      writeFileSync(
+        join(folder, 'run-b~writer~000000000001.logs.jsonl'),
+        `${stage.replace('404', '406')}\n${JSON.stringify(step).replace('404', '406')}\n`
+      )
       await deps?.sleep?.(0)
       deps?.write?.(Buffer.from('2026-10-29T10:00:01Z  Duplicate driver narration\n'))
       deps?.tick?.()
@@ -88,6 +108,7 @@ test('task follow selects local records by work reference and falls back for a t
     expect(output.some((line) => line.includes('Log gap (file_missing)'))).toBe(true)
     expect(output).toContain('10:00:00  ◆ Loop   ━━ Round 1 · review · typical unavailable ━━')
     expect(output.some((line) => line.includes('Duplicate driver narration'))).toBe(false)
+    expect(output).toContain('          · retained command')
   } finally {
     rmSync(folder, { recursive: true, force: true })
   }

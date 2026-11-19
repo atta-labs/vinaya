@@ -117,7 +117,7 @@ const spanNamed = (record: OtelRecord, name: string): boolean =>
 
 type Primary = Extract<DriverLogLine, { kind: 'primary' }>
 type Step = { call: string; line: Primary }
-type Detail = { at: number; call?: string; label: string; text: string }
+type Detail = { at: number; call?: string; label: string; text: string; poll: number }
 
 function terminalText(text: string): string {
   return Array.from(text, (character) => {
@@ -160,6 +160,7 @@ export function createRecordFollow(options: FollowViewOptions) {
   const previousSteps: Step[] = []
   let pending: Detail[] = []
   let owner: Primary | undefined
+  let poll = 0
 
   function seat(record: OtelRecord, call: string | undefined): Role | undefined {
     const a = record.attributes
@@ -185,7 +186,9 @@ export function createRecordFollow(options: FollowViewOptions) {
     const a = record.attributes
     const at = timeOf(record)
     const round = a[A.roundNumber] ?? a[A.round]
-    if (record.name === E.runStarted || record.name === E.cancelled) return { line: { kind: 'reset' } }
+    if (record.name === E.runStarted || record.name === E.cancelled) {
+      return { line: { kind: 'reset', run: record.traceId } }
+    }
     if (record.name === E.pauseStarted) {
       const reason = word(a[A.pauseWhy])
       if (reason) pauseReasons.set(record.traceId, reason)
@@ -200,6 +203,7 @@ export function createRecordFollow(options: FollowViewOptions) {
           mark: 'round',
           label: 'Loop',
           words: '',
+          run: record.traceId,
           meta: {
             stage,
             round: String(round),
@@ -219,6 +223,7 @@ export function createRecordFollow(options: FollowViewOptions) {
       if (record.kind === 'span') stepSeats.delete(key)
       else if (role) stepSeats.set(key, role)
       const errorType = word(a[A.errorType])
+      const confidence = a[A.confidence]
       const failedCount = /^(\d+) failed$/.exec(word(a[A.stepErrorLine]) ?? '')?.[1]
       const parts =
         record.kind === 'span'
@@ -231,7 +236,14 @@ export function createRecordFollow(options: FollowViewOptions) {
               durationMs: Number(BigInt(record.time) - BigInt(record.startTime ?? record.time)) / 1_000_000,
               ...(failedCount !== undefined ? { failedTests: Number(failedCount) } : {})
             })
-          : renderNarratedUpdate({ type: 'action', id: call, kind, subject, at })
+          : renderNarratedUpdate({
+              type: 'action',
+              id: call,
+              kind,
+              subject,
+              at,
+              ...(kind === 'reporting' && typeof confidence === 'number' ? { confidence } : {})
+            })
       const line: Primary = {
         kind: 'primary',
         at,
@@ -259,20 +271,22 @@ export function createRecordFollow(options: FollowViewOptions) {
         mark: marks[narration.kind],
         words: narration.text,
         meta: {},
+        run: record.traceId,
         endsStage: record.name === E.exited
       }
     }
   }
 
-  function attachDetails(raw: readonly string[], steps: Step[], settled: boolean): DriverLogLine[] {
+  function attachDetails(raw: readonly string[], steps: Step[]): DriverLogLine[] {
     if (!options.details) return []
+    poll += 1
     for (const text of raw) {
       const line = parseDriverLogLine(text)
       if (line.kind === 'primary') owner = line
       else if (line.kind === 'runner' || line.kind === 'untimed') owner = undefined
       else if (line.kind === 'detail' && owner) {
         const call = word(line.meta.call) ?? word(owner.meta.call)
-        pending.push({ at: owner.at, label: owner.label, text: line.text, ...(call ? { call } : {}) })
+        pending.push({ at: owner.at, label: owner.label, text: line.text, poll, ...(call ? { call } : {}) })
       }
     }
     const trailing: DriverLogLine[] = []
@@ -293,7 +307,9 @@ export function createRecordFollow(options: FollowViewOptions) {
         if (line.label === detail.label && line.at <= detail.at && (!latest || line.at >= latest.line.at))
           latest = candidate
       }
-      const target = match ?? (detail.call === undefined || settled ? latest : undefined)
+      // Let the SDK catch up across one poll before using the seat fallback.
+      const canFallback = detail.call === undefined || poll > detail.poll
+      const target = match ?? (canFallback ? latest : undefined)
       if (!target) return true
       if (fresh.has(target)) target.line.details?.push(detail.text)
       else
@@ -333,13 +349,7 @@ export function createRecordFollow(options: FollowViewOptions) {
         lines.push(translated.line)
         if (translated.step) steps.push(translated.step)
       }
-      lines.unshift(
-        ...attachDetails(
-          rawDetails,
-          steps,
-          update.records.some((record) => record.name === E.exited)
-        )
-      )
+      lines.unshift(...attachDetails(rawDetails, steps))
       return renderer.render(lines.map(escapeRecordLine), now, backlog)
     },
     tick: renderer.tick

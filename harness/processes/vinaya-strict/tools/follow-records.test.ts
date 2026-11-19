@@ -180,4 +180,54 @@ test('an early detail waits for its call and a late detail identifies its step',
       false
     )
   ).toEqual(['          · Developer a: late detail'])
+  expect(
+    follow.render(
+      { records: [], gaps: [] },
+      ['2026-11-19T10:00:03Z [call=missing]  > Developer   Reading', '2026-11-19T10:00:03Z  · unmatched note'],
+      now,
+      false
+    )
+  ).toEqual([])
+  expect(follow.render({ records: [], gaps: [] }, [], now, false)).toEqual(['          · Developer b: unmatched note'])
+})
+
+test('an exit from an older run leaves the active run’s stage timer intact', () => {
+  const follow = view(false)
+  const attributes = { [A.roundNumber]: 1, [A.stageTo]: 'develop' }
+  follow.render(
+    {
+      records: [
+        { ...record(E.stageChanged, 0, attributes), traceId: 'old' },
+        record(E.stageChanged, 1000, attributes),
+        { ...record(E.exited, 2000, { [A.exitKind]: 'finished' }), traceId: 'old' }
+      ],
+      gaps: []
+    },
+    [],
+    now,
+    true
+  )
+  expect(follow.tick(new Date(now.getTime() + 301_000))).toEqual([
+    '10:05:01  ◌ Loop   Still in develop (round 1) after 5m'
+  ])
+})
+
+test('action starts omit suffixes when the record has no counts or confidence', () => {
+  const records = ['editing', 'creating', 'reporting'].map((kind, i) =>
+    record(
+      E.stepStarted,
+      1000 + i * 1000,
+      {
+        ...step(kind, 'file'),
+        [A.stepKind]: kind
+      },
+      'started',
+      kind
+    )
+  )
+  expect(view(false).render({ records, gaps: [] }, [], now, false)).toEqual([
+    '10:00:01  ▸ Developer   Editing file',
+    '10:00:02  ▸ Developer   Creating file',
+    '10:00:03  ▸ Developer   Reporting file'
+  ])
 })
