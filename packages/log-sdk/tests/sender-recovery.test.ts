@@ -74,6 +74,23 @@ test('retries staged records after their source segment is removed', async () =>
   expect(observed).toEqual(new Set([trace]))
 })
 
+test('reports a missing writer segment and still sends the later segment', async () => {
+  const { options, fetch, segment, observed } = fixture()
+  const missing = segment(0, trace)
+  segment(1, event)
+  unlinkSync(missing)
+  const result = await sendLocalCopy({ ...options, fetch })
+  expect(result.sent).toBe(1)
+  expect(result.failures).toEqual([
+    expect.objectContaining({
+      file: expect.stringContaining('run~writer~000000000000'),
+      reason: 'lost segment from writer writer'
+    })
+  ])
+  expect(observed).toEqual(new Set([event]))
+  expect((await sendLocalCopy({ ...options, fetch })).failures).toEqual(result.failures)
+})
+
 test('overlapping sends leave continuing segments eligible after old files are deleted', async () => {
   const { options, fetch, segment, observed } = fixture()
   const old = segment(0, trace)

@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { constants } from 'node:fs'
+import { constants, lstatSync } from 'node:fs'
 import { lstat, mkdir, open, readdir, rename, unlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { repoSegment } from '../writer/settings.js'
 
 type Signal = 'traces' | 'logs'
-const segmentName = /^[a-zA-Z0-9][a-zA-Z0-9._-]*~[a-zA-Z0-9][a-zA-Z0-9._-]*~\d{12}\.(traces|logs)\.jsonl$/
+const segmentName = /^([a-zA-Z0-9][a-zA-Z0-9._-]*~([a-zA-Z0-9][a-zA-Z0-9._-]*))~(\d{12})\.(traces|logs)\.jsonl$/
 const retryableClientStatuses = new Set([401, 403, 404, 408, 429])
 const requestTimeoutMs = 30_000
 
@@ -36,6 +36,38 @@ export function otlpSignalUrl(base: string, signal: Signal): string {
 
 function missing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === 'ENOENT'
+}
+
+async function nextNewline(data: Buffer, offset: number, signal: AbortSignal): Promise<number> {
+  const block = 64 * 1024
+  for (let start = offset; start < data.length && !signal.aborted; start += block) {
+    const index = data.subarray(start, start + block).indexOf(10)
+    if (index !== -1) return start + index
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+  return -1
+}
+
+async function lineKey(identity: { file: string; offset: number }, line: Buffer, signal: AbortSignal) {
+  const hash = createHash('sha256').update(JSON.stringify(identity))
+  const block = 64 * 1024
+  for (let start = 0; start < line.length; start += block) {
+    if (signal.aborted) return undefined
+    hash.update(line.subarray(start, start + block))
+    if (line.length > block) await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+  return hash.digest('hex')
+}
+
+function rejectedBeforePost(path: string): boolean {
+  try {
+    const stat = lstatSync(path)
+    if (!stat.isFile() || stat.nlink !== 1) throw new Error('Unsafe rejection receipt')
+    return stat.size > 0
+  } catch (error) {
+    if (missing(error)) return false
+    throw error
+  }
 }
 
 async function list(directory: string) {
@@ -87,7 +119,7 @@ async function hasReceipt(path: string): Promise<boolean> {
 }
 
 async function recordReceipt(path: string, content: string | Uint8Array): Promise<void> {
-  const temp = `${path}.${randomUUID()}.tmp`
+  const temp = join(dirname(path), `${randomUUID()}.tmp`)
   await writeFile(temp, content, { flag: 'wx', mode: 0o600 })
   try {
     await rename(temp, path)
@@ -182,27 +214,93 @@ export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<Loca
     headers.set('content-type', 'application/json')
     const files = await list(directory)
     await checkState(state)
+    const entries = await list(state)
+    const observed = new Map<string, string>()
+    const writers = new Map<string, Set<number>>()
+    const seen = new Set<string>()
+    const marker = (name: string, suffix: string) => join(state, `${name.slice(0, -6)}.${suffix}`)
+    async function fullyStaged(name: string): Promise<boolean> {
+      const size = await snapshot(marker(name, 'seen'))
+      const complete = await snapshot(marker(name, 'done'))
+      return size !== undefined && complete !== undefined && Number(complete.toString()) >= Number(size.toString())
+    }
+    function remember(name: string, onDisk: boolean) {
+      const match = segmentName.exec(name)
+      if (!match?.[1] || !match[2]) return
+      const index = Number(match[3])
+      const positions = writers.get(match[1]) ?? new Set<number>()
+      positions.add(index)
+      writers.set(match[1], positions)
+      if (onDisk) seen.add(name)
+      observed.set(name, match[2])
+    }
+    for (const entry of files) if (entry.isFile()) remember(entry.name, true)
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      if (entry.name.endsWith('.seen')) remember(`${entry.name.slice(0, -5)}.jsonl`, false)
+    }
+    async function lost(name: string, writer: string) {
+      const failure = { file: join(directory, name), reason: `lost segment from writer ${writer}` }
+      const key = createHash('sha256').update(name).digest('hex')
+      await mkdir(state, { recursive: true, mode: 0o700 })
+      await recordReceipt(join(state, `${key}.lost.json`), JSON.stringify(failure))
+      if (!stopped) report.failures.push(failure)
+    }
+    for (const [name, writer] of observed) {
+      if (stopped || Date.now() >= deadline) return
+      if (seen.has(name)) {
+        await mkdir(state, { recursive: true, mode: 0o700 })
+        const stat = await lstat(join(directory, name)).catch((error) => {
+          if (missing(error)) return undefined
+          throw error
+        })
+        if (stat?.isFile()) await recordReceipt(marker(name, 'seen'), String(stat.size))
+        else if (!(await fullyStaged(name))) await lost(name, writer)
+      } else if (!(await fullyStaged(name)) && !(await hasReceipt(join(directory, name)))) {
+        await lost(name, writer)
+      }
+    }
+    for (const [prefix, positions] of writers) {
+      let expected = 0
+      for (const index of [...positions].sort((a, b) => a - b)) {
+        if (stopped || Date.now() >= deadline) return
+        if (index > expected) {
+          const slot = (value: number) => String(value).padStart(12, '0')
+          const range = index === expected + 1 ? slot(expected) : `${slot(expected)}–${slot(index - 1)}`
+          await lost(`${prefix}~${range}.{traces,logs}.jsonl`, prefix.split('~')[1] ?? prefix)
+        }
+        expected = index + 1
+      }
+    }
     const pending = new Map<string, { signal: Signal; file: string; offset: number }>()
-    for (const entry of await list(state)) {
+    for (const entry of entries) {
       const match = /^([a-f0-9]{64})\.(traces|logs)\.pending$/.exec(entry.name)
       if (match?.[1] && entry.isFile())
         pending.set(entry.name, { file: match[1], offset: 0, signal: match[2] as Signal })
     }
     for (const entry of files) {
       if (stopped || Date.now() >= deadline) return
-      const signal = segmentName.exec(entry.name)?.[1] as Signal | undefined
+      const match = segmentName.exec(entry.name)
+      const signal = match?.[4] as Signal | undefined
       if (!signal || !entry.isFile()) continue
       try {
         const data = await snapshot(join(directory, entry.name))
-        if (!data) continue
-        for (let offset = 0, end = data.indexOf(10); end !== -1; end = data.indexOf(10, offset)) {
+        if (!data) {
+          if (!(await fullyStaged(entry.name))) await lost(entry.name, match?.[2] ?? 'unknown')
+          continue
+        }
+        let offset = 0
+        while (offset < data.length) {
           if (stopped || Date.now() >= deadline) return
+          const end = await nextNewline(data, offset, stop.signal)
+          if (end === -1) break
           const identity = { file: entry.name, offset }
           const line = data.subarray(offset, end)
           offset = end + 1
           // A replacement with different bytes gets its own receipt. No position
           // in this file can mark a different file or an earlier line delivered.
-          const key = createHash('sha256').update(JSON.stringify(identity)).update(line).digest('hex')
+          const key = await lineKey(identity, line, stop.signal)
+          if (!key || stopped || Date.now() >= deadline) return
           const name = `${key}.${signal}.pending`
           const path = join(state, name)
           if (!pending.has(name)) {
@@ -213,6 +311,9 @@ export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<Loca
             await recordReceipt(path, data.subarray(identity.offset, offset))
           }
           pending.set(name, { ...identity, signal })
+        }
+        if (!stopped && offset === data.length) {
+          await recordReceipt(marker(entry.name, 'done'), String(data.length))
         }
       } catch {
         if (!stopped) report.failures.push({ file: entry.name, reason: 'local copy or delivery state unavailable' })
@@ -239,6 +340,7 @@ export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<Loca
         const body = large ? (line as Uint8Array<ArrayBuffer>) : line.toString('utf8')
         let reason = valid ? undefined : 'invalid JSON'
         if (!reason) {
+          if (rejectedBeforePost(rejected)) continue
           const status = await post(options.fetch ?? fetch, endpoints[signal], headers, body, deadline)
           if (stopped) return
           if (typeof status !== 'number') {

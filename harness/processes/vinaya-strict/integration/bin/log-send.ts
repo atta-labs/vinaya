@@ -21,10 +21,14 @@
 
 import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
 import { existsSync, readFileSync, readdirSync, realpathSync, unlinkSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
 import { loadConfig, loadTrustAnchorConfigAsync, resolveCiTrustAnchorProbeRef } from '../config/compose.js'
-import { resolveSettings } from '../../../../../packages/log-sdk/src/writer/settings.js'
+import {
+  defaultRuntimeDir,
+  repoSegment as sdkRepoSegment,
+  resolveSettings
+} from '../../../../../packages/log-sdk/src/writer/settings.js'
 import { printJson } from '../../../../kernel/effects/envelope.js'
 import {
   appendHardenedLine,
@@ -106,9 +110,18 @@ type SendReport = {
   failures: Array<{ issue: number | null; reason: string }>
 }
 
+function physicalPath(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || dirname(path) === path) throw error
+    return join(physicalPath(dirname(path)), basename(path))
+  }
+}
+
 function localCopyFolder(configured: string | undefined, fallback: string, root: string | null): string {
   if (!configured || isInsideRepo(configured, root)) return fallback
-  if (root && existsSync(configured) && isInsideRepo(realpathSync(configured), realpathSync(root))) return fallback
+  if (root && isInsideRepo(physicalPath(configured), realpathSync(root))) return fallback
   return configured
 }
 
@@ -145,7 +158,17 @@ export async function logSendCommand(args: string[]): Promise<void> {
     repoRoot
   })
 
-  const legacy = destination.kind === 'server' ? await deliverServerLogs(repo, defaultFolder, destination) : undefined
+  const legacy =
+    destination.kind === 'server'
+      ? await deliverServerLogs(repo, defaultFolder, destination).catch(
+          (): SendReport => ({
+            destination: destination.url,
+            tasks: [],
+            totals: { moved: 0, delivered: 0, chunks: 0, rejected: 0 },
+            failures: [{ issue: null, reason: 'could not enumerate Log server backlog' }]
+          })
+        )
+      : undefined
   const serverReason =
     destination.kind === 'server'
       ? undefined
@@ -162,24 +185,37 @@ export async function logSendCommand(args: string[]): Promise<void> {
     env: process.env
   })
   const repository = repo ? `${repo.owner}/${repo.repo}` : undefined
-  const sdk = address.kind === 'address' && repoRoot ? resolveSettings({ repoRoot, repository }) : undefined
-  const settings = sdk?.ok ? sdk.settings.logs : localConfig?.logs
-  const sdkFallback = sdk?.ok ? join(sdk.settings.runtimeDir, 'logs') : defaultFolder
-  const otlp =
-    address.kind === 'address'
-      ? sdk && !sdk.ok
-        ? {
-            sent: 0,
-            setAside: [],
-            failures: [{ file: undefined, offset: undefined, reason: 'SDK Log settings unavailable' }]
-          }
-        : await sendLocalCopy({
-            folder: localCopyFolder((settings || undefined)?.folder, sdkFallback, repoRoot),
-            repository,
-            url: address.url,
-            headers: address.headers
-          })
-      : { reason: address.reason }
+  async function deliverOtlp(url: string, headers: Record<string, string> | undefined) {
+    try {
+      const sdk = !otlpAnchored && repoRoot ? resolveSettings({ repoRoot, repository }) : undefined
+      if (sdk && !sdk.ok) throw new Error('SDK settings unavailable')
+      const settings = otlpAnchored ? trustAnchorConfig?.logs : (sdk?.settings.logs ?? localConfig?.logs)
+      const runtime = otlpAnchored
+        ? (trustAnchorConfig?.runtimeDir ?? defaultRuntimeDir(repository))
+        : sdk?.settings.runtimeDir
+      const folder = localCopyFolder(
+        (settings || undefined)?.folder,
+        runtime ? join(runtime, 'logs') : defaultFolder,
+        repoRoot
+      )
+      const target = join(folder, sdkRepoSegment(repository))
+      if (
+        !repoRoot ||
+        [target, join(target, '.otlp-delivery')].some((path) =>
+          isInsideRepo(physicalPath(path), realpathSync(repoRoot))
+        )
+      )
+        throw new Error('Unsafe SDK Log directory')
+      return await sendLocalCopy({ folder, repository, url, headers })
+    } catch {
+      return {
+        sent: 0,
+        setAside: [],
+        failures: [{ file: undefined, offset: undefined, reason: 'SDK Log directory unavailable or unsafe' }]
+      }
+    }
+  }
+  const otlp = address.kind === 'address' ? await deliverOtlp(address.url, address.headers) : { reason: address.reason }
   const failed =
     (!legacy && address.kind === 'none') ||
     Boolean(legacy?.failures.length) ||
