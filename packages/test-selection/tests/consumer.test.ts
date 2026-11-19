@@ -189,8 +189,10 @@ describe('a fresh repository installs the packed package and selects with it', (
       // Started in a member's folder, under Node, through the command npm linked.
       const command = join(mono, 'node_modules/.bin/test-selection')
       const status = run('git', ['status', '--porcelain', '--untracked-files=all'], mono, home).stdout
-      const printed = JSON.parse(
-        run('node', [command, '--base', 'HEAD~1', '--head', 'HEAD'], join(mono, 'packages/app'), home).stdout
+      const selection = run('node', [command, '--base', 'HEAD~1', '--head', 'HEAD'], join(mono, 'packages/app'), home)
+      const printed = JSON.parse(selection.stdout)
+      expect(selection.stderr).toBe(
+        'test-selection: warning: left out 0 package(s) with unsupported runners and 1 test file(s) under no suite\n'
       )
       expect(run('git', ['status', '--porcelain', '--untracked-files=all'], mono, home).stdout).toBe(status)
       expect(printed.tests).toEqual(['packages/app/tests/greet.test.ts', 'packages/web/tests/view.spec.ts'])
@@ -244,6 +246,13 @@ describe('a fresh repository installs the packed package and selects with it', (
           ['--base', '--head', '--record', '--fetch-record', '--config', '--help']
         )
       }
+
+      writeFileSync(join(mono, 'packages/docs/package.json'), '{ "name": "docs", "scripts": { "test": "jest" } }\n')
+      run('git', ['commit', '-q', '-am', 'use Jest for docs'], mono, home)
+      const jest = run('node', [command, '--base', 'HEAD~1', '--head', 'HEAD'], mono, home)
+      expect(jest.stderr).toBe(
+        'test-selection: warning: left out 1 package(s) with unsupported runners and 1 test file(s) under no suite\n'
+      )
 
       // The command with a read record and a consumer config, in a fresh repository whose head commit changes only
       // a data file one test reads without importing it, and whose next commit adds a test with its own data file.
@@ -366,6 +375,10 @@ esac
       const plain = fetching()
       expect(plain.status).toBe(0)
       expect(plain.stderr).toBe('')
+      expect(JSON.parse(plain.stdout).leftOut).toEqual({
+        packages: [{ dir: '.', name: 'cfg', reason: 'no-test-script', script: null }],
+        tests: []
+      })
       expect(callsOf()).toBe('')
       expect(existsSync(keptDir)).toBe(false)
       // The flag: the plan equals the `--record` plan, the record is kept, the line is on standard error only.
