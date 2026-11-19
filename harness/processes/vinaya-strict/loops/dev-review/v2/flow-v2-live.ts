@@ -1580,6 +1580,15 @@ export async function runExplicitCommandsLive(input: {
         cleanupReadyGateStorage(ownedRun)
       }
     }
+    // A receipt is keyed on the worktree's state, git-ignored files included, and a later command may write ignored
+    // files (a typecheck filling its build cache). Every command passed at this head with the tracked tree unchanged,
+    // so each receipt is recorded once more against the state the Evidence write will read.
+    const final = await worktreeDrift(input.worktreePath, input.head, input.signal)
+    if (final !== null) return finish('drift', { detail: final })
+    for (const result of results) {
+      if (result.outcome !== 'passed') continue
+      await recordGreenTestRun(result.command, result.output, input.worktreePath, 'pr-report', cache)
+    }
     return finish('passed')
   })
 }
