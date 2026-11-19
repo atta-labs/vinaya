@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import {
   evaluateChangesetCoverage,
+  evaluateIgnoredChangesets,
   isChangesetFile,
   isShippedPath,
   type FixedGroupMember
@@ -19,6 +20,38 @@ const VINAYA: FixedGroupMember = {
 }
 
 const FIXED_GROUP = [SAMPLE_CORE, VINAYA]
+
+describe('evaluateIgnoredChangesets', () => {
+  const path = '.changeset/example.md'
+
+  it('reports every ignored key in CRLF frontmatter using exact and scoped wildcard entries', () => {
+    const text = [
+      '---',
+      'plain: patch',
+      "'@fixture/a': minor",
+      '"\\x40fixture\\/b": major',
+      'released: patch',
+      '---',
+      'body-only: patch'
+    ].join('\r\n')
+    expect(evaluateIgnoredChangesets(['plain', '@fixture/*', 'body-only'], [{ path, text }], false)).toEqual([
+      { path, packages: ['plain', '@fixture/a', '@fixture/b'] }
+    ])
+  })
+
+  it('accepts empty changesets and skips negated entries', () => {
+    expect(
+      evaluateIgnoredChangesets(
+        ['!@fixture/*', 'ignored'],
+        [
+          { path, text: '---\n---\n' },
+          { path: '.changeset/allowed.md', text: "---\n'@fixture/a': patch\n---\n" }
+        ],
+        false
+      )
+    ).toEqual([])
+  })
+})
 
 describe('changeset-coverage-logic — isShippedPath', () => {
   it('a bare directory entry matches anything nested under it', () => {
