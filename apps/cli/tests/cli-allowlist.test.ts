@@ -92,6 +92,14 @@ describe('the command line allow list', () => {
     expect(bin['vinaya-supervised-command']).toBe('dist/programs/supervised-command.js')
   })
 
+  test('the manifest names this repository as its source, at apps/cli', () => {
+    const { repository } = JSON.parse(readFileSync(join(CLI, 'package.json'), 'utf8')) as {
+      repository: { url: string; directory: string }
+    }
+    expect(repository.url).toBe('git+https://github.com/atta-labs/vinaya.git')
+    expect(repository.directory).toBe('apps/cli')
+  })
+
   test('a manifest bin the program table does not name fails', () => {
     const drift = binDrift({ ...manifestBin(), 'vinaya-not-a-program': 'dist/programs/not-a-program.js' })
     expect(drift.unnamed).toEqual(['vinaya-not-a-program'])
