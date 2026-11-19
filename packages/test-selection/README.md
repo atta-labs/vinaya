@@ -185,7 +185,7 @@ file that the test read directly. The test file itself always runs when changed.
   entry added, removed or changed. Each affected value on either side must be
   a string matching `^[0-9A-Za-z^~<>=|*+ .-]+$` with no leading dot,
   and the affected names must be absent from the workspace names on both sides.
-  The test must run under Bun, open the manifest exactly once in its own
+  The test must have a version-2 record, run under Bun, open the manifest exactly once in its own
   process, and have no child opens of the manifest. Every coverage path must
   exist as a file in the record commit, and at least one must have this manifest
   as its nearest `package.json`. The rule keeps file-level tests, readers of

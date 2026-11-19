@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'bun:test'
 import {
   type InventoryDeclarations,
+  isReadRecord,
   inventoryViewOf,
   memoryRepository,
   neverEnteredFunctions,
@@ -462,6 +463,7 @@ describe('workspace manifest dependency-list changes', () => {
       declarations?: InventoryDeclarations
       platform?: string
       drift?: boolean
+      schemaVersion?: 1 | 2
     } = {}
   ): SelectionPlan {
     const overlay = (original: Record<string, string>, changes: Record<string, string | null>) =>
@@ -481,7 +483,10 @@ describe('workspace manifest dependency-list changes', () => {
       },
       policy: { depth: 'transitive', installLayout: 'hoisted', ...options.policy },
       records: {
-        record: { ...recordOf({ [TEST]: options.entry ?? entry }), commit: options.drift ? 'recorded' : 'base' },
+        record: {
+          ...recordOf({ [TEST]: options.entry ?? entry }, options.schemaVersion),
+          commit: options.drift ? 'recorded' : 'base'
+        },
         platform: options.platform ?? 'linux'
       }
     })
@@ -604,6 +609,28 @@ describe('workspace manifest dependency-list changes', () => {
     })
     expect(viaDeclaration.required.find((test) => test.test === TEST)?.reasons).toContainEqual(
       expect.objectContaining({ kind: 'declared-input', via: manifest })
+    )
+  })
+
+  it('keeps a static dependency on another changed file missing from the record', () => {
+    const plan = compare({
+      base: { [TEST]: "import { other } from '../src/other.js'\nother()\n" },
+      head: { [manifest]: after, [OTHER]: OTHER_BASE.replace('return 1', 'return 2') }
+    })
+    expect(plan.required.find((test) => test.test === TEST)?.reasons).toContainEqual(
+      expect.objectContaining({ kind: 'direct-dependency', via: OTHER })
+    )
+  })
+
+  it('ignores unvalidated version-one evidence in selection and drift', () => {
+    const legacy = { ...entry, childOpens: {} } as unknown as RecordedTest
+    expect(isReadRecord(recordOf({ [TEST]: legacy }, 1))).toBe(true)
+    const current = compare({ schemaVersion: 1, entry: legacy })
+    expect(current.required.map((test) => test.test)).toContain(TEST)
+    expect(current.records.leftOut).toEqual([])
+    const drift = compare({ schemaVersion: 1, entry: legacy, drift: true, base: { [manifest]: after }, head: {} })
+    expect(drift.records.fallbacks).toContainEqual(
+      expect.objectContaining({ id: 'record-input-changed', tests: [TEST] })
     )
   })
 

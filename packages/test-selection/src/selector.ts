@@ -2567,7 +2567,7 @@ function selectChange(input: SelectTestsInput): ChangePlan {
     }
     return kept
   }
-  const manifestRuleEnabled = records !== null && policy.installLayout === 'hoisted'
+  const manifestRuleEnabled = records?.record.schemaVersion === 2 && policy.installLayout === 'hoisted'
   const headManifests = dependencyListManifests(repo, base, head)
   const driftManifests = dependencyListManifests(repo, records?.record.commit ?? base, base)
   let recordFiles: ReadonlySet<string> | null | undefined
@@ -2796,11 +2796,12 @@ function selectChange(input: SelectTestsInput): ChangePlan {
     leftOutFiles.set(test, [...(leftOutFiles.get(test) ?? []), { path, rule, detail }])
   const recordRead = new Set<string>()
   if (decided.size > 0) {
-    const declaredReasons = new Map<string, PlanReason[]>()
+    const independentReasons = new Map<string, PlanReason[]>()
+    const changesByPath = new Map(pathChanges.map((change) => [change.path, change]))
     for (const test of decided.keys()) {
       if (manifestRuleEnabled) {
-        const declared = reasons.get(test)?.filter((reason) => reason.kind === 'declared-input')
-        if (declared?.length) declaredReasons.set(test, declared)
+        const previous = reasons.get(test)
+        if (previous?.length) independentReasons.set(test, previous)
       }
       reasons.delete(test)
     }
@@ -2817,8 +2818,6 @@ function selectChange(input: SelectTestsInput): ChangePlan {
               'manifest-dependency-lists',
               'Bun opened the workspace manifest only to load modules, and only dependency lists changed'
             )
-            for (const reason of declaredReasons.get(test) ?? []) addReason(test, reason)
-            declaredReasons.delete(test)
             continue
           }
           if (narrowable(test, change.path)) {
@@ -2837,6 +2836,22 @@ function selectChange(input: SelectTestsInput): ChangePlan {
           }
         }
         addReason(test, { kind: 'recorded-read', detail: reach.detail, via: reach.via, revision: 'head' })
+      }
+    }
+    for (const [test, omissions] of leftOutFiles) {
+      const manifests = new Set(
+        omissions.filter((file) => file.rule === 'manifest-dependency-lists').map((file) => file.path)
+      )
+      if (manifests.size === 0) continue
+      const index = decided.get(test)
+      for (const reason of independentReasons.get(test) ?? []) {
+        const otherChange = changesByPath.get(reason.via)
+        // Recorded reads already decide paths they reach, including the two existing narrowing rules.
+        if (
+          reason.kind === 'declared-input' ||
+          (otherChange && !manifests.has(otherChange.path) && index && !recordReach(index, otherChange))
+        )
+          addReason(test, reason)
       }
     }
   }
