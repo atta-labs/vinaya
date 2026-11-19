@@ -159,7 +159,7 @@ test('a failure claims its agent span and a subsequent role attempt stays an ear
   expect(reported.record.attributes).toContainEqual({ key: A.provenance, value: { stringValue: 'reported' } })
 })
 
-test('replayed starts preserve original times and distinct loops have distinct spans', () => {
+test('replayed starts preserve original times and ids derive from the run and round alone', () => {
   for (const [startName, endName] of [
     ['loop_started', 'journal_finalized'],
     ['round_started', 'round_ended']
@@ -172,8 +172,7 @@ test('replayed starts preserve original times and distinct loops have distinct s
     const whole = convertEarlierEvents([start, replay, otherStart, end, otherEnd])
     const spans = whole.traces.resourceSpans.flatMap((group) => group.scopeSpans.flatMap((scope) => scope.spans))
     expect(spans).toHaveLength(2)
-    expect(spans[0]?.spanId).not.toBe(spans[1]?.spanId)
-    expect(spans[0]?.startTimeUnixNano).not.toBe(spans[1]?.startTimeUnixNano)
+    expect(spans[0]?.spanId).toBe(spans[1]?.spanId)
     const first = createLiveEarlierConverter(runId).convert(start)
     if (first.type !== 'log') throw new Error('Expected started record')
     const key = first.record.attributes.find((attr) => attr.key === A.spanKey)?.value
@@ -226,6 +225,48 @@ test('earlier finding metadata survives without finding descriptions', () => {
     expect(encoded).not.toContain(description)
     expect(encoded).toContain('F1')
     expect(encoded).toContain('BLOCKER')
+  }
+})
+
+test('a dispatch outcome has the same agent span and parent live and whole-run, with or without round_ended', () => {
+  const start = fixtures.find((event) => event.event === 'round_started')!
+  const end = fixtures.find((event) => event.event === 'round_ended')!
+  const dispatch = fixtures.find((event) => event.event === 'outcome_received')!
+  for (const events of [
+    [start, dispatch],
+    [start, dispatch, end]
+  ]) {
+    const whole = convertEarlierEvents(events)
+    const wholeAgent = whole.traces.resourceSpans
+      .flatMap((group) => group.scopeSpans.flatMap((scope) => scope.spans))
+      .find((span) => span.name === 'invoke_agent')
+    const live = createLiveEarlierConverter(runId)
+    const liveAgent = events
+      .map((event) => live.convert(event))
+      .flatMap((item) => (item.type === 'span' ? [item.record] : []))
+      .find((span) => span.name === 'invoke_agent')
+    expect(wholeAgent?.parentSpanId).toBeDefined()
+    expect(liveAgent).toEqual(wholeAgent)
+  }
+})
+
+test('a role attempt followed by a dispatch start and end for one effect leaves no open start', () => {
+  const attempt = fixtures.find((event) => event.kind === 'role_attempt')!
+  const dispatchStart = fixtures.find((event) => event.event === 'dispatched')!
+  const dispatchEnd = fixtures.find((event) => event.event === 'outcome_received')!
+  if (attempt.kind !== 'role_attempt' || dispatchStart.kind !== 'dispatch' || dispatchEnd.kind !== 'dispatch') {
+    throw new Error('Expected agent fixtures')
+  }
+  const effect_id = attempt.effect_id
+  const live = createLiveEarlierConverter(runId)
+  const first = live.convert(attempt)
+  const started = live.convert(LogEventSchema.parse({ ...dispatchStart, effect_id }))
+  const ended = live.convert(LogEventSchema.parse({ ...dispatchEnd, effect_id }))
+  expect(first.type).toBe('span')
+  for (const later of [started, ended]) {
+    if (later.type !== 'log') throw new Error('Expected an earlier-format event')
+    expect(later.record.eventName.startsWith('vinaya.earlier.')).toBe(true)
+    expect(later.record.attributes.some((attr) => attr.key === A.spanKey)).toBe(false)
   }
 })
 

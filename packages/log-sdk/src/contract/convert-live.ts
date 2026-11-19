@@ -144,17 +144,10 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
       const spanId = spanIdFor(runId, key)
       const agent = event.kind === 'dispatch' || event.kind === 'role_attempt'
       const openKey = agent ? `span:${spanId}` : key
-      const laterAgentRecord = agent && !started && writtenEffects.has(event.effect_id)
+      const laterAgentRecord = agent && writtenEffects.has(event.effect_id)
       if (agent && !started) writtenEffects.add(event.effect_id)
-      const roundSuffix = mapping.parent?.replace(/^run(?=:)/, '')
-      const parent = agent
-        ? [...open.keys()].find(
-            (candidate) =>
-              roundSuffix?.startsWith(':round:') && candidate.startsWith('loop:') && candidate.endsWith(roundSuffix)
-          )
-        : mapping.parent !== undefined && open.has(mapping.parent)
-          ? mapping.parent
-          : undefined
+      // The parent is derived from the run id and the event's own round; it is never looked up.
+      const parent = mapping.parent
       const resource = {
         attributes: attributesOf(
           {
@@ -200,7 +193,7 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
         }
       )
       if (mapping.repeatable) attributes.push({ key: A.questionKey, value: { stringValue: key } })
-      if (started) attributes.push({ key: A.spanKey, value: { stringValue: openKey } })
+      if (started && !laterAgentRecord) attributes.push({ key: A.spanKey, value: { stringValue: openKey } })
       if (mapping.mode === 'event' || started || laterAgentRecord) {
         const eventName = laterAgentRecord ? `${EARLIER_EVENT_PREFIX}${event.kind}.${event.event}` : mapping.name
         const converted: StartedRecord = {
@@ -208,7 +201,7 @@ export function createEarlierConversionState(runId: string, seeds: readonly Earl
           resource,
           record: { eventName, traceId, spanId, timeUnixNano, attributes, flags: 1 }
         }
-        if (started && !open.has(openKey)) {
+        if (started && !laterAgentRecord && !open.has(openKey)) {
           open.set(openKey, { spanKey: openKey, startTimeUnixNano: timeUnixNano, started: converted })
         }
         return { converted }

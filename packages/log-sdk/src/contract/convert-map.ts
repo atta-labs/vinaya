@@ -27,7 +27,9 @@ export function agentSpanIdFor(runId: string, effectId: string): string {
 
 export function mapEarlierEvent(event: LogEvent): Mapping {
   const round = ('round' in event ? event.round : undefined) ?? event.subject.round
-  const runKey = event.kind === 'dev_review_loop' ? `loop:${spanIdFor(event.meta.run_id, event.loop_id)}` : 'run'
+  // One run span and one span per round number: the loop's own events and a dispatch's
+  // parent derive the same ids from the run id and the round alone.
+  const runKey = 'run'
   const roundKey = round === undefined ? runKey : `${runKey}:round:${round}`
   const point = (name: string, attributes: Fields = {}, key = runKey): Mapping => ({
     mode: 'event',

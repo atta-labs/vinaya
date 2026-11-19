@@ -29,12 +29,9 @@ export function convertEarlierEvents(events: readonly LogEvent[], home = ''): Ea
   // records when several historical producers share the run.
   let lastSpanResource: string | undefined
   let lastLogResource: string | undefined
-  const spanIds = new Set([...records].flatMap((item) => (item.type === 'span' ? [item.record.spanId] : [])))
   for (const { resource, record, type } of records) {
     const key = JSON.stringify(resource)
     if (type === 'span') {
-      // A partial run can end before the historical parent is emitted.
-      if (record.parentSpanId !== undefined && !spanIds.has(record.parentSpanId)) delete record.parentSpanId
       const group = output.traces.resourceSpans.at(-1)?.scopeSpans[0]
       if (group !== undefined && key === lastSpanResource) group.spans.push(record)
       else output.traces.resourceSpans.push({ resource, scopeSpans: [{ scope: { ...scope }, spans: [record] }] })
