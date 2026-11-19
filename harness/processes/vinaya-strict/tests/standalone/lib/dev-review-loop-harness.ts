@@ -837,6 +837,9 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     // its full 5s bound (Issue #709: the whole point is that these run fast).
     sleep: (ms) => new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0)),
     now: () => Date.now(),
+    // Never the real `gh api rate_limit`: `devReviewLoop` fills any dep left out with its real default, so a
+    // spent budget on the machine running the tests would send every run down the host-budget wait.
+    readRateLimitReset: async () => null,
     prPollMaxAttempts: 3,
     prPollIntervalMs: 1,
     gatePollMaxAttempts: 3,
