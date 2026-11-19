@@ -100,6 +100,7 @@ export const SANCTIONED_APPEND_STREAMS: readonly string[] = ['none-cli-operation
 
 /** Whether `rel` (relative to the runtime root) is a sanctioned append's file: `logs/<repository>/<stream>.ndjson` or its `.1.ndjson` rotation slot, with `<repository>` exactly one segment. */
 export function isSanctionedAppend(rel: string): boolean {
+  if (isLocalCopySegment(rel)) return true
   const parts = rel.split(sep)
   return (
     parts.length === 3 &&
@@ -108,6 +109,14 @@ export function isSanctionedAppend(rel: string): boolean {
     parts[1] !== '.' &&
     parts[1] !== '..' &&
     SANCTIONED_APPEND_STREAMS.some((stream) => parts[2] === `${stream}.ndjson` || parts[2] === `${stream}.1.ndjson`)
+  )
+}
+
+/** Whether `rel` is one process's file of an OpenTelemetry local copy beside a sanctioned append: `logs/<repository>/<run>~<writer>~<index>.(logs|traces).jsonl`. */
+export function isLocalCopySegment(rel: string): boolean {
+  const parts = rel.split(sep)
+  return (
+    parts.length === 3 && parts[0] === 'logs' && /^[^~]+~[^~]+~\d{12}\.(logs|traces)\.jsonl$/.test(parts[2] as string)
   )
 }
 

@@ -103,14 +103,11 @@ export function createRunRecorder(deps: RunRecorderDeps) {
             const started = open.get(step.id)
             if (started === undefined) return
             open.delete(step.id)
-            const failedLine =
-              step.failedTests === undefined
-                ? step.error
-                : `${step.failedTests} failed${step.error === undefined ? '' : ` (${step.error})`}`
+            // Only the outcome and a test run's failed count: the translator's error line excerpts tool output.
             log.agent.stepEnded(started.ref, {
               endTime: started.startedAt + step.durationMs,
               ...(step.ok ? {} : { errorType: step.failedTests === undefined ? 'failed' : 'tests_failed' }),
-              ...(step.ok || failedLine === undefined ? {} : { errorLine: failedLine })
+              ...(step.ok || step.failedTests === undefined ? {} : { errorLine: `${step.failedTests} failed` })
             })
           } catch (error) {
             report(error)

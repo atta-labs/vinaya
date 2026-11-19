@@ -71,7 +71,7 @@ test("step updates become step spans under the dispatch's agent span, with no pa
     ok: false,
     durationMs: 250,
     at: 1_250,
-    error: 'exit 1',
+    error: 'SECRET-TOOL-OUTPUT-LINE',
     failedTests: 3
   })
   steps.observe({ type: 'start', id: 'c2', tool: 'Read', kind: 'reading', target: 'a.ts', at: 2_000 })
@@ -87,7 +87,8 @@ test("step updates become step spans under the dispatch's agent span, with no pa
   expect(attribute(tests, 'vinaya.step.kind')).toBe('running_tests')
   expect(attribute(tests, 'vinaya.step.target')).toBe('bun test')
   expect(attribute(tests, 'error.type')).toBe('tests_failed')
-  expect(String(attribute(tests, 'vinaya.step.error_line'))).toContain('3 failed')
+  expect(String(attribute(tests, 'vinaya.step.error_line'))).toBe('3 failed')
+  expect(JSON.stringify(written)).not.toContain('SECRET-TOOL-OUTPUT-LINE')
   expect(BigInt(tests.endTimeUnixNano) - BigInt(tests.startTimeUnixNano)).toBe(250_000_000n)
   const read = written.find((s) => s.name === 'execute_tool Read')
   expect(attribute(read, 'error.type')).toBeUndefined()
