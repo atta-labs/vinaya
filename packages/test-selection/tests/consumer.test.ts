@@ -70,6 +70,105 @@ function readmeExample(): string {
   return match[1] as string
 }
 
+function checkSetup(command: string, home: string): void {
+  const setup = (cwd: string, ...args: string[]) =>
+    spawnSync('node', [command, ...args], { cwd, encoding: 'utf8', env: bareEnv(home) })
+  const refused = (result: SpawnSyncReturns<string>, message: string): void => {
+    expect(result.status).toBe(2)
+    expect(result.stdout).toBe('')
+    expect(result.stderr.trimEnd().split('\n')).toHaveLength(1)
+    expect(result.stderr).toContain(message)
+  }
+  for (const flag of ['--help', '-h']) {
+    expectHelp(
+      command,
+      [flag],
+      home,
+      'usage: test-selection-setup [--branch <name>] [--package-manager <bun|npm|pnpm|yarn>] [--help]',
+      ['--branch', '--package-manager', '--help']
+    )
+  }
+  refused(setup(home), 'git repository')
+  refused(setup(home, '--unknown'), 'unknown flag')
+  refused(setup(home, '--package-manager', 'other'), '--package-manager')
+  refused(setup(home, '--branch'), '--branch')
+
+  const relative = '.github/workflows/test-selection-record.yml'
+  const readme = readFileSync(join(PACKAGE_DIR, 'README.md'), 'utf8')
+  const section = readme.slice(readme.indexOf('## The `test-selection-setup` command'))
+  const example = /```yaml\n([\s\S]*?)```/.exec(section)?.[1]
+  if (example === undefined) throw new Error('README.md has no YAML example under the setup command')
+
+  const variants = [
+    { name: 'bun', lock: 'bun.lock', install: ['bun install --frozen-lockfile'], start: 'npx' },
+    { name: 'npm', lock: 'package-lock.json', install: ['npm ci'], start: 'npx' },
+    { name: 'npm-override', lock: 'package-lock.json', install: ['npm ci'], start: 'npx' },
+    {
+      name: 'pnpm',
+      lock: 'pnpm-lock.yaml',
+      install: ['corepack enable', 'pnpm install --frozen-lockfile'],
+      start: 'pnpm exec'
+    },
+    {
+      name: 'yarn',
+      lock: 'yarn.lock',
+      install: ['corepack enable', 'yarn install --frozen-lockfile'],
+      start: 'yarn run'
+    },
+    {
+      name: 'yarn-modern',
+      lock: 'yarn.lock',
+      install: ['corepack enable', 'yarn install --immutable'],
+      start: 'yarn run'
+    }
+  ]
+  for (const { name, lock, install, start } of variants) {
+    const repo = join(home, `setup-${name}`)
+    const nested = join(repo, 'nested')
+    mkdirSync(nested, { recursive: true })
+    run('git', ['init', '-q'], repo, home)
+    const file = join(repo, relative)
+    if (name === 'bun') {
+      refused(setup(nested), '--branch')
+      refused(setup(nested, '--branch', 'main'), '--package-manager')
+      expect(existsSync(join(repo, '.github'))).toBe(false)
+      run('git', ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'], repo, home)
+    }
+    writeFileSync(join(repo, lock), '')
+    if (name === 'yarn-modern') writeFileSync(join(repo, '.yarnrc.yml'), '')
+
+    let flags = name === 'bun' ? [] : ['--branch', 'main']
+    if (name === 'npm-override') {
+      writeFileSync(join(repo, 'bun.lockb'), '')
+      refused(setup(nested, ...flags), '--package-manager')
+      expect(existsSync(file)).toBe(false)
+      flags = [...flags, '--package-manager', 'npm']
+    }
+    const result = setup(nested, ...flags)
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe(`${relative}\n`)
+    expect(readdirSync(join(repo, '.github/workflows'))).toEqual(['test-selection-record.yml'])
+    const workflow = readFileSync(file, 'utf8')
+    for (const line of install) expect(workflow).toContain(`      - run: ${line}\n`)
+    expect(workflow).toContain(`      - run: ${start} test-selection-record --out `)
+    expect(workflow).toContain('name: read-record-${{ github.sha }}')
+    expect(workflow).toContain('path: ${{ runner.temp }}/read-record/read-record.json')
+    if (name === 'bun') {
+      expect(workflow).toBe(example)
+      writeFileSync(join(repo, 'bun.lockb'), '')
+      const again = setup(nested, '--branch', 'main')
+      expect(again.status).toBe(0)
+      expect(again.stderr).toBe('')
+      expect(again.stdout).toBe(`${relative} is unchanged\n`)
+      expect(readFileSync(file, 'utf8')).toBe(workflow)
+      writeFileSync(file, workflow.trimEnd())
+      refused(setup(nested, '--branch', 'main'), relative)
+      expect(readFileSync(file, 'utf8')).toBe(workflow.trimEnd())
+    }
+  }
+}
+
 /** A selection over the fresh repository's own last two commits, through the git reader. */
 const GIT_SELECTION = `import { execFileSync } from 'node:child_process'
 import { gitRepository, inventoryViewOf, plannedTests, selectTests } from '@attalabs/test-selection'
@@ -428,6 +527,8 @@ esac
       }
       // The record command, linked by npm, under Node: the built `dist/`, with the probe's source shipped beside it.
       expect(listing).toContain('package/dist/record-command.js')
+      expect(listing).toContain('package/dist/setup-command.js')
+      checkSetup(join(mono, 'node_modules/.bin/test-selection-setup'), home)
       expect(listing).toContain('package/src/listing-probe.ts')
       expect(listing).toContain('package/src/listing-probe-paths.ts')
       const recorder = join(mono, 'node_modules/.bin/test-selection-record')
