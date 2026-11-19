@@ -17,6 +17,24 @@ function fixture() {
   return { dir, folder, repository: 'acme/repo', url: 'https://collector.example/base' }
 }
 
+test('sets malformed UTF-8 aside and sends a valid large line unchanged', async () => {
+  const options = fixture()
+  const file = join(options.dir, 'run~writer~000000000000.logs.jsonl')
+  const record = JSON.stringify({ body: 'a'.repeat(128 * 1024) })
+  writeFileSync(file, Buffer.concat([Buffer.from('{"body":"'), Buffer.from([255]), Buffer.from(`"}\n${record}\n`)]))
+  const report = await sendLocalCopy({
+    ...options,
+    deadline: Date.now() + 2000,
+    fetch: async (_url, init) => {
+      expect(await new Response(init.body).text()).toBe(record)
+      return new Response()
+    }
+  })
+  expect(report.sent).toBe(1)
+  expect(report.failures).toEqual([])
+  expect(report.setAside.map(({ reason }) => reason)).toEqual(['invalid JSON'])
+})
+
 test('sends both signals from each writer and run without changing their files', async () => {
   const options = fixture()
   const expected: string[] = []

@@ -212,7 +212,9 @@ it('reports a failed OTLP request after the legacy drain and retries it on the n
       }
     })
   )
-  const source = join(dirname(folderFile(home, 804)), 'run~writer~000000000000.logs.jsonl')
+  const sdkFolder = join(home, 'sdk-logs')
+  writeFileSync(join(cwd, 'log.config.json'), JSON.stringify({ logs: { folder: sdkFolder } }))
+  const source = join(sdkFolder, OWNER_REPO_DIR, 'run~writer~000000000000.logs.jsonl')
   seed(source, ['{"resourceLogs":[]}'])
   seed(folderFile(home, 804), [ndjsonLine('legacy', 804)])
   const script = join(cwd, 'run-otlp-send.ts')

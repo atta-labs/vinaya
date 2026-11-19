@@ -23,7 +23,8 @@ import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
 import { existsSync, readFileSync, readdirSync, realpathSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
-import { loadConfig, loadTrustAnchorConfigAsync } from '../config/compose.js'
+import { loadConfig, loadTrustAnchorConfigAsync, resolveCiTrustAnchorProbeRef } from '../config/compose.js'
+import { resolveSettings } from '../../../../../packages/log-sdk/src/writer/settings.js'
 import { printJson } from '../../../../kernel/effects/envelope.js'
 import {
   appendHardenedLine,
@@ -124,13 +125,15 @@ export async function logSendCommand(args: string[]): Promise<void> {
   const localConfig = loadConfig()
   const unattended = isUnattendedProcess(process.env)
   const otlpAnchored = unattended || Boolean(process.env.GITHUB_ACTIONS || process.env.CI)
-  const trustAnchorConfig = otlpAnchored
-    ? await withDeadline(
-        loadTrustAnchorConfigAsync(undefined, { quiet: true }),
-        LOG_DESTINATION_ANCHOR_DEADLINE_MS,
-        null
-      )
-    : null
+  const probe = resolveCiTrustAnchorProbeRef()
+  const trustAnchorConfig =
+    unattended || (otlpAnchored && !probe)
+      ? await withDeadline(
+          loadTrustAnchorConfigAsync(undefined, { quiet: true }),
+          LOG_DESTINATION_ANCHOR_DEADLINE_MS,
+          null
+        )
+      : null
   const defaultFolder = join(await runtimeDirForRepoAsync(repo), 'logs')
   const repoRoot = repoRootSync()
   const destination = resolveLogDestinationFrom({
@@ -152,16 +155,30 @@ export async function logSendCommand(args: string[]): Promise<void> {
           ? describeFolderFallback(destination.fallbackReason)
           : 'this repository is configured to write log events to a local folder, not a server'
   const reason = serverReason ? `vinaya log send: no server destination to deliver to — ${serverReason}.` : undefined
-  const address = resolveOtlpAddress({ localConfig, trustAnchorConfig, unattended, env: process.env })
-  const settings = otlpAnchored ? trustAnchorConfig?.logs : localConfig?.logs
+  const address = resolveOtlpAddress({
+    localConfig,
+    trustAnchorConfig: probe ? null : trustAnchorConfig,
+    unattended,
+    env: process.env
+  })
+  const repository = repo ? `${repo.owner}/${repo.repo}` : undefined
+  const sdk = address.kind === 'address' && repoRoot ? resolveSettings({ repoRoot, repository }) : undefined
+  const settings = sdk?.ok ? sdk.settings.logs : localConfig?.logs
+  const sdkFallback = sdk?.ok ? join(sdk.settings.runtimeDir, 'logs') : defaultFolder
   const otlp =
     address.kind === 'address'
-      ? await sendLocalCopy({
-          folder: localCopyFolder((settings || undefined)?.folder, defaultFolder, repoRoot),
-          repository: repo ? `${repo.owner}/${repo.repo}` : undefined,
-          url: address.url,
-          headers: address.headers
-        })
+      ? sdk && !sdk.ok
+        ? {
+            sent: 0,
+            setAside: [],
+            failures: [{ file: undefined, offset: undefined, reason: 'SDK Log settings unavailable' }]
+          }
+        : await sendLocalCopy({
+            folder: localCopyFolder((settings || undefined)?.folder, sdkFallback, repoRoot),
+            repository,
+            url: address.url,
+            headers: address.headers
+          })
       : { reason: address.reason }
   const failed =
     (!legacy && address.kind === 'none') ||

@@ -64,6 +64,16 @@ test.each(['before', 'during', 'after'])('recovers after a sender is killed %s a
   expect(observed).toEqual(new Set([trace, trace.replace('beef', 'cafe'), event]))
 })
 
+test('retries staged records after their source segment is removed', async () => {
+  const { options, fetch, segment, observed } = fixture()
+  const source = segment(0, trace)
+  const first = await sendLocalCopy({ ...options, fetch: async () => new Response(null, { status: 503 }) })
+  expect(first.failures.map(({ reason }) => reason)).toEqual(['HTTP 503'])
+  unlinkSync(source)
+  expect((await sendLocalCopy({ ...options, fetch })).sent).toBe(1)
+  expect(observed).toEqual(new Set([trace]))
+})
+
 test('overlapping sends leave continuing segments eligible after old files are deleted', async () => {
   const { options, fetch, segment, observed } = fixture()
   const old = segment(0, trace)
