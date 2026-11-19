@@ -727,6 +727,13 @@ describe('indexTrancheMilestonesAsync', () => {
     expect(calls).toHaveLength(2)
   })
 
+  it('rejects when a tranche label from the label list has no count, never reading it as planned', async () => {
+    mockPages(emptyMilestones, [{ name: 'vinaya/tranche:label-only-v1' }, { name: 'vinaya/tranche:missed-v1' }])
+    mocked(ghLabelIssueCountsAsync).mockResolvedValueOnce([{ name: 'vinaya/tranche:label-only-v1', open: 1, total: 1 }])
+
+    await expect(indexTrancheMilestonesAsync(OWNER, REPO)).rejects.toThrow('vinaya/tranche:missed-v1')
+  })
+
   it('with retryFailedReads, a counts read that fails twice still rejects; without it, one failure rejects', async () => {
     mockPages(emptyMilestones, [{ name: 'vinaya/tranche:label-only-v1' }])
     mocked(ghLabelIssueCountsAsync).mockClear()

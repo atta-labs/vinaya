@@ -190,9 +190,9 @@ export async function ghLabelIssueCountsAsync(
     '--paginate',
     '-f',
     `query=${LABEL_ISSUE_COUNTS_QUERY.replace('$labelQuery', JSON.stringify(labelQuery))}`,
-    '-F',
+    '-f',
     `owner=${owner}`,
-    '-F',
+    '-f',
     `name=${repo}`,
     '--jq',
     '.data.repository.labels.nodes[] | {name, open: .open.totalCount, total: .all.totalCount}'

@@ -550,6 +550,16 @@ export async function indexTrancheMilestonesAsync(
     read(() => ghLabelIssueCountsAsync(owner, repo, TRANCHE_LABEL_QUERY))
   ])
   const countsByLabel = new Map(counts.map((c) => [c.name, c]))
+  // Every tranche label the label list names must come back from the counts
+  // query: a label the query missed would otherwise read as planned and drop
+  // an active tranche without a word, where a per-label Issue read would
+  // have failed loudly.
+  const uncounted = trancheSlugsFromLabels(labels)
+    .map((slug) => trancheLabel(slug))
+    .filter((label) => !countsByLabel.has(label))
+  if (uncounted.length > 0) {
+    throw new Error(`the label Issue-count query returned no count for ${uncounted.join(', ')}`)
+  }
   const lifecycleOf = (slug: string): Lifecycle => {
     const c = countsByLabel.get(trancheLabel(slug))
     return lifecycleFromCounts(c?.open ?? 0, c?.total ?? 0)

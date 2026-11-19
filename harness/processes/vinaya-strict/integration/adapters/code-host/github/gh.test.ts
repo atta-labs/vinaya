@@ -21,7 +21,7 @@ const forge = {
   /** Every full `gh` arg vector this module issued, in order. */
   requested: [] as string[][],
   /** Answers one page, given its args vector (so a test can inspect/react to `-q` too); overridden per test. */
-  respond: (_page: number, _args: string[]): unknown[] => []
+  respond: (_page: number, _args: string[]): unknown => [] as unknown
 }
 
 // The real functions, captured before the mock replaces the module: only `gh` is answered here, so a process the
@@ -39,7 +39,8 @@ mock.module('node:child_process', () => {
     forge.requested.push(args)
     const path = args[1] as string
     const page = Number(new URLSearchParams(path.split('?')[1] ?? '').get('page') ?? '1')
-    return { stdout: JSON.stringify(forge.respond(page, args)), stderr: '' }
+    const answer = forge.respond(page, args)
+    return { stdout: typeof answer === 'string' ? answer : JSON.stringify(answer), stderr: '' }
   }
 
   return {
@@ -53,7 +54,7 @@ mock.module('node:child_process', () => {
 const freshGhPath = '../../../../../../kernel/adapters/code-host/github/gh?fresh-after-mock'
 const freshGh = (await import(freshGhPath)) as typeof import('../../../../../../kernel/adapters/code-host/github/gh')
 mock.module('../../../../../../kernel/adapters/code-host/github/gh', () => ({ ...freshGh }))
-const { ghApiGetAllPagesAsync } = freshGh
+const { ghApiGetAllPagesAsync, ghLabelIssueCountsAsync } = freshGh
 
 const items = (n: number, offset = 0): { id: number }[] => Array.from({ length: n }, (_, i) => ({ id: offset + i }))
 
@@ -68,6 +69,36 @@ const requestedPerPage = (): (string | null)[] =>
 beforeEach(() => {
   forge.requested.length = 0
   forge.respond = () => []
+})
+
+describe('ghLabelIssueCountsAsync', () => {
+  it('asks one paginated GraphQL query with the label search and string variables, and parses each JSON line', async () => {
+    forge.respond = () =>
+      '{"name":"vinaya/tranche:a-v1","open":2,"total":5}\n{"name":"vinaya/tranche:b-v1","open":0,"total":3}\n'
+
+    const counts = await ghLabelIssueCountsAsync('o', 'r', 'vinaya/tranche:')
+
+    expect(counts).toEqual([
+      { name: 'vinaya/tranche:a-v1', open: 2, total: 5 },
+      { name: 'vinaya/tranche:b-v1', open: 0, total: 3 }
+    ])
+    expect(forge.requested).toHaveLength(1)
+    const args = forge.requested[0] ?? []
+    expect(args.slice(0, 3)).toEqual(['api', 'graphql', '--paginate'])
+    const query = args.find((a) => a.startsWith('query=')) ?? ''
+    expect(query).toContain('query: "vinaya/tranche:"')
+    expect(query).toContain('after: $endCursor')
+    expect(query).toContain('open: issues(states: OPEN) { totalCount }')
+    expect(args).toContain('owner=o')
+    expect(args).toContain('name=r')
+    expect(args[args.indexOf('owner=o') - 1]).toBe('-f')
+    expect(args[args.indexOf('name=r') - 1]).toBe('-f')
+  })
+
+  it('returns no counts for an empty answer', async () => {
+    forge.respond = () => ''
+    expect(await ghLabelIssueCountsAsync('o', 'r', 'vinaya/tranche:')).toEqual([])
+  })
 })
 
 describe('ghApiGetAllPagesAsync', () => {
