@@ -1,5 +1,6 @@
 /**
- * An inventory view built from one commit's own package manifests, for a
+ * An inventory view built from one commit's own package manifests and
+ * workspace declarations in the root manifest and pnpm workspace file, for a
  * repository with no inventory program of its own: one suite per package whose
  * `test` script starts Bun's test runner or Vitest, and every test-named file
  * as a test of the deepest package that holds it. It reads only through the
@@ -57,12 +58,13 @@ const depth = (dir: string): number => (dir === '.' ? 0 : dir.split('/').length)
 const holds = (dir: string, path: string): boolean => dir === '.' || path.startsWith(`${dir}/`)
 
 /**
- * One commit's inventory view, from the root manifest's `workspaces` field and
- * each member's manifest. A package gets a suite when its `test` script starts
+ * One commit's inventory view, from the root manifest's `workspaces` field,
+ * the `packages` list of `pnpm-workspace.yaml` and each member's manifest.
+ * A package gets a suite when its `test` script starts
  * `bun test` or Vitest; a package with no `test` script or another runner is
  * left out with its reason. The root package gets a suite on the same rule
- * from its own `test` script; a root manifest that declares no workspaces
- * yields the root suite alone. Every test-named file (`*.test.*`, `*.spec.*`)
+ * from its own `test` script. With no workspace members, only the root can
+ * have a suite. Every test-named file (`*.test.*`, `*.spec.*`)
  * belongs to the suite whose folder is the deepest one that holds it; a file
  * under no suite folder is left out.
  */
