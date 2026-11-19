@@ -24,7 +24,7 @@
 import { mock } from 'bun:test'
 
 export function createGhMock() {
-  return {
+  const gh = {
     ghApiGet: mock(),
     ghApiGetAsync: mock(),
     ghApiGetAllPagesAsync: mock(),
@@ -33,6 +33,28 @@ export function createGhMock() {
     ghIssueListByLabel: mock(),
     ghIssueListByLabelAsync: mock(),
     ghIssueListByAnyLabel: mock(),
-    ghIssueListByAnyLabelAsync: mock()
+    ghIssueListByAnyLabelAsync: mock(),
+    ghLabelIssueCountsAsync: mock()
   }
+  // By default the label counts follow whatever this suite's own label list
+  // and Issue-list stubs answer, so a suite that stubs `ghIssueListByLabelAsync`
+  // per label gets matching counts without stubbing the counts query too. The
+  // stub calls it makes are struck from their call records the moment they
+  // are made, so a suite counting the reader's own Issue-list reads sees only
+  // those.
+  gh.ghLabelIssueCountsAsync.mockImplementation(async (owner: string, repo: string, labelQuery: string) => {
+    const labelsRead = gh.ghApiGetAllPagesAsync(`repos/${owner}/${repo}/labels?per_page=100`)
+    gh.ghApiGetAllPagesAsync.mock.calls.pop()
+    const labels = ((await labelsRead) ?? []) as Array<{ name: string }>
+    const counts: Array<{ name: string; open: number; total: number }> = []
+    for (const { name } of labels) {
+      if (!name.startsWith(labelQuery)) continue
+      const issuesRead = gh.ghIssueListByLabelAsync(owner, repo, name)
+      gh.ghIssueListByLabelAsync.mock.calls.pop()
+      const issues = ((await issuesRead) ?? []) as Array<{ state: string }>
+      counts.push({ name, open: issues.filter((i) => i.state === 'OPEN').length, total: issues.length })
+    }
+    return counts
+  })
+  return gh
 }
