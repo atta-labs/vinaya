@@ -22,13 +22,44 @@
  *   or github spec and its commit id are kept, the meta and integrity kept;
  * - any other shape is kept whole.
  *
- * Pure: the caller parses the text (the lockfile is JSON with trailing
- * commas) and a malformed or ambiguous lockfile throws, so a reader of it
- * keeps the conservative answer.
+ * The text reader accepts JSON with trailing commas. A malformed or ambiguous
+ * lockfile throws so selection keeps the conservative answer.
  */
 
 const PATH = '<path>'
 const PATH_PROTOCOLS = ['workspace:', 'file:', 'link:']
+const JSON_WHITESPACE = /[ \t\r\n]/
+
+/** Read the dependency identity of a text bun.lock, including Bun's trailing commas. */
+export function readBunLockIdentity(text: string): unknown {
+  let json = ''
+  let start = 0
+  let inString = false
+  let previousToken = ''
+  for (let i = 0; i < text.length; i++) {
+    const char = text.charAt(i)
+    if (inString) {
+      if (char === '\\') i++
+      else if (char === '"') inString = false
+      continue
+    }
+    if (JSON_WHITESPACE.test(char)) continue
+    if (char === '"') inString = true
+    // Leave commas in empty containers for JSON.parse to reject.
+    if (char === ',' && previousToken !== '{' && previousToken !== '[') {
+      let next = i + 1
+      while (JSON_WHITESPACE.test(text.charAt(next))) next++
+      const closer = text.charAt(next)
+      if (closer === '}' || closer === ']') {
+        json += text.slice(start, i)
+        start = i + 1
+      }
+      i = next - 1
+    }
+    previousToken = char
+  }
+  return bunLockIdentity(JSON.parse(json + text.slice(start)))
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -100,7 +131,8 @@ function workspacesIdentity(workspaces: unknown): unknown {
 /** The dependency identity of a parsed `bun.lock`; throws on a value that is not a lockfile object. */
 export function bunLockIdentity(parsed: unknown): unknown {
   if (!isRecord(parsed)) throw new Error('bun.lock is not an object')
-  const out: Record<string, unknown> = {}
+  // Copy every key as an own data property before normalizing known fields.
+  const out = { ...parsed }
   for (const [key, value] of Object.entries(parsed)) {
     if (key === 'workspaces') out[key] = workspacesIdentity(value)
     else if (key === 'packages')
@@ -108,7 +140,6 @@ export function bunLockIdentity(parsed: unknown): unknown {
         ? Object.fromEntries(Object.entries(value).map(([name, entry]) => [name, packageIdentity(entry)]))
         : value
     else if (key === 'overrides' || key === 'catalog' || key === 'catalogs') out[key] = pathFreeLeaves(value)
-    else out[key] = value
   }
   return out
 }
@@ -138,13 +169,17 @@ export function changedLockPackages(
   after: unknown,
   same: (a: unknown, b: unknown) => boolean
 ): string[] | null {
-  if (!isRecord(before) || !isRecord(after) || !isRecord(before.packages) || !isRecord(after.packages)) return null
-  for (const key of new Set([...Object.keys(before), ...Object.keys(after)]))
-    if (key !== 'packages' && key !== 'workspaces' && !same(before[key], after[key])) return null
+  if (!isRecord(before) || !isRecord(after)) return null
+  if (!Object.hasOwn(before, 'packages') || !Object.hasOwn(after, 'packages')) return null
+  if (!isRecord(before.packages) || !isRecord(after.packages)) return null
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    if (key === 'packages' || key === 'workspaces') continue
+    if (!Object.hasOwn(before, key) || !Object.hasOwn(after, key) || !same(before[key], after[key])) return null
+  }
   const names = new Set<string>()
   const a = before.packages
   const b = after.packages
   for (const key of new Set([...Object.keys(a), ...Object.keys(b)]))
-    if (!(key in a) || !(key in b) || !same(a[key], b[key])) names.add(lockKeyPackageName(key))
+    if (!Object.hasOwn(a, key) || !Object.hasOwn(b, key) || !same(a[key], b[key])) names.add(lockKeyPackageName(key))
   return [...names].sort()
 }
