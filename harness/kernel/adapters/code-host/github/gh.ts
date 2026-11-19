@@ -157,6 +157,52 @@ export type GhIssue = {
   stateReason?: 'COMPLETED' | 'NOT_PLANNED' | 'REOPENED' | null
 }
 
+/** One label and how many Issues carry it: open ones, and all of them in every state. */
+export type GhLabelIssueCounts = { name: string; open: number; total: number }
+
+const LABEL_ISSUE_COUNTS_QUERY = `query($owner: String!, $name: String!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    labels(first: 100, after: $endCursor, query: $labelQuery) {
+      pageInfo { hasNextPage endCursor }
+      nodes { name open: issues(states: OPEN) { totalCount } all: issues { totalCount } }
+    }
+  }
+}`
+
+/**
+ * Every label whose name or description matches `labelQuery`, with its open
+ * and total Issue counts, from one paginated GraphQL query: one call per 100
+ * labels, however many labels match. Counts only, never the Issues
+ * themselves, so a reader that only needs to know whether a label has Issues,
+ * and whether any is open, pays one call instead of one Issue list per label.
+ * The match is GitHub's label search, so a caller filters the names it gets
+ * back. Pull requests carrying the label are not counted, matching
+ * `gh issue list --label`.
+ */
+export async function ghLabelIssueCountsAsync(
+  owner: string,
+  repo: string,
+  labelQuery: string
+): Promise<GhLabelIssueCounts[]> {
+  const stdout = await runAsync([
+    'api',
+    'graphql',
+    '--paginate',
+    '-f',
+    `query=${LABEL_ISSUE_COUNTS_QUERY.replace('$labelQuery', JSON.stringify(labelQuery))}`,
+    '-f',
+    `owner=${owner}`,
+    '-f',
+    `name=${repo}`,
+    '--jq',
+    '.data.repository.labels.nodes[] | {name, open: .open.totalCount, total: .all.totalCount}'
+  ])
+  return stdout
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line) as GhLabelIssueCounts)
+}
+
 /** Single source for the `gh issue list` arg vector shared by the sync and
  * async variants below — the `--json` field list and `--limit` never drift. */
 function issueListByLabelArgs(owner: string, repo: string, label: string): string[] {

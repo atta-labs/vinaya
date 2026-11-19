@@ -60,7 +60,7 @@ export {
   validateInventory,
   validateInventoryView
 } from './inventory.js'
-export { bunLockIdentity, changedLockPackages, lockKeyPackageName } from './lockfile-identity.js'
+export { bunLockIdentity, changedLockPackages, lockKeyPackageName, readBunLockIdentity } from './lockfile-identity.js'
 export {
   DEFAULT_CONFIGURATION,
   type ExecutedValidation,
@@ -162,6 +162,14 @@ export {
   workspacePackages,
   workspaceTestInventory
 } from './recorder.js'
+export {
+  type CommandRunner,
+  findReadRecord,
+  RECORD_ARTIFACT_PREFIX,
+  RECORD_WORKFLOW_FILE,
+  type RecordSearch,
+  type RecordSource
+} from './record-fetch.js'
 export {
   type LeftOutPackage,
   type LeftOutReason,
