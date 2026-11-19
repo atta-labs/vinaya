@@ -622,6 +622,23 @@ describe('workspace manifest dependency-list changes', () => {
     )
   })
 
+  it('keeps a whole-package fallback for an independently changed source file', () => {
+    const otherSource = 'packages/other/src/index.ts'
+    const plan = compare({
+      base: {
+        'package.json': '{"workspaces":["packages/*"]}',
+        'packages/other/package.json': '{"name":"@fixture/other","main":"./src/index.ts"}',
+        [otherSource]: 'export const value = 1\n',
+        [TEST]: "import other = require('@fixture/other')\nconsole.log(other)\n"
+      },
+      head: { [manifest]: after, [otherSource]: 'export const value = 2\n' }
+    })
+    expect(plan.required.find((test) => test.test === TEST)?.reasons).toContainEqual(
+      expect.objectContaining({ kind: 'conservative-fallback', via: '@fixture/other' })
+    )
+    expect(plan.records.leftOut).toEqual([])
+  })
+
   it('ignores unvalidated version-one evidence in selection and drift', () => {
     const legacy = { ...entry, childOpens: {} } as unknown as RecordedTest
     expect(isReadRecord(recordOf({ [TEST]: legacy }, 1))).toBe(true)

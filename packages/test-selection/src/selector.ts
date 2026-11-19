@@ -2111,10 +2111,6 @@ export function plannedTests(plan: SelectionPlan): string[] {
   return reachedTests(plan).filter((test) => !skipped.has(test))
 }
 
-/**
- * Every path that differs between two revisions, a rename as an addition and a
- * deletion; `null` when either revision cannot be listed.
- */
 const DEPENDENCY_LISTS = new Set(['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'])
 const REGISTRY_RANGE = /^[0-9A-Za-z^~<>=|*+ .-]+$/
 
@@ -2219,6 +2215,10 @@ function dependencyListManifests(repo: RepositoryReader, from: string, to: strin
   }
 }
 
+/**
+ * Every path that differs between two revisions, a rename as an addition and a
+ * deletion; `null` when either revision cannot be listed.
+ */
 function changesBetween(repo: RepositoryReader, from: string, to: string): PathChange[] | null {
   if (from === to) return []
   let fromFiles: readonly string[]
@@ -2371,6 +2371,7 @@ function selectChange(input: SelectTestsInput): ChangePlan {
   const maxDepth = policy.depth === 'one' ? 1 : Number.POSITIVE_INFINITY
   const headTests = new Map(headView.tests.map((t) => [t.id, t]))
   const reasons = new Map<string, PlanReason[]>()
+  const packageHitPaths = new Map<PlanReason, readonly string[]>()
   const addReason = (test: string, reason: PlanReason) => {
     if (!headTests.has(test)) return
     reasons.set(test, [...(reasons.get(test) ?? []), reason])
@@ -2432,16 +2433,27 @@ function selectChange(input: SelectTestsInput): ChangePlan {
     }
     const facts = changeFactsFor(graph, new Set(changed.map((p) => join(root, p))), names)
     if (facts.files.size === 0 && facts.packages.size === 0) return
+    const pathsByPackage = new Map<string, readonly string[]>()
     for (const test of tests) {
       const hit = reaches(`${ALL_PREFIX}${join(root, test)}`, graph.edges, facts, maxDepth)
       if (!hit) continue
       const target = side === 'base' ? (renames.get(test) ?? test) : test
-      addReason(target, {
+      const reason: PlanReason = {
         kind: hit.kind === 'always-run' ? 'declared-input' : hit.kind,
         detail: hit.detail,
         via: hit.via.startsWith(`${root}/`) ? hit.via.slice(root.length + 1) : hit.via,
         revision: side
-      })
+      }
+      if (policy.installLayout === 'hoisted' && hit.kind === 'conservative-fallback') {
+        let paths = pathsByPackage.get(hit.via)
+        if (!paths) {
+          const owners = graph.packages.filter((pkg) => pkg.name === hit.via)
+          paths = changed.filter((path) => owners.some((pkg) => join(root, path).startsWith(pkg.dir + '/')))
+          pathsByPackage.set(hit.via, paths)
+        }
+        packageHitPaths.set(reason, paths)
+      }
+      addReason(target, reason)
     }
   }
   walk(
@@ -2845,11 +2857,15 @@ function selectChange(input: SelectTestsInput): ChangePlan {
       if (manifests.size === 0) continue
       const index = decided.get(test)
       for (const reason of independentReasons.get(test) ?? []) {
-        const otherChange = changesByPath.get(reason.via)
+        const paths = packageHitPaths.get(reason) ?? [reason.via]
         // Recorded reads already decide paths they reach, including the two existing narrowing rules.
         if (
           reason.kind === 'declared-input' ||
-          (otherChange && !manifests.has(otherChange.path) && index && !recordReach(index, otherChange))
+          (index &&
+            paths.some((path) => {
+              const change = changesByPath.get(path)
+              return change && !manifests.has(path) && !recordReach(index, change)
+            }))
         )
           addReason(test, reason)
       }
