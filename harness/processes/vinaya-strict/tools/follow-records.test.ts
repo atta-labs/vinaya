@@ -140,4 +140,44 @@ test('a recorded step inherits its seat from the dispatch even without a seat st
   const lines = follow.render({ records, gaps: [] }, [], now, false)
   expect(lines[0]).toContain('code reviewer')
   expect(lines[1]).toBe('\x1b[35m10:00:01  ▸ Code review   Reading file\x1b[0m')
+  const finish = record(
+    'execute_tool Read',
+    3000,
+    {
+      [A.toolCallId]: 'call',
+      [A.stepKind]: 'reading',
+      [A.stepTarget]: 'file'
+    },
+    'span',
+    spanId
+  )
+  expect(follow.render({ records: [finish], gaps: [] }, [], now, false)).toEqual([
+    '\x1b[35m10:00:03  ✓ Code review   Finished reading file in 2.0s (started 10:00:01)\x1b[0m'
+  ])
+})
+
+test('an early detail waits for its call and a late detail identifies its step', () => {
+  const follow = view(true)
+  const a = record(E.stepStarted, 1000, step('a', 'first'), 'started', 'a')
+  const b = record(E.stepStarted, 2000, step('b', 'second\n\r'), 'started', 'b')
+  expect(
+    follow.render(
+      { records: [a], gaps: [] },
+      ['2026-11-19T10:00:02Z [call=b]  > Developer   Reading', '2026-11-19T10:00:02Z  · details for b'],
+      now,
+      false
+    )
+  ).toEqual(['10:00:01  ▸ Developer   Reading first'])
+  expect(follow.render({ records: [b], gaps: [] }, [], now, false)).toEqual([
+    '10:00:02  ▸ Developer   Reading second\\u000a\\u000d',
+    '          · details for b'
+  ])
+  expect(
+    follow.render(
+      { records: [], gaps: [] },
+      ['2026-11-19T10:00:01Z [call=a]  > Developer   Reading', '2026-11-19T10:00:03Z  · late detail'],
+      now,
+      false
+    )
+  ).toEqual(['          · Developer a: late detail'])
 })

@@ -629,32 +629,43 @@ export async function followTaskSources(
   follow = followLoopLog
 ): Promise<void> {
   const runs = readTaskRuns(folder, issue, homedir())
-  const first = await runs.pull()
   const split = lineSplitter()
-  if (first !== null) {
-    const records = createRecordFollow(viewOptions)
-    let rawDetails: string[] = []
-    let initial = true
-    await follow(path, {
-      write: (chunk) => {
-        if (viewOptions.details) rawDetails.push(...split(chunk))
-      },
-      sleep: async (ms) => {
-        if (!initial) await new Promise((resolve) => setTimeout(resolve, ms))
-        const update = initial ? first : await runs.pull()
-        const now = new Date()
-        if (update !== null) print(records.render(update, rawDetails, now, initial))
-        rawDetails = []
-        if (!initial) print(records.tick(now))
-        initial = false
-      }
-    })
-    return
-  }
   const view = createFollowView(viewOptions)
+  const records = createRecordFollow(viewOptions)
+  let update = await runs.pull()
+  let raw: string[] = []
+  let recordBacklog = true
+  let firstPoll = true
   await follow(path, {
-    writeBacklog: (chunk) => print(view.backlog(split(chunk), new Date())),
-    write: (chunk) => print(view.push(split(chunk), new Date())),
-    tick: () => print(view.tick(new Date()))
+    writeBacklog(chunk) {
+      if (update === null) print(view.backlog(split(chunk), new Date()))
+      else if (viewOptions.details) raw.push(...split(chunk))
+    },
+    write(chunk) {
+      if (update === null) print(view.push(split(chunk), new Date()))
+      else if (viewOptions.details) raw.push(...split(chunk))
+    },
+    // A legacy backlog prints immediately. Once a copy exists, flush its backlog before waiting.
+    async sleep(ms) {
+      if (firstPoll && update !== null) {
+        print(records.render(update, raw, new Date(), true))
+        raw = []
+        recordBacklog = false
+      }
+      firstPoll = false
+      await new Promise((resolve) => setTimeout(resolve, ms))
+      update = await runs.pull()
+    },
+    tick() {
+      const now = new Date()
+      if (update === null) {
+        print(view.tick(now))
+        return
+      }
+      print(records.render(update, raw, now, recordBacklog))
+      raw = []
+      recordBacklog = false
+      print(records.tick(now))
+    }
   })
 }

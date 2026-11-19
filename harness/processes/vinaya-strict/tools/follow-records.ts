@@ -5,6 +5,7 @@ import {
   SPAN_NAMES as S
 } from '../../../../packages/log-sdk/src/contract/catalogue.js'
 import { spanIdFor } from '../../../../packages/log-sdk/src/contract/ids.js'
+import { agentSpanIdFor } from '../../../../packages/log-sdk/src/contract/convert-map.js'
 import { narrate } from '../../../../packages/log-sdk/src/narration/narrate.js'
 import { createFolderSource } from '../../../../packages/log-sdk/src/reader/folder-source.js'
 import type { OtelRecord } from '../../../../packages/log-sdk/src/reader/records.js'
@@ -118,6 +119,31 @@ type Primary = Extract<DriverLogLine, { kind: 'primary' }>
 type Step = { call: string; line: Primary }
 type Detail = { at: number; call?: string; label: string; text: string }
 
+function terminalText(text: string): string {
+  return Array.from(text, (character) => {
+    const code = character.codePointAt(0) ?? 0
+    return code < 32 || (code >= 127 && code <= 159) || code === 0x2028 || code === 0x2029
+      ? `\\u${code.toString(16).padStart(4, '0')}`
+      : character
+  }).join('')
+}
+
+function escapeRecordLine(line: DriverLogLine): DriverLogLine {
+  if (line.kind === 'primary') {
+    return {
+      ...line,
+      words: terminalText(line.words),
+      label: terminalText(line.label),
+      ...(line.details ? { details: line.details.map(terminalText) } : {}),
+      ...(typeof line.meta.reason === 'string'
+        ? { meta: { ...line.meta, reason: terminalText(line.meta.reason) } }
+        : {})
+    }
+  }
+  if (line.kind === 'runner' || line.kind === 'step-detail') return { ...line, text: terminalText(line.text) }
+  return line
+}
+
 export function createRecordFollow(options: FollowViewOptions) {
   const renderer = createFollowRenderer(options)
   const seatNames = Object.fromEntries(
@@ -127,6 +153,8 @@ export function createRecordFollow(options: FollowViewOptions) {
     })
   )
   const agents = new Map<string, Map<string, string>>()
+  const agentsRunIds = new Map<string, string>()
+  const stepSeats = new Map<string, Role>()
   const earlier = new Map<string, OtelRecord[]>()
   const pauseReasons = new Map<string, string>()
   const previousSteps: Step[] = []
@@ -137,6 +165,12 @@ export function createRecordFollow(options: FollowViewOptions) {
     const a = record.attributes
     const direct = word(a[A.agentName]) ?? word(a[A.seat])
     if (direct !== undefined && lookupRole(direct)) return direct as Role
+    if (record.parentSpanId !== null) {
+      for (const [effect, role] of agents.get(record.traceId) ?? []) {
+        const runId = agentsRunIds.get(record.traceId)
+        if (runId && agentSpanIdFor(runId, effect) === record.parentSpanId) return role as Role
+      }
+    }
     const runAgents = agents.get(record.traceId)
     const runId = word(a[A.runId])
     if (runAgents && call && runId) {
@@ -180,7 +214,10 @@ export function createRecordFollow(options: FollowViewOptions) {
       const subject = word(a[A.stepTarget]) ?? word(a[A.toolName])
       if (!call || !recordedKind || !subject) return undefined
       const kind = actionKinds.has(recordedKind) ? (recordedKind as ActionKind) : 'working'
-      const role = seat(record, call)
+      const key = `${record.traceId}/${record.spanId}`
+      const role = seat(record, call) ?? stepSeats.get(key)
+      if (record.kind === 'span') stepSeats.delete(key)
+      else if (role) stepSeats.set(key, role)
       const errorType = word(a[A.errorType])
       const failedCount = /^(\d+) failed$/.exec(word(a[A.stepErrorLine]) ?? '')?.[1]
       const parts =
@@ -227,7 +264,7 @@ export function createRecordFollow(options: FollowViewOptions) {
     }
   }
 
-  function attachDetails(raw: readonly string[], steps: Step[]): DriverLogLine[] {
+  function attachDetails(raw: readonly string[], steps: Step[], settled: boolean): DriverLogLine[] {
     if (!options.details) return []
     for (const text of raw) {
       const line = parseDriverLogLine(text)
@@ -256,13 +293,13 @@ export function createRecordFollow(options: FollowViewOptions) {
         if (line.label === detail.label && line.at <= detail.at && (!latest || line.at >= latest.line.at))
           latest = candidate
       }
-      const target = match ?? latest
+      const target = match ?? (detail.call === undefined || settled ? latest : undefined)
       if (!target) return true
       if (fresh.has(target)) target.line.details?.push(detail.text)
       else
         trailing.push({
           kind: 'step-detail',
-          text: detail.text,
+          text: `${target.line.label} ${target.call}: ${detail.text}`,
           ...(target.line.role ? { role: target.line.role } : {})
         })
       return false
@@ -283,6 +320,8 @@ export function createRecordFollow(options: FollowViewOptions) {
         if (record.name !== E.agentStarted && !spanNamed(record, S.agent)) continue
         const id = word(record.attributes[A.agentId])
         const role = seat(record, undefined)
+        const runId = word(record.attributes[A.runId])
+        if (runId) agentsRunIds.set(record.traceId, runId)
         if (!id || !role) continue
         const run = agents.get(record.traceId) ?? new Map()
         run.set(id, role)
@@ -294,8 +333,14 @@ export function createRecordFollow(options: FollowViewOptions) {
         lines.push(translated.line)
         if (translated.step) steps.push(translated.step)
       }
-      lines.unshift(...attachDetails(rawDetails, steps))
-      return renderer.render(lines, now, backlog)
+      lines.unshift(
+        ...attachDetails(
+          rawDetails,
+          steps,
+          update.records.some((record) => record.name === E.exited)
+        )
+      )
+      return renderer.render(lines.map(escapeRecordLine), now, backlog)
     },
     tick: renderer.tick
   }

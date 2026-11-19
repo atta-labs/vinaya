@@ -76,6 +76,18 @@ test('task follow selects local records by work reference and falls back for a t
     expect(output.splice(0)).toEqual(['10:00:00  ◆ Loop   ━━ Round 1 · review · typical unavailable ━━'])
     await followTaskSources('driver.log', folder, 405, options, print, follow)
     expect(output).toEqual(['10:00:00  ▸ Loop   Driver narration'])
+    output.length = 0
+    await followTaskSources('driver.log', folder, 406, options, print, async (_path, deps) => {
+      deps?.writeBacklog?.(driver)
+      writeFileSync(join(folder, 'run-b~writer~000000000001.logs.jsonl'), `${stage.replace('404', '406')}\n`)
+      await deps?.sleep?.(0)
+      deps?.write?.(Buffer.from('2026-10-29T10:00:01Z  Duplicate driver narration\n'))
+      deps?.tick?.()
+    })
+    expect(output[0]).toBe('10:00:00  ▸ Loop   Driver narration')
+    expect(output.some((line) => line.includes('Log gap (file_missing)'))).toBe(true)
+    expect(output).toContain('10:00:00  ◆ Loop   ━━ Round 1 · review · typical unavailable ━━')
+    expect(output.some((line) => line.includes('Duplicate driver narration'))).toBe(false)
   } finally {
     rmSync(folder, { recursive: true, force: true })
   }
