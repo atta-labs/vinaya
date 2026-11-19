@@ -17,9 +17,10 @@ import {
   type RecordProvenance
 } from '../contract/catalogue.js'
 import { redact } from '../contract/redact.js'
+import type { CustomFieldValue } from '../contract/custom.js'
 import { type RunIdGenerator, type SpanParent, spanIdFor } from '../contract/ids.js'
 
-export type AttributeValue = string | number | boolean | string[] | undefined
+export type AttributeValue = string | number | boolean | string[] | boolean[] | undefined
 export type Attrs = Record<string, AttributeValue>
 
 type OpenSpan = { span: Span; ref: SpanParent }
@@ -56,8 +57,8 @@ export function guard<T>(core: Pick<WriterCore, 'report'>, fn: () => T, fallback
 export function sanitize(
   core: Pick<WriterCore, 'home'>,
   attrs: Attrs
-): Record<string, string | number | boolean | string[]> {
-  const out: Record<string, string | number | boolean | string[]> = {}
+): Record<string, Exclude<AttributeValue, undefined>> {
+  const out: Record<string, Exclude<AttributeValue, undefined>> = {}
   for (const [name, value] of Object.entries(attrs)) {
     if (FORBIDDEN_CONTENT_ATTRIBUTES.includes(name)) continue
     if (!ALL_ATTRIBUTE_NAMES.includes(name)) throw new Error(`attribute "${name}" is not in the catalogue`)
@@ -66,7 +67,7 @@ export function sanitize(
       typeof value === 'string'
         ? redact(value, core.home)
         : Array.isArray(value)
-          ? value.map((v) => redact(v, core.home))
+          ? (value.map((v) => (typeof v === 'string' ? redact(v, core.home) : v)) as string[] | boolean[])
           : value
   }
   return out
@@ -101,10 +102,27 @@ export function runSpanRef(core: WriterCore): SpanParent {
 }
 
 /** Emits one named event as an OpenTelemetry log record, stamped with seq, writer id, provenance and event id. */
-export function emitEvent(core: WriterCore, name: string, attrs: Attrs, ref: SpanParent, time?: TimeInput): void {
+export function emitEvent(
+  core: WriterCore,
+  name: string,
+  attrs: Attrs,
+  ref?: SpanParent,
+  time?: TimeInput,
+  customFields?: Record<string, CustomFieldValue>
+): void {
   if (!core.enabled || core.logger === undefined) return
-  if (!ALL_EVENT_NAMES.includes(name)) throw new Error(`event "${name}" is not in the catalogue`)
-  const own = sanitize(core, attrs)
+  if (customFields === undefined && !ALL_EVENT_NAMES.includes(name)) {
+    throw new Error(`event "${name}" is not in the catalogue`)
+  }
+  const own =
+    customFields === undefined
+      ? sanitize(core, attrs)
+      : Object.fromEntries(
+          Object.entries(customFields).map(([key, value]) => [
+            key,
+            typeof value === 'string' ? redact(value, core.home) : value
+          ])
+        )
   const seq = nextSeq(core)
   const stamped = sanitize(core, { ...stamps(core, seq), [ATTRIBUTE_NAMES.eventId]: `${core.writerId}:${seq}` })
   core.logger.emit({
