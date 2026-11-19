@@ -115,3 +115,26 @@ test('writers of the earlier format report no sequence gap, and records with no 
   expect(ordering.flush().gaps).toEqual([])
   expect(ready.slice(-2).map(({ name }) => name)).toEqual(['x', 'y'])
 })
+
+test("a run read from its start reports numbers missing before a writer's first record, and a resumed read does not", () => {
+  const first = createOrdering({ fromStart: true, patience: 1 }).push([event('a', 3, 1)])
+  expect(first.gaps.map(({ place }) => place)).toEqual(['writer a sequence 0–2'])
+  expect(labels(first.ready)).toEqual(['a3'])
+  const second = createOrdering({ patience: 1 }).push([event('a', 3, 1)])
+  expect(second.gaps).toEqual([])
+  expect(labels(second.ready)).toEqual(['a3'])
+})
+
+test('a long follow keeps a bounded memory of identities and of held records', () => {
+  const ordering = createOrdering({ remember: 3 })
+  ordering.push([0, 1, 2, 3, 4].map((n) => event('a', n, n)))
+  // The oldest identity was forgotten, so only a recent one is still a duplicate.
+  expect(ordering.push([event('a', 4, 4)]).duplicates).toBe(1)
+  const held = createOrdering({ fromStart: true, maxHeld: 2 }).push([
+    event('b', 5, 1),
+    event('b', 6, 2),
+    event('b', 7, 3)
+  ])
+  expect(held.gaps).toHaveLength(1)
+  expect(labels(held.ready)).toEqual(['b5', 'b6', 'b7'])
+})

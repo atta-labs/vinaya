@@ -161,7 +161,8 @@ export function createFolderSource(options: FolderSourceOptions): RecordSource {
               place: segment.file,
               detail: `${segment.file} was listed but could not be read`
             })
-            places.set(writer, [segment.index, 0])
+            // Keep the offset already read when this is the file being read on.
+            if (!(place !== undefined && segment.index === place[0])) places.set(writer, [segment.index, 0])
             continue
           }
           const { bytes } = read

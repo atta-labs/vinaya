@@ -39,6 +39,12 @@ export function applyTrust(record: OtelRecord, options: { foreign: boolean; home
   return {
     ...record,
     name: redact(record.name, home),
+    traceId: redact(record.traceId, home),
+    spanId: redact(record.spanId, home),
+    parentSpanId: record.parentSpanId === null ? null : redact(record.parentSpanId, home),
+    writerId: record.writerId === null ? null : redact(record.writerId, home),
+    eventId: record.eventId === null ? null : redact(record.eventId, home),
+    source: redact(record.source, home),
     attributes: cleanAttributes(record.attributes, home),
     resource: cleanAttributes(record.resource, home),
     provenance: options.foreign ? 'reported' : record.provenance

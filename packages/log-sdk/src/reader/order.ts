@@ -47,9 +47,22 @@ function range(from: number, to: number): string {
  *   records leave. A writer whose records carry no usable numbers is handed
  *   in arrival order and never claims a gap.
  */
-export function createOrdering(options: { patience?: number } = {}) {
+export function createOrdering(
+  options: { patience?: number; fromStart?: boolean; remember?: number; maxHeld?: number } = {}
+) {
   const patience = Math.max(1, options.patience ?? 2)
+  const fromStart = options.fromStart ?? false
+  // Bounds on what a long follow keeps: the oldest identities are forgotten first.
+  const remember = Math.max(1, options.remember ?? 200_000)
+  const maxHeld = Math.max(1, options.maxHeld ?? 10_000)
   const seen = new Set<string>()
+  const forget = (set: Set<string>) => {
+    while (set.size > remember) {
+      const oldest = set.values().next()
+      if (oldest.done) break
+      set.delete(oldest.value)
+    }
+  }
   const writers = new Map<string, Writer>()
   const open = new Map<string, OtelRecord>()
   const closed = new Set<string>()
@@ -57,7 +70,8 @@ export function createOrdering(options: { patience?: number } = {}) {
   function writerOf(key: string, sequenced: boolean): Writer {
     let writer = writers.get(key)
     if (writer === undefined) {
-      writer = { sequenced, next: null, held: [], age: 0 }
+      // A run read from its start expects each writer's first number to be 0.
+      writer = { sequenced, next: fromStart ? 0 : null, held: [], age: 0 }
       writers.set(key, writer)
     }
     return writer
@@ -125,6 +139,7 @@ export function createOrdering(options: { patience?: number } = {}) {
       if (record.kind === 'span') {
         open.delete(key)
         closed.add(key)
+        forget(closed)
       } else if (record.kind === 'started' && !closed.has(key)) {
         open.set(key, record)
       }
@@ -147,6 +162,7 @@ export function createOrdering(options: { patience?: number } = {}) {
         continue
       }
       seen.add(identity)
+      forget(seen)
       if (isSequenced(record)) writerOf(record.writerId, true).held.push(record)
       else queue(`${record.writerId ?? `source:${record.source}`}`, record)
     }
@@ -155,7 +171,7 @@ export function createOrdering(options: { patience?: number } = {}) {
       for (const record of release(writer)) queue(key, record)
       if (writer.held.length > 0) {
         writer.age += 1
-        while (writer.held.length > 0 && (force || writer.age >= patience)) {
+        while (writer.held.length > 0 && (force || writer.age >= patience || writer.held.length > maxHeld)) {
           for (const record of skipMissing(key, writer, gaps)) queue(key, record)
         }
       } else writer.age = 0

@@ -223,3 +223,16 @@ test('following yields each update that holds a record until it is stopped', asy
   }
   expect(seen).toEqual(['a0', 'a1'])
 })
+
+test("a file listed but unreadable keeps the offset already read in the writer's current file", async () => {
+  const path = folder()
+  const file = join(path, name('a', 0))
+  writeFileSync(file, line('a', 0, 1))
+  const source = createFolderSource({ folder: path, runId: 'run-1' })
+  const first = await source.read()
+  rmSync(file)
+  mkdirSync(file)
+  const second = await source.read(first.position)
+  expect(second.records).toEqual([])
+  expect(second.position).toBe(first.position)
+})

@@ -72,7 +72,10 @@ function wait(ms: number, signal: AbortSignal | undefined): Promise<void> {
 
 /** A reader over one source: trust and redaction on every record, then each writer's order, duplicates, open spans and gaps. */
 export function createReader(source: RecordSource, options: ReaderOptions = {}): Reader {
-  const ordering = createOrdering(options.patience === undefined ? {} : { patience: options.patience })
+  const ordering = createOrdering({
+    fromStart: options.position === undefined,
+    ...(options.patience === undefined ? {} : { patience: options.patience })
+  })
   let position = options.position
 
   function finish(ordered: ReturnType<typeof ordering.push>, problems: ReadGap[]): ReaderUpdate {

@@ -90,3 +90,11 @@ test('a reader applies trust and redaction to every record it hands', async () =
   expect(JSON.stringify(records)).not.toContain('prompt')
   expect(JSON.stringify(records)).not.toContain(SECRET)
 })
+
+test('identity and source fields are redacted too', () => {
+  const trusted = applyTrust(
+    record({}, { writerId: SECRET, eventId: `${SECRET}:1`, source: SECRET, spanId: SECRET, traceId: SECRET }),
+    { foreign: true }
+  )
+  expect(JSON.stringify(trusted)).not.toContain(SECRET)
+})
