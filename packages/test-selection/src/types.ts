@@ -201,6 +201,8 @@ export type SelectionPolicy = {
    * trigger.
    */
   depth: 'one' | 'transitive'
+  /** The caller has a hoisted installation in its checkout. */
+  installLayout?: 'hoisted'
   /** The repository's folder-scanning tests and the kind of change each judges. */
   scanners?: readonly ScannerDeclaration[]
   /** Programs whose spawn by a test is followed into the entrypoint's imports; entrypoints repository-relative. */
@@ -312,7 +314,7 @@ export type PlanRecords = {
 }
 
 /** Why a record let a changed file go by one test: the changed names its imports never reach, or the safe rule. */
-export type RecordLeftOutRule = 'unreached-names' | 'unentered-bodies'
+export type RecordLeftOutRule = 'unreached-names' | 'unentered-bodies' | 'manifest-dependency-lists'
 
 /** A test the recorded reads left out, with one reason per changed file it read. */
 export type RecordLeftOut = {
