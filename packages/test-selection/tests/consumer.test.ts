@@ -94,6 +94,9 @@ function checkSetup(command: string, home: string): void {
   refused(setup(home, '--unknown'), 'unknown flag')
   refused(setup(home, '--package-manager', 'other'), '--package-manager')
   refused(setup(home, '--branch'), '--branch')
+  for (const flag of ['--unknown', '--package-manager']) {
+    refused(setup(home, flag, '--help'), 'usage: test-selection-setup')
+  }
 
   const relative = '.github/workflows/test-selection-record.yml'
   const readme = readFileSync(join(PACKAGE_DIR, 'README.md'), 'utf8')
@@ -133,6 +136,10 @@ function checkSetup(command: string, home: string): void {
     if (name === 'bun') {
       refused(setup(nested), '--branch')
       refused(setup(nested, '--branch', 'main'), '--package-manager')
+      refused(
+        setup(nested, '--branch', 'bad branch', '--branch', 'main', '--package-manager', 'bun'),
+        'invalid --branch value'
+      )
       expect(existsSync(join(repo, '.github'))).toBe(false)
       run('git', ['commit', '--allow-empty', '-qm', 'initial'], repo, home)
       run('git', ['branch', 'origin/main'], repo, home)

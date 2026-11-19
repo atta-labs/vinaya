@@ -14,6 +14,12 @@ const LOCKFILES = {
 }
 type PackageManager = keyof typeof LOCKFILES
 
+const USAGE = 'usage: test-selection-setup [--branch <name>] [--package-manager <bun|npm|pnpm|yarn>] [--help]'
+
+function usageError(message: string): Error {
+  return new Error(`${message}. ${USAGE}`)
+}
+
 function git(args: string[], cwd?: string) {
   return spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
 }
@@ -71,28 +77,37 @@ function workflow(root: string, branch: string, manager: PackageManager): string
 }
 
 function setup(args: string[]): void {
-  if (args.includes('--help') || args.includes('-h')) {
+  let branch: string | undefined
+  let manager: PackageManager | undefined
+  let help = false
+  for (let i = 0; i < args.length; i += 1) {
+    const flag = args[i]
+    if (flag === '--help' || flag === '-h') {
+      help = true
+      continue
+    }
+    if (flag !== '--branch' && flag !== '--package-manager') throw usageError(`unknown flag ${JSON.stringify(flag)}`)
+    const value = args[++i]
+    if (!value || value.startsWith('-')) throw usageError(`${flag} requires a value`)
+    if (flag === '--branch') {
+      if (git(['check-ref-format', `refs/heads/${value}`]).status !== 0) {
+        throw usageError(`invalid --branch value ${JSON.stringify(value)}`)
+      }
+      branch = value
+    } else {
+      if (!Object.hasOwn(LOCKFILES, value)) throw usageError('--package-manager must be bun, npm, pnpm or yarn')
+      manager = value as PackageManager
+    }
+  }
+
+  if (help) {
     process.stdout.write(
-      'usage: test-selection-setup [--branch <name>] [--package-manager <bun|npm|pnpm|yarn>] [--help]\n' +
+      `${USAGE}\n` +
         '  --branch <name>                       Branch to record (default: origin/HEAD).\n' +
         '  --package-manager <bun|npm|pnpm|yarn>  Package manager (default: infer from root lockfiles).\n' +
         '  --help, -h                            Print help.\n'
     )
     return
-  }
-
-  let branch: string | undefined
-  let manager: PackageManager | undefined
-  for (let i = 0; i < args.length; i += 2) {
-    const [flag, value] = [args[i], args[i + 1]]
-    if (flag !== '--branch' && flag !== '--package-manager') throw new Error(`unknown flag ${JSON.stringify(flag)}`)
-    if (!value || value.startsWith('-')) throw new Error(`${flag} requires a value`)
-    if (flag === '--branch') {
-      branch = value
-    } else {
-      if (!Object.hasOwn(LOCKFILES, value)) throw new Error('--package-manager must be bun, npm, pnpm or yarn')
-      manager = value as PackageManager
-    }
   }
 
   const repo = git(['rev-parse', '--show-toplevel'])
@@ -105,9 +120,9 @@ function setup(args: string[]): void {
       throw new Error('no default branch from origin/HEAD; pass --branch')
     }
     branch = remote.stdout.replace(/\r?\n$/, '').slice(prefix.length)
-  }
-  if (git(['check-ref-format', `refs/heads/${branch}`], root).status !== 0) {
-    throw new Error(`invalid --branch value ${JSON.stringify(branch)}`)
+    if (git(['check-ref-format', `refs/heads/${branch}`], root).status !== 0) {
+      throw new Error(`invalid --branch value ${JSON.stringify(branch)}`)
+    }
   }
 
   const text = workflow(root, branch, manager ?? inferPackageManager(root))
