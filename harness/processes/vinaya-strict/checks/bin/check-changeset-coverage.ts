@@ -6,7 +6,8 @@
  * `fixed` group live, resolves each member's own `package.json` `files`
  * allowlist live (never a hardcoded path list), reads the diff's changed
  * files, and reports a finding when a shipped path is hit with no
- * `.changeset/*.md` in the same diff.
+ * `.changeset/*.md` in the same diff. It also checks surviving changesets
+ * in the diff for package names covered by the configured ignore list.
  *
  * Blocking: a finding is `error` severity and exits `1`, so the pre-push
  * hook refuses the push and CI fails the pull request. The one waiver is an
@@ -31,11 +32,16 @@
 
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
 import { CHANGESET_RELEASE_BRANCH } from '../../tools/review-gate'
-import { repoRoot, resolveChangedFiles } from '../../../../../harness/kernel/connectors/git/diff-evidence'
+import { repoRoot, resolveDiff } from '../../../../../harness/kernel/connectors/git/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
-import { evaluateChangesetCoverage, type FixedGroupMember } from '../changeset-coverage-logic'
+import {
+  evaluateChangesetCoverage,
+  evaluateIgnoredChangesets,
+  isChangesetFile,
+  type FixedGroupMember
+} from '../changeset-coverage-logic'
 
 const CHECK_NAME = 'changeset-coverage'
 
@@ -45,6 +51,18 @@ function git(args: string[]): string {
   } catch {
     return ''
   }
+}
+
+/** Read only regular blobs from the snapshot used for diff evidence. */
+function readSnapshotFile(root: string, path: string, staged: boolean): string | null {
+  const args = staged ? ['ls-files', '--stage'] : ['ls-tree', 'HEAD']
+  const options = { cwd: root, encoding: 'utf8' as const, stdio: 'pipe' as const }
+  const entry = execFileSync('git', ['--literal-pathspecs', ...args, '-z', '--', path], options)
+  const oid = (
+    staged ? /^100(?:644|755) ([a-f0-9]+) 0\t/.exec(entry) : /^100(?:644|755) blob ([a-f0-9]+)\t/.exec(entry)
+  )?.[1]
+  if (!oid) return null
+  return execFileSync('git', ['cat-file', 'blob', oid], options)
 }
 
 /** `git symbolic-ref --quiet --short HEAD` — `''` on detached HEAD, never a false name. */
@@ -58,8 +76,15 @@ function defaultBranch(): string {
   return ref.startsWith('origin/') ? ref.slice('origin/'.length) : ''
 }
 
-function toPosix(p: string): string {
-  return p.split('\\').join('/')
+function changedPaths(staged: boolean): string[] | null {
+  const diff = resolveDiff()
+  if (!diff) return null
+
+  const options = { cwd: diff.root, encoding: 'utf8' as const, stdio: 'pipe' as const }
+  const args = staged ? ['--cached', '--merge-base', diff.base] : [`${diff.base}...HEAD`]
+  return execFileSync('git', ['diff', '--name-only', '-z', ...args], options)
+    .split('\0')
+    .filter(Boolean)
 }
 
 type PackageJsonView = { name?: unknown; files?: unknown; workspaces?: unknown }
@@ -126,10 +151,10 @@ function resolveWorkspaceMembers(root: string): Map<string, { dir: string; files
   return members
 }
 
-/** `.changeset/config.json`'s `fixed` group, flattened across every sub-array — read live, never hardcoded. Missing/malformed config degrades to `[]` (dormant). */
-function fixedGroupNames(root: string): string[] {
-  const pkg = readPackageJson(join(root, '.changeset', 'config.json')) as { fixed?: unknown } | null
-  const fixed = pkg?.fixed
+type ChangesetsConfigView = { fixed?: unknown; ignore?: unknown }
+
+/** `.changeset/config.json`'s `fixed` group, flattened across every sub-array. */
+function fixedGroupNames(fixed: unknown): string[] {
   if (!Array.isArray(fixed)) return []
   return fixed.flat().filter((n): n is string => typeof n === 'string')
 }
@@ -148,7 +173,8 @@ function main(): void {
     process.exit(0)
   }
 
-  const changedAbs = resolveChangedFiles()
+  const staged = process.env.VINAYA_COMMIT_HOOK === '1' && Boolean(process.env.GIT_INDEX_FILE)
+  const changedFiles = changedPaths(staged)
   // `null` (indeterminate — a shallow clone, no merge base, an orphan or
   // bare/single-commit history) is NOT the same fact as `[]` (a real,
   // resolved, genuinely empty diff) — collapsing the two into the same
@@ -159,7 +185,7 @@ function main(): void {
   // "report everything unfiltered" fallback), so the loud direction here is
   // a `warning` finding naming the ambiguity — never a bypass, and still
   // exit `0` always, same report-only contract as every other outcome.
-  if (changedAbs === null) {
+  if (changedFiles === null) {
     emitCheckError({
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
@@ -171,10 +197,9 @@ function main(): void {
     })
     process.exit(0)
   }
-  if (changedAbs.length === 0) {
+  if (changedFiles.length === 0) {
     process.exit(0)
   }
-  const changedFiles = changedAbs.map((p) => toPosix(relative(root, p)))
 
   // Always self-computed via git, never `process.env.BRANCH` — this check
   // declares `env: {}` (registry.ts) and the runner's env allowlist already
@@ -185,15 +210,42 @@ function main(): void {
   const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'])
   const isReleaseBranch = branch === CHANGESET_RELEASE_BRANCH
 
+  const config = readPackageJson(join(root, '.changeset', 'config.json')) as { fixed?: unknown } | null
+  const snapshotConfig = isReleaseBranch ? null : readSnapshotFile(root, '.changeset/config.json', staged)
+  let snapshotIgnore: unknown
+  if (snapshotConfig !== null) {
+    try {
+      snapshotIgnore = (JSON.parse(snapshotConfig) as ChangesetsConfigView | null)?.ignore
+    } catch {
+      // A malformed configuration has no usable ignore list.
+    }
+  }
+  const ignore = Array.isArray(snapshotIgnore)
+    ? snapshotIgnore.filter((entry): entry is string => typeof entry === 'string')
+    : []
+  const changedChangesets =
+    ignore.length > 0 && !isReleaseBranch
+      ? changedFiles.filter(isChangesetFile).flatMap((path) => {
+          const text = readSnapshotFile(root, path, staged)
+          return text === null ? [] : [{ path, text }]
+        })
+      : []
+  const ignored = evaluateIgnoredChangesets(ignore, changedChangesets, isReleaseBranch)
+
   const workspaceMembers = resolveWorkspaceMembers(root)
-  const fixedGroup: FixedGroupMember[] = fixedGroupNames(root)
+  const fixedGroup: FixedGroupMember[] = fixedGroupNames(config?.fixed)
     .map((name) => {
       const member = workspaceMembers.get(name)
       return member ? { name, dir: member.dir, files: member.files } : null
     })
     .filter((m): m is FixedGroupMember => m !== null)
 
-  const result = evaluateChangesetCoverage(fixedGroup, changedFiles, isReleaseBranch)
+  const refusedChangesets = new Set(ignored.map(({ path }) => path))
+  const result = evaluateChangesetCoverage(
+    fixedGroup,
+    changedFiles.filter((path) => !refusedChangesets.has(path)),
+    isReleaseBranch
+  )
 
   // stdout only — stderr is the CheckError JSON channel (contract.ts).
   console.log(
@@ -205,12 +257,22 @@ function main(): void {
       schema: CHECK_SCHEMA_VERSION,
       check: CHECK_NAME,
       severity: 'error',
-      message: `changeset-coverage: this diff changes a published package's shipped file(s) with no \`.changeset/*.md\` in the same diff: ${result.shippedPathsHit.join(', ')}. Add a changeset describing the change, or add an empty one when the change ships nothing users see.`,
+      message: `changeset-coverage: this diff changes a published package's shipped file(s) with no accepted \`.changeset/*.md\` in the same diff: ${result.shippedPathsHit.join(', ')}. Add a changeset describing the change, or add an empty one when the change ships nothing users see.`,
       agent_recovery_prompt:
         "Either add a `.changeset/*.md` entry describing the change in user terms (run the repo's changeset CLI, e.g. `bunx changeset`), or, when the change ships nothing users see, add an empty changeset (`bunx changeset add --empty`). Commit it in the same PR."
     })
-    process.exit(1)
   }
+  for (const { path, packages } of ignored) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'error',
+      message: `changeset-coverage: ${path} names ignored package(s): ${packages.join(', ')}.`,
+      agent_recovery_prompt:
+        'Remove the ignored package entries from the changeset frontmatter. If no release is intended, use an empty changeset or delete the file when a changeset is unnecessary.'
+    })
+  }
+  if (result.status === 'finding' || ignored.length > 0) process.exit(1)
 }
 
 main()
