@@ -437,6 +437,197 @@ describe('the safe rule composes with the name narrowing', () => {
   })
 })
 
+describe('workspace manifest dependency-list changes', () => {
+  const manifest = 'packages/example/package.json'
+  const source = 'packages/example/src/main.ts'
+  const lock = '{"workspaces":{"":{"name":"root"},"packages/example":{"name":"example",},},"packages":{}}'
+  const before = '{"name":"example","dependencies":{"external":"^1"}}'
+  const after = '{"name":"example","dependencies":{"external":"^2"}}'
+  const covered = { instrumented: [[1, 1] as [number, number]], executed: [] }
+  const entry: RecordedTest = {
+    reads: [TEST, manifest, source],
+    listed: [],
+    opens: { [manifest]: 1 },
+    childOpens: [],
+    coverage: { [source]: covered }
+  }
+  const files = { ...BASE, [manifest]: before, [source]: 'export const value = 1\n', 'bun.lock': lock }
+
+  function compare(
+    options: {
+      base?: Record<string, string | null>
+      head?: Record<string, string | null>
+      entry?: RecordedTest
+      policy?: Partial<SelectionPolicy>
+      declarations?: InventoryDeclarations
+      platform?: string
+      drift?: boolean
+    } = {}
+  ): SelectionPlan {
+    const overlay = (original: Record<string, string>, changes: Record<string, string | null>) =>
+      Object.fromEntries(
+        Object.entries({ ...original, ...changes }).filter((item): item is [string, string] => item[1] !== null)
+      )
+    const base = overlay(files, options.base ?? {})
+    const head = overlay(base, options.head ?? { [manifest]: after })
+    const declarations = options.declarations ?? DECLARATIONS
+    return selectTests({
+      repo: memoryRepository({ recorded: files, base, head }),
+      base: 'base',
+      head: 'head',
+      inventory: {
+        head: inventoryViewOf('head', head, declarations),
+        base: inventoryViewOf('base', base, declarations)
+      },
+      policy: { depth: 'transitive', installLayout: 'hoisted', ...options.policy },
+      records: {
+        record: { ...recordOf({ [TEST]: options.entry ?? entry }), commit: options.drift ? 'recorded' : 'base' },
+        platform: options.platform ?? 'linux'
+      }
+    })
+  }
+
+  it('leaves out only the test with one loader open and reports the rule', () => {
+    const plan = compare()
+    expect(plan.required).toEqual([])
+    expect(plan.records.leftOut).toEqual([
+      {
+        test: TEST,
+        files: [{ path: manifest, rule: 'manifest-dependency-lists', detail: expect.any(String) }]
+      }
+    ])
+  })
+
+  it('allows added and removed registry entries across the four lists', () => {
+    const plan = compare({
+      head: {
+        [manifest]:
+          '{"name":"example","devDependencies":{"dev":"latest"},"peerDependencies":{"peer":">=1 || ^2"},"optionalDependencies":{"optional":"*"}}'
+      }
+    })
+    expect(plan.records.leftOut[0]?.files[0]?.rule).toBe('manifest-dependency-lists')
+  })
+
+  const refusedTexts = [
+    ['a changed main', '{"name":"example","main":"./elsewhere.js","dependencies":{"external":"^2"}}'],
+    ['a duplicate escaped key', '{"name":"bad","n\\u0061me":"example","dependencies":{"external":"^2"}}'],
+    ['a nested duplicate key', '{"name":"example","dependencies":{"external":"^1","external":"^2"}}'],
+    ['invalid JSON', '{"name":"example","dependencies":{"external":"^2",}}'],
+    ['a non-object', '[]'],
+    ['a file dependency', '{"name":"example","dependencies":{"external":"file:../external"}}'],
+    ['a dot-prefixed dependency', '{"name":"example","dependencies":{"external":".."}}'],
+    ['a non-string dependency', '{"name":"example","dependencies":{"external":2}}'],
+    ['a workspace name', '{"name":"example","dependencies":{"example":"^2"}}'],
+    ['an unchanged entry', '{ "name": "example", "dependencies": {"external":"^1"} }']
+  ] as const
+  for (const [label, text] of refusedTexts)
+    it('keeps a reader for ' + label, () => {
+      expect(compare({ head: { [manifest]: text } }).required.map((test) => test.test)).toContain(TEST)
+    })
+
+  it('requires both lockfiles to name the workspace folder and rejects workspace names from either revision', () => {
+    for (const side of ['base', 'head'] as const) {
+      for (const text of [null, '{"workspaces":{}}', lock.replace('"name":"example"', '"name":"external"')]) {
+        const plan = compare({
+          base: side === 'base' ? { 'bun.lock': text } : {},
+          head: { [manifest]: after, ...(side === 'head' ? { 'bun.lock': text } : {}) }
+        })
+        expect(plan.required.map((test) => test.test)).toContain(TEST)
+      }
+    }
+  })
+
+  it('requires a modified non-root manifest', () => {
+    const root = { ...entry, reads: [...entry.reads, 'package.json'], opens: { 'package.json': 1 } }
+    for (const plan of [
+      compare({ base: { [manifest]: null } }),
+      compare({ head: { [manifest]: null } }),
+      compare({ base: { 'package.json': before }, head: { 'package.json': after }, entry: root })
+    ])
+      expect(plan.required.map((test) => test.test)).toContain(TEST)
+  })
+
+  const refusedEntries: [string, RecordedTest][] = [
+    ['two opens', { ...entry, opens: { [manifest]: 2 } }],
+    ['no open counts', { reads: entry.reads, listed: [], childOpens: [], coverage: { [source]: covered } }],
+    ['a child open', { ...entry, childOpens: [manifest] }],
+    [
+      'missing child opens',
+      { reads: entry.reads, listed: [], opens: { [manifest]: 1 }, coverage: { [source]: covered } }
+    ],
+    ['unknown coverage paths', { ...entry, coverage: { [source]: covered, 'missing.ts': covered } }],
+    ['coverage in another package', { ...entry, coverage: { [LIB]: covered } }],
+    ['no coverage', { reads: entry.reads, listed: [], opens: { [manifest]: 1 }, childOpens: [] }],
+    ['a source folder read', { ...entry, reads: [...entry.reads, 'packages/example/src/'] }],
+    ['an ancestor folder read', { ...entry, reads: [...entry.reads, 'packages/'] }]
+  ]
+  for (const [label, refused] of refusedEntries)
+    it('keeps a reader with ' + label, () => {
+      expect(compare({ entry: refused }).required.map((test) => test.test)).toContain(TEST)
+    })
+
+  it('honors nearest manifest ownership, the runner, file-level policy and platform branches', () => {
+    const platformEntry = { ...entry, branchesOnPlatform: true }
+    for (const plan of [
+      compare({ base: { 'packages/example/src/package.json': '{}' } }),
+      compare({
+        declarations: { ...DECLARATIONS, suites: [{ id: 'all', dir: '.', runner: 'vitest', preload: null }] }
+      }),
+      compare({ policy: { fileLevel: { realSandbox: [TEST] } } }),
+      compare({ policy: { fileLevel: { outsideCall: [source] } } }),
+      compare({ entry: platformEntry, platform: 'darwin' })
+    ])
+      expect(plan.required.map((test) => test.test)).toContain(TEST)
+    expect(compare({ platform: 'darwin' }).records.leftOut[0]?.test).toBe(TEST)
+    expect(compare({ entry: platformEntry }).records.leftOut[0]?.test).toBe(TEST)
+  })
+
+  it('keeps independent read and declared-input reasons', () => {
+    const viaRead = compare({ head: { [manifest]: after, [source]: 'export const value = 2\n' } })
+    expect(viaRead.required.find((test) => test.test === TEST)?.reasons).toContainEqual(
+      expect.objectContaining({ kind: 'recorded-read', via: source })
+    )
+    const viaPackage = compare({
+      entry: { ...entry, reads: [...entry.reads, 'bun.lock#external'] },
+      head: { [manifest]: after, 'bun.lock': lock.replace('"packages":{}', '"packages":{"external":["external@2"]}') }
+    })
+    expect(viaPackage.required.find((test) => test.test === TEST)?.reasons).toContainEqual(
+      expect.objectContaining({ kind: 'recorded-read', via: 'bun.lock#external' })
+    )
+    const viaDeclaration = compare({
+      declarations: {
+        ...DECLARATIONS,
+        edges: [
+          { input: manifest, kind: 'config', readerKind: 'raw-bytes', readers: [TEST], source: 'manifest-reader' }
+        ]
+      }
+    })
+    expect(viaDeclaration.required.find((test) => test.test === TEST)?.reasons).toContainEqual(
+      expect.objectContaining({ kind: 'declared-input', via: manifest })
+    )
+  })
+
+  it('requires the layout in the policy and includes it in the policy identity', () => {
+    const unknownLayout = compare({ policy: { installLayout: undefined } })
+    expect(unknownLayout.required.map((test) => test.test)).toContain(TEST)
+    expect(compare().context.policy).not.toBe(unknownLayout.context.policy)
+  })
+
+  it('uses the recorded tree and the record-to-base texts for drift', () => {
+    const stable = compare({
+      drift: true,
+      base: { [manifest]: after, 'packages/example/src/package.json': '{}' },
+      head: { [manifest]: '{"name":"example","dependencies":{"external":"^3"}}' }
+    })
+    expect(stable.records.recorded).toContain(TEST)
+    expect(stable.records.leftOut[0]?.test).toBe(TEST)
+    const changed = compare({ drift: true, base: { [manifest]: after, 'bun.lock': null }, head: {} })
+    expect(changed.records.fallbacks).toContainEqual(
+      expect.objectContaining({ id: 'record-input-changed', tests: [TEST] })
+    )
+  })
+})
+
 describe('neverEnteredFunctions', () => {
   const fn = { inner: [6, 7], closing: 8 }
 

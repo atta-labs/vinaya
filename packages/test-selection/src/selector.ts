@@ -141,7 +141,7 @@ import {
   validateInventory
 } from './inventory.js'
 import { globToRegex, inputCovers, underDeclaredRoot } from './path-pattern.js'
-import { changedLockPackages, readBunLockIdentity } from './lockfile-identity.js'
+import { changedLockPackages, readBunLockIdentity, readRawBunLock } from './lockfile-identity.js'
 import {
   anyDependencyRead,
   DEPENDENCY_PACKAGE_SEPARATOR,
@@ -2115,6 +2115,110 @@ export function plannedTests(plan: SelectionPlan): string[] {
  * Every path that differs between two revisions, a rename as an addition and a
  * deletion; `null` when either revision cannot be listed.
  */
+const DEPENDENCY_LISTS = new Set(['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'])
+const REGISTRY_RANGE = /^[0-9A-Za-z^~<>=|*+ .-]+$/
+
+function jsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/** JSON.parse validates syntax first. Scan its tokens separately because it discards duplicate keys. */
+function uniqueManifest(text: string): Record<string, unknown> | null {
+  const parsed: unknown = JSON.parse(text)
+  if (!jsonObject(parsed)) return null
+  const stack: (Set<string> | null)[] = []
+  for (const [token, key] of text.matchAll(/("(?:[^"\\]|\\[\s\S])*")(?=[ \t\r\n]*:)|"(?:[^"\\]|\\[\s\S])*"|[{}[\]]/g)) {
+    if (token === '{') stack.push(new Set())
+    else if (token === '[') stack.push(null)
+    else if (token === '}' || token === ']') stack.pop()
+    else if (key !== undefined) {
+      const keys = stack.at(-1)
+      const decoded: string = JSON.parse(key)
+      if (keys?.has(decoded)) return null
+      keys?.add(decoded)
+    }
+  }
+  return parsed
+}
+
+function manifestListsOnly(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  workspaceNames: ReadonlySet<string>
+): boolean {
+  let changedEntry = false
+  for (const field of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const a = Object.hasOwn(before, field) ? before[field] : undefined
+    const b = Object.hasOwn(after, field) ? after[field] : undefined
+    if (!DEPENDENCY_LISTS.has(field)) {
+      // Property order can matter inside fields such as conditional exports.
+      if (!isDeepStrictEqual(a, b) || JSON.stringify(a) !== JSON.stringify(b)) return false
+      continue
+    }
+    if (isDeepStrictEqual(a, b)) continue
+    const oldList = a === undefined ? {} : a
+    const newList = b === undefined ? {} : b
+    if (!jsonObject(oldList) || !jsonObject(newList)) return false
+    for (const name of new Set([...Object.keys(oldList), ...Object.keys(newList)])) {
+      const oldRange = Object.hasOwn(oldList, name) ? oldList[name] : undefined
+      const newRange = Object.hasOwn(newList, name) ? newList[name] : undefined
+      if (isDeepStrictEqual(oldRange, newRange)) continue
+      if (workspaceNames.has(name)) return false
+      for (const range of [oldRange, newRange])
+        if (range !== undefined && (typeof range !== 'string' || !REGISTRY_RANGE.test(range) || range.startsWith('.')))
+          return false
+      changedEntry = true
+    }
+  }
+  return changedEntry
+}
+
+/** Judge each modified manifest once for this pair of revisions, using the raw lockfile folder keys. */
+function dependencyListManifests(repo: RepositoryReader, from: string, to: string) {
+  const judged = new Map<string, boolean>()
+  const workspacesAt = (revision: string): Record<string, unknown> | null => {
+    try {
+      const text = repo.read(revision, 'bun.lock')
+      const lock = text === null ? null : readRawBunLock(text)
+      return jsonObject(lock) && jsonObject(lock.workspaces) ? lock.workspaces : null
+    } catch {
+      return null
+    }
+  }
+  let workspaces:
+    | { before: Record<string, unknown>; after: Record<string, unknown>; names: Set<string> }
+    | null
+    | undefined
+  const compare = (path: string): boolean => {
+    if (workspaces === undefined) {
+      const before = workspacesAt(from)
+      const after = workspacesAt(to)
+      const names = new Set<string>()
+      workspaces = before && after ? { before, after, names } : null
+      if (workspaces)
+        for (const entry of [...Object.values(workspaces.before), ...Object.values(workspaces.after)])
+          if (jsonObject(entry) && typeof entry.name === 'string') names.add(entry.name)
+    }
+    const folder = dirname(path)
+    if (!workspaces || !Object.hasOwn(workspaces.before, folder) || !Object.hasOwn(workspaces.after, folder))
+      return false
+    try {
+      const oldText = repo.read(from, path)
+      const newText = repo.read(to, path)
+      const before = oldText === null ? null : uniqueManifest(oldText)
+      const after = newText === null ? null : uniqueManifest(newText)
+      return before !== null && after !== null && manifestListsOnly(before, after, workspaces.names)
+    } catch {
+      return false
+    }
+  }
+  return ({ path, status }: PathChange): boolean => {
+    if (status !== 'modified' || !path.endsWith('/package.json')) return false
+    if (!judged.has(path)) judged.set(path, compare(path))
+    return judged.get(path) === true
+  }
+}
+
 function changesBetween(repo: RepositoryReader, from: string, to: string): PathChange[] | null {
   if (from === to) return []
   let fromFiles: readonly string[]
@@ -2452,6 +2556,72 @@ function selectChange(input: SelectTestsInput): ChangePlan {
     scope.tests.push(test)
   }
   const records = input.records ?? null
+  const onRecordPlatform = records !== null && records.platform === records.record.platform
+  const fileLevel = new Set([...(policy.fileLevel?.realSandbox ?? []), ...(policy.fileLevel?.outsideCall ?? [])])
+  const fileLevelTests = new Map<string, boolean>()
+  const keptAtFileLevel = (test: string, index: RecordIndex): boolean => {
+    let kept = fileLevelTests.get(test)
+    if (kept === undefined) {
+      kept = fileLevel.has(test) || [...index.exact].some((read) => fileLevel.has(read))
+      fileLevelTests.set(test, kept)
+    }
+    return kept
+  }
+  const manifestRuleEnabled = records !== null && policy.installLayout === 'hoisted'
+  const headManifests = dependencyListManifests(repo, base, head)
+  const driftManifests = dependencyListManifests(repo, records?.record.commit ?? base, base)
+  let recordFiles: ReadonlySet<string> | null | undefined
+  const nearestManifests = new Map<string, string | null>()
+  const nearestManifest = (file: string, files: ReadonlySet<string>): string | null => {
+    const folder = dirname(file)
+    if (nearestManifests.has(folder)) return nearestManifests.get(folder) ?? null
+    let at = folder
+    let manifest = at === '.' ? 'package.json' : at + '/package.json'
+    while (!files.has(manifest) && at !== '.') {
+      at = dirname(at)
+      manifest = at === '.' ? 'package.json' : at + '/package.json'
+    }
+    const nearest = files.has(manifest) ? manifest : null
+    nearestManifests.set(folder, nearest)
+    return nearest
+  }
+  const manifestRule = (
+    test: string,
+    index: RecordIndex,
+    change: PathChange,
+    listsOnly: (change: PathChange) => boolean
+  ): boolean => {
+    const { path } = change
+    const { opens, childOpens, coverage, branchesOnPlatform } = index.test
+    if (
+      !manifestRuleEnabled ||
+      test === path ||
+      headTests.get(test)?.runner !== 'bun' ||
+      !index.exact.has(path) ||
+      opens?.[path] !== 1 ||
+      !childOpens ||
+      childOpens.includes(path) ||
+      !coverage ||
+      (!onRecordPlatform && branchesOnPlatform) ||
+      keptAtFileLevel(test, index) ||
+      index.folders.some(
+        (folder) => folder === dirname(path) + '/src/' || folder === './' || path.startsWith(folder)
+      ) ||
+      !listsOnly(change)
+    )
+      return false
+    if (recordFiles === undefined && records) {
+      try {
+        recordFiles = new Set(repo.list(records.record.commit))
+      } catch {
+        recordFiles = null
+      }
+    }
+    const files = recordFiles
+    if (!files) return false
+    const covered = Object.keys(coverage)
+    return covered.every((file) => files.has(file)) && covered.some((file) => nearestManifest(file, files) === path)
+  }
   // The inputs whose reads the record keeps per installed package (`bun.lock#zod`).
   const dependencyInputs = new Set<string>()
   for (const entry of Object.values(records?.record.tests ?? {}))
@@ -2521,7 +2691,11 @@ function selectChange(input: SelectTestsInput): ChangePlan {
         // A push from another platform uses the same Linux record CI uses: tests are platform-independent except the
         // real-sandbox ones, so the push and CI select the same tests.
         const index = indexRecordedTest(entry)
-        if (drift.some((change) => recordReach(index, change) !== null))
+        if (
+          drift.some(
+            (change) => recordReach(index, change) !== null && !manifestRule(test, index, change, driftManifests)
+          )
+        )
           leaveToStatic(
             test,
             'record-input-changed',
@@ -2582,8 +2756,6 @@ function selectChange(input: SelectTestsInput): ChangePlan {
   // ── The safe rule: a changed file whose every hunk is body-only or an inert addition, and whose changed functions a
   // test's recorded coverage shows it never entered, does not select that test. Coverage is control flow, which may
   // differ by platform, so it applies only on the record's own platform; the file-level lists never use it.
-  const fileLevel = new Set([...(policy.fileLevel?.realSandbox ?? []), ...(policy.fileLevel?.outsideCall ?? [])])
-  const onRecordPlatform = records !== null && records.platform === records.record.platform
   const testIds = new Set(headTests.keys())
   if (baseReliable) for (const t of (baseView as InventoryView).tests) testIds.add(t.id)
   type ChangedBodies = { functions: OwnBodyLines[]; names: string[] }
@@ -2608,15 +2780,6 @@ function selectChange(input: SelectTestsInput): ChangePlan {
     changedBodies.set(path, found)
     return found
   }
-  const fileLevelTests = new Map<string, boolean>()
-  const keptAtFileLevel = (test: string, index: RecordIndex): boolean => {
-    let kept = fileLevelTests.get(test)
-    if (kept === undefined) {
-      kept = fileLevel.has(test) || [...index.exact].some((read) => fileLevel.has(read))
-      fileLevelTests.set(test, kept)
-    }
-    return kept
-  }
   /** Why the safe rule lets `path` go by `test`, or `null` when the rule keeps the test. */
   const safeRule = (test: string, index: RecordIndex, path: string): string | null => {
     if (!onRecordPlatform || test === path || !index.exact.has(path) || keptAtFileLevel(test, index)) return null
@@ -2633,13 +2796,31 @@ function selectChange(input: SelectTestsInput): ChangePlan {
     leftOutFiles.set(test, [...(leftOutFiles.get(test) ?? []), { path, rule, detail }])
   const recordRead = new Set<string>()
   if (decided.size > 0) {
-    for (const test of decided.keys()) reasons.delete(test)
+    const declaredReasons = new Map<string, PlanReason[]>()
+    for (const test of decided.keys()) {
+      if (manifestRuleEnabled) {
+        const declared = reasons.get(test)?.filter((reason) => reason.kind === 'declared-input')
+        if (declared?.length) declaredReasons.set(test, declared)
+      }
+      reasons.delete(test)
+    }
     for (const change of pathChanges) {
       for (const [test, index] of decided) {
         const reach = recordReach(index, change)
         if (!reach) continue
         recordRead.add(change.path.split(DEPENDENCY_PACKAGE_SEPARATOR)[0] as string)
         if (test !== change.path && reach.exact && change.status === 'modified') {
+          if (manifestRule(test, index, change, headManifests)) {
+            leaveOut(
+              test,
+              change.path,
+              'manifest-dependency-lists',
+              'Bun opened the workspace manifest only to load modules, and only dependency lists changed'
+            )
+            for (const reason of declaredReasons.get(test) ?? []) addReason(test, reason)
+            declaredReasons.delete(test)
+            continue
+          }
           if (narrowable(test, change.path)) {
             leaveOut(
               test,
@@ -2751,6 +2932,7 @@ function selectChange(input: SelectTestsInput): ChangePlan {
       },
       policy: stableHash({
         depth: policy.depth,
+        ...(policy.installLayout === undefined ? {} : { installLayout: policy.installLayout }),
         scanners: policy.scanners ?? [],
         spawnPrograms: policy.spawnPrograms ?? [],
         dataFolders,

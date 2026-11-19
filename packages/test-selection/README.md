@@ -154,9 +154,8 @@ a caller parser, changes to `bun.lockb`, `package-lock.json`,
 `pnpm-lock.yaml` or `yarn.lock` also select every recorded package reader.
 
 On the record path a test whose reads include a changed file is left out, with
-a reason in the plan, in two independent ways; neither applies to the test file
-itself, to an added, deleted or renamed path, or to a file read only through a
-folder.
+a reason in the plan, in three independent ways. All three require a modified
+file that the test read directly. The test file itself always runs when changed.
 
 - *Unreached names* — only the exported names the test's imports never reach
   changed (`unreached-names`).
@@ -175,11 +174,32 @@ folder.
   never by matching changed names, and the rule applies only when the caller's
   platform is the record's, because coverage is control flow and may differ by
   platform.
+- *Manifest dependency lists* (`manifest-dependency-lists`) — with a hoisted
+  install, Bun resolves installed modules from `node_modules`, and changed
+  installed packages reach their readers through the lockfile. The rule requires
+  a modified non-root `package.json` whose folder appears in the raw
+  `workspaces` object of the root `bun.lock` on both sides. Both manifests
+  must be JSON objects with unique keys at every depth, including after
+  decoding escapes. Only `dependencies`, `devDependencies`,
+  `peerDependencies` and `optionalDependencies` may differ, with at least one
+  entry added, removed or changed. Each affected value on either side must be
+  a string matching `^[0-9A-Za-z^~<>=|*+ .-]+$` with no leading dot,
+  and the affected names must be absent from the workspace names on both sides.
+  The test must run under Bun, open the manifest exactly once in its own
+  process, and have no child opens of the manifest. Every coverage path must
+  exist as a file in the record commit, and at least one must have this manifest
+  as its nearest `package.json`. The rule keeps file-level tests, readers of
+  the workspace's `src/` folder (which also represents reads under `dist/`),
+  and readers of any folder containing the manifest. Across platforms it also
+  keeps tests that branch on the platform. A missing fact keeps the test, and
+  any independent reason can still select it. The same decision applies when
+  comparing the record commit to the base for drift.
 
 `SelectionPolicy.fileLevel` (`realSandbox`, `outsideCall`) lists tests the
-second rule never leaves out: a listed test, or a test whose record read a
+second and third rules never leave out: a listed test, or a test whose record read a
 listed helper, always runs when a file it read changes. Both lists are part of
-the policy's identity hash.
+the policy's identity hash. `SelectionPolicy.installLayout` enables the
+manifest rule when set to `'hoisted'` and enters the policy identity when present.
 
 On the record path a changed path reaches a recorded test through its reads
 (`recordReach`). An added or deleted path also reaches it through a listed
