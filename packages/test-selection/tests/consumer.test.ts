@@ -439,6 +439,18 @@ esac
         expect(refused.stderr.trim().split('\n')).toHaveLength(1)
         expect(refused.stderr).toContain(message)
       }
+
+      // The root uses Jest, while all test files still belong to member suites.
+      const cfgManifestPath = join(cfg, 'package.json')
+      const cfgManifest = JSON.parse(readFileSync(cfgManifestPath, 'utf8'))
+      cfgManifest.scripts = { test: 'jest' }
+      writeFileSync(cfgManifestPath, JSON.stringify(cfgManifest))
+      run('git', ['commit', '-q', '-am', 'use Jest at the root'], cfg, home)
+      const runnerOnly = run('node', [command, '--base', cfgAdded, '--head', 'HEAD'], cfg, home)
+      expect(runnerOnly.stderr).toBe(
+        'test-selection: warning: left out 1 package(s) with unsupported runners and 0 test file(s) under no suite\n'
+      )
+
       // The record command, linked by npm, under Node: the built `dist/`, with the probe's source shipped beside it.
       expect(listing).toContain('package/dist/record-command.js')
       expect(listing).toContain('package/src/listing-probe.ts')
