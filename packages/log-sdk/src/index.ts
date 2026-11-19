@@ -1,4 +1,11 @@
 export * from './contract/catalogue.js'
+export { convertEarlierEvents, type EarlierOtlpDocuments } from './contract/convert.js'
+export {
+  createLiveEarlierConverter,
+  type ConvertedEarlierRecord,
+  type EarlierOpenStart
+} from './contract/convert-live.js'
+export { agentSpanIdFor } from './contract/convert-map.js'
 export * from './contract/custom.js'
 export * from './contract/ids.js'
 export * from './contract/redact.js'
