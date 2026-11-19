@@ -2475,7 +2475,14 @@ function selectChange(input: SelectTestsInput): ChangePlan {
           const before = repo.read(from, change.path)
           const after = repo.read(to, change.path)
           if (before !== null && after !== null)
-            names = changedLockPackages(lockParser(before), lockParser(after), isDeepStrictEqual)
+            names = changedLockPackages(
+              lockParser(before),
+              lockParser(after),
+              policyLockParser
+                ? (a, b) => stableJson(a) === stableJson(b)
+                : // The built-in reader keeps numbers that overflow to Infinity, which stableJson turns into null.
+                  isDeepStrictEqual
+            )
         } catch {
           names = null
         }
