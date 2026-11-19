@@ -7,7 +7,14 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { gitRepository, selectTests } from '../src/index.js'
+import {
+  type CommandRunner,
+  findReadRecord,
+  gitRepository,
+  RECORD_ARTIFACT_PREFIX,
+  RECORD_WORKFLOW_FILE,
+  selectTests
+} from '../src/index.js'
 import { fixture, headFiles, scenarioInput } from './fixture-repos.js'
 
 function scratch(prefix: string): string {
@@ -113,4 +120,157 @@ describe('a plan for two commits reads only those commits', () => {
       rmSync(repo, { recursive: true, force: true })
     }
   }, 120_000)
+})
+
+describe('the search for a read record, with a runner of the test in place of gh', () => {
+  /** A scratch repository of `count` commits on one line; the commits' ids, oldest first. */
+  function line(count: number): { repo: string; commits: string[] } {
+    const repo = scratch('verification-fetch-')
+    git(repo, ['init', '-q', '-b', 'main'])
+    const commits: string[] = []
+    for (let i = 0; i < count; i++) {
+      writeTree(repo, { 'a.txt': `${i}\n` })
+      git(repo, ['add', '-A'])
+      git(repo, ['commit', '-q', '-m', `c${i}`])
+      commits.push(git(repo, ['rev-parse', 'HEAD']))
+    }
+    return { repo, commits }
+  }
+
+  const recordOf = (commit: string, extra = {}) =>
+    JSON.stringify({ schema: 'vinaya.read-record', schemaVersion: 1, commit, platform: 'linux', tests: {}, ...extra })
+
+  /** A stand-in for gh: `artifacts` maps a commit to the text of its record file; `fail` names a call that fails. */
+  function fakeGh(artifacts: Record<string, string>, fail?: 'branch' | 'list' | 'start') {
+    const calls: string[][] = []
+    const envs: NodeJS.ProcessEnv[] = []
+    const run: CommandRunner = (file, args, options) => {
+      expect(file).toBe('gh')
+      calls.push(args)
+      envs.push(options.env ?? {})
+      if (fail === 'start') throw Object.assign(new Error('spawnSync gh ENOENT'), { code: 'ENOENT' })
+      if (args[0] === 'repo') {
+        if (fail === 'branch') throw new Error('gh: not logged in')
+        return JSON.stringify({ defaultBranchRef: { name: 'trunk' } })
+      }
+      if (args[0] === 'run' && args[1] === 'list') {
+        if (fail === 'list') throw new Error('gh: HTTP 401')
+        const commit = args[args.indexOf('--commit') + 1] as string
+        expect(args).toContain(RECORD_WORKFLOW_FILE)
+        expect(args[args.indexOf('--branch') + 1]).toBe('trunk')
+        expect(args[args.indexOf('--event') + 1]).toBe('push')
+        return JSON.stringify(commit in artifacts ? [{ databaseId: 7 }] : [])
+      }
+      const name = args[args.indexOf('--name') + 1] as string
+      const commit = name.slice(RECORD_ARTIFACT_PREFIX.length)
+      if (!name.startsWith(RECORD_ARTIFACT_PREFIX) || !(commit in artifacts)) throw new Error('no artifact')
+      writeFileSync(join(args[args.indexOf('--dir') + 1] as string, 'read-record.json'), artifacts[commit] as string)
+      return ''
+    }
+    return { run, calls, envs }
+  }
+
+  it('uses the record of the base, keeps it, and uses the kept copy with no call', () => {
+    const { repo, commits } = line(3)
+    try {
+      const base = commits[2] as string
+      const gh = fakeGh({ [base]: recordOf(base) })
+      const found = findReadRecord(repo, base, gh.run)
+      expect(found).toMatchObject({ source: 'fetched', commit: base })
+      expect(gh.calls.filter((c) => c[0] === 'repo')).toHaveLength(1)
+      expect(readFileSync(join(repo, '.git/test-selection/read-records', `${base}.json`), 'utf8')).toBe(recordOf(base))
+      expect(git(repo, ['status', '--porcelain', '--untracked-files=all'])).toBe('')
+
+      const again = fakeGh({})
+      expect(findReadRecord(repo, base, again.run)).toMatchObject({ source: 'kept', commit: base })
+      expect(again.calls).toEqual([])
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('uses the record of an earlier commit when the base has none, and starts gh with no GIT_ variable', () => {
+    const { repo, commits } = line(4)
+    try {
+      const earlier = commits[1] as string
+      const gh = fakeGh({ [earlier]: recordOf(earlier) })
+      process.env.GIT_DIR = '/nowhere'
+      try {
+        const found = findReadRecord(repo, commits[3] as string, gh.run)
+        expect(found).toMatchObject({ source: 'fetched', commit: earlier })
+      } finally {
+        delete process.env.GIT_DIR
+      }
+      expect(gh.envs.length).toBeGreaterThan(0)
+      for (const env of gh.envs) expect(Object.keys(env).filter((key) => key.startsWith('GIT_'))).toEqual([])
+      // The default branch was asked once, before the first fetch.
+      expect(gh.calls.filter((c) => c[0] === 'repo')).toHaveLength(1)
+      expect(gh.calls[0]?.[0]).toBe('repo')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('goes on after a candidate with no run, and gives a reason when no candidate has a record', () => {
+    const { repo, commits } = line(3)
+    try {
+      const none = findReadRecord(repo, commits[2] as string, fakeGh({}).run)
+      expect(none).toEqual({ record: null, reason: `no ${RECORD_WORKFLOW_FILE} push run for ${commits[2]}` })
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('starts gh no more after a failing run list or default branch, and a missing gh is a reason', () => {
+    const { repo, commits } = line(5)
+    try {
+      const base = commits[4] as string
+      for (const fail of ['list', 'branch', 'start'] as const) {
+        const gh = fakeGh({ [commits[0] as string]: recordOf(commits[0] as string) }, fail)
+        const found = findReadRecord(repo, base, gh.run)
+        expect(found.record).toBeNull()
+        // The default branch, then (for a failing run list) one run list; never a second commit's.
+        expect(gh.calls).toHaveLength(fail === 'list' ? 2 : 1)
+      }
+      // A kept record of an earlier commit is still used after gh failed.
+      mkdirSync(join(repo, '.git/test-selection/read-records'), { recursive: true })
+      const kept = commits[2] as string
+      writeFileSync(join(repo, '.git/test-selection/read-records', `${kept}.json`), recordOf(kept))
+      const gh = fakeGh({}, 'list')
+      expect(findReadRecord(repo, base, gh.run)).toMatchObject({ source: 'kept', commit: kept })
+      expect(gh.calls).toHaveLength(2)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a file that is not a record and a record of another commit, and keeps neither', () => {
+    const { repo, commits } = line(3)
+    try {
+      const base = commits[2] as string
+      const other = commits[1] as string
+      const gh = fakeGh({ [base]: '{ "not": "a record" }', [other]: recordOf(commits[0] as string) })
+      const found = findReadRecord(repo, base, gh.run)
+      expect(found.record).toBeNull()
+      expect(found).toMatchObject({ reason: `the fetched file is not a read record of ${base}` })
+      expect(() => readFileSync(join(repo, '.git/test-selection/read-records', `${base}.json`))).toThrow()
+      expect(() => readFileSync(join(repo, '.git/test-selection/read-records', `${other}.json`))).toThrow()
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('looks through the base and nine commits before it, no further', () => {
+    const { repo, commits } = line(12)
+    try {
+      const base = commits[11] as string
+      const tooFar = fakeGh({ [commits[1] as string]: recordOf(commits[1] as string) })
+      expect(findReadRecord(repo, base, tooFar.run).record).toBeNull()
+      expect(tooFar.calls.filter((c) => c[1] === 'list')).toHaveLength(10)
+      const reached = fakeGh({ [commits[2] as string]: recordOf(commits[2] as string) })
+      expect(findReadRecord(repo, base, reached.run)).toMatchObject({ commit: commits[2] })
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
 })
