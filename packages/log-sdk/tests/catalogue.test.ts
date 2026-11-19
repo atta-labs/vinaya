@@ -43,10 +43,39 @@ test('every name a handle function writes is in the catalogue', () => {
   handle.stopRuleMet({ rule: 'r' })
   handle.cancelled({ reason: 'c' })
   handle.exited({ code: 0 })
+  handle.reviewVerdicts({ seats: [], blockingCount: 0, findings: [] })
+  handle.findingsCompared({ open: [], resolved: [], new: [], recurring: [] })
+  for (const where of ['hook', 'local', 'push', 'ci'] as const) {
+    const check = handle.startChecks({ where })
+    handle.endChecks(check, { ran: 0, passed: 0, failed: 0, skipped: 0, failedNames: [] })
+  }
+  handle.checkNotPassed({ name: 'lint', result: 'failed' })
+  handle.checkResultRead({ name: 'lint', result: 'passed' })
+  for (const kind of [
+    'saved',
+    'pushed',
+    'opened',
+    'conflicted',
+    'recovered',
+    'merged',
+    'reverted',
+    'incident'
+  ] as const) {
+    handle.recordChange({ kind, change: 'pr-1' })
+  }
+  for (const kind of ['authority', 'strategy', 'product'] as const) {
+    const startTime = new Date(1_000)
+    const ref = handle.askPerson({ kind, key: kind, startTime })
+    handle.answerPerson({ kind, spanId: ref.spanId, startTime, by: 'principal' })
+  }
+  const action = { action: 'write', result: 'success', target: 'pr-1' }
+  handle.forgeAction(action)
+  handle.verifiedAction(action)
+  handle.commandCompleted(action)
   handle.endRun()
   expect(errors).toEqual([])
   const finished = spans.getFinishedSpans()
-  expect(finished.length).toBe(5 + 0)
+  expect(new Set(finished.map((span) => span.name))).toEqual(new Set(ALL_SPAN_NAMES))
   for (const s of finished) {
     expect(ALL_SPAN_NAMES).toContain(s.name)
     for (const k of Object.keys(s.attributes)) expect(ALL_ATTRIBUTE_NAMES).toContain(k)

@@ -13,14 +13,22 @@ import {
 } from '@opentelemetry/sdk-trace-base'
 import {
   ATTRIBUTE_NAMES,
+  EVENT_NAMES,
   GENAI_CONVENTIONS_VERSION,
   type RecordProvenance,
   SDK_VERSION
 } from '../contract/catalogue.js'
+import { CustomEventDeclarationsSchema, type CustomEventDeclarations } from '../contract/custom.js'
 import { createRunIdGenerator, type SpanParent, traceIdFor } from '../contract/ids.js'
 import { createFileExporters } from '../local-copy/file-exporters.js'
 import * as agent from './agent.js'
 import { type Attrs, guard, type WriterCore } from './attributes.js'
+import * as change from './change.js'
+import * as checks from './checks.js'
+import { custom } from './custom.js'
+import * as outside from './outside.js'
+import * as person from './person.js'
+import * as review from './review.js'
 import * as round from './round.js'
 import * as run from './run.js'
 import { type LogsSetting, type PassedSettings, resolveSettings, type ResolvedSettings } from './settings.js'
@@ -77,6 +85,19 @@ export type LogHandle = WriterCore & {
   startStep(options: agent.StartStepOptions): SpanParent
   endStep(step: SpanParent, options?: run.EndOptions): void
   confidenceStated(detail: { confidence: number; agent?: SpanParent }): void
+  reviewVerdicts(d: review.ReviewVerdicts): void
+  findingsCompared(d: review.FindingsCompared): void
+  startChecks(d: checks.StartChecks): SpanParent
+  endChecks(ref: SpanParent, d: checks.EndChecks): void
+  checkNotPassed(d: checks.CheckResult): void
+  checkResultRead(d: checks.CheckResult): void
+  recordChange(d: change.Change): void
+  askPerson(d: person.AskPerson): SpanParent
+  answerPerson(d: person.AnswerPerson): void
+  forgeAction(d: outside.OutsideAction): void
+  verifiedAction(d: outside.OutsideAction): void
+  commandCompleted(d: outside.OutsideAction): void
+  custom(name: string, fields: Readonly<Record<string, unknown>>): void
   writeSpan(
     name: string,
     own: SpanParent,
@@ -165,6 +186,7 @@ export function connect(options: ConnectOptions): LogHandle {
   if (options.headers !== undefined) passed.headers = options.headers
   if (options.runtimeDir !== undefined) passed.runtimeDir = options.runtimeDir
 
+  let declarations: CustomEventDeclarations = {}
   let settings: ResolvedSettings | undefined
   try {
     const resolved = resolveSettings({
@@ -173,8 +195,11 @@ export function connect(options: ConnectOptions): LogHandle {
       ...(options.vinayaHome !== undefined ? { vinayaHome: options.vinayaHome } : {}),
       passed
     })
-    if (resolved.ok) settings = resolved.settings
-    else report(resolved.error)
+    if (resolved.ok) {
+      const logs = resolved.settings.logs
+      if (logs && logs.events !== undefined) declarations = CustomEventDeclarationsSchema.parse(logs.events)
+      settings = resolved.settings
+    } else report(resolved.error)
   } catch (e) {
     report(e)
   }
@@ -294,6 +319,19 @@ export function connect(options: ConnectOptions): LogHandle {
     startStep: s((o: agent.StartStepOptions) => agent.startStep(core, o)),
     endStep: g((step: SpanParent, o?: run.EndOptions) => agent.endStep(core, step, o)),
     confidenceStated: g((d: { confidence: number; agent?: SpanParent }) => agent.confidenceStated(core, d)),
+    reviewVerdicts: g((d: review.ReviewVerdicts) => review.reviewVerdicts(core, d)),
+    findingsCompared: g((d: review.FindingsCompared) => review.findingsCompared(core, d)),
+    startChecks: s((d: checks.StartChecks) => checks.startChecks(core, d)),
+    endChecks: g((ref: SpanParent, d: checks.EndChecks) => checks.endChecks(core, ref, d)),
+    checkNotPassed: g((d: checks.CheckResult) => checks.checkResult(core, EVENT_NAMES.checkNotPassed, d)),
+    checkResultRead: g((d: checks.CheckResult) => checks.checkResult(core, EVENT_NAMES.checkResultRead, d)),
+    recordChange: g((d: change.Change) => change.recordChange(core, d)),
+    askPerson: s((d: person.AskPerson) => person.askPerson(core, d)),
+    answerPerson: g((d: person.AnswerPerson) => person.answerPerson(core, d)),
+    forgeAction: g((d: outside.OutsideAction) => outside.outsideAction(core, EVENT_NAMES.forgeAction, d)),
+    verifiedAction: g((d: outside.OutsideAction) => outside.outsideAction(core, EVENT_NAMES.verifiedAction, d)),
+    commandCompleted: g((d: outside.OutsideAction) => outside.outsideAction(core, EVENT_NAMES.commandCompleted, d)),
+    custom: g((name: string, fields: Readonly<Record<string, unknown>>) => custom(core, declarations, name, fields)),
     writeSpan: g(
       (
         name: string,

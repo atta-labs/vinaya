@@ -13,3 +13,8 @@ export {
 } from './writer/connect.js'
 export type { LogsSetting } from './writer/settings.js'
 export { writeWholeSpan } from './writer/whole-span.js'
+export type { Change } from './writer/change.js'
+export type { CheckResult, EndChecks, StartChecks } from './writer/checks.js'
+export type { OutsideAction } from './writer/outside.js'
+export type { AnswerPerson, AskPerson } from './writer/person.js'
+export type { FindingsCompared, ReviewVerdicts } from './writer/review.js'
