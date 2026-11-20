@@ -1,8 +1,7 @@
 {
   "name": "@attalabs/vinaya-log-sdk",
   "version": "0.0.0",
-  "private": true,
-  "description": "The Vinaya Log's contract: the event schema, custom-event declarations, redaction and the stored-line classifier.",
+  "description": "Record, send, read and narrate workflow events with OpenTelemetry from Node.js or the command line.",
   "type": "module",
   "license": "FSL-1.1-ALv2",
   "author": "Daniel Estevez",
@@ -23,7 +22,23 @@
   "files": [
     "dist",
     "src",
-    "README.md"
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/atta-labs/vinaya.git",
+    "directory": "packages/log-sdk"
+  },
+  "keywords": [
+    "vinaya",
+    "opentelemetry",
+    "otlp",
+    "logging",
+    "workflow"
   ],
   "engines": {
     "node": ">=22.13"
