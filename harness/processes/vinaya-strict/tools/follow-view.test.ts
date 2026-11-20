@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { colourEnabled } from '../loops/dev-review/dispatch/dispatch'
 import {
   createFollowView,
+  followTaskSources,
   type FollowViewOptions,
   formatStageLine,
   lineSplitter,
@@ -32,6 +33,128 @@ const NOW = new Date('2026-10-29T10:00:00Z')
 
 const view = (overrides: Partial<FollowViewOptions> = {}) =>
   createFollowView({ colour: false, details: true, roots: ROOTS, timeZone: 'UTC', history: HISTORY, ...overrides })
+
+test('task follow selects local records by work reference and falls back for a task without a copy', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'vinaya-follow-'))
+  try {
+    const stage = JSON.stringify({
+      resourceLogs: [
+        {
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  eventName: 'vinaya.run.stage_changed',
+                  timeUnixNano: String(BigInt(NOW.getTime()) * 1_000_000n),
+                  attributes: [
+                    { key: 'vinaya.work.ref', value: { stringValue: '404' } },
+                    { key: 'vinaya.stage.to', value: { stringValue: 'review' } },
+                    { key: 'vinaya.round.number', value: { intValue: '1' } }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    })
+    writeFileSync(join(folder, 'run-a~writer~000000000000.logs.jsonl'), `${stage}\n${stage}\n`)
+    const driver = Buffer.from('2026-10-29T10:00:00Z  Driver narration\n')
+    const follow = async (
+      _path: string,
+      deps: Partial<import('../../../kernel/log/client/loop-log.js').FollowLoopLogDeps> = {}
+    ) => {
+      ;(deps.writeBacklog ?? deps.write)?.(driver)
+      await deps.sleep?.(0)
+    }
+    const output: string[] = []
+    const options = { colour: false, details: false, timeZone: 'UTC' }
+    const print = (lines: string[]) => {
+      output.push(...lines)
+    }
+    await followTaskSources('driver.log', folder, 404, options, print, follow)
+    expect(output.splice(0)).toEqual(['10:00:00  ◆ Loop   ━━ Round 1 · review · typical unavailable ━━'])
+    await followTaskSources('driver.log', folder, 405, options, print, follow)
+    expect(output).toEqual(['10:00:00  ▸ Loop   Driver narration'])
+    output.length = 0
+    await followTaskSources('driver.log', folder, 406, { ...options, details: true }, print, async (_path, deps) => {
+      deps?.writeBacklog?.(
+        Buffer.concat([
+          Buffer.from('2026-10-29T09:59:59Z  Driver narration\n'),
+          Buffer.from(
+            '2026-10-29T09:59:59Z [call=read]  > Developer   Reading file\n' +
+              '2026-10-29T09:59:59Z [command]  · retained command\n'
+          )
+        ])
+      )
+      const step = JSON.parse(stage)
+      const event = step.resourceLogs[0].scopeLogs[0].logRecords[0]
+      event.eventName = 'vinaya.step.started'
+      event.attributes.push(
+        { key: 'gen_ai.tool.call.id', value: { stringValue: 'read' } },
+        { key: 'vinaya.step.kind', value: { stringValue: 'reading' } },
+        { key: 'vinaya.step.target', value: { stringValue: 'file' } },
+        { key: 'vinaya.seat', value: { stringValue: 'developer' } }
+      )
+      writeFileSync(
+        join(folder, 'run-b~writer~000000000001.logs.jsonl'),
+        `${stage.replace('404', '406')}\n${JSON.stringify(step).replace('404', '406')}\n`
+      )
+      await deps?.sleep?.(0)
+      deps?.write?.(Buffer.from('2026-10-29T10:00:01Z  Duplicate driver narration\n'))
+      deps?.tick?.()
+    })
+    expect(output[0]).toBe('09:59:59  ▸ Loop   Driver narration')
+    expect(output.some((line) => line.includes('Log gap (file_missing)'))).toBe(true)
+    expect(output).toContain('10:00:00  ◆ Loop   ━━ Round 1 · review · typical unavailable ━━')
+    expect(output.some((line) => line.includes('Duplicate driver narration'))).toBe(false)
+    expect(output).toContain('          · retained command')
+  } finally {
+    rmSync(folder, { recursive: true, force: true })
+  }
+})
+
+test('switching from the driver log to the local copy prints no event twice', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'vinaya-follow-switch-'))
+  try {
+    const at = (time: string) => String(BigInt(Date.parse(`2026-10-29T${time}Z`)) * 1_000_000n)
+    const record = (eventName: string, time: string, extra: { key: string; value: object }[]) => ({
+      eventName,
+      timeUnixNano: at(time),
+      attributes: [{ key: 'vinaya.work.ref', value: { stringValue: '407' } }, ...extra]
+    })
+    const stage = (time: string, to: string) =>
+      record('vinaya.run.stage_changed', time, [
+        { key: 'vinaya.stage.to', value: { stringValue: to } },
+        { key: 'vinaya.round.number', value: { intValue: '1' } }
+      ])
+    const body = (...logRecords: object[]) => `${JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords }] }] })}\n`
+    const output: string[] = []
+    await followTaskSources(
+      'driver.log',
+      folder,
+      407,
+      { colour: false, details: false, timeZone: 'UTC' },
+      (lines) => {
+        output.push(...lines)
+      },
+      async (_path, deps) => {
+        deps?.writeBacklog?.(Buffer.from('2026-10-29T10:00:00Z [stage=review round=1]  # Loop   Round 1 started\n'))
+        // The copy appears mid-follow, holding the event already printed and one newer.
+        writeFileSync(
+          join(folder, 'run-c~writer~000000000000.logs.jsonl'),
+          body(stage('10:00:00', 'review'), stage('10:00:05', 'develop'))
+        )
+        await deps?.sleep?.(0)
+        deps?.tick?.()
+      }
+    )
+    expect(output.filter((line) => line.includes('Round 1 · review'))).toHaveLength(1)
+    expect(output).toContain('10:00:05  ◆ Loop   ━━ Round 1 · develop · typical unavailable ━━')
+  } finally {
+    rmSync(folder, { recursive: true, force: true })
+  }
+})
 
 // The one fixed colour per role, the loop's grey, and dimmed notes beneath their actor.
 const RESET = '\x1b[0m'
