@@ -1,5 +1,20 @@
 # @attalabs/harness
 
+## 0.0.4
+
+### Patch Changes
+
+- Updated dependencies [c5f7c7b]
+- Updated dependencies [e54fbcd]
+- Updated dependencies [88b7c2d]
+- Updated dependencies [e1ab127]
+- Updated dependencies [a9e48ea]
+- Updated dependencies [608096c]
+- Updated dependencies [d8f202e]
+- Updated dependencies [1afec3e]
+- Updated dependencies [db741b1]
+  - @attalabs/test-selection@0.4.0
+
 ## 0.0.3
 
 ### Patch Changes

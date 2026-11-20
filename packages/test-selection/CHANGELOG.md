@@ -1,5 +1,22 @@
 # @attalabs/test-selection
 
+## 0.4.0
+
+### Minor Changes
+
+- c5f7c7b: Skip dependency-list-only edits to workspace manifests for recorded Bun tests whose only manifest open came from the module loader. This applies to hoisted installs, where installed module resolution comes from `node_modules`. Manifest data reads and independent selection reasons still select tests.
+- e1ab127: Compare text `bun.lock` changes package by package for recorded dependency reads by default. Export `readBunLockIdentity` for Node and Bun, and honor a caller's `bun-lock` parser when supplied.
+- a9e48ea: The `test-selection` command takes `--fetch-record`: it looks for the read record of the base commit, or of the nearest of the nine commits before it that has one, either kept under the git directory or fetched with `gh`, and selects with it. The package exports the search as `findReadRecord`, with `RECORD_WORKFLOW_FILE` and `RECORD_ARTIFACT_PREFIX`.
+- 608096c: Add `--help` and `-h` to `test-selection` and `test-selection-record`. Both print usage and flag details to standard output and exit successfully without requiring a git repository.
+- d8f202e: When the head inventory omits a package with an unsupported test runner or a test file outside any suite, `test-selection` prints both counts in a single warning on standard error. The command still exits with status zero after printing the plan.
+- 1afec3e: Discover pnpm workspace members from the root `pnpm-workspace.yaml` so their tests and cross-package imports participate in test selection.
+- db741b1: Add `test-selection-setup`, which writes the GitHub Actions workflow that records every push to a repository's default branch.
+
+### Patch Changes
+
+- e54fbcd: The `repository` field of both packages' manifests names the GitHub repository `atta-labs/vinaya`, so the links the npm registry shows for each package lead to this repository.
+- 88b7c2d: `--fetch-record` no longer fails the command when no download folder can be made, and a download that runs out of time stops the search's use of `gh` instead of trying every run of every candidate commit. The workflow `test-selection-setup` writes runs `sudo apt-get update` before installing `strace`. The README's opening names the two parts of the package that reach GitHub.
+
 ## 0.3.0
 
 ### Minor Changes
