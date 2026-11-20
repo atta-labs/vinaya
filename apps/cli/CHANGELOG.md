@@ -1,5 +1,21 @@
 # @attalabs/vinaya
 
+## 0.45.0
+
+### Minor Changes
+
+- fd0b77e: `vinaya task status --follow` narrates a task's runs from the local Log copy and reports gaps in that copy. The driver log supplies optional step details and remains the follow source for tasks without a local copy.
+- 94c71be: Configure an OpenTelemetry address with `logs.otlp` and use `vinaya log send` to send each run's local traces and logs over OTLP/HTTP.
+- 5c426cb: Every run also keeps an OpenTelemetry local copy of its Log events, with each agent step and stage change, and sends it to a configured `logs.otlp` address without a manual command.
+
+### Patch Changes
+
+- 6f84dd0: A ready push records every explicit Test Plan command's receipt against the worktree state left after the last command, so a later command that writes git-ignored files (a typecheck filling its build cache) no longer leaves an earlier command without a receipt and the pull request without Evidence.
+- f5e1779: The `changeset-coverage` check now refuses added or edited changesets that name packages covered by the Changesets `ignore` list, even when the diff touches no published files. Remove the ignored package entries from the frontmatter. If no release is intended, use an empty changeset or delete the file when a changeset is unnecessary.
+- 102328b: The `log emit` usage text points loops to the standalone SDK command, `vinaya-log emit`.
+- e54fbcd: The `repository` field of both packages' manifests names the GitHub repository `atta-labs/vinaya`, so the links the npm registry shows for each package lead to this repository.
+- a4d2550: Checks that need to know which tranches are active now read every tranche label's Issue counts in one GitHub query and list Issues only for active tranches, instead of listing every tranche's Issues on every run. In a repository with many tranches this stops loops and CI from running out of GitHub's GraphQL rate limit.
+
 ## 0.44.1
 
 ### Patch Changes
