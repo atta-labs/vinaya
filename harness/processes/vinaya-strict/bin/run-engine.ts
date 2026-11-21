@@ -3045,8 +3045,19 @@ export async function liveTaskInput(
   let round = 1
   // The one base calculation the reviewers' diff and the manifest of a head both take, so a verdict's echoed base is
   // the commit its diff started from.
+  // The fallback line is written once per head: the stager and the manifest both ask for the same head's base.
+  const fallbackLogged = new Set<string>()
   const reviewBase = (head: string): string =>
-    reviewBaseOf({ worktreePath, head, remoteUrl: lookups.defaultBranchUrl ?? null })
+    reviewBaseOf({
+      worktreePath,
+      head,
+      remoteUrl: lookups.defaultBranchUrl ?? null,
+      warn: (line) => {
+        if (fallbackLogged.has(head)) return
+        fallbackLogged.add(head)
+        process.stderr.write(`${line}\n`)
+      }
+    })
   const manifestAt = (headSha: string): ReviewInputManifest => {
     const pr = forge.findOpenPrForBranch(branch)
     let baseSha: string | null = null
