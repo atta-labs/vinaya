@@ -157,6 +157,18 @@ const workflowWithoutProducers = [
   "workflow:ci.yml:build:Print the limits of this job's GitHub reads",
   "workflow:ci.yml:sandbox-conformance:Print the limits of this job's GitHub reads",
   "workflow:sandbox-conformance-macos.yml:sandbox-conformance-macos:Print the limits of this job's GitHub reads",
+  "workflow:ci.yml:build:Print this job's GitHub quota use (start)",
+  "workflow:ci.yml:build:Print this job's GitHub quota use (end)",
+  "workflow:ci.yml:test-shared-packages:Print this job's GitHub quota use (start)",
+  "workflow:ci.yml:test-shared-packages:Print this job's GitHub quota use (end)",
+  "workflow:ci.yml:test-cli:Print this job's GitHub quota use (start)",
+  "workflow:ci.yml:test-cli:Print this job's GitHub quota use (end)",
+  "workflow:ci.yml:sandbox-conformance:Print this job's GitHub quota use (start)",
+  "workflow:ci.yml:sandbox-conformance:Print this job's GitHub quota use (end)",
+  "workflow:ci.yml:record-reads:Print this job's GitHub quota use (start)",
+  "workflow:ci.yml:record-reads:Print this job's GitHub quota use (end)",
+  "workflow:ci.yml:record-reads-merge:Print this job's GitHub quota use (start)",
+  "workflow:ci.yml:record-reads-merge:Print this job's GitHub quota use (end)",
   "workflow:vinaya-archivist.yml:post-merge:Report this job's GitHub token budget",
   "workflow:vinaya-archivist.yml:issue-closed:Report this job's GitHub token budget",
   "workflow:vinaya-archivist.yml:daily-drift:Report this job's GitHub token budget",
@@ -406,7 +418,7 @@ describe('log entry-path producer inventory', () => {
 
   it("keeps today's no-producer list explicit and shrinking", () => {
     const noProducer = inventory.filter((row) => row.noProducer)
-    expect(noProducer).toHaveLength(120)
+    expect(noProducer).toHaveLength(132)
     expect(noProducer.every((row) => row.noProducer!.trim().length > 0)).toBe(true)
   })
 })
