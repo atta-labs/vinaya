@@ -1,7 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { CONTROL_RUN_RECORDS, touchedSince } from '../../../../../kernel/conformance/unit/real-runtime-guard-core'
 import {
   type ControlStoreDeps,
   readCurrentOwnership,
@@ -269,6 +270,65 @@ describe('startBackgroundRun', () => {
     await expect(startBackgroundRun({ issue: 42, agent: 'claude' }, deps)).rejects.toThrow(BackgroundUnsupportedError)
     expect(spawnCalls).toHaveLength(0)
     expect(readCurrentOwnership(deps.controlStore, 42).epoch).toBe(0)
+  })
+
+  describe('the end-of-run guard reads the launched task', () => {
+    /** The real launch into a runtime directory of its own; the child is `pid`, which the guard signals for real. */
+    async function launchInto(runtime: string, pid: number) {
+      const store: ControlStoreDeps = {
+        root: () => join(runtime, 'tasks-execution'),
+        now: () => new Date(),
+        pid: () => process.pid,
+        hostname: () => 'test-host'
+      }
+      const deps = makeDeps({
+        controlStore: store,
+        resolveLoopLogPath: async (task: number) => join(runtime, 'logs', `${task}.ndjson`),
+        spawnDetached: (argv, opts) => {
+          const child = fakeSpawn(argv, opts)
+          liveness.set(pid, true)
+          snapshots.set(pid, { ppid: 1, startedAt: `started-${pid}`, command: 'node' })
+          return { ...child, pid }
+        }
+      })
+      return startBackgroundRun({ issue: 42, agent: 'claude' }, deps)
+    }
+
+    it('reads the task live while its recorded child runs, and not once the child has ended', async () => {
+      const runtime = mkdtempSync(join(tmpdir(), 'task-run-background-guard-'))
+      try {
+        // The runtime directory's two top folders already exist on a host that has run before.
+        mkdirSync(join(runtime, 'logs'))
+        mkdirSync(join(runtime, 'tasks-execution'))
+        await Bun.sleep(30)
+        const since = Date.now()
+        const handle = await launchInto(runtime, process.pid)
+        // The core's literal folder names equal the real writer's.
+        expect(existsSync(join(runtime, 'tasks-execution', '42', ...CONTROL_RUN_RECORDS, `${handle.runId}.json`))).toBe(
+          true
+        )
+        expect(touchedSince(runtime, since, [])).toEqual([])
+        // A file written anywhere else is still reported.
+        writeFileSync(join(runtime, 'stray'), 'x')
+        expect(touchedSince(runtime, since, [])).toEqual(['stray'])
+      } finally {
+        rmSync(runtime, { recursive: true, force: true })
+      }
+
+      const ended = mkdtempSync(join(tmpdir(), 'task-run-background-guard-'))
+      try {
+        mkdirSync(join(ended, 'logs'))
+        mkdirSync(join(ended, 'tasks-execution'))
+        await Bun.sleep(30)
+        const sinceEnded = Date.now()
+        await launchInto(ended, Bun.spawnSync(['true']).pid)
+        const found = touchedSince(ended, sinceEnded, [])
+        expect(found).toContain(join('tasks-execution', '42', 'control', 'run', 'bg-42-1.json'))
+        expect(found).toContain(join('logs', '42.ndjson'))
+      } finally {
+        rmSync(ended, { recursive: true, force: true })
+      }
+    })
   })
 
   it('creates the per-task loop log file the child inherits stdio into', async () => {
