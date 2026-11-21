@@ -1,5 +1,18 @@
 # @attalabs/vinaya
 
+## 0.45.1
+
+### Patch Changes
+
+- 2fd434f: A pull request whose Evidence block cannot be written now pauses the run for the infrastructure before its CI read, naming the pull request, the head and the reason, instead of sending the Developer back for a failure that is not in the code. A continued run writes the Evidence for the pull request that is already open and then reads CI.
+- a4e75b2: `vinaya task status --follow` shows the narrative again on every runner: a run that records no steps of its own (the Engine runner today) shows each agent step from the driver log, an agent turn converted from an earlier role attempt is narrated with its seat ("The developer finished its turn." instead of "A role finished its turn."), and a run read from its local copy no longer reports a false "sequence 0 never arrived" gap, because a Log SDK writer numbers its records from 1.
+- 0a8f911: A task that has been launched in the background and holds no driver lock yet no longer fails another task's test run: the end-of-run check on the real runtime directory also reads a task as live when its run record names a running process.
+- f44f55b: After the review loop merges a default branch that changed dependencies, the worktree is installed again before the Developer turn. A failed install pauses the run for the infrastructure, and the resumed run installs before its first Developer turn.
+- 1a909e1: A paused run that waits for a ruling now reads the forge less and less often, up to one read every five minutes, and waits the full five minutes after a read that says the forge's rate limit is spent. It still reads its own cancel and resolution on the configured interval, and acts on a ruling at the next forge read.
+- 8735fb5: A repair push that defers its selected tests to required CI now runs the approved Test Plan's explicit commands on the pushed head, so its Evidence composes with a green receipt for each.
+- 037fc76: Reviewers on the Engine now see the task's own change: the reviewers' diff and the review-input manifest start from the newest default-branch commit the judged head contains, read from the remote, instead of from the checkout's possibly older local default-branch ref.
+- 613c14c: Two task starts that prepare the same clean checkout at once both finish: a start whose fetch or fast-forward lost to the other reads the checkout again and continues when it is at the remote tip, with no request to update it by hand.
+
 ## 0.45.0
 
 ### Minor Changes
