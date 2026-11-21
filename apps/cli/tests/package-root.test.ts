@@ -150,7 +150,6 @@ describe('vinaya: an installed build defers to this repo’s own source (Issue #
   const CLI_ROOT = join(import.meta.dir, '..')
   const REPO_ROOT = join(CLI_ROOT, '..', '..')
   const SRC_INDEX = join(CLI_ROOT, 'src', 'index.ts')
-  const DIST_INDEX = join(CLI_ROOT, 'dist', 'index.js')
 
   // Issue #660, O3 (round 5 review, MAJOR) — this process's own VINAYA_*
   // environment is stripped before `extraEnv` is applied, and the
@@ -166,36 +165,50 @@ describe('vinaya: an installed build defers to this repo’s own source (Issue #
     )
   }
 
-  it('an installed dist build, run from this repo, prints the same stdout as running the source directly, via exactly one stderr deferral line', () => {
-    // Issue #660, O3 — bounded by an explicit budget (60s, generous for a
-    // ~1s build on a quiet host) that throws with the child's own captured
-    // stdout/stderr on expiry, rather than a bare test-framework timeout.
-    const buildResult = spawnSyncBudgeted(
+  /** A build folder of the case's own under the system temporary directory, so no case rewrites the package's own `dist/`. */
+  function makeBuildOut(): string {
+    const out = join(tmpdir(), `vinaya-package-root-build-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    mkdirSync(out, { recursive: true })
+    return out
+  }
+
+  // Issue #660, O3 — bounded by an explicit budget (60s, generous for a
+  // ~1s build on a quiet host) that throws with the child's own captured
+  // stdout/stderr on expiry, rather than a bare test-framework timeout.
+  // `--out` writes the whole `dist/` tree under the folder given.
+  function buildInto(out: string) {
+    return spawnSyncBudgeted(
       'bun',
-      ['run', 'build'],
-      { cwd: CLI_ROOT, encoding: 'utf8' },
+      ['scripts/build.ts', '--out', out],
+      { cwd: CLI_ROOT, encoding: 'utf8', env: stripVinayaEnv() },
       60_000,
       'apps/cli build'
     )
-    expect(buildResult.status, `apps/cli build failed:\n${buildResult.stdout}\n${buildResult.stderr}`).toBe(0)
+  }
 
-    // Nested inside THIS repo's own real `node_modules` (rather than an
-    // unrelated tmp dir) so the bundle's externalized npm dependencies
-    // (workspace deps are inlined; real npm deps are not, per
-    // scripts/build.ts) resolve exactly as they would for a real hoisted
-    // install — Node's module resolution walks up from the requiring file
-    // to each ancestor's `node_modules`, and this repo's root `node_modules`
-    // is one such ancestor here. The path still carries a `node_modules`
-    // segment, which is the only thing `resolveAuthorRepoSourceEntry` reads.
+  it('an installed dist build, run from this repo, prints the same stdout as running the source directly, via exactly one stderr deferral line', () => {
+    const buildOut = makeBuildOut()
+    const DIST_INDEX = join(buildOut, 'dist', 'index.js')
     const installedPkgDir = join(REPO_ROOT, 'node_modules', '.vinaya-defer-fixture')
-    mkdirSync(join(installedPkgDir, 'dist'), { recursive: true })
-    // `type: module` matches the real package.json's own declaration — the
-    // bundle is emitted as ESM (`import`/`export`), and Node picks CJS vs
-    // ESM parsing from the nearest ancestor package.json's `type` field.
-    writeFileSync(join(installedPkgDir, 'package.json'), JSON.stringify({ name: '@attalabs/vinaya', type: 'module' }))
-    copyFileSync(DIST_INDEX, join(installedPkgDir, 'dist', 'index.js'))
-
     try {
+      const buildResult = buildInto(buildOut)
+      expect(buildResult.status, `apps/cli build failed:\n${buildResult.stdout}\n${buildResult.stderr}`).toBe(0)
+
+      // Nested inside THIS repo's own real `node_modules` (rather than an
+      // unrelated tmp dir) so the bundle's externalized npm dependencies
+      // (workspace deps are inlined; real npm deps are not, per
+      // scripts/build.ts) resolve exactly as they would for a real hoisted
+      // install — Node's module resolution walks up from the requiring file
+      // to each ancestor's `node_modules`, and this repo's root `node_modules`
+      // is one such ancestor here. The path still carries a `node_modules`
+      // segment, which is the only thing `resolveAuthorRepoSourceEntry` reads.
+      mkdirSync(join(installedPkgDir, 'dist'), { recursive: true })
+      // `type: module` matches the real package.json's own declaration — the
+      // bundle is emitted as ESM (`import`/`export`), and Node picks CJS vs
+      // ESM parsing from the nearest ancestor package.json's `type` field.
+      writeFileSync(join(installedPkgDir, 'package.json'), JSON.stringify({ name: '@attalabs/vinaya', type: 'module' }))
+      copyFileSync(DIST_INDEX, join(installedPkgDir, 'dist', 'index.js'))
+
       const direct = run('bun', [SRC_INDEX, 'version'], REPO_ROOT, { VINAYA_NO_DEFER: '1' })
       const deferred = run('node', [join(installedPkgDir, 'dist', 'index.js'), 'version'], REPO_ROOT, {
         GITHUB_ACTIONS: ''
@@ -210,32 +223,28 @@ describe('vinaya: an installed build defers to this repo’s own source (Issue #
       expect(deferralLines[0]).toContain(SRC_INDEX)
     } finally {
       rmSync(installedPkgDir, { recursive: true, force: true })
+      rmSync(buildOut, { recursive: true, force: true })
     }
   })
 
   it('built files carry no Bun pragma line, so Bun reads the title pattern’s em dash as UTF-8', () => {
-    const buildResult = spawnSyncBudgeted(
-      'bun',
-      ['run', 'build'],
-      { cwd: CLI_ROOT, encoding: 'utf8' },
-      60_000,
-      'apps/cli build'
-    )
-    expect(buildResult.status, `apps/cli build failed:\n${buildResult.stdout}\n${buildResult.stderr}`).toBe(0)
-
-    const distDir = join(CLI_ROOT, 'dist')
-    const jsFiles = (readdirSync(distDir, { recursive: true }) as string[]).filter((f) => f.endsWith('.js'))
-    expect(jsFiles.length).toBeGreaterThan(0)
-    const pragmaFiles = jsFiles.filter((f) =>
-      readFileSync(join(distDir, f), 'utf8')
-        .split('\n')
-        .some((line) => line.startsWith('// @bun'))
-    )
-    expect(pragmaFiles).toEqual([])
-
+    const buildOut = makeBuildOut()
+    const distDir = join(buildOut, 'dist')
     const scratch = join(tmpdir(), `vinaya-pragma-probe-${Date.now()}-${Math.random().toString(36).slice(2)}`)
-    mkdirSync(scratch, { recursive: true })
     try {
+      const buildResult = buildInto(buildOut)
+      expect(buildResult.status, `apps/cli build failed:\n${buildResult.stdout}\n${buildResult.stderr}`).toBe(0)
+
+      const jsFiles = (readdirSync(distDir, { recursive: true }) as string[]).filter((f) => f.endsWith('.js'))
+      expect(jsFiles.length).toBeGreaterThan(0)
+      const pragmaFiles = jsFiles.filter((f) =>
+        readFileSync(join(distDir, f), 'utf8')
+          .split('\n')
+          .some((line) => line.startsWith('// @bun'))
+      )
+      expect(pragmaFiles).toEqual([])
+
+      mkdirSync(scratch, { recursive: true })
       const titleFile = join(scratch, 'title.txt')
       writeFileSync(titleFile, '[some-slug] 3 — Do the thing', 'utf8')
       const probe = join(scratch, 'probe.js')
@@ -255,6 +264,7 @@ describe('vinaya: an installed build defers to this repo’s own source (Issue #
       expect(result.stdout, result.stderr).toBe('match')
     } finally {
       rmSync(scratch, { recursive: true, force: true })
+      rmSync(buildOut, { recursive: true, force: true })
     }
   })
 })
