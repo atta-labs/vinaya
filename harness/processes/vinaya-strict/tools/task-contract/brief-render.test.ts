@@ -11,6 +11,7 @@ import {
   parseIssueTestPlan
 } from './issue-validation'
 import { NO_GATE_CUTOVERS } from './gate-cutovers'
+import { EVIDENCE_PLACEHOLDER_TEXT } from '../../checks/evidence-fresh-logic'
 import { COMMENT_MARKER_PREFIX } from '../legacy-markers'
 import { LEGACY_DOCTRINE_ROOT } from '../legacy-paths'
 import { objectivesOf } from './objectives'
@@ -1200,6 +1201,10 @@ describe('the render and both templates carry no retired instruction', () => {
     join(import.meta.dirname, '../../artifacts/templates/pr-report-template.md'),
     'utf8'
   )
+
+  it('the PR report template holds the placeholder line the Evidence freshness check recognises', () => {
+    expect(PR_REPORT_TEMPLATE.split('\n')).toContain(EVIDENCE_PLACEHOLDER_TEXT)
+  })
 
   // Each entry, and the tool or gate that makes it wrong.
   const RETIRED: readonly string[] = [
