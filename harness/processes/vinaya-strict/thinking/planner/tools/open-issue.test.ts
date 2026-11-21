@@ -840,6 +840,9 @@ describe('the script decides through the validation the Planner tools call', () 
 
   it('runs the validation once the Log sink factory is installed: the program stops on no missing-factory error', () => {
     const script = runScript(['--validate-only', '--title', TITLE, '--body-file', bodyFile, '--label', LABEL])
+    // The program ran the validation to its findings and refused on them, rather than dying on a missing factory.
+    expect(script.status).toBe(1)
+    expect(script.findings.length).toBeGreaterThan(0)
     expect(script.stderr).not.toMatch(/sink factory/i)
   }, 300_000)
 })
