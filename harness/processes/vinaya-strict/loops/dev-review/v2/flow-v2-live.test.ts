@@ -2,7 +2,7 @@ import { fixtureDir } from '../../../../../kernel/conformance/unit/test-temp-fix
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { DevToolContext } from '../../../../../kernel/tools/dev-tools-server'
 import {
   gitPath,
@@ -17,9 +17,16 @@ import {
 import {
   DEFERRAL_MARKER_TTL_MS,
   parseDeferralMarker,
-  READY_DEFERRAL_MARKER
+  READY_DEFERRAL_MARKER,
+  READY_TESTS_DEFERRED_RECORD
 } from '../../../tools/pre-push-ready-policy'
-import { lookupGreenRun, type TestRunCache, type TestRunCacheRecord } from '../../../tools/pr-report/pr-report-engine'
+import {
+  DeferredEvidenceError,
+  lookupGreenRun,
+  resolveDeferredGroupC,
+  type TestRunCache,
+  type TestRunCacheRecord
+} from '../../../tools/pr-report/pr-report-engine'
 import {
   beginReadyDeferral,
   beginStoragePushes,
@@ -1917,3 +1924,129 @@ process.exit(cfg.exit ?? 0)
 })
 
 const POLICY_CI = { mode: 'ci' as const, workflow: '.github/workflows/ci.yml', check: 'Vinaya CI' }
+
+describe('a deferred repair push leaves a receipt for each approved explicit Test Plan command', () => {
+  const memoryCache = (): TestRunCache => {
+    const store = new Map<string, TestRunCacheRecord>()
+    return { get: (key) => store.get(key), set: (key, record) => void store.set(key, record) }
+  }
+  const headOf = (dir: string) => execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+  const planBody = (...commands: string[]) => `## Test Plan\n\n\`\`\`\n${commands.join('\n')}\n\`\`\`\n`
+  const count = (path: string) => (existsSync(path) ? readFileSync(path, 'utf8').length : 0)
+
+  /** A repair publish whose hook deferred (or not): the fake push writes the record the real hook writes. */
+  function setup(input: { body: string | null; open?: boolean; deferred?: boolean }) {
+    const dir = repo()
+    // The run directory lives outside the worktree, as the driver's does: a file in it would read as drift.
+    const store = stagedPullRequestStore(fixtureDir('repair-run-'))
+    if (input.body !== null) store.write({ title: 't', body: input.body })
+    const cache = memoryCache()
+    const logs: string[] = []
+    const base = {
+      ...baseTools([]),
+      publishChanges: async () => {
+        const head = headOf(dir)
+        if (input.deferred !== false) {
+          const recordPath = gitPath(dir, READY_TESTS_DEFERRED_RECORD) as string
+          mkdirSync(dirname(recordPath), { recursive: true })
+          writeFileSync(
+            recordPath,
+            JSON.stringify({
+              version: 1,
+              kind: 'repair',
+              head,
+              branch: 'task/issue-1',
+              runId: 'run-1',
+              workflow: POLICY_CI.workflow,
+              check: POLICY_CI.check,
+              recordedAt: new Date().toISOString()
+            })
+          )
+        }
+        return { ok: true, result: { pushedHead: head } }
+      }
+    } as unknown as DevToolContext
+    const tools = withV2DevTools(base, {
+      worktreePath: dir,
+      runId: 'run-1',
+      branch: 'task/issue-1',
+      store,
+      findOpenPullRequest: () => (input.open === false ? null : { number: 9 }),
+      onStoragePush: () => {},
+      readyTestsPolicy: () => POLICY_CI,
+      checkBaseline: () => ({ ok: true }),
+      commandCache: cache,
+      log: (line) => logs.push(line)
+    })
+    // What the report engine's deferred composition reads for this head.
+    const compose = (command: string, using: TestRunCache = cache) =>
+      resolveDeferredGroupC([`required-ci "${POLICY_CI.check}" ${POLICY_CI.workflow}`, command], dir, using, {
+        readPolicy: () => POLICY_CI
+      })
+    return { dir, tools, compose, logs }
+  }
+  const counterPath = () => join(fixtureDir('repair-counter-'), 'runs')
+
+  test('a passing command leaves a green receipt the deferred composition accepts, and the same composition refuses without it', async () => {
+    const runs = counterPath()
+    const command = `printf x >> ${JSON.stringify(runs)}`
+    const f = setup({ body: planBody('bun test a.test.ts → 0 fail', command) })
+    const result = await f.tools.publishChanges('Fix(x): y')
+    expect(result).toEqual({ ok: true, result: { pushedHead: headOf(f.dir) } })
+    expect(count(runs)).toBe(1)
+    const composed = await f.compose(command)
+    expect(composed?.commands.map((c) => c.command)).toContain(command)
+    await expect(f.compose(command, memoryCache())).rejects.toBeInstanceOf(DeferredEvidenceError)
+  })
+
+  test('a failing command is reported with its name, exit and the pushed head, and leaves no green receipt', async () => {
+    const command = 'echo boom-output && exit 3'
+    const f = setup({ body: planBody(command) })
+    const result = await f.tools.publishChanges('Fix(x): y')
+    expect(result.ok).toBe(true)
+    const text = JSON.stringify(result)
+    expect(text).toContain(headOf(f.dir))
+    expect(text).toContain(command)
+    expect(text).toContain('exit 3')
+    expect(text).toContain('boom-output')
+    expect(text).toContain('untrusted')
+    await expect(f.compose(command)).rejects.toBeInstanceOf(DeferredEvidenceError)
+  })
+
+  test('a staged body that cannot be read is reported with nothing run', async () => {
+    const f = setup({ body: null })
+    const result = await f.tools.publishChanges('Fix(x): y')
+    expect(result.ok).toBe(true)
+    expect(JSON.stringify(result)).toContain('could not be read')
+    expect(JSON.stringify(result)).toContain(headOf(f.dir))
+    expect(f.logs.filter((line) => line.includes('explicit Test Plan commands'))).toEqual([])
+  })
+
+  test('a second repair push of the same head and tree runs no command', async () => {
+    const runs = counterPath()
+    const f = setup({ body: planBody(`printf x >> ${JSON.stringify(runs)}`) })
+    await f.tools.publishChanges('Fix(x): y')
+    await f.tools.publishChanges('Fix(x): y')
+    expect(count(runs)).toBe(1)
+  })
+
+  test('only the staged body is read: a command written only in the live body is never run', async () => {
+    const staged = counterPath()
+    const liveOnly = counterPath()
+    const f = setup({ body: planBody(`printf x >> ${JSON.stringify(staged)}`) })
+    // The pull request's live body is never consulted by the publish tool; it holds `liveOnly` here only in spirit.
+    await f.tools.publishChanges('Fix(x): y')
+    expect(count(staged)).toBe(1)
+    expect(count(liveOnly)).toBe(0)
+  })
+
+  test('a publish with no open pull request, and a repair push that did not defer, run no command', async () => {
+    for (const input of [{ open: false }, { deferred: false }]) {
+      const runs = counterPath()
+      const f = setup({ body: planBody(`printf x >> ${JSON.stringify(runs)}`), ...input })
+      const result = await f.tools.publishChanges('Fix(x): y')
+      expect(result.ok).toBe(true)
+      expect(count(runs)).toBe(0)
+    }
+  })
+})

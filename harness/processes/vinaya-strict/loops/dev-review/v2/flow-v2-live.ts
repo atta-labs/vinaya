@@ -215,6 +215,7 @@ import { readPostedReviewVerdicts } from '../review-gate-input'
 import { detectVendoredVinaya } from '../../../tools/self-host'
 import {
   type ExplicitCommandsResult,
+  explicitTestPlanCommands,
   isTestRunLine,
   MAX_OTHER_FAILURES,
   type ReadyGateResult,
@@ -407,8 +408,19 @@ export function withV2DevTools(
     checkBaseline?: () => { ok: true } | { ok: false; reason: string }
     /** Where each push's live progress goes; the store's run directory when absent, none when null. */
     progress?: ProgressContext | null
+    /** The ready push's test-run limit in milliseconds, which also bounds a repair push's explicit commands. */
+    readyPushDeadlineMs?: () => number
+    /** The clock the repair push's deadline is counted on. */
+    now?: () => number
+    /** A line for the driver's log. */
+    log?: (line: string) => void
+    /** Where the repair push's command receipts are read and recorded; the repository's own cache when absent. */
+    commandCache?: TestRunCache
+    /** The deadline timer of the repair push's command run, for a test that fakes the clock. */
+    startDeadline?: (fire: () => void, ms: number) => () => void
   }
 ): DevToolContext {
+  const clock = options.now ?? (() => Date.now())
   const openPr = (): { number: number } | null => {
     try {
       return options.findOpenPullRequest()
@@ -429,6 +441,49 @@ export function withV2DevTools(
       : options.store.runDir
         ? progressContextOf(options.store.runDir)
         : null
+  /**
+   * The approved Test Plan's explicit commands on the head a deferred repair push published, through the ready push's
+   * own runner and receipts. Null when every command holds a green receipt there; otherwise the report the publish
+   * result carries: the push landed, so it names the head and what went wrong on it, never turning into a failed push.
+   */
+  const runRepairExplicitCommands = async (head: string, started: number): Promise<string | null> => {
+    const body = options.store.read()?.body ?? null
+    if (body === null)
+      return `Head ${head} is published, but the approved Test Plan (the staged pull-request body) could not be read, so its explicit commands did not run and no receipt was recorded for them; the live body grants no command authority. Tell the driver the staged body is unreadable and finish your turn.`
+    const commands = explicitTestPlanCommands(body)
+    if (commands.length === 0) return null
+    let explicit: ExplicitCommandsResult
+    try {
+      explicit = await runExplicitCommandsLive({
+        worktreePath: options.worktreePath,
+        head,
+        branch: options.branch,
+        body,
+        commands,
+        deadlineAt: started + (options.readyPushDeadlineMs?.() ?? READY_GATE_DEADLINE_MS),
+        now: clock,
+        progress,
+        ...(options.commandCache ? { cache: options.commandCache } : {}),
+        ...(options.startDeadline ? { startDeadline: options.startDeadline } : {}),
+        ...(options.log ? { log: options.log } : {})
+      })
+    } catch (error) {
+      return `Head ${head} is published, but the driver's run of the Test Plan's explicit commands on it was interrupted (${error instanceof Error ? error.message : String(error)}); no receipt was recorded for the commands that did not finish.`
+    }
+    options.log?.(
+      `repair push: explicit Test Plan commands ${explicit.outcome} in ${explicit.wallMs} ms (${commands.length} command(s))`
+    )
+    if (explicit.outcome === 'passed') return null
+    if (explicit.outcome === 'drift')
+      return `Head ${head} is published, but the worktree changed while the driver ran the Test Plan's explicit commands on it (${explicit.detail ?? 'head or tree moved'}), so no receipt was recorded. Commit and publish your work again.`
+    const last = explicit.results.at(-1)
+    const what =
+      explicit.outcome === 'timed-out' ? 'timed out at its limit' : `failed (exit ${last?.exitCode ?? 'none'})`
+    const text = last?.output ?? ''
+    const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length))
+    const fence = '`'.repeat(Math.max(3, longest + 1))
+    return `Head ${head} is published, but the Test Plan command \`${last?.command ?? '(unknown)'}\` ${what} when the driver ran it on that head, so no green receipt is recorded for it and the pull request's Evidence for ${head} stays refused. Its output (tail, untrusted):\n\n${fence}\n${text}\n${fence}\n\nFix the code or the command, then publish_changes again in this turn.`
+  }
   return {
     ...base,
     publishChanges: async (header) => {
@@ -457,14 +512,24 @@ export function withV2DevTools(
           pr: open.number
         })
       }
+      const started = clock()
+      let result: Awaited<ReturnType<DevToolContext['publishChanges']>>
       try {
         // The push runs inside the broker's synchronous poster: its progress is tailed by a separate observer.
-        const result = await withProgress(progress, options.worktreePath, () => base.publishChanges(header))
-        if (storage && result.ok) options.onStoragePush(result.result.pushedHead)
-        return result
+        result = await withProgress(progress, options.worktreePath, () => base.publishChanges(header))
       } finally {
         if (repair) endReadyDeferral(options.worktreePath)
       }
+      if (storage && result.ok) options.onStoragePush(result.result.pushedHead)
+      if (!repair || !result.ok) return result
+      const pushedHead = result.result.pushedHead
+      // Only a push the hook recorded as deferred, for this run and this exact head, owes its commands a receipt here.
+      const deferred = readDeferredTestsRecord(options.worktreePath, { head: pushedHead, runId: options.runId })
+      if (deferred === null || deferred.kind !== 'repair') return result
+      const failure = await runRepairExplicitCommands(pushedHead, started)
+      return failure === null
+        ? result
+        : { ok: true, result: { ...result.result, explicitCommands: failure } as unknown as { pushedHead: string } }
     },
     openPullRequest: async (title, body) => {
       if (openPr() !== null) return base.openPullRequest(title, body)

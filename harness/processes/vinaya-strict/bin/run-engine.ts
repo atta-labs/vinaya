@@ -3579,6 +3579,10 @@ async function runLive(
       runId: loopId,
       readyTestsPolicy,
       checkBaseline: () => checkReadyBaseline(taskInput.worktreePath),
+      // A deferred repair push runs the approved explicit commands within the ready push's own limit.
+      readyPushDeadlineMs: () =>
+        (taskInput.reviewPolicy?.().readyPushTimeoutMinutes ?? DEFAULT_READY_PUSH_TIMEOUT_MINUTES) * 60_000,
+      log: (line) => process.stderr.write(`${new Date().toISOString()}  ${line}\n`),
       store,
       findOpenPullRequest,
       onStoragePush: (head) =>
