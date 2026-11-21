@@ -353,9 +353,23 @@ export type FastForwardOutcome =
   | { kind: 'moved'; from: string; to: string }
   | { kind: 'refused'; reason: string }
 
+/**
+ * How long a preparation whose own fetch or fast-forward failed waits for the
+ * checkout to reach the remote tip, in case another preparation of the same
+ * checkout is moving it. No lock file stands between two preparations, so
+ * nothing a killed start leaves behind can refuse the next one: after this
+ * wait the checkout's own state decides.
+ */
+export const CONCURRENT_PREPARATION_WAIT_MS = 3000
+
+function pauseMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
 export function fastForwardToRemoteIfSafe(
   cwd?: string,
-  resolveRemote: () => { branch: string; sha: string } | null = () => resolveRemoteDefaultBranch(cwd)
+  resolveRemote: () => { branch: string; sha: string } | null = () => resolveRemoteDefaultBranch(cwd),
+  waitMs: number = CONCURRENT_PREPARATION_WAIT_MS
 ): FastForwardOutcome {
   const run = (args: string[]): { ok: true; out: string } | { ok: false } => {
     try {
@@ -367,6 +381,18 @@ export function fastForwardToRemoteIfSafe(
 
   const remote = resolveRemote()
   if (!remote) return { kind: 'refused', reason: OFFLINE_REFUSAL }
+
+  // Another preparation of this checkout may have moved it: read HEAD again,
+  // for up to `waitFor` ms, and report whether it now equals the remote tip.
+  const reachedTip = (waitFor: number): boolean => {
+    const deadline = Date.now() + waitFor
+    for (;;) {
+      const now = run(['rev-parse', 'HEAD'])
+      if (now.ok && now.out.trim() === remote.sha) return true
+      if (Date.now() >= deadline) return false
+      pauseMs(100)
+    }
+  }
 
   const headRes = run(['rev-parse', 'HEAD'])
   const headSha = headRes.ok ? headRes.out.trim() : ''
@@ -412,8 +438,17 @@ export function fastForwardToRemoteIfSafe(
   // "move nothing until every unsafe case is cleared" still holds. A fetch that
   // fails after `ls-remote` already succeeded is a transient loss of the
   // remote: refuse as offline (O3).
-  const fetchRes = run(['fetch', 'origin', remote.branch])
-  if (!fetchRes.ok) return { kind: 'refused', reason: OFFLINE_REFUSAL }
+  // Two preparations fetch the same remote-tracking ref, so one fetch can lose
+  // to the other: a failed fetch is retried within the wait, and ends in the
+  // offline refusal only when the checkout is still not at the tip.
+  const fetchDeadline = Date.now() + waitMs
+  let fetchRes = run(['fetch', 'origin', remote.branch])
+  while (!fetchRes.ok && Date.now() < fetchDeadline) {
+    if (reachedTip(0)) return { kind: 'noop' }
+    pauseMs(200)
+    fetchRes = run(['fetch', 'origin', remote.branch])
+  }
+  if (!fetchRes.ok) return reachedTip(0) ? { kind: 'noop' } : { kind: 'refused', reason: OFFLINE_REFUSAL }
 
   // Unsafe case 3 — HEAD is not an ancestor of the remote tip: the checkout
   // carries local commit(s) the remote does not have (ahead, or diverged), and
@@ -432,6 +467,9 @@ export function fastForwardToRemoteIfSafe(
   // the remote tip and continue.
   const merge = run(['merge', '--ff-only', remote.sha])
   if (!merge.ok) {
+    // A fast-forward that lost to another preparation leaves the checkout at the
+    // tip: continue as for a checkout that was there from the start.
+    if (reachedTip(waitMs)) return { kind: 'noop' }
     return {
       kind: 'refused',
       reason:
