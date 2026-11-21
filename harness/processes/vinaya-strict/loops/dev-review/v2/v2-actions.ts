@@ -83,6 +83,7 @@ import {
   readAssessment,
   readForgeCi,
   type RecordedApprovalCarry,
+  firstFailureLine,
   type RecordedRoundTests,
   recordedDispatch,
   recordedRoundTests,
@@ -339,8 +340,13 @@ export async function runRoundTestsStep(
   const round = dispatch?.round ?? task.reviewRound()
   const head = dispatch?.inputs?.manifest.headSha ?? worktreeHeadOf(task)
   const record = (result: RecordedRoundTests['result'], head: string): { exitCode: number; stdout: string } => {
+    const failed = result.outcome === 'failed' ? result.firstFailure : undefined
+    const errorLine = failed ? firstFailureLine(failed.excerpt) : ''
+    const named = failed
+      ? `: first failure ${/^\(?unnamed\)?$/i.test(failed.test.trim()) ? '' : `${failed.test} `}at ${failed.location}${errorLine ? `: ${errorLine}` : ''}`
+      : ''
     fns.log?.(
-      `round tests: ${result.outcome} for round ${round} at ${head.slice(0, 12)}${result.detail ? `: ${result.detail}` : ''}`
+      `round tests: ${result.outcome} for round ${round} at ${head.slice(0, 12)}${named}${result.detail ? `: ${result.detail}` : ''}`
     )
     return ok(JSON.stringify({ round, head, result } satisfies RecordedRoundTests))
   }

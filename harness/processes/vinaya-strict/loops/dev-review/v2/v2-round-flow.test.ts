@@ -1901,6 +1901,49 @@ describe('the round runs its selected tests beside both reviewers', () => {
     expect(JSON.stringify(observed.published)).not.toContain('expected 1 to be 2')
   })
 
+  test('a red head leaves the verdicts record as the reviewers returned it, and the log line names the failure', async () => {
+    const observed = await runV2('claude', {
+      roundTests: (call, head) => (call === 1 ? red(head) : result(head, 'passed'))
+    })
+    const [read] = observed.rawEvents.filter((event) => event.event === 'verdicts_read')
+    expect(read?.all_approve).toBe(true)
+    expect(read?.blockers).toBe(0)
+    expect(read?.findings).toEqual([])
+    expect(read?.reviewers).toEqual([
+      { role: 'code-reviewer', outcome: 'approve', blockers: 0 },
+      { role: 'security', outcome: 'approve', blockers: 0 }
+    ])
+    const [ended] = observed.rawEvents.filter((event) => event.event === 'round_ended')
+    expect(ended?.outcome).toBe('changes_requested')
+    expect(observed.published).toHaveLength(1)
+    expect(observed.prompts.developer[1] ?? '').toContain('T1')
+    const line = observed.world.evidenceLogs.find((entry) => entry.startsWith('round tests: failed'))
+    expect(line).toContain('/repo/a.test.ts at /repo/a.test.ts:12: error: expected 1 to be 2')
+  })
+
+  test('a failure with no test name gives its error line in the log line and the finding, not the placeholder', async () => {
+    const unnamed = (head: string): RoundTestsResult => ({
+      head,
+      outcome: 'failed',
+      firstFailure: {
+        test: '(unnamed)',
+        location: 'tests/x.test.ts:55',
+        excerpt: '55 |   renameSync(a, b)\n       ^\nerror: ENOENT: no such file\n(fail) (unnamed) [4ms]'
+      },
+      wallMs: 5
+    })
+    const observed = await runV2('claude', {
+      roundTests: (call, head) => (call === 1 ? unnamed(head) : result(head, 'passed'))
+    })
+    const line = observed.world.evidenceLogs.find((entry) => entry.startsWith('round tests: failed')) ?? ''
+    expect(line).toContain('tests/x.test.ts:55: error: ENOENT: no such file')
+    expect(line).not.toContain('unnamed')
+    const prompt = observed.prompts.developer[1] ?? ''
+    expect(prompt).toContain('error: ENOENT: no such file')
+    expect(prompt).toContain('a test with no name at `tests/x.test.ts:55`')
+    expect(prompt).not.toContain('`(unnamed)`')
+  })
+
   test('a red head with several failing files tells the Developer every one in its prompt', async () => {
     const several = (head: string): RoundTestsResult => ({
       ...red(head),

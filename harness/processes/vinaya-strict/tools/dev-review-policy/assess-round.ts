@@ -671,13 +671,14 @@ function assessGate(
 
 function assessVerdicts(
   state: LoopState,
-  obs: { round: number; verdicts: VerdictObservation[] }
+  obs: { round: number; verdicts: VerdictObservation[]; returned?: VerdictObservation[] }
 ): { decision: Decision; state: LoopState; events: DevReviewLoopEventInput[] } {
   const pending = state.pending
   if (pending === null || pending.round !== obs.round) {
     throw new Error(`assessRound: verdicts observation for round ${obs.round} with no matching pending gate result`)
   }
-  const events: DevReviewLoopEventInput[] = [verdictsReadEvent(state, obs.round, obs.verdicts)]
+  // The record says what the reviewers returned; every decision below reads `obs.verdicts`.
+  const events: DevReviewLoopEventInput[] = [verdictsReadEvent(state, obs.round, obs.returned ?? obs.verdicts)]
 
   const currentIds = mergeFindings(obs.verdicts)
   const fc = computeFindingsCompared(obs.round, pending.priorIds, currentIds)

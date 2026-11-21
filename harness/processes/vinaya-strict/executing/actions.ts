@@ -1074,12 +1074,27 @@ export function failedRoundTest(results: Results): {
     : null
 }
 
-/** The first line of a failure excerpt that is not blank. */
-const firstFailureLine = (excerpt: string): string =>
-  excerpt
+/** The most a failure's error line holds in a log line or a finding. */
+const MAX_ERROR_LINE_CHARS = 300
+
+/** The unnamed placeholder the test runner prints for a failure that has no test name. */
+const UNNAMED_TEST = /^\(?unnamed\)?$/i
+
+/**
+ * The line of a failure excerpt that names the error: the first line that starts with an error word (`error: ...`,
+ * `TypeError: ...`), else the first line that is not blank, a `(fail)` line or a source-excerpt line. The excerpt is
+ * sanitized when recorded; the line is bounded here.
+ */
+export const firstFailureLine = (excerpt: string): string => {
+  const lines = excerpt
     .split('\n')
-    .find((line) => line.trim().length > 0)
-    ?.trim() ?? ''
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  const named = lines.find((line) => /^(?:uncaught\s+)?(?:[A-Za-z]*error)\s*[:(]/i.test(line))
+  const plain = lines.find((line) => !/^\(fail\)/.test(line) && !/^\d+\s*\|/.test(line) && line !== '^')
+  const line = named ?? plain ?? ''
+  return line.length > MAX_ERROR_LINE_CHARS ? `${line.slice(0, MAX_ERROR_LINE_CHARS)}…` : line
+}
 
 /**
  * Folds a red round test into the round's verdicts: the code reviewer's `APPROVE` becomes `REQUEST CHANGES` and one
@@ -1103,7 +1118,10 @@ function foldRoundTestFailure(
     failure.otherFailures.length > 0
       ? `; these selected tests fail too: ${failure.otherFailures.map((other) => other.test).join(', ')}${omitted}`
       : ''
-  const description = `The selected test ${failure.test} fails${line ? `: ${line}` : ''}${others}`
+  const subject = UNNAMED_TEST.test(failure.test.trim())
+    ? `A selected test at ${failure.location}`
+    : `The selected test ${failure.test}`
+  const description = `${subject} fails${line ? `: ${line}` : ''}${others}`
   return verdicts.map((verdict) =>
     verdict.role !== 'reviewer'
       ? verdict
@@ -1128,14 +1146,19 @@ function foldRoundTestFailure(
   )
 }
 
-/** The verdict observations the reviewer-output step held for the round; throws when it held none. */
-export function recordedVerdicts(results: Results): VerdictObservation[] {
+/** The verdict observations the reviewers returned for the round, as held; throws when it held none. */
+export function returnedVerdicts(results: Results): VerdictObservation[] {
   const reviews = recordedReviews(results)
   const reviewer = reviews?.accepted.reviewer
   const security = reviews?.accepted.security
   if (reviews?.next !== 'hold' || reviewer === undefined || security === undefined)
     throw new Error('no verdicts were held for the round: the reviewer-output step recorded none')
-  const held = [reviewer.observation, security.observation]
+  return [reviewer.observation, security.observation]
+}
+
+/** The verdict observations the round is decided on: the returned ones with a red round test folded in. */
+export function recordedVerdicts(results: Results): VerdictObservation[] {
+  const held = returnedVerdicts(results)
   const red = failedRoundTest(results)
   return red === null ? held : foldRoundTestFailure(held, red)
 }
@@ -1946,7 +1969,8 @@ function assessVerdictsAction(task: TaskInput, context: ActionContext): { exitCo
       : recorded
   const round = task.reviewRound()
   const verdicts = recordedVerdicts(results)
-  const assessment = assessRound(state0, { kind: 'verdicts', round, verdicts }, task.clock)
+  const returned = returnedVerdicts(results)
+  const assessment = assessRound(state0, { kind: 'verdicts', round, verdicts, returned }, task.clock)
   const { decision, state } = assessment
   // The findings set aside rather than let block, round by round, for the publish step to track.
   const deferredFindings = [

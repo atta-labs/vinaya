@@ -122,6 +122,11 @@ export type Observations =
   | ({ kind: 'verdicts' } & {
       round: number
       verdicts: VerdictObservation[]
+      /**
+       * What the reviewers returned, when `verdicts` is not that: the round's verdicts record is built from it
+       * while every decision reads `verdicts`. Absent, the record is built from `verdicts`.
+       */
+      returned?: VerdictObservation[]
     })
   /**
    * A mechanical failure that ended an attempt WITHOUT producing a head for
