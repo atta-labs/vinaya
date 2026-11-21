@@ -174,7 +174,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",
-        "sha256": "315a954de271d8cf37e84febdc5899054e78baf2cb3176b657893468494b4ee7"
+        "sha256": "bbb6946e0c7c8fede5cd27d3d233a0a52d505519265dd6391c41018d598edf23"
       },
       {
         "path": "harness/processes/vinaya-strict/tools/dev-review-policy/fakes.ts",
@@ -190,7 +190,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/tools/dev-review-policy/types.ts",
-        "sha256": "57afcfc7ca1dcb3818bedef2feea168624fc37508d431c7e32e2c9ce781dfa38"
+        "sha256": "f71de999377e698e6fca66cd354ea9eb151c099d5241cb0618b4ddb5ea02a710"
       }
     ]
   },

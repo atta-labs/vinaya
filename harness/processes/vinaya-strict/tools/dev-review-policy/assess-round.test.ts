@@ -204,6 +204,52 @@ describe('assessRound — verdicts_read reviewers', () => {
     expect(read.reviewers.reduce((n, r) => n + r.blockers, 0)).toBe(read.blockers)
   })
 
+  const TEST_FINDING = { id: 'T1', severity: 'blocker' as const, state: 'open' as const }
+
+  it('given the returned verdicts beside folded ones, the record reads the returned and the decision the folded', () => {
+    const { events, decisions } = runScenario(freshState(), [
+      fakeGate(1, true),
+      {
+        ...fakeVerdicts(1, [blockingVerdict('reviewer', [TEST_FINDING]), cleanVerdict('security')]),
+        returned: [cleanVerdict('reviewer'), cleanVerdict('security')]
+      } as never
+    ])
+    const read = events.find((e) => e.event === 'verdicts_read') as unknown as {
+      reviewers: Reviewers
+      blockers: number
+      findings: unknown[]
+      all_approve: boolean
+    }
+    expect(read.reviewers).toEqual([
+      { role: 'code-reviewer', outcome: 'approve', blockers: 0 },
+      { role: 'security', outcome: 'approve', blockers: 0 }
+    ])
+    expect(read.blockers).toBe(0)
+    expect(read.findings).toEqual([])
+    expect(read.all_approve).toBe(true)
+    expect(decisions.at(-1)?.type).not.toBe('publish')
+  })
+
+  it('a reviewer’s own request for changes is recorded as returned, beside the test finding', () => {
+    const own = blockingVerdict('reviewer', [{ id: 'F1', severity: 'blocker', state: 'open' }])
+    const { events } = runScenario(freshState(), [
+      fakeGate(1, true),
+      {
+        ...fakeVerdicts(1, [
+          blockingVerdict('reviewer', [{ id: 'F1', severity: 'blocker', state: 'open' }, TEST_FINDING]),
+          cleanVerdict('security')
+        ]),
+        returned: [own, cleanVerdict('security')]
+      } as never
+    ])
+    const read = events.find((e) => e.event === 'verdicts_read') as unknown as {
+      reviewers: Reviewers
+      findings: { id: string }[]
+    }
+    expect(read.reviewers[0]).toEqual({ role: 'code-reviewer', outcome: 'changes_requested', blockers: 1 })
+    expect(read.findings.map((f) => f.id)).toEqual(['F1'])
+  })
+
   it('an ESCALATE verdict reads changes_requested with no counted blocker, matching the event count', () => {
     const read = reviewersOf([escalateVerdict('reviewer'), blockingVerdict('security', [])])
     expect(read.reviewers[0]).toEqual({ role: 'code-reviewer', outcome: 'changes_requested', blockers: 0 })
