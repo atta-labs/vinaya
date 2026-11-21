@@ -480,8 +480,9 @@ export function withV2DevTools(
     if (explicit.outcome === 'drift')
       return `Head ${head} is published, but the worktree changed while the driver ran the Test Plan's explicit commands on it (${explicit.detail ?? 'head or tree moved'}), so no receipt was recorded. Commit and publish your work again.`
     const last = explicit.results.at(-1)
-    const what =
-      explicit.outcome === 'timed-out' ? 'timed out at its limit' : `failed (exit ${last?.exitCode ?? 'none'})`
+    // The outcome union is exhausted here: `passed` and `drift` returned above, and a cancel rejects (caught above).
+    const outcome: 'failed' | 'timed-out' = explicit.outcome
+    const what = outcome === 'timed-out' ? 'timed out at its limit' : `failed (exit ${last?.exitCode ?? 'none'})`
     const text = last?.output ?? ''
     const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length))
     const fence = '`'.repeat(Math.max(3, longest + 1))
