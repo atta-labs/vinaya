@@ -2608,6 +2608,32 @@ export function readReviewDiff(base: string, head: string, cwd: string): string 
   return sh('git', ['diff', `${base}...${head}`], cwd, REVIEW_DIFF_MAX_BUFFER)
 }
 
+/**
+ * The base the reviewers' diff and the round's review-input manifest both start from: the merge base of `head` with
+ * the default branch's tip as the remote at `remoteUrl` reports it, made present in the worktree under that hash and
+ * never through the worktree's own `origin`. The local `origin/main` ref is only the fallback, with one line naming
+ * it, because the loop's merge of a moved default branch uses the fetched tip by its hash and leaves that ref behind.
+ */
+export function reviewBaseOf(input: {
+  worktreePath: string
+  head: string
+  remoteUrl: string | null
+  warn?: (line: string) => void
+}): string {
+  const tip = input.remoteUrl === null ? null : readFetchedMainTip(input.worktreePath, input.remoteUrl)
+  if (tip !== null) {
+    try {
+      return sh('git', ['merge-base', tip, input.head], input.worktreePath).trim()
+    } catch {
+      // No common ancestor with the remote's tip: the local ref answers below.
+    }
+  }
+  ;(input.warn ?? ((line: string) => process.stderr.write(`${line}\n`)))(
+    `the default-branch commit ${input.head} contains could not be resolved from the remote; the review input of ${input.head} is staged against the merge base with the local origin/main`
+  )
+  return sh('git', ['merge-base', 'origin/main', input.head], input.worktreePath).trim()
+}
+
 function refusal<T>(check: string, output: string): DevToolResult<T> {
   return {
     ok: false,
@@ -2957,6 +2983,8 @@ export async function liveTaskInput(
     completion?: Partial<BoundFunctions>
     /** The repository (`owner/repo`) the round's manifest record names. */
     repository?: string
+    /** The driver-built address the default branch's tip is read from; absent, the local `origin/main` ref is the base. */
+    defaultBranchUrl?: string
     /** Where the CLI the checks run from lives; defaults to `repoRoot`, which is the install when Vinaya runs on itself. */
     cliRoot?: string
     /** The check program the gates run; takes precedence over `cliRoot`. The live runner names the program table's file, which differs from the task's repository when Vinaya is adopted elsewhere. */
@@ -3020,11 +3048,26 @@ export async function liveTaskInput(
   const usageOf = (role: HeldVerdictRole | 'developer') => launchUsage.get(role) ?? null
   // The review round advances when a revision handoff reads the verdicts it answers.
   let round = 1
+  // The one base calculation the reviewers' diff and the manifest of a head both take, so a verdict's echoed base is
+  // the commit its diff started from.
+  // The fallback line is written once per head: the stager and the manifest both ask for the same head's base.
+  const fallbackLogged = new Set<string>()
+  const reviewBase = (head: string): string =>
+    reviewBaseOf({
+      worktreePath,
+      head,
+      remoteUrl: lookups.defaultBranchUrl ?? null,
+      warn: (line) => {
+        if (fallbackLogged.has(head)) return
+        fallbackLogged.add(head)
+        process.stderr.write(`${line}\n`)
+      }
+    })
   const manifestAt = (headSha: string): ReviewInputManifest => {
     const pr = forge.findOpenPrForBranch(branch)
     let baseSha: string | null = null
     try {
-      baseSha = sh('git', ['merge-base', 'origin/main', headSha], worktreePath)
+      baseSha = reviewBase(headSha)
     } catch {
       baseSha = null
     }
@@ -3085,7 +3128,7 @@ export async function liveTaskInput(
     worktreePath,
     judgedHead,
     readHead: readWorktreeHead,
-    baseOf: (head) => sh('git', ['merge-base', 'origin/main', head], worktreePath).trim(),
+    baseOf: reviewBase,
     brief: () => forge.fetchFrozenBrief(args.task),
     prBody: () => {
       const pr = forge.findOpenPrForBranch(branch)
@@ -3493,7 +3536,12 @@ async function runLive(
   const repo = liveRepo()
   const taskInput = await liveTaskInput(args, repoRoot, runtimeDir, loopId, {
     checkProgram: programFile('check'),
-    ...(repo ? { repository: `${repo.owner}/${repo.repo}` } : {})
+    ...(repo
+      ? {
+          repository: `${repo.owner}/${repo.repo}`,
+          defaultBranchUrl: `https://github.com/${repo.owner}/${repo.repo}.git`
+        }
+      : {})
   })
   const liveContext = engineLiveDevToolsContext({
     repairPlan: taskInput.repairPlan,
@@ -3787,7 +3835,12 @@ async function runShadowLive(
   const checkout = prepareShadowCheckout({ repoRoot, branch, shadowRuntimeDir: runtimeDir })
   const taskInput = await liveTaskInput(args, checkout, runtimeDir, loopId, {
     checkProgram: programFile('check'),
-    ...(repo ? { repository: `${repo.owner}/${repo.repo}` } : {})
+    ...(repo
+      ? {
+          repository: `${repo.owner}/${repo.repo}`,
+          defaultBranchUrl: `https://github.com/${repo.owner}/${repo.repo}.git`
+        }
+      : {})
   })
   // The enforcement controls are the live repository's: the copy installs no hooks of its own.
   taskInput.bound = {
