@@ -98,6 +98,7 @@ import {
 } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import {
   isUsageLimitPauseDetail,
+  isGitHubRateLimitError,
   MAX_AUTOMATIC_RATE_LIMIT_RESUMES,
   MAX_INFRASTRUCTURE_RETRIES,
   usageLimitResetFromDetail,
@@ -473,6 +474,7 @@ export const liveResumeDeps: ResumeDeps = {
 /** The environment variable the standalone loop's watcher reads its poll interval from, and its default. */
 export const RULING_POLL_MS_ENV = 'VINAYA_DEV_REVIEW_LOOP_WATCH_POLL_MS'
 export const DEFAULT_RULING_POLL_MS = 30_000
+export const RULING_FORGE_WAIT_CEILING_MS = 300_000
 
 /** How often the post-halt watch reads the forge: the standalone watcher's interval. */
 export function rulingPollMs(env: NodeJS.ProcessEnv = process.env): number {
@@ -621,18 +623,43 @@ export async function watchForRuling(
     () => deps.readEscalationRecord(task, escalationId)?.rulingOrdinal ?? null,
     null
   )
+  // The first forge read is due at once; each later one waits as long as the last or twice as long, up to the ceiling.
+  let forgeWaitMs = watch.pollMs
+  let sinceForgeReadMs = forgeWaitMs
   while (!stop.aborted) {
     const resolution = tolerate(() => deps.readResolution(task, escalationId), null)
     if (resolution?.decision === 'cancel') return { kind: 'cancelled' }
     if (resolution !== null) return { kind: 'consumed' }
     // The pause's pull request, read again each tick so a pause bound to one since it was raised is watched too.
     const pr = tolerate(() => deps.readPauseState(root, task)?.prNumber ?? held.prNumber, held.prNumber)
-    if (pr !== null) {
-      const state = tolerate(() => deps.fetchPrState(pr), 'OPEN' as PrOpenState)
-      if (state === 'MERGED') return { kind: 'ended', state: 'merged' }
-      if (state === 'CLOSED') return { kind: 'ended', state: 'closed' }
+    // The forge is read only when its wait has run out; the local reads above keep the configured interval.
+    if (sinceForgeReadMs < forgeWaitMs) {
+      await watch.sleep(watch.pollMs, stop)
+      sinceForgeReadMs += watch.pollMs
+      continue
     }
-    const newest = tolerate(() => rulingOrdinalOf(deps, held, task), null)
+    sinceForgeReadMs = 0
+    // A failed read grows the wait like an idle one; one that says the rate limit is spent waits the full ceiling.
+    let rateLimited = false
+    const forgeRead = <T>(read: () => T, fallback: T): T => {
+      try {
+        return read()
+      } catch (error) {
+        rateLimited ||= isGitHubRateLimitError(error)
+        narrate(`a forge read failed: ${error instanceof Error ? error.message : String(error)}; trying again`)
+        return fallback
+      }
+    }
+    forgeWaitMs = Math.max(forgeWaitMs, Math.min(Math.max(RULING_FORGE_WAIT_CEILING_MS, watch.pollMs), forgeWaitMs * 2))
+    let ended: WatchResult | null = null
+    if (pr !== null) {
+      const state = forgeRead(() => deps.fetchPrState(pr), 'OPEN' as PrOpenState)
+      if (state === 'MERGED') ended = { kind: 'ended', state: 'merged' }
+      if (state === 'CLOSED') ended = { kind: 'ended', state: 'closed' }
+    }
+    if (ended !== null) return ended
+    const newest = forgeRead(() => rulingOrdinalOf(deps, held, task), null)
+    if (rateLimited) forgeWaitMs = Math.max(RULING_FORGE_WAIT_CEILING_MS, watch.pollMs)
     if (newest !== null) {
       baseline ??= newest
       if (newest > baseline) {
@@ -657,6 +684,7 @@ export async function watchForRuling(
       }
     }
     await watch.sleep(watch.pollMs, stop)
+    sinceForgeReadMs += watch.pollMs
   }
   return { kind: 'stopped' }
 }
