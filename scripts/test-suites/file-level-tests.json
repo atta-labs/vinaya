@@ -18,7 +18,6 @@
     "harness/processes/vinaya-strict/checks/check-flip.test.ts": "runs gh pr list against the real GitHub CLI",
     "harness/processes/vinaya-strict/checks/issue-checks.test.ts": "runs gh api, gh issue list against the real GitHub CLI",
     "harness/processes/vinaya-strict/checks/registry-gates.test.ts": "runs gh auth status, gh pr list against the real GitHub CLI",
-    "harness/processes/vinaya-strict/checks/standalone/verify-coherence.index-outage.test.ts": "runs gh auth token against the real GitHub CLI when neither GITHUB_TOKEN nor GH_TOKEN is set, so a scheduled run with no token variable starts it without the stand-in and it reads the token from the real gh",
     "harness/processes/vinaya-strict/checks/standalone/verify-coherence.pr-head.test.ts": "runs gh api against the real GitHub CLI",
     "harness/processes/vinaya-strict/checks/standalone/verify-coherence.shell-safety.test.ts": "runs gh api against the real GitHub CLI",
     "harness/processes/vinaya-strict/checks/standalone/verify-coherence.topology-move.test.ts": "runs gh issue list against the real GitHub CLI",
