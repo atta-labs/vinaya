@@ -15,7 +15,14 @@ import {
   turnResultCorrectionPrompt,
   turnResultInstruction
 } from '../loops/dev-review/standalone/dev-review-loop/turn-result'
-import { failedRoundTest, latestRecord, recordedForgeCi, ROUND_TEST_FINDING_ID, type SendBack } from './actions'
+import {
+  failedRoundTest,
+  isUnnamedTest,
+  latestRecord,
+  recordedForgeCi,
+  ROUND_TEST_FINDING_ID,
+  type SendBack
+} from './actions'
 
 // What today's review loop sends its Developer each round, built from the same exported functions
 // (`renderDeveloperDoctrineBlock`, `publishingInstructionLine`, `turnResultInstruction`, the context-packet
@@ -181,7 +188,7 @@ export function roundTestFailureOf(results: Readonly<Record<string, StepNodeResu
   const failure = failedRoundTest(results)
   if (failure === null) return null
   // A failure the runner could not name prints the placeholder `(unnamed)`; the location says where it is.
-  const unnamed = /^\(?unnamed\)?$/i.test(failure.test.trim())
+  const unnamed = isUnnamedTest(failure.test)
   const longestRun = Math.max(0, ...(failure.excerpt.match(/`+/g) ?? []).map((run) => run.length))
   const fence = '`'.repeat(Math.max(3, longestRun + 1))
   const fenceFor = (excerpt: string) =>

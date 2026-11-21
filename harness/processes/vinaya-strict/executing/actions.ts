@@ -1078,7 +1078,7 @@ export function failedRoundTest(results: Results): {
 const MAX_ERROR_LINE_CHARS = 300
 
 /** The unnamed placeholder the test runner prints for a failure that has no test name. */
-const UNNAMED_TEST = /^\(?unnamed\)?$/i
+export const isUnnamedTest = (test: string): boolean => /^\(?unnamed\)?$/i.test(test.trim())
 
 /**
  * The line of a failure excerpt that names the error: the first line that starts with an error word (`error: ...`,
@@ -1118,7 +1118,7 @@ function foldRoundTestFailure(
     failure.otherFailures.length > 0
       ? `; these selected tests fail too: ${failure.otherFailures.map((other) => other.test).join(', ')}${omitted}`
       : ''
-  const subject = UNNAMED_TEST.test(failure.test.trim())
+  const subject = isUnnamedTest(failure.test)
     ? `A selected test at ${failure.location}`
     : `The selected test ${failure.test}`
   const description = `${subject} fails${line ? `: ${line}` : ''}${others}`
