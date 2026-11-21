@@ -416,6 +416,8 @@ export function withV2DevTools(
     log?: (line: string) => void
     /** Where the repair push's command receipts are read and recorded; the repository's own cache when absent. */
     commandCache?: TestRunCache
+    /** The per-command limit of the repair push's command run; the report engine's own limit when absent. */
+    commandTimeoutMs?: number
     /** The deadline timer of the repair push's command run, for a test that fakes the clock. */
     startDeadline?: (fire: () => void, ms: number) => () => void
   }
@@ -464,6 +466,7 @@ export function withV2DevTools(
         now: clock,
         progress,
         ...(options.commandCache ? { cache: options.commandCache } : {}),
+        ...(options.commandTimeoutMs !== undefined ? { commandTimeoutMs: options.commandTimeoutMs } : {}),
         ...(options.startDeadline ? { startDeadline: options.startDeadline } : {}),
         ...(options.log ? { log: options.log } : {})
       })
@@ -527,9 +530,7 @@ export function withV2DevTools(
       const deferred = readDeferredTestsRecord(options.worktreePath, { head: pushedHead, runId: options.runId })
       if (deferred === null || deferred.kind !== 'repair') return result
       const failure = await runRepairExplicitCommands(pushedHead, started)
-      return failure === null
-        ? result
-        : { ok: true, result: { ...result.result, explicitCommands: failure } as unknown as { pushedHead: string } }
+      return failure === null ? result : { ok: true, result: { ...result.result, explicitCommands: failure } }
     },
     openPullRequest: async (title, body) => {
       if (openPr() !== null) return base.openPullRequest(title, body)

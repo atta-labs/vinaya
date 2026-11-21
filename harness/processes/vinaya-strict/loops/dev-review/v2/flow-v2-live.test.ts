@@ -4,6 +4,8 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { DevToolContext } from '../../../../../kernel/tools/dev-tools-server'
+import { DEV_TOOL_CATALOG } from '../../../../../kernel/tools/tool-catalog'
+import { validatesJsonSchema } from '../../../../../kernel/tools/json-schema-check'
 import {
   gitPath,
   LAST_PUSH_RESULT,
@@ -1935,7 +1937,13 @@ describe('a deferred repair push leaves a receipt for each approved explicit Tes
   const count = (path: string) => (existsSync(path) ? readFileSync(path, 'utf8').length : 0)
 
   /** A repair publish whose hook deferred (or not): the fake push writes the record the real hook writes. */
-  function setup(input: { body: string | null; open?: boolean; deferred?: boolean }) {
+  function setup(input: {
+    body: string | null
+    open?: boolean
+    deferred?: boolean
+    liveBody?: string
+    commandTimeoutMs?: number
+  }) {
     const dir = repo()
     // The run directory lives outside the worktree, as the driver's does: a file in it would read as drift.
     const store = stagedPullRequestStore(fixtureDir('repair-run-'))
@@ -1944,6 +1952,7 @@ describe('a deferred repair push leaves a receipt for each approved explicit Tes
     const logs: string[] = []
     const base = {
       ...baseTools([]),
+      readPullRequest: async () => ({ ok: true, result: { body: input.liveBody ?? '' } }),
       publishChanges: async () => {
         const head = headOf(dir)
         if (input.deferred !== false) {
@@ -1976,6 +1985,7 @@ describe('a deferred repair push leaves a receipt for each approved explicit Tes
       readyTestsPolicy: () => POLICY_CI,
       checkBaseline: () => ({ ok: true }),
       commandCache: cache,
+      ...(input.commandTimeoutMs !== undefined ? { commandTimeoutMs: input.commandTimeoutMs } : {}),
       log: (line) => logs.push(line)
     })
     // What the report engine's deferred composition reads for this head.
@@ -2033,11 +2043,25 @@ describe('a deferred repair push leaves a receipt for each approved explicit Tes
   test('only the staged body is read: a command written only in the live body is never run', async () => {
     const staged = counterPath()
     const liveOnly = counterPath()
-    const f = setup({ body: planBody(`printf x >> ${JSON.stringify(staged)}`) })
-    // The pull request's live body is never consulted by the publish tool; it holds `liveOnly` here only in spirit.
+    // The live body of the open pull request names a command the staged body does not; every live read returns it.
+    const live = planBody(`printf x >> ${JSON.stringify(liveOnly)}`)
+    const f = setup({ body: planBody(`printf x >> ${JSON.stringify(staged)}`), liveBody: live })
     await f.tools.publishChanges('Fix(x): y')
     expect(count(staged)).toBe(1)
     expect(count(liveOnly)).toBe(0)
+  })
+
+  test('a command past its limit is reported as timed out with the pushed head, and the result fits the tool schema', async () => {
+    const f = setup({ body: planBody('sleep 5'), commandTimeoutMs: 300 })
+    const result = await f.tools.publishChanges('Fix(x): y')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.result.explicitCommands).toContain('timed out')
+    expect(result.result.explicitCommands).toContain(headOf(f.dir))
+    expect(result.result.explicitCommands).toContain('sleep 5')
+    const entry = DEV_TOOL_CATALOG.find((tool) => tool.name === 'publish_changes')
+    expect(validatesJsonSchema(entry?.successOutputSchema, result.result)).toBe(true)
+    await expect(f.compose('sleep 5')).rejects.toBeInstanceOf(DeferredEvidenceError)
   })
 
   test('a publish with no open pull request, and a repair push that did not defer, run no command', async () => {

@@ -241,9 +241,10 @@ export const AGENT_TOOL_CATALOG: readonly AgentToolCatalogEntry[] = [
       neighboringTools: ['run_checks', 'open_pull_request']
     },
     inputSchema: stringInput('header'),
-    successOutputSchema: objectSchema({ pushedHead: str, beyondSurface: { type: 'array', items: str } }, [
-      'pushedHead'
-    ]),
+    successOutputSchema: objectSchema(
+      { pushedHead: str, beyondSurface: { type: 'array', items: str }, explicitCommands: str },
+      ['pushedHead']
+    ),
     requiredAuthority: 'Controller-held task-branch publication authority.',
     idempotencyAndReplay:
       'Effectful and not blindly replayable; reconcile the remote head before retrying an uncertain result.',

@@ -181,7 +181,9 @@ export type DevToolContext = {
   /** Deterministic, scope-preserving repair; older hosts explicitly refuse it as unavailable. */
   repairPlan?: () => Promise<DevToolResult<{ brief: string; briefHash: string; reasons: string[] }>>
   /** Commit the worktree's changes under `header` and push the task branch — behind the commit-header, publication-precondition, protected-path and pre-push gates. `beyondSurface` names each changed path the task's Surface does not cover, which the driver records in the pull request body rather than refusing. */
-  publishChanges: (header: string) => Promise<DevToolResult<{ pushedHead: string; beyondSurface?: string[] }>>
+  publishChanges: (
+    header: string
+  ) => Promise<DevToolResult<{ pushedHead: string; beyondSurface?: string[]; explicitCommands?: string }>>
   /** Open the pull request with `title`/`body` — behind PR-body validation. */
   openPullRequest: (title: string, body: string) => Promise<DevToolResult<{ prNumber: number }>>
   /** Replace the pull request body — behind PR-body validation. */
