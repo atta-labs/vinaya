@@ -14,7 +14,9 @@
  * own suite runs: `tasks-execution/<VINAYA_TASK>` and `tasks-execution/unscoped`.
  * A task whose `tasks-execution/<task>/driver.pid.json` names a running process
  * is live too: its folder and its `logs/<task>.ndjson` are exempt, since another
- * loop on this host writes them. A dead pid is not live and stays flagged.
+ * loop on this host writes them. A dead pid is not live and stays flagged. So is a
+ * launched task holding no lock yet whose run record
+ * (`tasks-execution/<task>/control/run/<runId>.json`) names a running process.
  *
  * Liveness is read twice: once when this module loads, before any test writes,
  * and again at the check; a task live at either is exempt. A loop that is live
@@ -22,7 +24,9 @@
  * naming a dead pid) wrote its folders during the run, so it stays exempt.
  * Known limits: a task live at start stays exempt for the whole run, even after
  * its loop ends; a loop that both starts and ends inside one run is live at
- * neither read and stays flagged; and a stale lock whose pid now names an
+ * neither read and stays flagged; the instant between a launch claiming a task
+ * and writing its run record, about one second, names no running process and
+ * stays flagged; and a stale lock whose pid now names an
  * unrelated process, or a lock naming this process's own pid, reads as live.
  *
  * Two appends are sanctioned whatever runs, because any process on the host —
@@ -50,6 +54,12 @@ import { homedir } from 'node:os'
 import { join, relative, sep } from 'node:path'
 
 export const PROCESS_START_MS = Date.now() - process.uptime() * 1000 - 1000
+
+/**
+ * The control store's folder under a task's folder, and its run records' folder beneath it. Literals, not an
+ * import, as the stream names below are; the background launch's test holds them equal to the real writer.
+ */
+export const CONTROL_RUN_RECORDS: readonly string[] = ['control', 'run']
 
 /** `realRuntimeDir()`'s answer, kept after its first call. */
 let resolvedRuntimeDir: string | undefined
@@ -168,21 +178,45 @@ export function liveTaskPrefixes(root: string): string[] {
   }
   const out: string[] = []
   for (const task of tasks) {
+    let live = false
     try {
       const lock = JSON.parse(readFileSync(join(root, 'tasks-execution', task, 'driver.pid.json'), 'utf-8'))
-      // A live Engine run also writes its checkpoints under `engine-runs/<task>`.
-      if (pidRunning(lock?.pid))
-        out.push(
-          join('tasks-execution', task),
-          join('engine-runs', task),
-          join('logs', `${task}.ndjson`),
-          ...logFolders.map((folder) => join('logs', folder, `${task}.ndjson`))
-        )
+      live = pidRunning(lock?.pid)
     } catch {
-      // no readable lock — not live
+      // no readable lock — read the run records below
     }
+    // A launched task holds no lock until its runner starts: its run record names the launched process.
+    if (!live) live = runRecordNamesRunningProcess(join(root, 'tasks-execution', task))
+    // A live Engine run also writes its checkpoints under `engine-runs/<task>`.
+    if (live)
+      out.push(
+        join('tasks-execution', task),
+        join('engine-runs', task),
+        join('logs', `${task}.ndjson`),
+        ...logFolders.map((folder) => join('logs', folder, `${task}.ndjson`))
+      )
   }
   return out
+}
+
+/** Whether any run record (`<taskDir>/control/run/<runId>.json`) names a running process. Never by age or by the folder's existence. */
+function runRecordNamesRunningProcess(taskDir: string): boolean {
+  const dir = join(taskDir, ...CONTROL_RUN_RECORDS)
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return false
+  }
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue
+    try {
+      if (pidRunning(JSON.parse(readFileSync(join(dir, name), 'utf-8'))?.pid)) return true
+    } catch {
+      // unreadable record — names no process
+    }
+  }
+  return false
 }
 
 /**

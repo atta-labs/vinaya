@@ -168,6 +168,43 @@ describe('real runtime directory guard', () => {
     }
   })
 
+  it('exempts a launched task with no lock whose run record names a running process, not one whose process ended', () => {
+    const root = mkdtempSync(join(tmpdir(), 'real-runtime-guard-'))
+    try {
+      const dead = Bun.spawnSync(['true']).pid
+      mkdirSync(join(root, 'logs', 'owner-repo'), { recursive: true })
+      for (const [task, pids] of [
+        ['launched', [dead, process.pid]],
+        ['gone', [dead]]
+      ] as const) {
+        const runDir = join(root, 'tasks-execution', task, 'control', 'run')
+        mkdirSync(runDir, { recursive: true })
+        for (const [i, pid] of pids.entries()) {
+          writeFileSync(join(runDir, `bg-${task}-${i}.json`), JSON.stringify({ pid }))
+        }
+        writeFileSync(join(root, 'tasks-execution', task, 'request'), 'x')
+        writeFileSync(join(root, 'logs', `${task}.ndjson`), 'x')
+        writeFileSync(join(root, 'logs', 'owner-repo', `${task}.ndjson`), 'x')
+        mkdirSync(join(root, 'engine-runs', task), { recursive: true })
+        writeFileSync(join(root, 'engine-runs', task, 'checkpoints.sqlite'), 'x')
+      }
+      writeFileSync(join(root, 'tasks-execution', 'torn.json'), '{')
+      writeFileSync(join(root, 'stray'), 'x')
+      const found = touchedSince(root, Date.now() - 60_000, [])
+      expect(found.some((p) => p.includes('launched'))).toBe(false)
+      expect(found).toContain(join('tasks-execution', 'gone', 'request'))
+      expect(found).toContain(join('tasks-execution', 'gone', 'control', 'run', 'bg-gone-0.json'))
+      expect(found).toContain(join('logs', 'gone.ndjson'))
+      expect(found).toContain(join('logs', 'owner-repo', 'gone.ndjson'))
+      expect(found).toContain(join('engine-runs', 'gone', 'checkpoints.sqlite'))
+      expect(found).toContain('stray')
+      expect(liveTaskPrefixes(root)).toContain(join('tasks-execution', 'launched'))
+      expect(liveTaskPrefixes(root)).not.toContain(join('tasks-execution', 'gone'))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('exempts a task whose loop was live at start and then ended, not one never live', () => {
     const root = mkdtempSync(join(tmpdir(), 'real-runtime-guard-'))
     try {
