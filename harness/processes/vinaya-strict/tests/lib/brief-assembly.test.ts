@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { spawnBudgetedAsync } from '../../../../kernel/conformance/unit/process-fixture.js'
 import {
   assembleAndRenderBriefForIssue,
   canRenderBriefFromHere,
@@ -353,6 +354,170 @@ describe('fastForwardToRemoteIfSafe (Issue #839)', () => {
     expect(result.kind).toBe('refused')
     if (result.kind === 'refused') expect(result.reason).toMatch(/could not be resolved/)
     expect(git(localDir, ['rev-parse', 'HEAD'])).toBe(before)
+  })
+})
+
+/**
+ * Two starts preparing one checkout at once. A fake `git` placed first on the
+ * path slows or fails the `merge` call; the two overlapping preparations are
+ * real processes started through the shared budgeted asynchronous helper.
+ */
+describe('fastForwardToRemoteIfSafe with another preparation of the same checkout', () => {
+  let tmpDir: string
+  let remoteDir: string
+  let localDir: string
+  let fakeDir: string
+  let originalPath: string | undefined
+
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
+  const FF_REFUSAL_PART = 'update the checkout by hand first'
+
+  const advanceRemote = (content: string): string => {
+    writeFileSync(join(remoteDir, 'pinned.md'), content)
+    git(remoteDir, ['add', 'pinned.md'])
+    git(remoteDir, ['commit', '-q', '-m', `advance ${content.trim()}`])
+    return git(remoteDir, ['rev-parse', 'HEAD'])
+  }
+
+  const writeFakeGit = (mergeBody: string): void => {
+    writeFileSync(
+      join(fakeDir, 'git'),
+      `#!/bin/sh\nif [ "$1" = "merge" ]; then\n${mergeBody}\nfi\nexec '${realGit}' "$@"\n`
+    )
+    chmodSync(join(fakeDir, 'git'), 0o755)
+  }
+
+  const resolve = () => resolveRemoteDefaultBranch(localDir)
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'vinaya-brief-ff-conc-'))
+    remoteDir = join(tmpDir, 'remote')
+    localDir = join(tmpDir, 'local')
+    fakeDir = join(tmpDir, 'fake')
+    mkdirSync(remoteDir, { recursive: true })
+    mkdirSync(fakeDir, { recursive: true })
+    git(remoteDir, ['init', '-q', '-b', 'main'])
+    git(remoteDir, ['config', 'user.email', 'a@example.com'])
+    git(remoteDir, ['config', 'user.name', 'A'])
+    writeFileSync(join(remoteDir, 'pinned.md'), 'v1\n')
+    git(remoteDir, ['add', 'pinned.md'])
+    git(remoteDir, ['commit', '-q', '-m', 'first'])
+    git(tmpDir, ['clone', '-q', remoteDir, localDir])
+    git(localDir, ['config', 'user.email', 'a@example.com'])
+    git(localDir, ['config', 'user.name', 'A'])
+    originalPath = process.env.PATH
+  })
+
+  afterEach(() => {
+    process.env.PATH = originalPath
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('lets two preparations in separate processes both finish with the checkout at the remote tip (O1)', async () => {
+    const tip = advanceRemote('v2\n')
+    const state = join(tmpDir, 'state')
+    mkdirSync(state)
+    // The first `merge` to arrive claims the state folder, holds the
+    // fast-forward for a second, then performs it; the second `merge` fails at
+    // once, as a fast-forward that lost the race to the index lock does.
+    writeFakeGit(
+      `if mkdir '${state}/first' 2>/dev/null; then touch '${state}/winner-merging'; sleep 1; else echo 'fatal: Unable to create index.lock' >&2; exit 128; fi`
+    )
+    const child = join(tmpDir, 'prepare.ts')
+    const moduleUrl = new URL('../../tools/task-contract/brief-assembly.js', import.meta.url).href
+    writeFileSync(
+      child,
+      `import { fastForwardToRemoteIfSafe } from '${moduleUrl}'\nconsole.log(JSON.stringify(fastForwardToRemoteIfSafe(process.argv[2])))\n`
+    )
+    const env = { ...process.env, PATH: `${fakeDir}:${process.env.PATH ?? ''}` }
+    const first = spawnBudgetedAsync([process.execPath, child, localDir], { env }, 30_000, 'first preparation')
+    const deadline = Date.now() + 15_000
+    while (!existsSync(join(state, 'winner-merging')) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    expect(existsSync(join(state, 'winner-merging'))).toBe(true)
+    const second = await spawnBudgetedAsync([process.execPath, child, localDir], { env }, 30_000, 'second preparation')
+    const firstResult = await first
+
+    expect(firstResult.status).toBe(0)
+    expect(second.status).toBe(0)
+    const a = JSON.parse(firstResult.stdout.trim().split('\n').pop() ?? '')
+    const b = JSON.parse(second.stdout.trim().split('\n').pop() ?? '')
+    expect(a.kind).toBe('moved')
+    expect(b).toEqual({ kind: 'noop' })
+    expect(JSON.stringify([a, b])).not.toContain(FF_REFUSAL_PART)
+    expect(git(localDir, ['rev-parse', 'HEAD'])).toBe(tip)
+  }, 60_000)
+
+  it('continues as at the tip when its own fast-forward fails after the checkout reached the tip (O2)', () => {
+    const tip = advanceRemote('v2\n')
+    writeFakeGit(`'${realGit}' "$@"; exit 1`)
+    process.env.PATH = `${fakeDir}:${originalPath ?? ''}`
+    const result = fastForwardToRemoteIfSafe(localDir, resolve, 1000)
+    expect(result).toEqual({ kind: 'noop' })
+    expect(git(localDir, ['rev-parse', 'HEAD'])).toBe(tip)
+  })
+
+  it('still refuses with the message it has when the fast-forward fails and the checkout stays behind (O4)', () => {
+    advanceRemote('v2\n')
+    const before = git(localDir, ['rev-parse', 'HEAD'])
+    writeFakeGit('exit 1')
+    process.env.PATH = `${fakeDir}:${originalPath ?? ''}`
+    const result = fastForwardToRemoteIfSafe(localDir, resolve, 300)
+    expect(result.kind).toBe('refused')
+    if (result.kind === 'refused') {
+      expect(result.reason).toContain('failed — update the checkout by hand first: `git pull --ff-only`.')
+    }
+    expect(git(localDir, ['rev-parse', 'HEAD'])).toBe(before)
+  })
+
+  describe('the three unsafe cases keep their refusals while another git operation holds the checkout (O3)', () => {
+    beforeEach(() => {
+      advanceRemote('v2\n')
+      writeFileSync(join(localDir, '.git', 'index.lock'), '')
+    })
+
+    it('refuses an uncommitted tracked change', () => {
+      writeFileSync(join(localDir, 'pinned.md'), 'uncommitted local edit\n')
+      const before = git(localDir, ['rev-parse', 'HEAD'])
+      const result = fastForwardToRemoteIfSafe(localDir, resolve, 300)
+      expect(result.kind).toBe('refused')
+      if (result.kind === 'refused') {
+        expect(result.reason).toContain('uncommitted changes to tracked file(s): pinned.md')
+        expect(result.reason).toContain('git stash')
+      }
+      expect(git(localDir, ['rev-parse', 'HEAD'])).toBe(before)
+    })
+
+    it('refuses a local commit the remote does not have', () => {
+      rmSync(join(localDir, '.git', 'index.lock'))
+      git(localDir, ['fetch', '-q', 'origin'])
+      git(localDir, ['reset', '-q', '--hard', 'origin/main'])
+      writeFileSync(join(localDir, 'local.md'), 'local\n')
+      git(localDir, ['add', 'local.md'])
+      git(localDir, ['commit', '-q', '-m', 'local only'])
+      writeFileSync(join(localDir, '.git', 'index.lock'), '')
+      const before = git(localDir, ['rev-parse', 'HEAD'])
+      const result = fastForwardToRemoteIfSafe(localDir, resolve, 300)
+      expect(result.kind).toBe('refused')
+      if (result.kind === 'refused') {
+        expect(result.reason).toContain('local commit(s) the remote default branch `main` does not have')
+        expect(result.reason).toContain('git push')
+      }
+      expect(git(localDir, ['rev-parse', 'HEAD'])).toBe(before)
+    })
+
+    it('refuses a checkout on another branch', () => {
+      rmSync(join(localDir, '.git', 'index.lock'))
+      git(localDir, ['switch', '-q', '-c', 'feature'])
+      writeFileSync(join(localDir, '.git', 'index.lock'), '')
+      const result = fastForwardToRemoteIfSafe(localDir, resolve, 300)
+      expect(result.kind).toBe('refused')
+      if (result.kind === 'refused') {
+        expect(result.reason).toContain('not the remote default branch `main`')
+        expect(result.reason).toContain('git switch main')
+      }
+    })
   })
 })
 
