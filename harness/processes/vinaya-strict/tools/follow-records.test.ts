@@ -264,3 +264,77 @@ test('records at or before the driver-log time already printed are not printed a
     '10:00:02  ▸ Developer   Reading second'
   ])
 })
+
+test('a run whose Log SDK writer numbers from 1 reports no gap', async () => {
+  const { mkdtempSync, readdirSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { connect } = await import('../../../../packages/log-sdk/src/writer/connect.js')
+  const { readTaskRuns } = await import('./follow-records.js')
+  const dir = mkdtempSync(join(tmpdir(), 'follow-first-sequence-'))
+  try {
+    const handle = connect({
+      runId: 'run-1',
+      repository: 'acme/widgets',
+      runtimeDir: dir,
+      repoRoot: join(dir, 'repo'),
+      workRef: '7',
+      provenance: 'governed'
+    })
+    handle.run.stageChanged({ to: 'review', round: 1 })
+    handle.run.stageChanged({ to: 'develop', round: 2 })
+    await handle.shutdown()
+    const folder = join(dir, 'logs', 'acme-widgets')
+    expect(readdirSync(folder).length).toBeGreaterThan(0)
+    const update = await readTaskRuns(folder, 7, dir).pull()
+    expect(update?.records).toHaveLength(2)
+    expect(update?.gaps).toEqual([])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('an agent turn converted from an earlier role attempt is narrated with its seat', () => {
+  const follow = view(false)
+  const turn = record(
+    'invoke_agent developer',
+    3000,
+    { [A.agentName]: 'developer', 'vinaya.earlier.actor': 'claude', 'vinaya.earlier.outcome': 'completed' },
+    'span'
+  )
+  expect(follow.render({ records: [turn], gaps: [] }, [], now, true)).toEqual([
+    '10:00:03  ✓ Loop   The developer finished its turn.'
+  ])
+})
+
+test('a run that records no steps shows the driver log step lines, a live one after one poll', () => {
+  const follow = view(false)
+  expect(
+    follow.render(
+      { records: [record(E.roundStarted, 0, { [A.roundNumber]: 1 })], gaps: [] },
+      ['2026-11-19T10:00:01Z [call=a]  > Developer   Reading first', '2026-11-19T10:00:01Z  · a detail'],
+      now,
+      true
+    )
+  ).toEqual(['10:00:00  ◆ Loop   Round 1 started.', '10:00:01  ▸ Developer   Reading first'])
+  const live = ['2026-11-19T10:00:05Z [call=b]  > Developer   Reading second']
+  expect(follow.render({ records: [], gaps: [] }, live, now, false)).toEqual([])
+  expect(follow.render({ records: [], gaps: [] }, [], now, false)).toEqual(['10:00:05  ▸ Developer   Reading second'])
+  // Once a step record is seen, the driver log's step lines are not shown again.
+  expect(
+    follow.render(
+      { records: [record(E.stepStarted, 9000, step('c', 'third'), 'started', 'c')], gaps: [] },
+      ['2026-11-19T10:00:09Z [call=c]  > Developer   Reading third'],
+      now,
+      false
+    )
+  ).toEqual(['10:00:09  ▸ Developer   Reading third'])
+  expect(
+    follow.render(
+      { records: [], gaps: [] },
+      ['2026-11-19T10:00:10Z [call=d]  > Developer   Reading fourth'],
+      now,
+      false
+    )
+  ).toEqual([])
+})
