@@ -6,9 +6,14 @@ import { join } from 'node:path'
 import { DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 import type { ReviewerPromptFacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import { writeHeldVerdict } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
-import { readReviewDiff } from '../bin/run-engine'
+import { readReviewDiff, reviewBaseOf } from '../bin/run-engine'
 import { buildVerifiedReviewerCandidate } from '../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
-import { createVinayaReviewInputStager, renderVinayaReviewerPrompt, reviewerRulings } from '../executing/review-input'
+import {
+  createVinayaReviewInputStager,
+  renderVinayaReviewerPrompt,
+  repairReviewDiff,
+  reviewerRulings
+} from '../executing/review-input'
 
 function repoWithCommit(): { worktree: string; head: string } {
   const worktree = fixtureDir('review-input-wt-')
@@ -366,6 +371,117 @@ describe('the Vinaya review input', () => {
     const prompt = renderVinayaReviewerPrompt('reviewer', facts, roles[0] ?? null, null, repair)
     expect(prompt).toContain('This round reviews a conflict repair')
     expect(prompt).toContain(roles[0]?.paths?.diff as string)
+  })
+})
+
+/**
+ * A remote with a default branch, a clone whose `origin/main` stays where the clone left it, and a task branch that
+ * merged the remote's newer default-branch commit by its hash, as the loop's own merge does.
+ */
+function repoWithMergedDefaultCommit(options: { refreshLocalRef: boolean }): {
+  remote: string
+  worktree: string
+  head: string
+  older: string
+  merged: string
+} {
+  const remote = fixtureDir('review-input-remote-')
+  const worktree = fixtureDir('review-input-clone-')
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' }).trim()
+  git(remote, 'init', '-q', '-b', 'main')
+  writeFileSync(join(remote, 'base.ts'), 'export const base = 1\n')
+  git(remote, 'add', '-A')
+  git(remote, 'commit', '-q', '-m', 'base')
+  const older = git(remote, 'rev-parse', 'HEAD')
+  git(worktree, 'clone', '-q', remote, '.')
+  git(worktree, 'switch', '-q', '-c', 'task/x/1')
+  writeFileSync(join(worktree, 'task-file.ts'), 'export const task = 1\n')
+  git(worktree, 'add', '-A')
+  git(worktree, 'commit', '-q', '-m', 'task')
+  writeFileSync(join(remote, 'main-only.ts'), 'export const mainOnly = 1\n')
+  git(remote, 'add', '-A')
+  git(remote, 'commit', '-q', '-m', 'main moves')
+  const merged = git(remote, 'rev-parse', 'HEAD')
+  // The loop fetches the tip by the repository's address and merges it by its hash: no local ref moves.
+  git(worktree, 'fetch', '-q', remote, 'refs/heads/main')
+  git(worktree, 'merge', '-q', '--no-ff', '-m', 'merge main', merged)
+  if (options.refreshLocalRef) git(worktree, 'fetch', '-q', 'origin', 'main')
+  return { remote, worktree, head: git(worktree, 'rev-parse', 'HEAD'), older, merged }
+}
+
+describe('the base the reviewers start from', () => {
+  const stageFor = (worktree: string, head: string, remote: string | null, logged: string[]) => {
+    const base = (h: string) =>
+      reviewBaseOf({ worktreePath: worktree, head: h, remoteUrl: remote, warn: (l) => logged.push(l) })
+    const stager = createVinayaReviewInputStager({
+      root: fixtureDir('review-input-root-'),
+      task: 9,
+      worktreePath: worktree,
+      judgedHead: () => head,
+      readHead: () => head,
+      baseOf: base,
+      brief: () => 'brief',
+      prBody: () => 'body',
+      diff: (b, h) => readReviewDiff(b, h, worktree)
+    })
+    const staged = stager.stage(1)
+    return { base: base(head), diff: readFileSync(staged?.paths?.diff as string, 'utf8') }
+  }
+
+  test('a default-branch commit merged by its hash, while the local ref is older, is not part of the task change', () => {
+    const { remote, worktree, head, older, merged } = repoWithMergedDefaultCommit({ refreshLocalRef: false })
+    expect(execFileSync('git', ['rev-parse', 'origin/main'], { cwd: worktree, encoding: 'utf8' }).trim()).toBe(older)
+    const logged: string[] = []
+    const { base, diff } = stageFor(worktree, head, remote, logged)
+    expect(base).toBe(merged)
+    expect(diff).toContain('task-file.ts')
+    expect(diff).not.toContain('main-only.ts')
+    expect(logged).toEqual([])
+  })
+
+  test('a local ref already current gives the base and diff the local ref gave', () => {
+    const { remote, worktree, head, merged } = repoWithMergedDefaultCommit({ refreshLocalRef: true })
+    const local = execFileSync('git', ['merge-base', 'origin/main', head], { cwd: worktree, encoding: 'utf8' }).trim()
+    const { base, diff } = stageFor(worktree, head, remote, [])
+    expect(base).toBe(local)
+    expect(base).toBe(merged)
+    expect(diff).toBe(readReviewDiff(local, head, worktree))
+  })
+
+  test('an unreachable repository address falls back to the local ref and logs the fallback', () => {
+    const { worktree, head, older } = repoWithMergedDefaultCommit({ refreshLocalRef: false })
+    const logged: string[] = []
+    const { base } = stageFor(worktree, head, join(worktree, 'no-such-repository'), logged)
+    expect(base).toBe(older)
+    expect(logged.length).toBeGreaterThan(0)
+    expect(logged[0]).toContain(head)
+    expect(logged[0]).toContain('local origin/main')
+  })
+
+  test('a proven conflict repair is staged by its interdiff without a base read', () => {
+    const { worktree, head } = repoWithMergedDefaultCommit({ refreshLocalRef: false })
+    const logged: string[] = []
+    const stager = createVinayaReviewInputStager({
+      root: fixtureDir('review-input-root-'),
+      task: 9,
+      worktreePath: worktree,
+      judgedHead: () => head,
+      readHead: () => head,
+      baseOf: (h) => reviewBaseOf({ worktreePath: worktree, head: h, remoteUrl: null, warn: (l) => logged.push(l) }),
+      brief: () => 'brief',
+      prBody: () => 'body',
+      diff: (b, h) => readReviewDiff(b, h, worktree)
+    })
+    const repair = {
+      judgedHead: 'j'.repeat(40),
+      head,
+      interdiff: '--- own patch at j\n+++ own patch at h',
+      approvals: { reviewer: 'VERDICT: APPROVE', security: 'VERDICT: PASS' }
+    }
+    const staged = stager.stage(1, repair)
+    expect(readFileSync(staged?.paths?.diff as string, 'utf8')).toBe(repairReviewDiff(repair))
+    expect(logged).toEqual([])
   })
 })
 
