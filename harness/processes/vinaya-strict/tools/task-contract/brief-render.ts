@@ -108,6 +108,9 @@ const RATIONALE_FIELD_PATTERNS: Record<RationaleFieldKey, string> = {
   stopAndEscalate: 'Stop-and-escalate'
 }
 
+/** The label the Issue write gate reads the docs field by (`checkRationaleNamesDocs`). Not in the table above: the field is carried when present, never required here. */
+const DOCS_TO_KEEP_COHERENT_PATTERN = 'Docs to keep coherent|§7'
+
 const RATIONALE_FIELD_NAMES: Record<RationaleFieldKey, string> = {
   boundary: 'Boundary',
   dependencyRationale: 'Dependency rationale',
@@ -155,6 +158,13 @@ function sliceRationaleField(text: string, labelPattern: string): string {
  * `renderBrief` without a second, caller-side wire to keep in sync.
  */
 export type ParsedRationale = Partial<Record<RationaleFieldKey, string>> & {
+  /**
+   * The `Docs to keep coherent` field exactly as the Issue write gate slices it
+   * — from its label to the next rationale field, check decision lines
+   * included. Absent when the Issue has no such field; the render never refuses
+   * for that, the gate owns the refusal.
+   */
+  docsToKeepCoherent?: string
   generatedFiles?: GeneratedFilesDeclaration[]
   /** `readTierFromPrBody(body)` — `null` when the Issue declares no `Tier:` field, or an invalid one. */
   declaredTier?: 0 | 1 | 3 | null
@@ -174,7 +184,13 @@ export function parseRationaleFields(body: string): ParsedRationale {
     const text = sliceRationaleField(body, RATIONALE_FIELD_PATTERNS[key])
     if (text) out[key] = text
   }
-  return { ...out, declaredTier: readTierFromPrBody(body), generatedFiles: parseGeneratedFilesDeclarations(body) }
+  const docs = sliceRationaleField(body, DOCS_TO_KEEP_COHERENT_PATTERN)
+  return {
+    ...out,
+    ...(docs ? { docsToKeepCoherent: docs } : {}),
+    declaredTier: readTierFromPrBody(body),
+    generatedFiles: parseGeneratedFilesDeclarations(body)
+  }
 }
 
 /**
@@ -781,9 +797,30 @@ function renderSection6(facts: BriefFacts): string {
   return [`## 6. Numbered parts — ${PUBLICATION_RULE_HEADING}`, '', ...rendered].join('\n')
 }
 
-function renderSection7(section7Pointers: string[]): string {
+/** Whether `path` appears in `text` as a whole path token — never as the head of a longer path. */
+function namesWholePath(text: string, path: string): boolean {
+  return text
+    .split(/[^\w./@-]+/)
+    .map((token) => token.replace(/[.,;:]+$/, ''))
+    .includes(path)
+}
+
+/**
+ * §7 — the Planner's `Docs to keep coherent` field as written, then every
+ * doc the `.vinaya/doc-owners` derivation binds to the changed files that the
+ * field does not already name (whole-path comparison), each once.
+ */
+function renderSection7(section7Pointers: string[], docsField: string | undefined): string {
   const lines = ['## 7. Documentation-update list', '']
-  if (section7Pointers.length > 0) {
+  const field = docsField?.trim() ?? ''
+  if (field) {
+    // A heading-style field would put a heading inside this section; carry it bold.
+    lines.push(field.replace(/^#{1,4}\s+(.*)$/m, (_m, label: string) => `**${label.trim()}**`))
+    const extra = section7Pointers.filter((p) => !namesWholePath(field, p))
+    if (extra.length > 0) {
+      lines.push('', 'Also bound to the changed files by `.vinaya/doc-owners`:', bulletList(extra))
+    }
+  } else if (section7Pointers.length > 0) {
     lines.push(bulletList(section7Pointers))
   } else {
     lines.push(
@@ -1070,7 +1107,7 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
     '',
     withCli(renderSection6(scopedFacts)),
     '',
-    withCli(renderSection7(section7Pointers)),
+    withCli(renderSection7(section7Pointers, facts.rationale.docsToKeepCoherent)),
     '',
     withCli(renderSection8(facts)),
     '',
