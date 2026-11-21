@@ -1,5 +1,6 @@
 import { execFileSync, execSync } from 'node:child_process'
 import * as realForgeState from '../../tools/task-contract/forge/fetch-milestone'
+import * as realListTasks from '../../tools/task-contract/forge/list-tasks'
 import { describe, expect, it, mock } from 'bun:test'
 import { LEGACY_TRANCHES_DIR } from '../../tools/legacy-paths'
 
@@ -19,9 +20,10 @@ import { LEGACY_TRANCHES_DIR } from '../../tools/legacy-paths'
  *
  * Both branches are asserted here: nothing enumerable at all (the guard that
  * already existed), and something enumerable from a topology file (the one
- * that was missing). Only `indexTrancheMilestonesAsync` is replaced; every
- * other forge read is the real one, so this measures the actual control flow
- * of a real run rather than a fully-stubbed imitation of it.
+ * that was missing). `indexTrancheMilestonesAsync` throws the outage; every
+ * other forge read is a fake that answers with nothing, and the token is a
+ * fake one, so the run takes the same control flow as a real run with a
+ * token while no request ever reaches GitHub.
  */
 
 const actual = { ...realForgeState }
@@ -34,8 +36,27 @@ mock.module('../../tools/task-contract/forge/fetch-milestone', () => {
   }
 })
 
+mock.module('../../../../kernel/adapters/code-host/github/github-token', () => ({
+  resolveGithubToken: async () => 'fake-token-for-a-test'
+}))
+mock.module('../../tools/task-contract/forge/fetch-forge-facts', () => ({
+  fetchForgeFacts: async () => ({ facts: new Map(), prRefs: new Map(), unavailable: false })
+}))
+mock.module('../../tools/task-contract/forge/list-tasks', () => ({
+  ...realListTasks,
+  fetchTrancheIssuesAsync: async () => []
+}))
+mock.module('../../tools/task-contract/forge/fetch-open-issues', () => ({
+  fetchOpenIssuesByLabel: async () => new Map()
+}))
+mock.module('../forge/fetch-provenance', () => ({
+  fetchProvenance: async () => new Map()
+}))
+mock.module('../forge/fetch-task-issue-refs', () => ({
+  fetchTaskIssueRefs: async () => new Map()
+}))
+
 const { runCoherenceChecks } = await import('./verify-coherence')
-const { resolveGithubToken } = await import('../../../../kernel/adapters/code-host/github/github-token')
 
 const SLUG = 'zzz-index-outage-fixture'
 const ACTIVE_PATH = `${LEGACY_TRANCHES_DIR}/${SLUG}.md`
@@ -82,8 +103,6 @@ function commitWithTrancheFile(): string {
 
 describe('a lost Milestone index is reported, never passed over', () => {
   it('withholds L4 and L5 and reports the gap when a topology file keeps the sweep non-empty', async () => {
-    if (!(await resolveGithubToken())) throw new Error('this test needs a live forge token (GITHUB_TOKEN or gh auth)')
-
     const head = commitWithTrancheFile()
     const { results, forgeUnavailable } = await runCoherenceChecks({
       prContext: { prHeadSha: head, touchedFiles: new Set([ACTIVE_PATH]) }

@@ -282,13 +282,13 @@ jobs:
       # a drifted managed file is a fact about the tree, independent of
       # whether THIS diff happens to also touch docs.
       #
-      # `GH_TOKEN` here for the same reason the Test step below sets it:
-      # doctor's own `[environment]` check shells to `gh auth status`, which
-      # `gh` fails with no token on the runner — `warn`/`error` findings
-      # flip doctor's exit code (measured live: PR #539's second CI run,
-      # ring 0 armed above, `gh` still red). The job token is a real,
-      # valid `gh` credential here, exactly like the Test step already
-      # relies on; this makes the finding true instead of suppressing it.
+      # `GH_TOKEN` here because doctor's own `[environment]` check shells
+      # to `gh auth status`, which `gh` fails with no token on the runner —
+      # `warn`/`error` findings flip doctor's exit code (measured live:
+      # PR #539's second CI run, ring 0 armed above, `gh` still red). The
+      # job token is a real, valid `gh` credential here; this makes the
+      # finding true instead of suppressing it. The test steps hold no
+      # token: a test never spends the repository's request quota.
       - name: vinaya doctor — managed files match their generator
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -524,7 +524,6 @@ jobs:
       - name: Test the packages the pull request affects
         if: github.event_name == 'pull_request'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI_PLAN_DECISION: ${{ needs.build.outputs.decision }}
           CI_PLAN_TESTED: ${{ needs.build.outputs.plan_tested }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
@@ -549,8 +548,6 @@ jobs:
           retention-days: 14
       - name: Test
         if: github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun scripts/test-suites/schedule.ts --run --placement shared --full --reason "a push to the default branch runs every test" --summary "$GITHUB_STEP_SUMMARY"
       - name: Print this job's GitHub quota use (end)
         if: ${{ always() }}
@@ -636,7 +633,6 @@ jobs:
       - name: Test shard ${{ matrix.shard }}'s selected files
         if: github.event_name == 'pull_request'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI_PLAN_DECISION: ${{ needs.build.outputs.decision }}
           CI_PLAN_TESTED: ${{ needs.build.outputs.plan_tested }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
@@ -647,8 +643,8 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$CI_PLAN_DECISION" > "$DECISION"
-          # The tests run under the same environment as on `main`, the job
-          # token included; the plan's own variable never reaches them.
+          # The tests run under the same environment as on `main`: no job
+          # token, and the plan's own variable never reaches them.
           unset CI_PLAN_DECISION CI_PLAN_TESTED
           bun scripts/test-suites/schedule.ts --run --placement shard-${{ matrix.shard }} --decision "$DECISION" --summary "$GITHUB_STEP_SUMMARY" --pass-entries "$RUNNER_TEMP/pass-entries/shard-${{ matrix.shard }}.json" --record "$RUNNER_TEMP/ci-plan-record/read-record.json" --approved-head "$PR_HEAD"
       # Every test file this shard passed completely, for the next run of this
@@ -663,8 +659,6 @@ jobs:
           retention-days: 14
       - name: Test shard ${{ matrix.shard }}
         if: github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun scripts/test-suites/schedule.ts --run --placement shard-${{ matrix.shard }} --full --reason "a push to the default branch runs every test" --summary "$GITHUB_STEP_SUMMARY"
       - name: Print this job's GitHub quota use (end)
         if: ${{ always() }}
