@@ -96,6 +96,38 @@ describe('COMMANDS -> needs declaration', () => {
   })
 })
 
+describe('task command group help', () => {
+  it('lists the task rows for a help flag and keeps the usage error for anything else', () => {
+    const home = mkdtempSync(join(tmpdir(), 'vinaya-task-help-'))
+    const run = (args: string[]) =>
+      spawnSyncBudgeted('bun', [INDEX_PATH, ...args], {
+        cwd: home,
+        encoding: 'utf8',
+        env: { ...stripVinayaEnv(), HOME: home }
+      })
+    try {
+      const rows = COMMANDS.filter((c) => c.name.startsWith('task '))
+      expect(rows.length).toBeGreaterThan(0)
+      for (const flag of ['--help', '-h']) {
+        const result = run(['task', flag])
+        expect(result.status).toBe(0)
+        expect(result.stderr).not.toContain("Unknown 'task' subcommand")
+        for (const r of rows) {
+          expect(result.stdout).toContain(r.name)
+          expect(result.stdout).toContain(r.description)
+        }
+      }
+      for (const args of [['task', 'bogus'], ['task']]) {
+        const result = run(args)
+        expect(result.status).toBe(2)
+        expect(result.stderr).toContain("Unknown 'task' subcommand")
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('retired role operations', () => {
   it('refuses old command words and subcommands with role-tool directions', () => {
     const home = mkdtempSync(join(tmpdir(), 'vinaya-retired-commands-'))

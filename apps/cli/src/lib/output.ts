@@ -8,6 +8,23 @@ function row(indent: string, name: string, description: string): string {
   return `${indent}${padded}${description}`
 }
 
+export function printGroupHelp(group: string): void {
+  const lines = [
+    `vinaya ${group} — subcommands`,
+    '',
+    'USAGE',
+    `  vinaya ${group} <subcommand> [options]`,
+    '',
+    'SUBCOMMANDS'
+  ]
+  for (const command of COMMANDS) {
+    if (!command.name.startsWith(`${group} `)) continue
+    const marker = command.status === 'planned' ? PLANNED_MARKER : ''
+    lines.push(row('  ', command.name, `${marker}${command.description}`))
+  }
+  process.stdout.write(`${lines.join('\n')}\n`)
+}
+
 export function printHelp(): void {
   const lines = ['vinaya — Vinaya CLI', '', 'USAGE', '  vinaya <command> [options]', '', 'COMMANDS']
 

@@ -10,7 +10,7 @@ import {
   installServices,
   registerOperationRecord
 } from '../../../harness/processes/vinaya-strict/integration/cli-services.js'
-import { printHelp } from './lib/output.js'
+import { printGroupHelp, printHelp } from './lib/output.js'
 import { packageRoot } from './lib/package-root.js'
 import { resolveAuthorRepoSourceEntry } from '../../../harness/processes/vinaya-strict/tools/self-host.js'
 
@@ -167,6 +167,8 @@ try {
         await (await import('./commands/task-switch.js')).taskSwitchCommand(rest)
       } else if (subcommand === 'status') {
         await (await import('./commands/task-status.js')).taskStatusCommand(rest)
+      } else if (subcommand === '--help' || subcommand === '-h') {
+        printGroupHelp('task')
       } else {
         console.error(`Unknown 'task' subcommand: ${subcommand ?? '(none)'} (expected 'run', 'switch', or 'status')`)
         process.exit(2)
