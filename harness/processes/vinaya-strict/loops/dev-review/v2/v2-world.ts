@@ -23,7 +23,7 @@ import {
   useRuntimeDir
 } from '../../../tests/round-fakes'
 import type { ActionRegistry } from '../../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
-import { pauseMarker, writePauseState } from '../standalone/dev-review-loop/pause-resume'
+import { clearDriverLock, pauseMarker, writePauseState } from '../standalone/dev-review-loop/pause-resume'
 import { cleanupAllReviewerIsolationArtifacts } from '../standalone/dev-review-loop/reviewer-isolation'
 import { parseMergeTreeConflictFiles } from '../standalone/dev-review-loop/gate-reading'
 import {
@@ -110,6 +110,8 @@ export interface Scenario {
   /** End one driver after this checkpointed step, then construct a fresh task input and resume it. */
   /** `rulingResume`: a ruling resumes the run between the two legs, so the second leg's driver owes a round-test re-run. */
   restartAfter?: { step: string; beforeResume: () => void; rulingResume?: boolean }
+  /** When the first leg ended paused: runs the callback, then a second leg continues the run. */
+  continueAfterPause?: { beforeResume: () => void }
   /** Runs once the world is built, before the driver starts: commits on the task branch, a moved default branch. */
   setUp?: (world: World) => void
   /**
@@ -921,6 +923,17 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     driverLegs += 1
     result = await runEngine(engineOptions())
   }
+  if (scenario.continueAfterPause) {
+    const firstTrace = JSON.parse(readFileSync(result.tracePath, 'utf8')) as RunTrace
+    if (firstTrace.outcome !== 'paused') throw new Error('the first driver did not end paused')
+    scenario.continueAfterPause.beforeResume()
+    // The first driver's process is this one, so its lock reads as a live driver; a real resume starts in a new process.
+    clearDriverLock(runtimeDir, TASK)
+    task = await makeTask()
+    control = createRunControl()
+    driverLegs += 1
+    result = await runEngine(engineOptions())
+  }
   const trace = JSON.parse(readFileSync(result.tracePath, 'utf8')) as RunTrace
   const gateRuns = existsSync(join(root, 'gate-runs')) ? Number(readFileSync(join(root, 'gate-runs'), 'utf8')) : 0
   return {
@@ -941,6 +954,14 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
   }
 }
 
-/** The records one step left, parsed, in the order it ran. */
+/** The records one step left, parsed, in the order it ran; a refusal's plain-text output is no record. */
 export const records = (observed: Observed, node: string) =>
-  observed.steps.filter((step) => step.node === node).map((step) => JSON.parse(step.stdout) as Record<string, any>)
+  observed.steps
+    .filter((step) => step.node === node)
+    .flatMap((step) => {
+      try {
+        return [JSON.parse(step.stdout) as Record<string, any>]
+      } catch {
+        return []
+      }
+    })

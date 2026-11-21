@@ -308,21 +308,60 @@ describe('the loop writes the Evidence block', () => {
     expect(observed.world.evidenceWrites).toHaveLength(2)
     expect(observed.world.evidenceWaits).toEqual([1000])
     expect(observed.world.evidenceLogs).toEqual([`Evidence write for pull request #${PR} failed: forge unavailable`])
-    expect(records(observed, 'open-pull-request')[0]?.evidence).toBe('written')
+    expect(records(observed, 'read-ci-once')[0]?.evidence).toBe('written')
+    expect(observed.outcome).not.toBe('pause:infrastructure')
   })
 
-  test('does not retry a policy refusal and leaves routing to CI', async () => {
+  test('does not retry a policy refusal and pauses before the CI read', async () => {
     const observed = await runV2('claude', {
       evidenceResult: () => ({ ok: false, reason: 'policy_refusal', retryable: false })
     })
     expect(observed.world.evidenceWrites).toHaveLength(1)
     expect(observed.world.evidenceWaits).toEqual([])
     expect(observed.world.evidenceLogs).toEqual([`Evidence write for pull request #${PR} failed: policy_refusal`])
-    expect(records(observed, 'open-pull-request')[0]?.evidence).toBe('not written: policy_refusal')
-    expect(observed.world.ciReads).toBe(1)
+    expect(observed.outcome).toBe('pause:infrastructure')
+    const refused = observed.steps.filter((step) => step.node === 'read-ci-once')
+    expect(refused).toHaveLength(1)
+    expect(refused[0]?.stdout).toContain(`pull request #${PR}`)
+    expect(refused[0]?.stdout).toContain(observed.world.remote)
+    expect(refused[0]?.stdout).toContain('policy_refusal')
+    expect(records(observed, 'read-ci-once')).toHaveLength(0)
+    expect(observed.world.ciReads).toBe(0)
+    expect(observed.spawns.developer).toBe(1)
   })
 
-  test('records the final failure after the single retry, logging both attempts', async () => {
+  test('carries a reason naming Test Plan commands with no green receipt into the pause', async () => {
+    const reason = 'these Test Plan commands hold no green receipt at head:\nbun test a.test.ts'
+    const observed = await runV2('claude', { evidenceResult: () => ({ ok: false, reason, retryable: false }) })
+    expect(observed.outcome).toBe('pause:infrastructure')
+    expect(observed.steps.find((step) => step.node === 'read-ci-once')?.stdout).toContain(
+      'these Test Plan commands hold no green receipt at head: bun test a.test.ts'
+    )
+  })
+
+  test('a continued run writes the Evidence for the open pull request, then reads CI', async () => {
+    let healed = false
+    const observed = await runV2('claude', {
+      evidenceResult: () => (healed ? { ok: true } : { ok: false, reason: 'policy_refusal', retryable: false }),
+      continueAfterPause: {
+        beforeResume: () => {
+          healed = true
+        }
+      }
+    })
+    expect(observed.driverLegs).toBe(2)
+    expect(observed.world.evidenceWrites).toEqual([
+      { pr: PR, head: observed.world.remote },
+      { pr: PR, head: observed.world.remote }
+    ])
+    expect(observed.world.ciReads).toBe(1)
+    expect(observed.world.prsOpened).toBe(1)
+    expect(observed.published).toHaveLength(1)
+    expect(observed.spawns.developer).toBe(1)
+    expect(records(observed, 'read-ci-once')[0]?.evidence).toBe('written')
+  })
+
+  test('pauses after the single retry, logging both attempts', async () => {
     const observed = await runV2('claude', {
       evidenceResult: (attempt) => ({ ok: false, reason: `forge failure ${attempt}`, retryable: true })
     })
@@ -332,8 +371,10 @@ describe('the loop writes the Evidence block', () => {
       `Evidence write for pull request #${PR} failed: forge failure 1`,
       `Evidence write for pull request #${PR} failed: forge failure 2`
     ])
-    expect(records(observed, 'open-pull-request')[0]?.evidence).toBe('not written: forge failure 2')
-    expect(observed.world.ciReads).toBe(1)
+    expect(observed.outcome).toBe('pause:infrastructure')
+    expect(observed.steps.find((step) => step.node === 'read-ci-once')?.stdout).toContain('forge failure 2')
+    expect(observed.world.ciReads).toBe(0)
+    expect(observed.spawns.developer).toBe(1)
   })
 
   test('retries a thrown forge failure without sleeping in the fake world', async () => {
@@ -348,13 +389,13 @@ describe('the loop writes the Evidence block', () => {
     expect(observed.world.evidenceLogs).toEqual([
       `Evidence write for pull request #${PR} failed: forge threw retry later`
     ])
-    expect(records(observed, 'open-pull-request')[0]?.evidence).toBe('written')
+    expect(records(observed, 'read-ci-once')[0]?.evidence).toBe('written')
   })
 
-  test('once the pull request opens, for the head the ready push passed; every ready push gets the run signal', async () => {
+  test('before the CI read, for the head the ready push passed; every ready push gets the run signal', async () => {
     const observed = await runV2('claude')
     expect(observed.world.evidenceWrites).toEqual([{ pr: PR, head: observed.world.remote }])
-    expect(records(observed, 'open-pull-request')[0]?.evidence).toBe('written')
+    expect(records(observed, 'read-ci-once')[0]?.evidence).toBe('written')
     expect(observed.world.readySignals).toEqual([true])
   })
 })
