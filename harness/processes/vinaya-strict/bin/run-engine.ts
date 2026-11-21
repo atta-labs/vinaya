@@ -248,7 +248,8 @@ import {
   type LiveDeveloperContextLoopDeps,
   type LivePublicationScope,
   type LivePublicationState,
-  mergeMovedDefaultBranch,
+  installDependenciesOwedAfterMerge,
+  mergeMovedDefaultBranchReport,
   resolvePublicationBase
 } from '../loops/dev-review/actions/live-developer-context'
 import {
@@ -2707,15 +2708,19 @@ export function engineLiveDevToolsContext(input: {
       task: input.task,
       round: input.round()
     })
-    turn = buildTurnContext()
     // The default branch is merged in before the head is read, so the base check sees the merge as the turn's
     // starting point; a conflicting merge is aborted and its files lead the turn's prompt.
-    const merge = mergeMovedDefaultBranch(scope)
+    const merge = mergeMovedDefaultBranchReport(scope)
+    // A merge that changed a dependency input leaves the install stale, and an install that failed stays owed to
+    // the resumed run. A failure throws here, before any agent starts, and pauses the leg for the infrastructure.
+    // The owed record is written in the control directory before the turn's write attribution begins.
+    installDependenciesOwedAfterMerge(scope, merge.dependencyInputsChanged)
+    turn = buildTurnContext()
     state.turnPreHead = deps.readWorktreeHead(input.worktreePath)
     state.turnPublicationRefusal = null
     state.turnPublicationAttempted = false
     await resolvePublicationBase(scope, state.turnPreHead)
-    return merge
+    return { conflictFiles: merge.conflictFiles }
   }
   // Every Developer tool call the driver serves starts from an empty git read memo and reads around it: the agent
   // commits in the worktree beside it.
