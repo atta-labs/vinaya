@@ -165,6 +165,11 @@ function shapeOf(record: NarratableRecord): Shape | null {
   }
   if (event === null) return null
   const earlier = earlierFields(record.attributes)
+  // An agent turn converted from an earlier role attempt names its agent, not its seat; the span's own seat does.
+  if (earlier !== null && kind === 'dispatch' && earlier.target_role == null) {
+    const seat = record.attributes[A.agentName] ?? record.attributes[A.seat]
+    if (seat != null) earlier.target_role = seat
+  }
   return { kind, event, fields: earlier ?? nativeFields(record, event), native: earlier === null }
 }
 
