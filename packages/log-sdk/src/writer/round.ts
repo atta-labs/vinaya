@@ -1,8 +1,8 @@
 import type { TimeInput } from '@opentelemetry/api'
 import { ATTRIBUTE_NAMES as A, EVENT_NAMES as E, SPAN_NAMES as S, spanName } from '../contract/catalogue.js'
 import type { SpanParent } from '../contract/ids.js'
-import { endSpan, runSpanRef, startSpan, type WriterCore, wholeSpan } from './attributes.js'
 import type { OtelRecord } from '../reader/records.js'
+import { endSpan, runSpanRef, startSpan, type WriterCore, wholeSpan } from './attributes.js'
 import { endFromCopy } from './carried.js'
 import type { EndOptions } from './run.js'
 
@@ -70,6 +70,9 @@ export function ended(core: WriterCore, options: EndRound = {}): void {
     endTime: options.endTime,
     errorType: options.errorType
   })
+  // The round is written; a second end must not find it open again.
+  delete core.current.round
+  delete core.moment.round
 }
 
 /** A phase is a `vinaya.phase {phase}` span under the open round, else under the run, written when it ends. */

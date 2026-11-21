@@ -4,9 +4,9 @@ import { spanIdFor, type SpanParent } from '../contract/ids.js'
 import { createFolderSource } from '../reader/folder-source.js'
 import type { OtelRecord } from '../reader/records.js'
 import { createReader } from '../reader/source.js'
+import { attribute, latestOpenStart, startAttributes, timeInput } from '../reader/span-start.js'
 import type { UsageRecorded } from '../writer/agent.js'
 import type { LogHandle } from '../writer/connect.js'
-import { attribute, latestOpenStart, startAttributes, timeInput } from '../reader/span-start.js'
 import type { Fields } from './args.js'
 
 type Subjects = Omit<

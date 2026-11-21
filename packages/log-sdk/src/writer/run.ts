@@ -139,6 +139,8 @@ export function ended(core: WriterCore, options: EndRun = {}): void {
     endTime: options.endTime,
     errorType: options.errorType
   })
+  // The run is written; a second end must not find it open again.
+  delete core.current.run
 }
 
 /** The run is alive: the open round and phase, as an event on the run span. */

@@ -173,6 +173,26 @@ test('a span with no start anywhere reports through onError and writes nothing',
   expect(later.spans.getFinishedSpans()).toEqual([])
 })
 
+test('a carried-on run ends once and sends no alive afterwards', () => {
+  const { first, later, timers } = twoProcesses('carried-end')
+  first.handle.run.started({ process: 'acme', startTime: T0 })
+  first.handle.round.started({ number: 1, startTime: new Date(2_000) })
+  later.handle.run.started({ process: 'acme' })
+  later.handle.round.ended({ endTime: new Date(3_000) })
+  later.handle.round.ended({ endTime: new Date(3_500) })
+  later.handle.run.ended({ endTime: new Date(4_000) })
+  later.handle.run.ended({ endTime: new Date(4_500) })
+  timers.advance(300_000)
+  expect(
+    later.spans
+      .getFinishedSpans()
+      .map((s) => s.name)
+      .sort()
+  ).toEqual(['invoke_workflow acme', 'vinaya.round 1'])
+  expect(later.errors).toHaveLength(2)
+  expect(later.logs.getFinishedLogRecords().filter((e) => e.eventName === E.alive)).toEqual([])
+})
+
 test('a handle that carries on stops its alive at shutdown', async () => {
   const { first, later, timers } = twoProcesses('carried-stop')
   first.handle.run.started({ process: 'acme', startTime: T0 })
