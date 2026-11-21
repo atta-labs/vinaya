@@ -249,7 +249,7 @@ the installer's own text, and the run that resumes after the wait finds the
 record, although the branch already holds the merge and the merge step reports
 nothing merged, and installs before its first Developer turn. The standalone
 loop keeps its one install per driver process.
-<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/actions/live-developer-context.ts contains:  d.installWorktreeDependencies(worktree) -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/actions/live-developer-context.ts contains:d.installWorktreeDependencies(worktree) -->
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/git-defaults.ts contains:export function defaultMergeDefaultTip( -->
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/git-defaults.ts contains:export function defaultClassifyAgainstDefaultTip( -->
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/git-defaults.ts contains:export function defaultRebaseOntoDefaultTip( -->
