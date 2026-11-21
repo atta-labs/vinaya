@@ -34,7 +34,12 @@ export function readTaskRuns(folder: string, issue: number, home: string) {
       for (const name of names) {
         const runId = /^([A-Za-z0-9][A-Za-z0-9._-]*)~[A-Za-z0-9._-]+~\d{12}\.(?:logs|traces)\.jsonl$/.exec(name)?.[1]
         if (!runId || runId.includes('..') || runs.has(runId)) continue
-        const reader = createReader(createFolderSource({ folder, runId, home }), { home, patience: 1 })
+        // A Log SDK writer numbers its records from 1; a converted earlier writer from 0 reads as early, not missing.
+        const reader = createReader(createFolderSource({ folder, runId, home }), {
+          home,
+          patience: 1,
+          firstSequence: 1
+        })
         runs.set(runId, { pull: reader.pull, gaps: [] })
       }
       const batches: OtelRecord[][] = []
@@ -77,6 +82,20 @@ function mergeRuns(batches: OtelRecord[][]): OtelRecord[] {
     output.push(next)
     positions[from] = (positions[from] ?? 0) + 1
   }
+}
+
+/** Two time-ordered line lists as one, each list keeping its own order; a line with no time stays where it is. */
+function inTimeOrder(first: DriverLogLine[], second: DriverLogLine[]): DriverLogLine[] {
+  const at = (line: DriverLogLine | undefined): number =>
+    line !== undefined && 'at' in line ? line.at : Number.NEGATIVE_INFINITY
+  const out: DriverLogLine[] = []
+  let i = 0
+  let j = 0
+  while (i < first.length || j < second.length) {
+    if (j >= second.length || (i < first.length && at(first[i]) <= at(second[j]))) out.push(first[i++] as DriverLogLine)
+    else out.push(second[j++] as DriverLogLine)
+  }
+  return out
 }
 
 const marks: Record<NonNullable<ReturnType<typeof narrate>>['kind'], AgentLineMark> = {
@@ -161,6 +180,23 @@ export function createRecordFollow(options: FollowViewOptions) {
   let pending: Detail[] = []
   let owner: Primary | undefined
   let poll = 0
+  // A runner that records no steps (the Engine today) still writes them to the driver log: those lines stand in
+  // until a step record is seen. A live line waits one poll, so a step whose record is only late prints once.
+  const titleRoles = new Map<string, Role>(
+    registeredRoles().flatMap((name) => {
+      const role = lookupRole(name)
+      return role === undefined ? [] : [[role.title, name as Role] as const]
+    })
+  )
+  let stepRecordsSeen = false
+  let waitingSteps: { step: Step; poll: number }[] = []
+
+  function driverStep(line: Primary): Step | undefined {
+    const call = word(line.meta.call)
+    const role = titleRoles.get(line.label)
+    if (!call || !role) return undefined
+    return { call, line: { ...line, role, details: [] } }
+  }
 
   function seat(record: OtelRecord, call: string | undefined): Role | undefined {
     const a = record.attributes
@@ -290,9 +326,25 @@ export function createRecordFollow(options: FollowViewOptions) {
     }
   }
 
+  /** The driver log's step lines to show this poll: none once the run records its steps. */
+  function driverSteps(raw: readonly string[], through: number, backlog: boolean): Step[] {
+    for (const text of raw) {
+      const line = parseDriverLogLine(text)
+      if (line.kind !== 'primary' || line.at <= through) continue
+      const step = driverStep(line)
+      if (step) waitingSteps.push({ step, poll })
+    }
+    if (stepRecordsSeen) {
+      waitingSteps = []
+      return []
+    }
+    const ready = waitingSteps.filter((waiting) => backlog || waiting.poll < poll).map((waiting) => waiting.step)
+    waitingSteps = waitingSteps.filter((waiting) => !(backlog || waiting.poll < poll))
+    return ready
+  }
+
   function attachDetails(raw: readonly string[], steps: Step[], through: number): DriverLogLine[] {
     if (!options.details) return []
-    poll += 1
     for (const text of raw) {
       const line = parseDriverLogLine(text)
       if (line.kind === 'primary') owner = line
@@ -322,6 +374,8 @@ export function createRecordFollow(options: FollowViewOptions) {
         if (line.label === detail.label && line.at <= detail.at && (!latest || line.at >= latest.line.at))
           latest = candidate
       }
+      // A detail of a driver-log step still waiting to print waits with it.
+      if (!match && waitingSteps.some((waiting) => waiting.step.call === detail.call)) return true
       // Let the SDK catch up across one poll before using the seat fallback.
       const canFallback = detail.call === undefined || poll > detail.poll
       const target = match ?? (canFallback ? latest : undefined)
@@ -366,19 +420,30 @@ export function createRecordFollow(options: FollowViewOptions) {
         run.set(id, role)
         agents.set(record.traceId, run)
       }
+      poll += 1
       const printed: DriverLogLine[] = []
+      const narrated: DriverLogLine[] = []
       for (const record of update.records) {
         const translated = translate(record)
         if (!translated) continue
+        if (translated.step) stepRecordsSeen = true
         if (timeOf(record) <= through) {
           printed.push(translated.line)
           continue
         }
-        lines.push(translated.line)
+        narrated.push(translated.line)
         if (translated.step) steps.push(translated.step)
       }
       // Lines the driver-log view already printed still feed the stage and open actions, but print nothing.
       if (printed.length > 0) renderer.render(printed.map(escapeRecordLine), now, true)
+      const fromDriver = driverSteps(rawDetails, through, backlog)
+      steps.push(...fromDriver)
+      lines.push(
+        ...inTimeOrder(
+          narrated,
+          fromDriver.map((step) => step.line)
+        )
+      )
       lines.unshift(...attachDetails(rawDetails, steps, through))
       return renderer.render(lines.map(escapeRecordLine), now, backlog)
     },
