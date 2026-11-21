@@ -173,9 +173,10 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       const reached = blockingFiles.filter((f) => reachesProducer(f, producers, imports))
       expect(crossingFiles).toHaveLength(0)
       expect(blockingFiles).toHaveLength(16)
-      expect(reached).toHaveLength(2)
+      expect(reached).toHaveLength(3)
+      expect(reached).toContain('harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts')
       const exemptions = readG7Exemptions(repoRoot)
-      expect(Object.keys(exemptions)).toHaveLength(14)
+      expect(Object.keys(exemptions)).toHaveLength(13)
       const result = checkG7({
         enforcementMapPresent: true,
         crossingFiles,
@@ -198,7 +199,7 @@ describe('registry-gates G7 — anything that can block or write to the forge re
     }
   })
 
-  it("loads exactly today's fourteen path-to-reason pairs from the committed data file", () => {
+  it("loads exactly today's thirteen path-to-reason pairs from the committed data file", () => {
     const checkBin =
       'a check bin: it runs only as a child of `vinaya check`, whose runner records one gate event per attempt, so no import of the sink is needed'
     const script =
@@ -212,7 +213,6 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       'harness/kernel/gates/checks/resolver.ts':
         'the pure step that decides which checks `vinaya check` runs; the runner it feeds records each run and the invocation records its own operation at exit',
       'harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.ts': script,
-      'harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/verify-task.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/check-branch-topology.ts': script,
