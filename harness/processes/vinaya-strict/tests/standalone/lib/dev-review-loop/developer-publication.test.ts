@@ -31,6 +31,7 @@ import {
   createLivePublicationState,
   type LivePublicationScope,
   mergeMovedDefaultBranch,
+  mergeMovedDefaultBranchReport,
   resolvePublicationBase
 } from '../../../../loops/dev-review/actions/live-developer-context.js'
 import {
@@ -1077,6 +1078,77 @@ describe('main drift on a protected path, against a real repository', () => {
       expect(state.turnPreHead).not.toBe(base)
       expect(await resolvePublicationBase(scope, state.turnPreHead)).toBe(tip)
       expect(state.publicationExpectedBase).toBe(tip)
+    })
+
+    describe('whether the merge changed a dependency input', () => {
+      /** Commits `file` on main, pushes it, and returns the new default branch tip with the task branch checked out again. */
+      const moveMain = (dir: string, change: (dir: string) => void, message: string): string => {
+        git(dir, 'checkout', '-q', 'main')
+        change(dir)
+        git(dir, 'add', '-A')
+        git(dir, 'commit', '-q', '-m', message)
+        git(dir, 'push', '-q', 'origin', 'main')
+        const moved = git(dir, 'rev-parse', 'HEAD')
+        git(dir, 'checkout', '-q', 'task/t/1')
+        return moved
+      }
+      const reportFor = (
+        dir: string,
+        tip: string,
+        mergeDefaultTip: LoopDeps['mergeDefaultTip'] = defaultMergeDefaultTip
+      ) =>
+        mergeMovedDefaultBranchReport({
+          d: { readDefaultBranchTip: () => tip, mergeDefaultTip } as unknown as LoopDeps,
+          task: 1,
+          branch: 'task/t/1',
+          repo: null,
+          worktree: dir,
+          runtimeRoot: dir,
+          loopLogPath: join(dir, 'loop.log'),
+          state: createLivePublicationState(null)
+        } as LivePublicationScope)
+
+      it('reports a merge that brought in a lockfile change as one that changed a dependency input', () => {
+        const { dir } = fixture()
+        const moved = moveMain(dir, (d) => writeFileSync(join(d, 'bun.lock'), 'lock\n'), 'main adds the lockfile')
+        expect(reportFor(dir, moved)).toEqual({ conflictFiles: null, dependencyInputsChanged: true })
+      })
+
+      it('reports a merge that brought in a nested manifest as one that changed a dependency input', () => {
+        const { dir } = fixture()
+        const moved = moveMain(
+          dir,
+          (d) => {
+            mkdirSync(join(d, 'packages', 'x'), { recursive: true })
+            writeFileSync(join(d, 'packages', 'x', 'package.json'), '{}\n')
+          },
+          'main adds a manifest'
+        )
+        expect(reportFor(dir, moved).dependencyInputsChanged).toBe(true)
+      })
+
+      it('reports a merge whose default-branch change touched no dependency input as one that changed none', () => {
+        const { dir, tip } = fixture()
+        expect(reportFor(dir, tip)).toEqual({ conflictFiles: null, dependencyInputsChanged: false })
+        expect(git(dir, 'rev-parse', 'HEAD')).not.toBe(tip)
+      })
+
+      it('reports a merge that removed a package manifest as one that changed a dependency input', () => {
+        const { dir } = fixture()
+        const added = moveMain(dir, (d) => writeFileSync(join(d, 'package.json'), '{}\n'), 'main adds a manifest')
+        expect(reportFor(dir, added).dependencyInputsChanged).toBe(true)
+        const removed = moveMain(dir, (d) => rmSync(join(d, 'package.json')), 'main removes the manifest')
+        expect(reportFor(dir, removed)).toEqual({ conflictFiles: null, dependencyInputsChanged: true })
+        expect(existsSync(join(dir, 'package.json'))).toBe(false)
+      })
+
+      it('reports an aborted conflicting merge, and a tip already merged, as no merge', () => {
+        const { dir, tip } = fixture()
+        const conflicting = moveMain(dir, (d) => writeFileSync(join(d, 'own.txt'), 'main\n'), 'main writes own.txt')
+        expect(reportFor(dir, conflicting)).toEqual({ conflictFiles: ['own.txt'], dependencyInputsChanged: false })
+        git(dir, 'merge', '-q', '--no-edit', tip)
+        expect(reportFor(dir, tip)).toEqual({ conflictFiles: null, dependencyInputsChanged: false })
+      })
     })
   })
 })

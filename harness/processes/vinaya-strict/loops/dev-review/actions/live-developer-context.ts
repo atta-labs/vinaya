@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
+import { taskControlDir } from '../../../../../kernel/isolation/worker-boundary.js'
 import {
   beyondSurfacePaths,
   globCoversPath,
@@ -83,6 +85,7 @@ export type LiveDeveloperContextLoopDeps = Pick<
   | 'classifyAgainstDefaultTip'
   | 'rebaseOntoDefaultTip'
   | 'mergeDefaultTip'
+  | 'installWorktreeDependencies'
   | 'pushTaskBranch'
   | 'pushTaskBranchWithLease'
   | 'restoreWorktreeHead'
@@ -786,8 +789,41 @@ export async function resolvePublicationBase(
  * prompt. Never throws, rebases, resets or pushes.
  */
 export function mergeMovedDefaultBranch(scope: LivePublicationScope): { conflictFiles: string[] | null } {
+  return { conflictFiles: mergeMovedDefaultBranchReport(scope).conflictFiles }
+}
+
+/** The files the installer reads: the lockfile, every package manifest and the installer's configuration, at any depth. */
+const DEPENDENCY_INPUT_NAMES = new Set(['bun.lock', 'package.json', 'bunfig.toml', '.npmrc'])
+
+/**
+ * Whether the merge from `oldHead` to `head` added, removed or changed a dependency input. A diff that cannot be
+ * read counts as a change, so the worktree is installed rather than left on an install that may be stale.
+ */
+function mergeChangedDependencyInputs(worktree: string, oldHead: string, head: string): boolean {
+  try {
+    const out = execFileSync('git', ['-C', worktree, 'diff', '--name-only', '-z', oldHead, head], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+    return out
+      .split('\0')
+      .filter(Boolean)
+      .some((path) => DEPENDENCY_INPUT_NAMES.has(basename(path)))
+  } catch {
+    return true
+  }
+}
+
+/**
+ * `mergeMovedDefaultBranch` with what the Engine runner also needs: whether the merge it made changed a dependency
+ * input of the worktree. `dependencyInputsChanged` is false when nothing merged. Never throws.
+ */
+export function mergeMovedDefaultBranchReport(scope: LivePublicationScope): {
+  conflictFiles: string[] | null
+  dependencyInputsChanged: boolean
+} {
   const { d, repo, worktree, branch, loopLogPath } = scope
-  const none = { conflictFiles: null }
+  const none = { conflictFiles: null, dependencyInputsChanged: false }
   try {
     if (!existsSync(worktree)) return none
     const remoteUrl = repo ? `https://github.com/${repo.owner}/${repo.repo}.git` : null
@@ -795,13 +831,16 @@ export function mergeMovedDefaultBranch(scope: LivePublicationScope): { conflict
     if (tip === null) return none
     const merge = d.mergeDefaultTip(worktree, tip, remoteUrl)
     if (merge.ok) {
-      if (merge.merged)
-        appendDriverLine(
-          loopLogPath,
-          `Merged the default branch ${tip} into ${branch} before the Developer turn (${merge.oldHead} → ${merge.head})`,
-          'done'
-        )
-      return none
+      if (!merge.merged) return none
+      appendDriverLine(
+        loopLogPath,
+        `Merged the default branch ${tip} into ${branch} before the Developer turn (${merge.oldHead} → ${merge.head})`,
+        'done'
+      )
+      return {
+        conflictFiles: null,
+        dependencyInputsChanged: mergeChangedDependencyInputs(worktree, merge.oldHead, merge.head)
+      }
     }
     if (merge.conflictFiles.length === 0) {
       appendDriverLine(loopLogPath, `Did not merge the default branch ${tip} into ${branch}: ${merge.reason}`, 'done')
@@ -812,10 +851,34 @@ export function mergeMovedDefaultBranch(scope: LivePublicationScope): { conflict
       `Merging the default branch ${tip} into ${branch} conflicts in ${merge.conflictFiles.join(', ')}; the merge was aborted and the Developer is sent the files`,
       'done'
     )
-    return { conflictFiles: merge.conflictFiles }
+    return { conflictFiles: merge.conflictFiles, dependencyInputsChanged: false }
   } catch {
     return none
   }
+}
+
+/** The record that a dependency install is owed, in the task's control files — never in the worktree. */
+export function owedDependencyInstallPath(runtimeRoot: string, task: number): string {
+  return join(taskControlDir(runtimeRoot, task), 'owed-dependency-install')
+}
+
+/**
+ * Installs the worktree's dependencies when a merge changed a dependency input, or when an install owed by an
+ * earlier such merge never returned. The owed install is recorded before the install runs and cleared only after it
+ * returns, so a failed install throws to the caller and stays owed for the resumed run, whose merge finds the tip
+ * already an ancestor and reports nothing merged.
+ */
+export function installDependenciesOwedAfterMerge(scope: LivePublicationScope, dependencyInputsChanged: boolean): void {
+  const { d, worktree, branch, loopLogPath, runtimeRoot, task } = scope
+  const owedPath = owedDependencyInstallPath(runtimeRoot, task)
+  if (dependencyInputsChanged) {
+    mkdirSync(taskControlDir(runtimeRoot, task), { recursive: true })
+    writeFileSync(owedPath, `${branch}\n`)
+  }
+  if (!existsSync(owedPath) || !existsSync(worktree)) return
+  d.installWorktreeDependencies(worktree)
+  rmSync(owedPath, { force: true })
+  appendDriverLine(loopLogPath, `Installed the dependencies of ${worktree} again before the Developer turn`, 'done')
 }
 
 /**

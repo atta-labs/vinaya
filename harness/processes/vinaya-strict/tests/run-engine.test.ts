@@ -1602,6 +1602,124 @@ describe('closing a Developer turn on the Engine path', () => {
   })
 })
 
+describe('a Developer turn installs again after a merge that changed a dependency input', () => {
+  const gitIn = (cwd: string, ...args: string[]): string =>
+    execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+
+  /** A real worktree whose second commit changed `changedFile`, and a fake merge that reports that commit as the merge. */
+  function mergedWorktree(changedFile: string) {
+    const dir = fixtureDir('engine-install-worktree-')
+    gitIn(dir, 'init', '-q', '-b', 'main')
+    gitIn(dir, 'config', 'user.name', 't')
+    gitIn(dir, 'config', 'user.email', 't@t')
+    writeFileSync(join(dir, 'a.txt'), 'a\n')
+    gitIn(dir, 'add', '-A')
+    gitIn(dir, 'commit', '-q', '-m', 'one')
+    const oldHead = gitIn(dir, 'rev-parse', 'HEAD')
+    mkdirSync(join(dir, changedFile, '..'), { recursive: true })
+    writeFileSync(join(dir, changedFile), '{}\n')
+    gitIn(dir, 'add', '-A')
+    gitIn(dir, 'commit', '-q', '-m', 'two')
+    const head = gitIn(dir, 'rev-parse', 'HEAD')
+    return { dir, oldHead, head }
+  }
+
+  function context(
+    world: World,
+    wt: { dir: string; oldHead: string; head: string },
+    runtimeDir: string,
+    options: { merges: boolean; install?: (path: string) => void; task?: number }
+  ) {
+    const base = fakeDeps(world)
+    return engineLiveDevToolsContext({
+      branch: BRANCH,
+      worktreePath: wt.dir,
+      task: options.task ?? 41,
+      runtimeDir,
+      agent: 'claude',
+      repo: null,
+      round: () => 1,
+      deps: {
+        ...base,
+        readDefaultBranchTip: () => 'tip-1',
+        mergeDefaultTip: () =>
+          options.merges
+            ? { ok: true as const, merged: true as const, oldHead: wt.oldHead, head: wt.head }
+            : { ok: true as const, merged: false as const, head: wt.head },
+        installWorktreeDependencies:
+          options.install ??
+          ((path: string) => {
+            world.installs.push(path)
+          })
+      },
+      recordLaunch: () => 'run-install',
+      completeLaunch: () => {}
+    })
+  }
+
+  test('a merge that changed a package manifest installs before the turn start is recorded', async () => {
+    const world = makeWorld()
+    const wt = mergedWorktree('packages/x/package.json')
+    let preHeadAtInstall: string | null | undefined
+    const runtimeDir = fixtureDir('engine-install-runtime-')
+    const live = context(world, wt, runtimeDir, {
+      merges: true,
+      install: (path) => {
+        preHeadAtInstall = live.state.turnPreHead
+        world.installs.push(path)
+      }
+    })
+    await live.beginTurn()
+    expect(world.installs).toEqual([wt.dir])
+    expect(preHeadAtInstall).toBeNull()
+    expect(live.state.turnPreHead).toBe('head-0')
+    expect(existsSync(join(taskControlDir(runtimeDir, 41), 'owed-dependency-install'))).toBe(false)
+  })
+
+  test('a merge that changed no dependency input, and a turn that merged nothing, install nothing', async () => {
+    const world = makeWorld()
+    const wt = mergedWorktree('src/code.ts')
+    await context(world, wt, fixtureDir('engine-install-runtime-'), { merges: true }).beginTurn()
+    await context(world, wt, fixtureDir('engine-install-runtime-'), { merges: false }).beginTurn()
+    expect(world.installs).toEqual([])
+  })
+
+  test('a failing install pauses the turn start with the installer text and reads no turn head', async () => {
+    const world = makeWorld()
+    const wt = mergedWorktree('bun.lock')
+    const live = context(world, wt, fixtureDir('engine-install-runtime-'), {
+      merges: true,
+      install: () => {
+        throw new Error('dependency install failed in worktree (exit 1):\nerror: package not found')
+      }
+    })
+    await expect(live.beginTurn()).rejects.toThrow('error: package not found')
+    expect(live.state.turnPreHead).toBeNull()
+  })
+
+  test('a fresh context on the same runtime directory installs after a failed install, although nothing is merged', async () => {
+    const world = makeWorld()
+    const wt = mergedWorktree('bun.lock')
+    const runtimeDir = fixtureDir('engine-install-runtime-')
+    const failing = context(world, wt, runtimeDir, {
+      merges: true,
+      install: () => {
+        throw new Error('registry unreachable')
+      }
+    })
+    await expect(failing.beginTurn()).rejects.toThrow('registry unreachable')
+    expect(existsSync(join(taskControlDir(runtimeDir, 41), 'owed-dependency-install'))).toBe(true)
+    // The resumed run: the branch holds the merge already, so the merge step reports nothing merged.
+    const resumed = context(world, wt, runtimeDir, { merges: false })
+    await resumed.beginTurn()
+    expect(world.installs).toEqual([wt.dir])
+    expect(existsSync(join(taskControlDir(runtimeDir, 41), 'owed-dependency-install'))).toBe(false)
+    // The install returned, so the next turn owes nothing.
+    await context(world, wt, runtimeDir, { merges: false }).beginTurn()
+    expect(world.installs).toEqual([wt.dir])
+  })
+})
+
 describe('the CLI entry commands run from inside the Engine runner', () => {
   test('is the one the runner names, not the runner script itself', async () => {
     const { cliEntryPath, CLI_ENTRY_ENV } = await import('../tools/cli-entry')
