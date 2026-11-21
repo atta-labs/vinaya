@@ -110,10 +110,11 @@ describe('compareEvidenceBlock — mutation proofs (fix/pr-report-emitter §9)',
 describe('the report program the Evidence guidance names', () => {
   // Each line quotes the program as `<name> --write <body-file>`; the name must
   // resolve through the program table by its installed name.
-  const QUOTED = /`([^`\s]+) --write <body-file>`/
+  const TICK = String.fromCharCode(96)
+  const QUOTED = new RegExp(`${TICK}([^${TICK}\\s]+) --write <body-file>${TICK}`)
 
   function expectRegisteredReportProgram(text: string): void {
-    const match = QUOTED.exec(text)
+    const match = text.match(QUOTED)
     expect(match).not.toBeNull()
     expect(programForBin(match?.[1] ?? '')).toBe('pr-report')
   }
