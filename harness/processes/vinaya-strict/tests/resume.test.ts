@@ -361,7 +361,8 @@ for (const agent of AGENTS) {
       const result = await watchForRuling(runtimeDir, TASK, watch, stop.signal)
       expect(result).toEqual({ kind: 'ruled', escalationId: 'esc-1' })
       expect(forge.claims).toEqual([{ expectedPr: PR, decision: 'resume', by: 'principal', from: `${PR}-3` }])
-      expect(watch.polls()).toBe(1)
+      // The ruling posted at the first sleep is found on the next forge read, which the watch spaced one sleep out.
+      expect(watch.polls()).toBe(2)
     })
 
     test('a cancel ends the watch with no resume', async () => {
@@ -405,8 +406,8 @@ for (const agent of AGENTS) {
       })
       const result = await watchForRuling(runtimeDir, TASK, watch, new AbortController().signal)
       expect(result).toEqual({ kind: 'ended', state: 'merged' })
-      // No pull request was read before the pause named one.
-      expect(forge.prStateReads).toEqual([PR, PR])
+      // No pull request was read before the pause named one; the forge is read once, after the spaced wait.
+      expect(forge.prStateReads).toEqual([PR])
       expect(forge.claims).toEqual([])
     })
 
@@ -688,5 +689,127 @@ describe('the poll interval', () => {
     expect(rulingPollMs({})).toBe(30_000)
     expect(rulingPollMs({ VINAYA_DEV_REVIEW_LOOP_WATCH_POLL_MS: '250' })).toBe(250)
     expect(rulingPollMs({ VINAYA_DEV_REVIEW_LOOP_WATCH_POLL_MS: 'soon' })).toBe(30_000)
+  })
+})
+
+describe('the watch for a ruling spaces its forge reads', () => {
+  const POLL = 30_000
+  const CEILING = 300_000
+  const HOUR = 3_600_000
+
+  /** A fake clock the watch's sleep advances; the watch is stopped once `limit` has passed. */
+  function clockedWatch(deps: ResumeDeps, limit: number, onSleep: (clock: number) => void = () => {}) {
+    const stop = new AbortController()
+    let clock = 0
+    const watch: RulingWatch = {
+      deps,
+      pollMs: POLL,
+      sleep: async (ms) => {
+        clock += ms
+        onSleep(clock)
+        if (clock >= limit) stop.abort()
+      }
+    }
+    return { watch, stop, clock: () => clock }
+  }
+
+  const start = () => {
+    const runtimeDir = fixtureDir('resume-watch-')
+    writePauseState(runtimeDir, heldPause())
+    return runtimeDir
+  }
+
+  /** A forge whose ruling reads are timed on the clock the test's watch holds, and may fail. */
+  function timedForge(fail?: (n: number) => Error | null) {
+    const clock = { now: () => 0 }
+    const times: number[] = []
+    const { forge, deps } = fakeForge({
+      fetchNewestRulingOrdinal: () => {
+        times.push(clock.now())
+        const error = fail?.(times.length)
+        if (error) throw error
+        return forge.ordinal
+      }
+    })
+    return { forge, deps, times, clock }
+  }
+
+  const gapsOf = (times: number[]) => times.slice(1).map((t, i) => t - times[i]!)
+
+  test('eight idle hours at the default interval make no more than 120 forge reads', async () => {
+    const { deps, times, clock } = timedForge()
+    const run = clockedWatch(deps, 8 * HOUR)
+    clock.now = run.clock
+    const result = await watchForRuling(start(), TASK, run.watch, run.stop.signal)
+    expect(result).toEqual({ kind: 'stopped' })
+    expect(times.length).toBeGreaterThan(50)
+    expect(times.length).toBeLessThanOrEqual(120)
+    expect(Math.max(...gapsOf(times))).toBe(CEILING)
+  })
+
+  for (const decision of ['cancel', 'resume'] as const) {
+    test(`a ${decision} recorded on the host after hours of idling ends the watch within one interval`, async () => {
+      const { forge, deps, clock } = timedForge()
+      const run = clockedWatch(deps, 20 * HOUR, (now) => {
+        if (now === 5 * HOUR) forge.resolution = resolutionOf(decision)
+      })
+      clock.now = run.clock
+      const result = await watchForRuling(start(), TASK, run.watch, run.stop.signal)
+      expect(result.kind).toBe(decision === 'cancel' ? 'cancelled' : 'consumed')
+      expect(run.clock()).toBeLessThanOrEqual(5 * HOUR + POLL)
+    })
+  }
+
+  test('failing forge reads never bring two reads closer than the reads before them', async () => {
+    const { deps, times, clock } = timedForge(() => new Error('gh: HTTP 502'))
+    const run = clockedWatch(deps, 3 * HOUR)
+    clock.now = run.clock
+    await watchForRuling(start(), TASK, run.watch, run.stop.signal)
+    const gaps = gapsOf(times)
+    expect(gaps.length).toBeGreaterThan(5)
+    for (let i = 1; i < gaps.length; i += 1) expect(gaps[i]!).toBeGreaterThanOrEqual(gaps[i - 1]!)
+    expect(gaps[0]!).toBeGreaterThanOrEqual(POLL)
+  })
+
+  test('a spent rate limit makes the watch wait the full ceiling before its next forge read', async () => {
+    const { deps, times, clock } = timedForge((n) =>
+      n === 1 ? new Error('gh: API rate limit already exceeded for user ID 1. (HTTP 403)') : null
+    )
+    const run = clockedWatch(deps, HOUR)
+    clock.now = run.clock
+    await watchForRuling(start(), TASK, run.watch, run.stop.signal)
+    expect(times[1]! - times[0]!).toBe(CEILING)
+  })
+
+  test('a ruling posted at the longest wait is found on the next forge read and claimed once', async () => {
+    const { forge, deps, times, clock } = timedForge()
+    const run = clockedWatch(deps, 20 * HOUR, (now) => {
+      if (now === 4 * HOUR) forge.post()
+    })
+    clock.now = run.clock
+    const result = await watchForRuling(start(), TASK, run.watch, run.stop.signal)
+    expect(result.kind).toBe('ruled')
+    expect(forge.claims).toHaveLength(1)
+    expect(times.at(-1)!).toBeGreaterThan(4 * HOUR)
+    expect(times.at(-1)!).toBeLessThanOrEqual(4 * HOUR + CEILING)
+  })
+
+  test("the claim carries the author the accepting read returned, not an earlier read's", async () => {
+    let reads = 0
+    const { forge, deps } = fakeForge({
+      fetchNewestRulingOrdinal: () => {
+        reads += 1
+        return forge.ordinal
+      },
+      fetchNewestRulingAuthor: () => `author-at-read-${reads}`
+    })
+    const run = clockedWatch(deps, 20 * HOUR, (now) => {
+      if (now === 2 * HOUR) forge.post()
+    })
+    const result = await watchForRuling(start(), TASK, run.watch, run.stop.signal)
+    expect(result.kind).toBe('ruled')
+    expect(reads).toBeGreaterThan(2)
+    expect(forge.claims).toHaveLength(1)
+    expect(forge.claims[0]!.by).toBe(`author-at-read-${reads}`)
   })
 })
