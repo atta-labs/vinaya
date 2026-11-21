@@ -651,7 +651,8 @@ export async function followTaskSources(
   await follow(path, {
     writeBacklog(chunk) {
       const lines = split(chunk)
-      if (viewOptions.details) raw.push(...lines)
+      // Kept even under --quiet: the driver log's step lines stand in for a runner that records no steps.
+      raw.push(...lines)
       if (update === null) {
         notePrinted(lines)
         print(view.backlog(lines, new Date()))
@@ -659,7 +660,8 @@ export async function followTaskSources(
     },
     write(chunk) {
       const lines = split(chunk)
-      if (viewOptions.details) raw.push(...lines)
+      // Kept even under --quiet: the driver log's step lines stand in for a runner that records no steps.
+      raw.push(...lines)
       if (update === null) {
         notePrinted(lines)
         print(view.push(lines, new Date()))
