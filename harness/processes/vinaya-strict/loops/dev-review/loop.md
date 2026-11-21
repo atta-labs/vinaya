@@ -236,6 +236,20 @@ leads with the conflict re-entry's text naming the conflicting files
 (`renderConflictPrompt`). A branch already holding the tip, a dirty worktree and
 an unreadable tip merge nothing. The driver never merges during a turn, and
 never rebases, resets, stashes or force-pushes for this merge.
+On the Engine, a merge that changed a dependency input — the lockfile
+`bun.lock`, any `package.json`, `bunfig.toml` or `.npmrc`, added, changed or
+removed, read from the heads before and after the merge — is followed by an
+install of the worktree's dependencies, before the turn's pre-head is read
+(`installDependenciesOwedAfterMerge`); a merge that changed none, a conflict
+the driver aborted and a turn that merged nothing install nothing. The install
+owed is recorded in the task's control directory, outside the worktree, before
+the install runs and cleared only after it returns. A failing install throws
+before the Developer is started, so the leg pauses for the infrastructure with
+the installer's own text, and the run that resumes after the wait finds the
+record, although the branch already holds the merge and the merge step reports
+nothing merged, and installs before its first Developer turn. The standalone
+loop keeps its one install per driver process.
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/actions/live-developer-context.ts contains:  d.installWorktreeDependencies(worktree) -->
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/git-defaults.ts contains:export function defaultMergeDefaultTip( -->
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/git-defaults.ts contains:export function defaultClassifyAgainstDefaultTip( -->
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/git-defaults.ts contains:export function defaultRebaseOntoDefaultTip( -->

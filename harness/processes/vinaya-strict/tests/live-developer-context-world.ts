@@ -31,6 +31,8 @@ export type World = {
   opened: Array<{ title: string; body: string }>
   bodyWrites: string[]
   rangeBases: Array<string | null>
+  /** Each worktree the fake installer was asked to install. */
+  installs: string[]
   view: Awaited<ReturnType<LiveDeveloperContextLoopDeps['readPrView']>>
   push?: (input: PushInput) => PushResult
 }
@@ -51,6 +53,7 @@ export function makeWorld(overrides: Partial<World> = {}): World {
     opened: [],
     bodyWrites: [],
     rangeBases: [],
+    installs: [],
     view: { prNumber: null, state: null, head: null, checks: null, reviews: null, body: null, failedChecks: [] },
     ...overrides
   }
@@ -96,6 +99,9 @@ export function fakeDeps(world: World): LiveDeveloperContextLoopDeps {
       merged: false as const,
       head: world.head
     }),
+    installWorktreeDependencies: (worktreePath: string) => {
+      world.installs.push(worktreePath)
+    },
     pushTaskBranch: (input: PushInput) => {
       world.pushes.push(input)
       const result = world.push?.(input) ?? world.pushResults.shift() ?? { ok: true as const }
