@@ -49,7 +49,8 @@ const FENCE = /```[^\n]*\n?([\s\S]*?)```/g
  * template's own line; a drift between the two would make every untouched
  * PR fail this check instead of passing it.
  */
-export const EVIDENCE_PLACEHOLDER_TEXT = '[run `vinaya pr report --write` to populate — do not type this block by hand]'
+export const EVIDENCE_PLACEHOLDER_TEXT =
+  '[run `vinaya-pr-report --write <body-file>` to populate — do not type this block by hand]'
 
 /**
  * Compares an already-located `VINAYA:EVIDENCE` region against the facts a
@@ -122,7 +123,7 @@ export function compareEvidenceBlock(
     return {
       status: 'fail',
       errors: [
-        'evidence-fresh: the VINAYA:EVIDENCE block reads as the untouched placeholder, but this PR has already had at least one developer round — a real report should exist for this head. Re-run `vinaya-pr-report --write` to regenerate it; re-pasting the placeholder over a real block never passes.'
+        'evidence-fresh: the VINAYA:EVIDENCE block reads as the untouched placeholder, but this PR has already had at least one developer round — a real report should exist for this head. Re-run `vinaya-pr-report --write <body-file>` to regenerate it; re-pasting the placeholder over a real block never passes.'
       ]
     }
   }
@@ -134,7 +135,7 @@ export function compareEvidenceBlock(
     return {
       status: 'fail',
       errors: [
-        'evidence-fresh: the VINAYA:EVIDENCE block is malformed — could not locate both a `Head:` line and a Group A fenced diff block. Re-run `vinaya-pr-report --write` to regenerate it.'
+        'evidence-fresh: the VINAYA:EVIDENCE block is malformed — could not locate both a `Head:` line and a Group A fenced diff block. Re-run `vinaya-pr-report --write <body-file>` to regenerate it.'
       ]
     }
   }
@@ -162,7 +163,7 @@ export function compareEvidenceBlock(
     if (!samePatch) {
       const patchNote = patchIdOf ? ', and the patch changed' : ''
       errors.push(
-        `evidence-fresh: Group B is stale — the block's Head (${storedHead}) does not match the PR's real head (${resolvedHead})${patchNote}. Re-run \`vinaya-pr-report --write\` against the current head, commit, and push again.`
+        `evidence-fresh: Group B is stale — the block's Head (${storedHead}) does not match the PR's real head (${resolvedHead})${patchNote}. Re-run \`vinaya-pr-report --write <body-file>\` against the current head, commit, and push again.`
       )
     }
   }

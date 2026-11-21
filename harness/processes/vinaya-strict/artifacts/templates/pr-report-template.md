@@ -58,7 +58,7 @@ The block opens with `Head:` and a `Summary:` line — a file and line count der
 **Keep the anchor pair out of the `<details>` block.** `body-bare-digits` blanks every digit inside a collapsed block, so an evidence block hidden in one is exempt from the digit scan and unverifiable — `check-evidence-fresh` refuses rather than passing silently. Both checks resolve this region from one shared, normalised context, so a zero-width character or an HTML entity in a marker no longer makes one of them see a block the other cannot.
 
 <!-- VINAYA:EVIDENCE:START -->
-[run `vinaya-pr-report --write` to populate — do not type this block by hand]
+[run `vinaya-pr-report --write <body-file>` to populate — do not type this block by hand]
 <!-- VINAYA:EVIDENCE:END -->
 
 ## Scope

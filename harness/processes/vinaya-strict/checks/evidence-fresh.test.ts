@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { anchoredRegion } from '../../../kernel/gates/checks/anchored-region'
 import { describe, expect, it } from 'bun:test'
 import { REGION_PREFIXES } from '../tools/legacy-markers'
+import { programForBin } from '../tools/programs'
 import { EVIDENCE_PLACEHOLDER_TEXT, compareEvidenceBlock } from './evidence-fresh-logic'
 import { type ResolvedRegion, ScanContext, resolveAnchoredRegion } from '../../../kernel/gates/checks/scan-context'
 import { type GroupCCommandResult, renderGroupC } from '../tools/pr-report/bin/pr-report'
@@ -103,6 +104,52 @@ describe('compareEvidenceBlock — mutation proofs (fix/pr-report-emitter §9)',
     )
     const result = compareEvidenceBlock(regionOf(malformed), HEAD, NUMSTAT)
     expect(result.status).toBe('fail')
+  })
+})
+
+describe('the report program the Evidence guidance names', () => {
+  // Each line quotes the program as `<name> --write <body-file>`; the name must
+  // resolve through the program table by its installed name.
+  const TICK = String.fromCharCode(96)
+  const QUOTED = new RegExp(`${TICK}([^${TICK}\\s]+) --write <body-file>${TICK}`)
+
+  function expectRegisteredReportProgram(text: string): void {
+    const match = text.match(QUOTED)
+    expect(match).not.toBeNull()
+    expect(programForBin(match?.[1] ?? '')).toBe('pr-report')
+  }
+
+  function bodyOf(lines: string[]): string {
+    return ['<!-- VINAYA:EVIDENCE:START -->', ...lines, '<!-- VINAYA:EVIDENCE:END -->'].join('\n')
+  }
+
+  function errorsOf(result: ReturnType<typeof compareEvidenceBlock>): string {
+    return result.status === 'fail' ? result.errors.join('\n') : ''
+  }
+
+  it('the recognised placeholder names the registered program with its body-file argument', () => {
+    expectRegisteredReportProgram(EVIDENCE_PLACEHOLDER_TEXT)
+  })
+
+  it('the refusal for a placeholder after a developer round names it the same way', () => {
+    const body = bodyOf([EVIDENCE_PLACEHOLDER_TEXT])
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT, undefined, undefined, true)
+    expect(result.status).toBe('fail')
+    expectRegisteredReportProgram(errorsOf(result))
+  })
+
+  it('the refusal for a malformed block names it the same way', () => {
+    const body = bodyOf(['```', NUMSTAT, '```'])
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT)
+    expect(result.status).toBe('fail')
+    expectRegisteredReportProgram(errorsOf(result))
+  })
+
+  it('the refusal for a stale head names it the same way', () => {
+    const body = evidenceBody('b'.repeat(40), NUMSTAT)
+    const result = compareEvidenceBlock(regionOf(body), HEAD, NUMSTAT)
+    expect(result.status).toBe('fail')
+    expectRegisteredReportProgram(errorsOf(result))
   })
 })
 
