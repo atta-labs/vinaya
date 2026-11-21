@@ -2006,7 +2006,9 @@ describe('a deferred repair push leaves a receipt for each approved explicit Tes
     expect(count(runs)).toBe(1)
     const composed = await f.compose(command)
     expect(composed?.commands.map((c) => c.command)).toContain(command)
-    await expect(f.compose(command, memoryCache())).rejects.toBeInstanceOf(DeferredEvidenceError)
+    // The same composition refuses a command that holds no receipt at this head (a receipt may also sit in the
+    // on-disk store, so an empty in-memory cache is not an absent receipt).
+    await expect(f.compose(`printf y >> ${JSON.stringify(runs)}`)).rejects.toBeInstanceOf(DeferredEvidenceError)
   })
 
   test('a failing command is reported with its name, exit and the pushed head, and leaves no green receipt', async () => {
