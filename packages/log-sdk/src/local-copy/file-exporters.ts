@@ -40,27 +40,39 @@ type FileCopyOptions = {
   settings: ResolvedSettings
 }
 
-export function createFileExporters(options: FileCopyOptions): { spans: SpanExporter; logs: LogRecordExporter } {
-  const { writerId, settings } = options
+function runSegment(runId: string, writerId: string): string {
   const suffixBytes = Buffer.byteLength(`~${writerId}~${'0'.repeat(INDEX_WIDTH)}.traces.jsonl`)
-  const run =
-    safeSegment(options.runId) && Buffer.byteLength(options.runId) + suffixBytes <= MAX_COMPONENT_BYTES
-      ? options.runId
-      : 'unresolved'
-  const repository = repoSegment(options.repository)
+  return safeSegment(runId) && Buffer.byteLength(runId) + suffixBytes <= MAX_COMPONENT_BYTES ? runId : 'unresolved'
+}
+
+/** The name every file of this run's local copy starts with, whichever writer wrote it. */
+export function copyFilePrefix(runId: string, writerId: string): string {
+  return `${runSegment(runId, writerId)}~`
+}
+
+/** The folder a repository's local copy is written to; nothing is created or checked. */
+export function copyFolder(options: Pick<FileCopyOptions, 'repository' | 'repoRoot' | 'settings'>): string {
+  const root = resolve(options.repoRoot)
+  const physicalRoot = physicalPath(root)
+  const configured = (options.settings.logs || undefined)?.folder
+  const folder =
+    configured && !inside(configured, root) && !inside(physicalPath(configured), physicalRoot)
+      ? configured
+      : join(options.settings.runtimeDir, 'logs')
+  const target = join(physicalPath(resolve(folder)), repoSegment(options.repository))
+  if (inside(target, physicalRoot)) throw new Error(`Log directory is inside the repository: ${target}`)
+  return target
+}
+
+export function createFileExporters(options: FileCopyOptions): { spans: SpanExporter; logs: LogRecordExporter } {
+  const { writerId } = options
+  const suffixBytes = Buffer.byteLength(`~${writerId}~${'0'.repeat(INDEX_WIDTH)}.traces.jsonl`)
+  const run = runSegment(options.runId, writerId)
   let nextIndex = 0
   let active: Segment | undefined
 
   function directory(): string {
-    const root = resolve(options.repoRoot)
-    const physicalRoot = physicalPath(root)
-    const configured = (settings.logs || undefined)?.folder
-    const folder =
-      configured && !inside(configured, root) && !inside(physicalPath(configured), physicalRoot)
-        ? configured
-        : join(settings.runtimeDir, 'logs')
-    const target = join(physicalPath(resolve(folder)), repository)
-    if (inside(target, physicalRoot)) throw new Error(`Log directory is inside the repository: ${target}`)
+    const target = copyFolder(options)
     mkdirSync(target, { recursive: true, mode: 0o700 })
     if (!lstatSync(target).isDirectory() || realpathSync(target) !== target)
       throw new Error(`Unsafe Log directory: ${target}`)

@@ -68,6 +68,8 @@ export type WriterCore = {
   /** Pauses begun by this handle and not yet resumed, by key. */
   readonly pauses: Map<string, { ref: SpanParent; startTime: TimeInput; round?: number; why?: string }>
   seq: number
+  /** The run's local copy: its folder and the name its files start with; `undefined` when nothing is copied. */
+  readonly copy?: { folder(): string; prefix: string }
   report(error: unknown): void
 }
 

@@ -63,10 +63,16 @@ Reuse the handle for the life of a run. Call `flush()` to flush processors durin
 | Round and phase | `round.started`, `round.ended`, `phase.ended` |
 | Agent and usage | `agent.sent`, `agent.stepStarted`, `agent.stepEnded`, `agent.returned`, `agent.failed`, `agent.confidenceStated`, `usage.recorded` |
 | Review and checks | `review.verdicts`, `review.findingsCompared`, `checks.ran`, `checks.notPassed`, `checks.read`, `checks.local`, `checks.ci`, `checks.rerun` |
-| Change | `saved`, `pushed`, `opened`, `conflicted`, `recovered`, `merged`, `reverted`, `incident` |
+| Change | `saved`, `pushed`, `opened`, `conflicted`, `recovered`, `merged`, `reverted`, `incident`, `closed` |
 | Person | `asked`, `answered` |
 | Forge, action and command | `forge.validated`, `forge.refused`, `forge.written`, `action.verified`, `command.completed` |
 | Custom | `custom.recorded(name, fields)` |
+
+### A run across processes
+
+A run's records link to it whichever process writes them. When `run.started` finds that another process already wrote the run's `vinaya.run.started` to the run's local copy, the handle writes no second start: it carries on that run. Its records nest under the same run span, it takes up the open round and the last stage from the copy, and it sends `run.alive` after two minutes with no record until `run.ended` or `shutdown`. `run.ended`, `round.ended`, `run.resumed` and `person.answered` called in a process that did not start the span write it once, whole, from the start time you give or else from the span's started event in the copy (`vinaya.run.started`, `vinaya.round.started`, `vinaya.pause.started`, `vinaya.person.asked`), with that event's start attributes. With neither, the call reports through `onError` and writes nothing. `vinaya-log` follows the same lookup rule for its span-end subcommands.
+
+`change.merged`, `change.reverted`, `change.incident` and `change.closed` (a change closed without merging) link to the handle's own run unless you pass a `runId`. `person.asked` takes an optional `howToAnswer` short text, such as the command to run; it is redacted, cut to 500 characters and written as `vinaya.person.how_to_answer` on the asked event and on the whole person span.
 
 Use the package's TypeScript declarations for each method's payload. Call `log.writeSpan()` when you already have a span's start and end times. The package also exports the event catalogue, schema, custom-event validation, ID, redaction, stored-line and earlier-event conversion helpers.
 

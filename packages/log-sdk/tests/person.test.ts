@@ -49,3 +49,36 @@ test('the handle that asked writes the span with the question it asked', () => {
     [A.personDecision]: 'pick_one'
   })
 })
+
+test('a how-to-answer text is on the asked event and on the whole person span, redacted', () => {
+  const { handle, logs, spans, errors } = harness({ runId: 'how-to-run' })
+  const secret = ['ghp', 'a'.repeat(36)].join('_')
+  const ref = handle.person.asked({
+    kind: 'authority',
+    key: 'q',
+    howToAnswer: `run vinaya answer --token ${secret}`,
+    startTime: new Date(1_000)
+  })
+  handle.person.answered({ kind: 'authority', spanId: ref.spanId, by: 'principal', endTime: new Date(2_000) })
+  expect(errors).toEqual([])
+  const asked = logs.getFinishedLogRecords().find((r) => r.eventName === E.personAsked)
+  expect(asked?.attributes[A.personHowToAnswer]).toBe('run vinaya answer --token <redacted>')
+  expect(spans.getFinishedSpans()[0]?.attributes[A.personHowToAnswer]).toBe('run vinaya answer --token <redacted>')
+  expect(spans.getFinishedSpans()[0]?.startTime).toEqual([1, 0])
+})
+
+test('a how-to-answer text is cut to the text cap, and with none the attribute is absent', () => {
+  const { handle, logs, spans, errors } = harness({ runId: 'how-to-cap' })
+  const startTime = new Date(1_000)
+  const long = handle.person.asked({ kind: 'product', key: 'long', howToAnswer: 'x'.repeat(900), startTime })
+  const none = handle.person.asked({ kind: 'strategy', key: 'none', startTime })
+  handle.person.answered({ kind: 'product', spanId: long.spanId, by: 'principal' })
+  handle.person.answered({ kind: 'strategy', spanId: none.spanId, by: 'principal' })
+  expect(errors).toEqual([])
+  const events = logs.getFinishedLogRecords().filter((r) => r.eventName === E.personAsked)
+  expect(String(events[0]?.attributes[A.personHowToAnswer])).toHaveLength(500)
+  expect(events[1]?.attributes).not.toHaveProperty(A.personHowToAnswer)
+  const [product, strategy] = spans.getFinishedSpans()
+  expect(String(product?.attributes[A.personHowToAnswer])).toHaveLength(500)
+  expect(strategy?.attributes).not.toHaveProperty(A.personHowToAnswer)
+})

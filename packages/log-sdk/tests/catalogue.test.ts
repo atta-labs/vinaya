@@ -65,6 +65,7 @@ test('every name a handle function writes is in the catalogue', () => {
   handle.change.merged()
   handle.change.reverted()
   handle.change.incident()
+  handle.change.closed()
   for (const kind of ['authority', 'strategy', 'product'] as const) {
     const ref = handle.person.asked({ kind, key: kind, startTime: start })
     handle.person.answered({ kind, spanId: ref.spanId, startTime: start, by: 'principal' })

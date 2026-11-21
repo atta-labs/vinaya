@@ -2,6 +2,8 @@ import type { TimeInput } from '@opentelemetry/api'
 import { ATTRIBUTE_NAMES as A, EVENT_NAMES as E, SPAN_NAMES as S, spanName } from '../contract/catalogue.js'
 import type { SpanParent } from '../contract/ids.js'
 import { endSpan, runSpanRef, startSpan, type WriterCore, wholeSpan } from './attributes.js'
+import type { OtelRecord } from '../reader/records.js'
+import { endFromCopy } from './carried.js'
 import type { EndOptions } from './run.js'
 
 export type StartRound = {
@@ -46,19 +48,28 @@ export function started(core: WriterCore, options: StartRound): SpanParent {
 
 export function ended(core: WriterCore, options: EndRound = {}): void {
   const ref = core.current.round
-  if (ref === undefined) throw new Error('no round is open')
-  endSpan(
-    core,
-    ref,
-    {
-      [A.roundFilesChanged]: options.filesChanged,
-      [A.roundLinesAdded]: options.linesAdded,
-      [A.roundLinesRemoved]: options.linesRemoved,
-      [A.roundOutcome]: options.outcome
-    },
-    options.endTime,
-    options.errorType
-  )
+  const attrs = {
+    [A.roundFilesChanged]: options.filesChanged,
+    [A.roundLinesAdded]: options.linesAdded,
+    [A.roundLinesRemoved]: options.linesRemoved,
+    [A.roundOutcome]: options.outcome
+  }
+  if (ref !== undefined && (!core.enabled || core.open.has(ref.spanId))) {
+    endSpan(core, ref, attrs, options.endTime, options.errorType)
+    return
+  }
+  if (!core.enabled) throw new Error('no round is open')
+  // Another process started this round: the span is written whole, from the start in the local copy.
+  endFromCopy(core, {
+    event: E.roundStarted,
+    base: S.round,
+    suffix: A.roundNumber,
+    ...(ref === undefined ? {} : { accept: (r: OtelRecord) => r.spanId === ref.spanId }),
+    parent: runSpanRef(core),
+    attrs,
+    endTime: options.endTime,
+    errorType: options.errorType
+  })
 }
 
 /** A phase is a `vinaya.phase {phase}` span under the open round, else under the run, written when it ends. */
