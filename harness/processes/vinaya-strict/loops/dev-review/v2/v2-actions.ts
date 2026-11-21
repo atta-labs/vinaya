@@ -897,7 +897,6 @@ export async function openPullRequestStep(
       nodeId: 'publish-ready-for-merge',
       action: 'harness.publish'
     })
-    const evidence = await writeEvidenceFor(fns, pr, head)
     return {
       exitCode: FORWARD,
       stdout: recordOutput(results, carriedLoopState(results, task.loopState), {
@@ -912,7 +911,6 @@ export async function openPullRequestStep(
           manifest: dispatchedManifest(results) ? manifestDigest(dispatchedManifest(results)!) : null
         },
         head,
-        ...(evidence ? { evidence } : {}),
         events
       })
     }
@@ -953,11 +951,14 @@ export async function openPullRequestStep(
 
 /**
  * The Evidence block for the head the ready push passed, written by the loop once the pull request is open. A write
- * that fails transiently is retried once after a short wait; every failed attempt is logged. A final failure is
- * recorded, not routed: the pull request's evidence check reads the block, and CI's one read sends the
- * Developer back if it is red.
+ * that fails transiently is retried once after a short wait; every failed attempt is logged. The CI read step calls
+ * it before any CI read and pauses the run on a final failure, so the Developer is never sent back for it.
  */
-async function writeEvidenceFor(fns: V2Functions, pr: number, head: string): Promise<string | null> {
+async function writeEvidenceFor(
+  fns: V2Functions,
+  pr: number,
+  head: string
+): Promise<{ written: true } | { written: false; reason: string } | null> {
   if (!fns.writeEvidence) return null
   const write = fns.writeEvidence
   const attempt = async () => {
@@ -978,7 +979,7 @@ async function writeEvidenceFor(fns: V2Functions, pr: number, head: string): Pro
       if (!written.ok) logFailure(written.reason)
     }
   }
-  return written.ok ? 'written' : `not written: ${written.reason}`
+  return written.ok ? { written: true } : { written: false, reason: written.reason }
 }
 
 /**
@@ -1086,12 +1087,56 @@ export function classifyPullRequestOpened(context: ActionContext): { exitCode: n
 export async function readCiOnce(
   task: TaskInput,
   context: ActionContext
+): Promise<{ exitCode: number; stdout: string; refused?: true }> {
+  const { results } = context
+  const fns = v2Of(task)
+  const open = safeRead(fns.findOpenPullRequest)
+  if (open === null) throw new Error(`read-ci-once found no open pull request for branch ${task.branch}`)
+  // The Evidence is written first, for the pull request and head the opening step recorded. A write that fails for
+  // good pauses the run here as a refusal, which leaves this step unrecorded so the resume runs it again; a recorded
+  // result would route the Developer back for a failure that is no code's.
+  const opened = openingRecord(results)
+  const head = opened?.head ?? worktreeHeadOf(task) ?? ''
+  const pr = opened?.pr ?? open.number
+  const evidence = await writeEvidenceFor(fns, pr, head)
+  if (evidence !== null && !evidence.written) {
+    const detail = `the Evidence block for pull request #${pr} at ${head} could not be written: ${evidence.reason.replace(/[\r\n]+/g, ' ')}. The pull request stays open; continue the run once the cause is fixed.`
+    pauseThrough(task, 'read-ci-once', { reason: 'infrastructure', detail })
+    return { exitCode: BACK, stdout: detail, refused: true }
+  }
+  const step = await readCiStep(task, context, open.number)
+  if (evidence === null) return step
+  try {
+    const record = JSON.parse(step.stdout) as Record<string, unknown>
+    return { ...step, stdout: JSON.stringify({ ...record, evidence: 'written' }) }
+  } catch {
+    return step
+  }
+}
+
+/** The pull request number and head the opening step recorded, or null when it recorded neither. */
+function openingRecord(results: Results): { pr: number; head: string } | null {
+  const opening = results['open-pull-request']
+  if (!opening || !('stdout' in opening)) return null
+  try {
+    const record = JSON.parse(String(opening.stdout)) as { pr?: unknown; head?: unknown }
+    return typeof record.pr === 'number' && typeof record.head === 'string' && record.head !== ''
+      ? { pr: record.pr, head: record.head }
+      : null
+  } catch {
+    return null
+  }
+}
+
+async function readCiStep(
+  task: TaskInput,
+  context: ActionContext,
+  prNumber: number
 ): Promise<{ exitCode: number; stdout: string }> {
   const { results } = context
   const fns = v2Of(task)
   const loop = loopOf(task, results)
-  const open = safeRead(fns.findOpenPullRequest)
-  if (open === null) throw new Error(`read-ci-once found no open pull request for branch ${task.branch}`)
+  const open = { number: prNumber }
   // A head that owes a required check — its tests deferred or run locally — owes the strict required-CI read; with no
   // strict reader the run refuses to complete rather than fall back to the generic read.
   const owed = requiredCiOwed(results)
