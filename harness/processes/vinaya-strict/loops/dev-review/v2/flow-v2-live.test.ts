@@ -1678,6 +1678,79 @@ process.exit(cfg.exit ?? 0)
     expect(result.otherFailuresOmitted).toBeUndefined()
   })
 
+  const startLine = (tests: string[]) =>
+    `vinaya-test-group-start ${JSON.stringify({ group: 'g1', runner: 'bun', cwd: 'pkg', tests })}`
+  const endLine = `vinaya-test-group-end ${JSON.stringify({ group: 'g1', executed: [], failed: [] })}`
+  const aBlock = [
+    ' 5 | expect([1]).toEqual([2])',
+    'error: expect(received).toEqual(expected)',
+    '',
+    '@@ -1,3 +1,3 @@',
+    ' [',
+    '-  1,',
+    '+  2,',
+    ' ]',
+    '',
+    '- Expected  - 1',
+    '+ Received  + 1',
+    '',
+    '      at <anonymous> (__DIR__/pkg/a.ts:5:1)',
+    '(fail) a [2ms]'
+  ]
+  const bBlock = ['error: b failed near a.test.ts', '      at __DIR__/pkg/b.ts:3:1', '(fail) b [1ms]']
+
+  test("a group run from a package directory: each file's lines, difference and location come from its own block", async () => {
+    const { dir, head } = repoWith({
+      selected: ['pkg/a.test.ts', 'pkg/b.test.ts'],
+      exit: 1,
+      output: [
+        startLine(['pkg/b.test.ts', 'pkg/a.test.ts']),
+        './b.test.ts:',
+        ...bBlock,
+        './a.test.ts:',
+        ...aBlock,
+        endLine,
+        'error: leaked after the group'
+      ].join('\n'),
+      result: { outcome: 'failed', failed: ['__DIR__/pkg/a.test.ts', '__DIR__/pkg/b.test.ts'] }
+    })
+    const result = await runRoundTestsLive({ ...common(dir), head })
+    expect(result.firstFailure?.test).toBe('pkg/a.test.ts')
+    expect(result.firstFailure?.location).toBe('pkg/a.ts:5')
+    const excerpt = result.firstFailure?.excerpt ?? ''
+    for (const kept of ['@@ -1,3 +1,3 @@', '-  1,', '+  2,', '- Expected  - 1', '+ Received  + 1'])
+      expect(excerpt).toContain(kept)
+    expect(excerpt).not.toContain('b failed')
+    expect(excerpt).not.toContain('leaked')
+    expect(result.otherFailures?.[0]?.location).toBe('pkg/b.ts:3')
+    expect(result.otherFailures?.[0]?.excerpt).toContain('b failed near a.test.ts')
+  })
+
+  test('a capture whose group start line is cut off compares the header with the repository path, as before', async () => {
+    const { dir, head } = repoWith({
+      selected: ['pkg/a.test.ts'],
+      exit: 1,
+      output: ['pkg/b.test.ts:', ...bBlock, 'pkg/a.test.ts:', ...aBlock].join('\n'),
+      result: { outcome: 'failed', failed: ['__DIR__/pkg/a.test.ts'] }
+    })
+    const result = await runRoundTestsLive({ ...common(dir), head })
+    expect(result.firstFailure?.location).toBe('pkg/a.ts:5')
+    expect(result.firstFailure?.excerpt).toContain('+  2,')
+    expect(result.firstFailure?.excerpt).not.toContain('b failed')
+  })
+
+  test('a header the capture cannot map to the file leaves the whole output as the first file excerpt', async () => {
+    const { dir, head } = repoWith({
+      selected: ['pkg/a.test.ts'],
+      exit: 1,
+      output: ['./a.test.ts:', ...aBlock].join('\n'),
+      result: { outcome: 'failed', failed: ['__DIR__/pkg/a.test.ts'] }
+    })
+    const result = await runRoundTestsLive({ ...common(dir), head })
+    expect(result.firstFailure?.excerpt).toContain('+  2,')
+    expect(result.firstFailure?.location).toBe('pkg/a.ts:5')
+  })
+
   test('a failing test with no frame inside the repository names the file alone', async () => {
     const { dir, head } = repoWith({
       selected: ['a.test.ts'],

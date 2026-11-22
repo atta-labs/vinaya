@@ -250,3 +250,41 @@ describe('renderFailureExcerpt', () => {
     expect(out).toContain('`````\na ```` b\n`````')
   })
 })
+
+describe('extractFailureExcerpt keeps what a failed assertion printed as differing', () => {
+  const long = 'x'.repeat(400)
+  const diffLog = (filler: number) =>
+    [
+      ...Array.from({ length: filler }, (_, i) => `(pass) suite > case ${i} [0.1ms]`),
+      'a.test.ts:',
+      ' 5 | expect(a).toEqual(b)',
+      'error: expect(received).toEqual(expected)',
+      '',
+      '@@ -2,3 +2,3 @@',
+      ' [',
+      '-  "first differing line",',
+      `+  "${long}",`,
+      ' ]',
+      '',
+      '- Expected  - 1',
+      '+ Received  + 1',
+      '',
+      '      at <anonymous> (/work/repo/pkg/a.test.ts:5:1)',
+      '(fail) a > differs [2ms]'
+    ].join('\n')
+
+  test('keeps the hunk, the differing lines and the summary lines, each cut to a fixed length', () => {
+    const excerpt = extractFailureExcerpt(diffLog(10))
+    for (const kept of ['@@ -2,3 +2,3 @@', '-  "first differing line",', '- Expected  - 1', '+ Received  + 1'])
+      expect(excerpt).toContain(kept)
+    expect(Math.max(...excerpt.split('\n').map((line) => line.length))).toBeLessThanOrEqual(161)
+    expect(excerpt).not.toContain('x'.repeat(200))
+  })
+
+  test('over its bound, the test name stays and the first differing line survives', () => {
+    const excerpt = extractFailureExcerpt(diffLog(10), 420)
+    expect(excerpt.length).toBeLessThanOrEqual(420)
+    expect(excerpt).toContain('(fail) a > differs')
+    expect(excerpt).toContain('-  "first differing line",')
+  })
+})

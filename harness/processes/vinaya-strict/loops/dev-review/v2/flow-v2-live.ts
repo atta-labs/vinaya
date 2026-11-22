@@ -190,7 +190,10 @@ import {
   ENGINE_RUNS_DIRNAME,
   FINAL_DRAIN_BOUND_MS,
   isBunTestCommand,
-  type ProgressRecord
+  parseTestGroupLine,
+  type ProgressRecord,
+  scheduledFileNamed,
+  type TestGroupStart
 } from '../../../../../kernel/gates/ring0-hooks/pre-push/push-progress'
 import {
   agentCommandEnv,
@@ -1124,19 +1127,36 @@ const ROUND_TEST_EXCERPT_CHARS = 2_000
 const ROUND_TEST_OTHER_EXCERPT_CHARS = 1_200
 const ROUND_TEST_OTHER_EXCERPTS_TOTAL = 8_000
 
-/** The output block of one test file: from its own `path:` header line up to the next test file's header. */
+/**
+ * The output block of one test file: from its own `path:` header line up to the next test file's header, or to the
+ * line that ends or starts a runner group. Inside a group whose start line is in the capture, a header is matched
+ * through the group's own scheduled files, so a header printed relative to the group's directory finds its file;
+ * with no start line in the capture (it keeps only the last part of a run) the header is compared with the
+ * repository-relative path. `''` when the file has no block.
+ */
 function testFileBlock(output: string, test: string): string {
   const lines = output.split('\n')
-  const start = lines.findIndex((line) => line.trim() === `${test}:` || line.trim().endsWith(`/${test}:`))
-  if (start < 0) return ''
-  let end = lines.length
-  for (let i = start + 1; i < lines.length; i++) {
-    if (/\.test\.[cm]?[jt]sx?:\s*$/.test(lines[i] ?? '')) {
-      end = i
-      break
+  const header = /\.test\.[cm]?[jt]sx?:\s*$/
+  let group: TestGroupStart | null = null
+  let start = -1
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? ''
+    const parsed = parseTestGroupLine(line)
+    if (parsed !== null) {
+      if (start >= 0) return lines.slice(start, i).join('\n')
+      group = parsed.kind === 'start' ? parsed.start : null
+      continue
     }
+    if (!header.test(line)) continue
+    if (start >= 0) return lines.slice(start, i).join('\n')
+    const trimmed = line.trim()
+    const matches =
+      group !== null
+        ? scheduledFileNamed(group, trimmed.slice(0, -1)) === test
+        : trimmed === `${test}:` || trimmed.endsWith(`/${test}:`)
+    if (matches) start = i
   }
-  return lines.slice(start, end).join('\n')
+  return start >= 0 ? lines.slice(start).join('\n') : ''
 }
 
 /** A source frame: `path.ts:12` or `path.ts:12:5`. */
@@ -1144,9 +1164,12 @@ const SOURCE_FRAME = /([^\s():'"]+\.[cm]?[jt]sx?):(\d+)(?::\d+)?/g
 
 /** `file:line` of the first frame inside the repository after the failing test is named, else the file alone. */
 function failureLocation(output: string, worktreePath: string, test: string): string {
-  const named = output.indexOf(test)
-  const fromIndex = named >= 0 ? named : Math.max(0, output.indexOf(basename(test)))
-  const text = output.slice(fromIndex)
+  const block = testFileBlock(output, test)
+  let text = block
+  if (block === '') {
+    const named = output.indexOf(test)
+    text = output.slice(named >= 0 ? named : Math.max(0, output.indexOf(basename(test))))
+  }
   for (const match of text.matchAll(SOURCE_FRAME)) {
     const raw = match[1] ?? ''
     const absolute = isAbsolute(raw) ? raw : join(worktreePath, raw)
@@ -1431,7 +1454,7 @@ async function runRoundTestsLocked(
       firstFailure: {
         test,
         location: failureLocation(output, input.worktreePath, test),
-        excerpt: extractFailureExcerpt(output, ROUND_TEST_EXCERPT_CHARS)
+        excerpt: extractFailureExcerpt(testFileBlock(output, test) || output, ROUND_TEST_EXCERPT_CHARS)
       }
     })
     ctx.log(
