@@ -1,3 +1,4 @@
+import { checkRecordContract, describeContractFailure } from '../contract/check.js'
 import { createOrdering, type ReadGap } from './order.js'
 import type { OtelRecord } from './records.js'
 import { applyTrust } from './trust.js'
@@ -75,6 +76,17 @@ function wait(ms: number, signal: AbortSignal | undefined): Promise<void> {
 /** A reader over one source: trust and redaction on every record, then each writer's order, duplicates, open spans and gaps. */
 export function createReader(source: RecordSource, options: ReaderOptions = {}): Reader {
   const ordering = createOrdering({
+    // A record that fails the contract is withheld after it has taken its place in its writer's sequence.
+    withhold(record) {
+      const failure = checkRecordContract(record)
+      if (failure === null) return null
+      return {
+        kind: 'contract',
+        writerId: record.writerId,
+        place: `${record.source} ${record.kind} "${record.name}" at ${record.time}`,
+        detail: describeContractFailure(failure)
+      }
+    },
     fromStart: options.position === undefined,
     ...(options.firstSequence === undefined ? {} : { firstSequence: options.firstSequence }),
     ...(options.patience === undefined ? {} : { patience: options.patience })

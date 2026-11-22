@@ -1,4 +1,10 @@
 export * from './contract/catalogue.js'
+export {
+  type CheckableRecord,
+  checkRecordContract,
+  type ContractFailure,
+  describeContractFailure
+} from './contract/check.js'
 export { convertEarlierEvents, type EarlierOtlpDocuments } from './contract/convert.js'
 export {
   createLiveEarlierConverter,
