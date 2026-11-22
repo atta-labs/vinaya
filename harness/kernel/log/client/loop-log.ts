@@ -32,11 +32,6 @@ import {
 } from 'node:fs'
 import { redact } from '../redact'
 import { type NarrationKind, narrate } from './narration'
-import {
-  type NarratableRecord,
-  narrate as narrateRecord,
-  type SeatNames
-} from '../../../../packages/log-sdk/src/index.js'
 import { homedir } from 'node:os'
 import { dirname } from 'node:path'
 import { runPath, runtimeDirForThisRepo } from '../../run-paths.js'
@@ -149,7 +144,7 @@ export function appendRunStartMarker(
   )
 }
 
-const marksByKind: Record<NarrationKind, AgentLineMark> = {
+export const marksByKind: Record<NarrationKind, AgentLineMark> = {
   starting: 'round',
   working: 'working',
   done: 'done',
@@ -190,17 +185,6 @@ export function narrateDriverEvent(path: string, event: unknown, earlier: readon
     ? `${line.text} The Operator's task_resume for task ${task} continues this run, bound to ${pause}, once the person has decided or repaired it.`
     : line.text
   appendDriverLine(path, words, marksByKind[line.kind])
-}
-
-/**
- * The plain line for one agent record the run's Log handle just wrote — the Log SDK's `narrate` for that very
- * record, with the seat names the caller passes: into the driver log and onto the terminal, as the driver's own
- * lines are. A record with no wording writes nothing.
- */
-export function narrateAgentRecord(path: string, record: NarratableRecord, seatNames: SeatNames): void {
-  const line = narrateRecord(record, seatNames)
-  if (!line) return
-  appendDriverLine(path, line.text, marksByKind[line.kind])
 }
 
 export type FollowLoopLogDeps = {

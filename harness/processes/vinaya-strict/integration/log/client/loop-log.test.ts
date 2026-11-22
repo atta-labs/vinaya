@@ -1,13 +1,18 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
+import { narrate } from '../../../../../../packages/log-sdk/src/index.js'
+import { narrateAgentRecord } from '../../../../../kernel/log/client/agent-record-line'
+import type { NarrationKind } from '../../../../../kernel/log/client/narration'
 import {
+  appendDriverLine,
   appendLoopLogLine,
   appendRoleLine,
   appendRunStartMarker,
   LOOP_LOG_MAX_BYTES,
   loopLogPathFor,
+  marksByKind,
   narrateDriverEvent
 } from '../../../../../kernel/log/client/loop-log'
 import { devReviewLoop, type LoopDeps } from '../../../loops/dev-review/standalone/dev-review-loop.js'
@@ -99,6 +104,55 @@ describe('appendLoopLogLine', () => {
     appendLoopLogLine(path, 'this line must not be appended')
     const content = readFileSync(path, 'utf8')
     expect(content).not.toContain('this line must not be appended')
+  })
+})
+
+describe('the driver-log module and the Log SDK', () => {
+  it('names no Log SDK path, so the round-test progress observer loads without it', () => {
+    const source = readFileSync(join(import.meta.dir, '../../../../../kernel/log/client/loop-log.ts'), 'utf8')
+    expect(source).not.toContain('log-sdk')
+  })
+
+  it('names the Log SDK index in no file of the client directory but the agent-record module', () => {
+    const clientDir = join(import.meta.dir, '../../../../../kernel/log/client')
+    const naming = readdirSync(clientDir)
+      .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
+      .filter((file) => readFileSync(join(clientDir, file), 'utf8').includes('packages/log-sdk/src/index'))
+    expect(naming).toEqual(['agent-record-line.ts'])
+  })
+})
+
+describe('narrateAgentRecord', () => {
+  const record = {
+    kind: 'event',
+    name: 'vinaya.round.started',
+    startTime: null,
+    time: '1',
+    attributes: { 'vinaya.round.number': 2 }
+  }
+
+  it('writes into the driver log the line, with the mark, the Log SDK narrates for the record', () => {
+    const path = join(tempDir('loop-log-agent-'), '521.log')
+    const narrated = narrate(record, {})
+    expect(narrated).not.toBeNull()
+    const expectedPath = join(tempDir('loop-log-agent-'), 'expected.log')
+    const stderr = console.error
+    console.error = () => {}
+    try {
+      narrateAgentRecord(path, record, {})
+      appendDriverLine(expectedPath, narrated?.text as string, marksByKind[narrated?.kind as NarrationKind])
+    } finally {
+      console.error = stderr
+    }
+    const withoutTime = (file: string): string => readFileSync(file, 'utf8').replace(/^\S+/, '')
+    expect(withoutTime(path)).toBe(withoutTime(expectedPath))
+    expect(readFileSync(path, 'utf8').trim().split('\n')).toHaveLength(1)
+  })
+
+  it('writes nothing for a record with no wording', () => {
+    const path = join(tempDir('loop-log-agent-'), '521.log')
+    narrateAgentRecord(path, { ...record, name: 'vinaya.unknown' }, {})
+    expect(existsSync(path)).toBe(false)
   })
 })
 
