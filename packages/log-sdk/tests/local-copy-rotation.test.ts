@@ -89,12 +89,15 @@ test('a failed partial append is reported and seals the segment', async () => {
 test('three size rollovers preserve each record and seal earlier files', () => {
   const { options, folder } = setup()
   const errors: unknown[] = []
-  const payload = 'é'.repeat((3 * 1024 * 1024) / 2)
+  // A text is capped at 500 characters, so size comes from the number of records, not from one large one.
+  const payload = 'é'.repeat(490)
   try {
     const handle = connect({ ...options, onError: (error) => errors.push(error) })
-    const stages = Array.from({ length: 8 }, (_, i) => `${i} ${payload}`)
+    const stages: string[] = []
     const sealed = new Map<string, Buffer>()
-    for (const stage of stages) {
+    while ((fs.existsSync(folder) ? readdirSync(folder).length : 0) < 4 && stages.length < 100_000) {
+      const stage = `${stages.length} ${payload}`
+      stages.push(stage)
       handle.run.stageChanged({ to: stage })
       const files = readdirSync(folder).sort()
       for (const file of files.slice(0, -1)) {
