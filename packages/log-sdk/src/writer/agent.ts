@@ -18,6 +18,8 @@ export type AgentSent = {
   model?: string
   codingAgent?: string
   codingAgentVersion?: string
+  /** The effort the agent was asked to work at, as plain text. */
+  effort?: string
   /** Defaults to the open round. */
   round?: number
   id?: string
@@ -98,6 +100,7 @@ export function sent(core: WriterCore, options: AgentSent): SpanParent {
         [A.requestModel]: options.model,
         [A.codingAgent]: options.codingAgent,
         [A.codingAgentVersion]: options.codingAgentVersion,
+        [A.agentEffort]: options.effort,
         [A.roundNumber]: options.round ?? core.moment.round
       },
       parent: options.parent ?? core.current.round ?? runSpanRef(core),
