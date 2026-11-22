@@ -24,13 +24,18 @@ import {
 const PR_FORGE_FIXTURES = join(import.meta.dir, '..', 'fixtures', 'forge')
 /** Issue body fixtures, still beside the command line's Issue command tests. */
 const FORGE_FIXTURES = join(import.meta.dir, '..', '..', '..', '..', 'apps', 'cli', 'tests', 'fixtures', 'forge')
+/** The shared Issue fixtures say "already merged" in their Dependency rationale; the condition-word rule refuses that with no premise, and these tests are about other checks. */
+function withoutConditionWord(body: string): string {
+  return body.replace('is already merged', 'is merged')
+}
+
 const validPr = readFileSync(join(PR_FORGE_FIXTURES, 'pr-valid.md'), 'utf8')
 const noTierPr = readFileSync(join(PR_FORGE_FIXTURES, 'pr-no-tier.md'), 'utf8')
 const noRationaleIssue = readFileSync(join(FORGE_FIXTURES, 'issue-no-rationale.md'), 'utf8')
-const validIssue = readFileSync(join(FORGE_FIXTURES, 'issue-valid.md'), 'utf8')
+const validIssue = withoutConditionWord(readFileSync(join(FORGE_FIXTURES, 'issue-valid.md'), 'utf8'))
 const blastRadiusViolationIssue = readFileSync(join(FORGE_FIXTURES, 'issue-blast-radius-violation.md'), 'utf8')
-const briefContentIssue = readFileSync(join(FORGE_FIXTURES, 'issue-brief-content.md'), 'utf8')
-const noDocPathIssue = readFileSync(join(FORGE_FIXTURES, 'issue-no-doc-path.md'), 'utf8')
+const briefContentIssue = withoutConditionWord(readFileSync(join(FORGE_FIXTURES, 'issue-brief-content.md'), 'utf8'))
+const noDocPathIssue = withoutConditionWord(readFileSync(join(FORGE_FIXTURES, 'issue-no-doc-path.md'), 'utf8'))
 
 const PR_SECTIONS: BriefSection[] = [
   { builtin: 'tier' },

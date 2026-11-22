@@ -33,6 +33,7 @@ import {
   readIssueBody,
   readIssueComments
 } from '../../../../../kernel/adapters/code-host/github/forge-read'
+import { checkConditionWordsNeedPremise, checkProsePathsExist } from '../prose-facts'
 import {
   boundaryPinnedFiles,
   checkBlastRadiusScope,
@@ -1799,6 +1800,10 @@ const ISSUE_CONTENT_RECOVERY = {
     'Add the missing `Depends-on` edge for the deferred premise named above to the `**Dependency rationale**` field (`task_issue_edit`), or drop the `after #<n>:` prefix and write a premise that holds now. Then re-run `{cmd}`.',
   boundaryClaimsNeedPremise:
     "Add a `## Premises` section pinning what the Boundary asserts already exists — one `` `<path>` contains `<text>` `` line per claim — or rewrite the Boundary so it no longer states the code's current shape. Then re-run `{cmd}`.",
+  conditionWordsNeedPremise:
+    "Add a `## Premises` section pinning what the named field or Part says about the code — one `` `<path>` contains `<text>` `` line per claim — or reword it so it no longer states the code's current condition. Then re-run `{cmd}`.",
+  prosePathsExist:
+    "Write the full repository path of a file that exists, or — when this task creates the file — name it in the Boundary's `Pinned files:` clause, or — when a task this one depends on creates it — add a `## Premises` line `` after #<n>: `<path>` contains `<text>` `` and the `Depends-on` edge. Then re-run `{cmd}`.",
   crossTaskValuesPinned:
     'Add a `## Premises` line `` after #<n>: `<path>` contains `<value>` `` for the named value, on the `Depends-on` task that creates it, or say in the same sentence that this task adds it. Then re-run `{cmd}`.'
 } as const
@@ -1946,6 +1951,8 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [checkIssuePremises(input.body, input.readFile).errors, 'issuePremises'],
     [checkPremiseDependencyDeclared(input.body).errors, 'premiseDependencyDeclared'],
     [checkBoundaryClaimsNeedPremise(input.body).errors, 'boundaryClaimsNeedPremise'],
+    [checkConditionWordsNeedPremise(input.body).errors, 'conditionWordsNeedPremise'],
+    [checkProsePathsExist(input.body, input.trackedFiles ?? []).errors, 'prosePathsExist'],
     [checkCrossTaskValuesPinned(input.body, input.existsInTree).errors, 'crossTaskValuesPinned']
   ]
   const errors: CheckError[] = []
