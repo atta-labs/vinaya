@@ -52,7 +52,9 @@ import {
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
   type DispatchGateInput,
-  type DispatchPriorTrancheFact
+  type DispatchPriorTrancheFact,
+  type DispatchBlockerClass,
+  type DispatchResult
 } from '../dispatch-gate'
 import { parseRationaleDeps } from './forge/parse-rationale-deps'
 import { createForgeSource } from '../sources/forge-adapter.js'
@@ -707,9 +709,42 @@ export function dispatchPremiseRefusals(
   return checkPremisesHold(asserted, (path) => readAt(rev, path))
 }
 
+/**
+ * `waiting`, on a preview render only, lists each reason the task cannot start
+ * yet — an unmerged dependency or a conflicting task still open — empty when
+ * the task can start. A render made to start a task never carries it.
+ */
 export type AssembleAndRenderBriefResult =
-  | { ok: true; brief: string; issue: number }
+  | { ok: true; brief: string; issue: number; waiting?: string[] }
   | { ok: false; missing: string[]; dispatchBlockerDetails?: DispatchBlocker[] }
+
+/** The only blocker classes that are reasons a planned task waits on another task. */
+const WAITING_BLOCKER_CLASSES: ReadonlySet<DispatchBlockerClass> = new Set<DispatchBlockerClass>([
+  'depends-on-not-merged',
+  'conflicts-with'
+])
+
+/**
+ * What readiness a render hands `renderBrief`, and whether a deferred premise
+ * is held back. A preview whose every blocker is a waiting one reports the
+ * task ready to the render and returns those blockers as `waiting`; a preview
+ * with any other blocker, and every render that is not a preview, keeps the
+ * gate's own verdict. A deferred premise is held back for a preview waiting on
+ * an open dependency whichever waiting blocker sits beside it; otherwise only
+ * when an open dependency is the only blocker.
+ */
+export function readinessForRender(
+  gate: DispatchResult,
+  preview: boolean
+): { ready: boolean; blockers: string[]; waiting: string[]; holdBackDeferredPremises: boolean } {
+  const details = gate.blockerDetails
+  const waitingOnly = details.length > 0 && details.every((b) => WAITING_BLOCKER_CLASSES.has(b.class))
+  if (preview && waitingOnly) {
+    return { ready: true, blockers: [], waiting: gate.blockers, holdBackDeferredPremises: true }
+  }
+  const dependencyOnly = details.length > 0 && details.every((b) => b.class === 'depends-on-not-merged')
+  return { ready: gate.ready, blockers: gate.blockers, waiting: [], holdBackDeferredPremises: dependencyOnly }
+}
 
 /**
  * Plan-time render options. `skipFreshness` bypasses the fast-forward and
@@ -733,6 +768,13 @@ export type BriefRenderOptions = {
    * caller cannot set one half of that and forget the other.
    */
   premiseScope?: PremiseScope
+  /**
+   * A Planner reading the brief before the task starts: a task waiting on an
+   * unmerged dependency or an open conflicting task renders in full, and the
+   * reasons come back as `waiting`. Omitted (every start), the render refuses
+   * such a task exactly as before.
+   */
+  preview?: boolean
 }
 
 /** `assembleAndRenderBriefForIssue`'s render options — plan-time freshness plus the O2 tranche-draft escape hatch. */
@@ -910,13 +952,14 @@ export async function assembleAndRenderBrief(
     principalAllowlist: resolveTrustedPrincipals()
   }
   const gate = checkDispatchReadiness(gateInput)
+  const readiness = readinessForRender(gate, opts?.preview === true)
 
-  // A deferred premise is not due while its dependency is the only readiness blocker.
+  // A deferred premise is not due while its dependency is the only readiness blocker
+  // (a preview: while any dependency is open and only waiting blockers remain).
   // Every other premise still refuses now; once ready, all premises are asserted again.
-  const pending =
-    gate.blockerDetails.length > 0 && gate.blockerDetails.every((b) => b.class === 'depends-on-not-merged')
-      ? dependsOn.filter((d) => !d.merged && d.issue !== null).map((d) => d.issue as number)
-      : []
+  const pending = readiness.holdBackDeferredPremises
+    ? dependsOn.filter((d) => !d.merged && d.issue !== null).map((d) => d.issue as number)
+    : []
   const premiseRefusals = dispatchPremiseRefusals(
     issueBody,
     headSha,
@@ -1013,8 +1056,8 @@ export async function assembleAndRenderBrief(
     // missing-`## Objectives`/`## Documentation` refusal grandfathers exactly
     // the class the Issue gate does (O1); this repo restates its own (O2).
     cutovers: resolveGateCutovers(loadConfig()),
-    dispatchReady: gate.ready,
-    dispatchBlockers: gate.blockers,
+    dispatchReady: readiness.ready,
+    dispatchBlockers: readiness.blockers,
     surfaceFiles,
     consumersOf,
     docOwnersContent: existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null,
@@ -1025,7 +1068,12 @@ export async function assembleAndRenderBrief(
   const template = readFileSync(TEMPLATE_PATH, 'utf8')
   const result = renderBrief(facts, template)
   return result.ok
-    ? { ok: true, brief: result.brief, issue: task.issue }
+    ? {
+        ok: true,
+        brief: result.brief,
+        issue: task.issue,
+        ...(opts?.preview === true ? { waiting: readiness.waiting } : {})
+      }
     : { ok: false, missing: result.missing, dispatchBlockerDetails: gate.blockerDetails }
 }
 
@@ -1235,11 +1283,11 @@ export async function assembleAndRenderBriefForIssue(
     principalAllowlist: resolveTrustedPrincipals()
   }
   const gate = checkDispatchReadiness(gateInput)
+  const readiness = readinessForRender(gate, opts?.preview === true)
 
-  const pending =
-    gate.blockerDetails.length > 0 && gate.blockerDetails.every((b) => b.class === 'depends-on-not-merged')
-      ? dependsOn.filter((d) => !d.merged && d.issue !== null).map((d) => d.issue as number)
-      : []
+  const pending = readiness.holdBackDeferredPremises
+    ? dependsOn.filter((d) => !d.merged && d.issue !== null).map((d) => d.issue as number)
+    : []
   const premiseRefusals = dispatchPremiseRefusals(
     issueBody,
     headSha,
@@ -1318,8 +1366,8 @@ export async function assembleAndRenderBriefForIssue(
     })(),
     // See the tranche-task facts above — absent `gateCutovers` → no cutover (O1).
     cutovers: resolveGateCutovers(loadConfig()),
-    dispatchReady: gate.ready,
-    dispatchBlockers: gate.blockers,
+    dispatchReady: readiness.ready,
+    dispatchBlockers: readiness.blockers,
     surfaceFiles,
     consumersOf,
     docOwnersContent: existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null,
@@ -1330,6 +1378,11 @@ export async function assembleAndRenderBriefForIssue(
   const template = readFileSync(TEMPLATE_PATH, 'utf8')
   const result = renderBrief(facts, template)
   return result.ok
-    ? { ok: true, brief: result.brief, issue: issueNumber }
+    ? {
+        ok: true,
+        brief: result.brief,
+        issue: issueNumber,
+        ...(opts?.preview === true ? { waiting: readiness.waiting } : {})
+      }
     : { ok: false, missing: result.missing, dispatchBlockerDetails: gate.blockerDetails }
 }

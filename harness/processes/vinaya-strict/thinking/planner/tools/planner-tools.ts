@@ -30,6 +30,7 @@ import {
   editObjectives,
   printIssueSurface,
   renderBrief,
+  type BriefInput as BriefAddress,
   type BriefOutcome,
   type IssueWriteOutcome,
   type ObjectivesOutcome,
@@ -146,8 +147,20 @@ const ObjectivesInput = z.discriminatedUnion('op', [
 ])
 
 const BriefInput = z
-  .object({ tranche: z.string().min(1), id: z.string().min(1), globs: z.array(z.string().min(1)).optional() })
+  .object({
+    tranche: z.string().min(1).optional(),
+    id: z.string().min(1).optional(),
+    globs: z.array(z.string().min(1)).optional(),
+    issue: issueNumber.optional()
+  })
   .strict()
+  .refine(
+    (v) =>
+      v.issue !== undefined
+        ? v.tranche === undefined && v.id === undefined && v.globs === undefined
+        : v.tranche !== undefined && v.id !== undefined,
+    { message: 'give either an Issue number alone, or a tranche with a task id — one address per call' }
+  )
 
 // --- JSON Schemas (the wire needs them; Zod 3 ships no exporter) ---------------
 
@@ -210,8 +223,12 @@ export const PLANNER_TOOL_INPUT_JSON_SCHEMAS: Record<PlannerToolName, Record<str
   },
   brief_render: {
     type: 'object',
-    properties: { tranche: str, id: str, globs: { type: 'array', items: str } },
-    required: ['tranche', 'id'],
+    properties: {
+      tranche: { ...str, description: 'The tranche slug, with id; never with issue.' },
+      id: { ...str, description: 'The task id within the tranche, with tranche; never with issue.' },
+      globs: { type: 'array', items: str },
+      issue: { ...issueSchema, description: 'A single Issue by number, alone; never with tranche and id.' }
+    },
     additionalProperties: false
   },
   task_issue_validate: {
@@ -250,8 +267,15 @@ export const PLANNER_TOOL_OUTPUT_JSON_SCHEMAS: Record<PlannerToolName, Record<st
   },
   brief_render: {
     type: 'object',
-    properties: { brief: { type: 'string' } },
-    required: ['brief'],
+    properties: {
+      brief: { type: 'string' },
+      waiting: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Each reason the task cannot start yet; empty when it can start.'
+      }
+    },
+    required: ['brief', 'waiting'],
     additionalProperties: false
   }
 }
@@ -264,7 +288,7 @@ const DESCRIPTIONS: Record<PlannerToolName, string> = {
   task_issue_edit: `Edit a task Issue's title, body or labels through the Issue write gate (the same gates \`task_issue_validate\` dry-runs for an edit). Returns the Issue's link. ${REFUSAL_NOTE}`,
   task_issue_surface: `Report what a draft Issue body's Boundary pins force on its Surface. Writes nothing. ${REFUSAL_NOTE}`,
   task_objectives_edit: `Add, drop or replace one objective of an Issue's \`## Objectives\` (Principal only); supersedes a frozen brief when one exists. Returns the new objectives version. ${REFUSAL_NOTE}`,
-  brief_render: `Render a task's brief from its Issue; a refusal lists the facts it could not find. Writes nothing. ${REFUSAL_NOTE}`,
+  brief_render: `Preview a task's brief from its Issue, addressed by a tranche with a task id or by an Issue number alone. A task waiting on an unmerged dependency or an open conflicting task still renders in full, with each reason it cannot start yet in \`waiting\`; a refusal lists the facts it could not find. Writes nothing. ${REFUSAL_NOTE}`,
   task_issue_validate: `Dry-run the Issue write gate for a create or an edit: runs exactly the gates create and edit run, writes nothing, and returns the findings in the same encoding as the other tools. ${REFUSAL_NOTE}`
 }
 
@@ -284,7 +308,7 @@ export type PlannerOperations = {
   editIssue: (input: { args: string[]; validateOnly?: boolean }) => Promise<IssueWriteOutcome>
   editObjectives: (args: string[]) => Promise<ObjectivesOutcome>
   printIssueSurface: (args: string[]) => SurfaceOutcome
-  renderBrief: (input: { trancheSlug: string; taskId: string; globs?: string[] }) => Promise<BriefOutcome>
+  renderBrief: (input: BriefAddress) => Promise<BriefOutcome>
 }
 
 export const realPlannerOperations: PlannerOperations = {
@@ -434,11 +458,15 @@ export function plannerToolHandlers(
       return succeeded({ version: outcome.version, url: outcome.url, supersedeUrl: outcome.supersedeUrl })
     }),
     brief_render: guarded(BriefInput, async (v) => {
-      const outcome = await ops.renderBrief({
-        trancheSlug: v.tranche,
-        taskId: v.id,
-        ...(v.globs ? { globs: v.globs } : {})
-      })
+      const outcome = await ops.renderBrief(
+        v.issue !== undefined
+          ? { issue: v.issue }
+          : {
+              trancheSlug: v.tranche as string,
+              taskId: v.id as string,
+              ...(v.globs ? { globs: v.globs } : {})
+            }
+      )
       if (!outcome.ok) {
         return refused(
           outcome.missing.length > 0
@@ -452,7 +480,7 @@ export function plannerToolHandlers(
             : [finding('brief-render', 'the brief cannot be rendered', 'Check the task Issue, then render again.')]
         )
       }
-      return succeeded({ brief: outcome.brief })
+      return succeeded({ brief: outcome.brief, waiting: outcome.waiting })
     })
   }
 }

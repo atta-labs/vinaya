@@ -338,7 +338,33 @@ describe('renderBrief with a stubbed assembler', () => {
       ok: true,
       brief: 'BRIEF'
     })) as never)
-    expect(out).toEqual({ ok: true, brief: 'BRIEF' })
+    expect(out).toEqual({ ok: true, brief: 'BRIEF', waiting: [] })
+  })
+
+  it('asks the tranche assembly for a preview and returns the waiting reasons beside the brief', async () => {
+    const seen: unknown[] = []
+    const out = await renderBrief({ trancheSlug: 't', taskId: '2', globs: ['g'] }, (async (...args: unknown[]) => {
+      seen.push(args)
+      return { ok: true, brief: 'BRIEF', issue: 5, waiting: ['depends on 1'] }
+    }) as never)
+    expect(out).toEqual({ ok: true, brief: 'BRIEF', waiting: ['depends on 1'] })
+    expect(seen).toEqual([['t', '2', ['g'], undefined, { preview: true }]])
+  })
+
+  it('renders a single Issue by its number alone through the Issue assembly, asking for a preview', async () => {
+    const seen: unknown[] = []
+    const out = await renderBrief(
+      { issue: 42 },
+      (async () => {
+        throw new Error('the tranche assembly must not run')
+      }) as never,
+      (async (...args: unknown[]) => {
+        seen.push(args)
+        return { ok: true, brief: 'ISSUE BRIEF', issue: 42, waiting: [] }
+      }) as never
+    )
+    expect(out).toEqual({ ok: true, brief: 'ISSUE BRIEF', waiting: [] })
+    expect(seen).toEqual([[42, undefined, { preview: true }]])
   })
 
   it('returns the missing facts as a refusal', async () => {
