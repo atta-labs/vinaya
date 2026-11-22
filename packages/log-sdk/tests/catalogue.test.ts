@@ -26,6 +26,23 @@ test('GenAI names match the conventions spelling', () => {
   for (const name of ALL_ATTRIBUTE_NAMES) expect(FORBIDDEN_CONTENT_ATTRIBUTES).not.toContain(name)
 })
 
+test('the run identity, machine and effort names are in the catalogue', () => {
+  for (const name of [
+    'vinaya.runner.name',
+    'vinaya.runner.version',
+    'vinaya.cli.version',
+    'vinaya.flow.id',
+    'vinaya.flow.version',
+    'vinaya.process.digest',
+    'vinaya.settings.digest',
+    'vinaya.ci',
+    'vinaya.agent.effort',
+    'os.type'
+  ]) {
+    expect(ALL_ATTRIBUTE_NAMES).toContain(name)
+  }
+})
+
 test('every name a handle function writes is in the catalogue', () => {
   const { handle, spans, logs, errors } = harness()
   const start = new Date(1_000)

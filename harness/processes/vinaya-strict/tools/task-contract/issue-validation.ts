@@ -656,7 +656,7 @@ const VITEST_RUN_RE = /\bvitest\s+run\b/i
 const TEST_FILE_ARG_RE = /[^\s'"]+\.(?:test|spec)\.[jt]sx?\b/i
 
 /** Same length, quoted regions blanked — so an index found in the result still points at the real character in the original string. */
-function maskQuoted(s: string): string {
+export function maskQuoted(s: string): string {
   return s.replace(/'[^']*'/g, (m) => 'x'.repeat(m.length)).replace(/"[^"]*"/g, (m) => 'x'.repeat(m.length))
 }
 
@@ -668,7 +668,7 @@ function maskQuoted(s: string): string {
  * `TEST_FILE_ARG_RE` by matching the commented-out path, though the line it
  * names still runs the whole suite.
  */
-function stripLineComment(s: string): string {
+export function stripLineComment(s: string): string {
   const idx = maskQuoted(s).indexOf('#')
   return idx === -1 ? s : s.slice(0, idx)
 }
@@ -681,7 +681,7 @@ function stripLineComment(s: string): string {
  * `TEST_FILE_ARG_RE` against the whole line, though the `bun test` statement
  * that actually runs still has no file argument.
  */
-function commandStatements(command: string): string[] {
+export function commandStatements(command: string): string[] {
   const masked = maskQuoted(command)
   const statements: string[] = []
   let last = 0
@@ -814,7 +814,7 @@ const DEVELOPER_UNRUNNABLE_FOREIGN_PREFIXES: readonly (readonly string[])[] = [
 ]
 
 /** The two spellings the CLI is invoked with: repository source, and the installed binary. */
-const CLI_INVOCATION_PREFIXES: readonly (readonly string[])[] = [['bun', 'apps/cli/src/index.ts'], ['vinaya']]
+export const CLI_INVOCATION_PREFIXES: readonly (readonly string[])[] = [['bun', 'apps/cli/src/index.ts'], ['vinaya']]
 
 /** What each declared need means for the Developer, named in the refusal. */
 const DEVELOPER_LACKS: Record<string, string> = {
@@ -2915,7 +2915,7 @@ function directoryGlobFor(file: string): string {
 }
 
 /** Every backticked span in `text`, backticks stripped. The only text these rules read a token out of — free prose is never matched. */
-function backtickedSpans(text: string): string[] {
+export function backtickedSpans(text: string): string[] {
   return [...text.matchAll(/`([^`\n]+)`/g)].map((m) => m[1] as string)
 }
 
@@ -2926,7 +2926,7 @@ function backtickedSpans(text: string): string[] {
  * does not parse contributes nothing rather than failing the write (its own
  * grammar gate already refuses it, and two refusals for one defect is noise).
  */
-function introducedText(body: string): Array<{ where: string; text: string }> {
+export function introducedText(body: string): Array<{ where: string; text: string }> {
   const out: Array<{ where: string; text: string }> = []
   const objectives = objectivesOf(body)
   if (objectives.ok) for (const o of objectives.objectives) out.push({ where: o.id, text: o.text })
@@ -2966,7 +2966,7 @@ function flagsIn(span: string): string[] {
  * from `Vinaya Body Checks`, so the line is drawn where the evidence is: the
  * binary may be capitalised, the command may not.
  */
-function invokedCommandTokens(span: string, binary: string): string[] | null {
+export function invokedCommandTokens(span: string, binary: string): string[] | null {
   const words = span.trim().split(/\s+/)
   if ((words[0] ?? '').toLowerCase() !== binary.toLowerCase()) return null
   const tokens: string[] = []
@@ -2990,7 +2990,10 @@ function invokedCommandTokens(span: string, binary: string): string[] | null {
  * undocumented is a real introduction, and so is a run whose very first word
  * the reference has never heard of.
  */
-function resolveCommand(tokens: string[], names: Set<string>): { known: string | null; introduced: string | null } {
+export function resolveCommand(
+  tokens: string[],
+  names: Set<string>
+): { known: string | null; introduced: string | null } {
   if (tokens.length === 0) return { known: null, introduced: null }
   const full = tokens.join(' ')
   if (names.has(full)) return { known: full, introduced: null }
