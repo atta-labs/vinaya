@@ -195,6 +195,7 @@ import {
   scheduledFileNamed,
   type TestGroupStart
 } from '../../../../../kernel/gates/ring0-hooks/pre-push/push-progress'
+import { isPlainDirectory } from '../../../executing/actions'
 import {
   agentCommandEnv,
   agentCommandText,
@@ -1128,6 +1129,22 @@ const ROUND_TEST_OTHER_EXCERPT_CHARS = 1_200
 const ROUND_TEST_OTHER_EXCERPTS_TOTAL = 8_000
 
 /**
+ * The directory the runner group that ran `test` ran from, read from the group's start line in the capture: only a
+ * Bun group, only a plain relative path, and only when the file is under it. `undefined` when the capture holds no
+ * start line naming the file (it keeps only the last part of a run), whatever the rest of the output says.
+ */
+export function groupDirectoryOf(output: string, test: string): string | undefined {
+  for (const line of output.split('\n')) {
+    const parsed = parseTestGroupLine(line)
+    if (parsed?.kind !== 'start' || !parsed.start.tests.includes(test)) continue
+    const { runner, cwd } = parsed.start
+    if (runner !== 'bun' || !isPlainDirectory(cwd)) return undefined
+    return cwd === '.' || test.startsWith(`${cwd}/`) ? cwd : undefined
+  }
+  return undefined
+}
+
+/**
  * The output block of one test file: from its own `path:` header line up to the next test file's header, or to the
  * line that ends or starts a runner group. Inside a group whose start line is in the capture, a header is matched
  * through the group's own scheduled files, so a header printed relative to the group's directory finds its file;
@@ -1445,16 +1462,24 @@ async function runRoundTestsLocked(
           ? extractFailureExcerpt(testFileBlock(output, other), Math.min(ROUND_TEST_OTHER_EXCERPT_CHARS, budget))
           : ''
       budget -= excerpt.length
-      return { test: other, location: failureLocation(output, input.worktreePath, other), excerpt }
+      const directory = groupDirectoryOf(output, other)
+      return {
+        test: other,
+        location: failureLocation(output, input.worktreePath, other),
+        excerpt,
+        ...(directory !== undefined ? { directory } : {})
+      }
     })
     const otherFailuresOmitted = Math.max(0, named.length - 1 - MAX_OTHER_FAILURES)
+    const firstDirectory = groupDirectoryOf(output, test)
     const failedResult = done('failed', {
       ...(otherFailures.length > 0 ? { otherFailures } : {}),
       ...(otherFailuresOmitted > 0 ? { otherFailuresOmitted } : {}),
       firstFailure: {
         test,
         location: failureLocation(output, input.worktreePath, test),
-        excerpt: extractFailureExcerpt(testFileBlock(output, test) || output, ROUND_TEST_EXCERPT_CHARS)
+        excerpt: extractFailureExcerpt(testFileBlock(output, test) || output, ROUND_TEST_EXCERPT_CHARS),
+        ...(firstDirectory !== undefined ? { directory: firstDirectory } : {})
       }
     })
     ctx.log(

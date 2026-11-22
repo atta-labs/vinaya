@@ -1016,6 +1016,17 @@ function recordedReviews(results: Results): RecordedReviews | null {
 /** The id of the blocking finding a red round test adds to the code reviewer's findings. */
 export const ROUND_TEST_FINDING_ID = 'T1'
 
+/**
+ * A directory a runner group ran from that a command may name: `.` or a relative path of plain segments, never an
+ * absolute path, a parent step or a character a shell reads. The one check the recorded copy and the prompt share.
+ */
+export function isPlainDirectory(directory: string): boolean {
+  if (directory === '.') return true
+  if (directory.length > 200 || !/^[A-Za-z0-9_@][A-Za-z0-9._@-]*(\/[A-Za-z0-9_@][A-Za-z0-9._@-]*)*$/.test(directory))
+    return false
+  return directory.split('/').every((segment) => segment !== '..')
+}
+
 /** What the round-test step recorded: the round and head it ran for, and the sanitized result of its run. */
 export interface RecordedRoundTests {
   round: number
@@ -1023,9 +1034,9 @@ export interface RecordedRoundTests {
   result: {
     outcome: 'passed' | 'failed' | 'none' | 'timed_out' | 'unavailable'
     /** Set with `failed`: the first failing test, its `file:line` and its failure lines, all sanitized. */
-    firstFailure?: { test: string; location: string; excerpt: string }
+    firstFailure?: { test: string; location: string; excerpt: string; directory?: string }
     /** Every other test file the run reported failing, each with its location and excerpt, sanitized. */
-    otherFailures?: Array<{ test: string; location: string; excerpt: string }>
+    otherFailures?: Array<{ test: string; location: string; excerpt: string; directory?: string }>
     /** Failing files past the carried list, counted. */
     otherFailuresOmitted?: number
     detail?: string
@@ -1057,7 +1068,9 @@ export function failedRoundTest(results: Results): {
   test: string
   location: string
   excerpt: string
-  otherFailures: Array<{ test: string; location: string; excerpt: string }>
+  /** The directory the file's Bun runner group ran from, when the capture named it. */
+  directory?: string
+  otherFailures: Array<{ test: string; location: string; excerpt: string; directory?: string }>
   otherFailuresOmitted: number
 } | null {
   const recorded = recordedRoundTests(results)
