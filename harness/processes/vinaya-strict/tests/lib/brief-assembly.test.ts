@@ -859,22 +859,6 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
   })
 })
 
-/**
- * A tranche-labeled EDIT is not circular the way a tranche-labeled CREATE
- * is: the task already exists in its tranche's forge-derived task list, with
- * a real Issue number to look up. `resolveTrancheTaskId` is the lookup that
- * lets `forge-write.ts` route such an edit through `assembleAndRenderBrief`
- * instead of leaving the whole-brief render dormant.
- *
- * The lookup itself (`createForgeSource(...).getTranche(slug)`) goes through
- * the forge-state `gh` module, whose `execFileSync('gh', ...)`
- * calls run against a `PATH` snapshotted into a module-level constant at
- * import time — a PATH-boundary fake bin placed after that snapshot is
- * silently ignored, so only the local, network-free guard (no resolvable
- * repo at all) is unit-testable here; the same live-network gap
- * `apps/cli/tests/commands/brief-render.test.ts` documents for
- * `assembleAndRenderBrief`'s own forge reads.
- */
 describe('readinessForRender — what a preview and a start each hand the render', () => {
   const dependency = {
     class: 'depends-on-not-merged' as const,
@@ -943,6 +927,22 @@ describe('readinessForRender — what a preview and a start each hand the render
   })
 })
 
+/**
+ * A tranche-labeled EDIT is not circular the way a tranche-labeled CREATE
+ * is: the task already exists in its tranche's forge-derived task list, with
+ * a real Issue number to look up. `resolveTrancheTaskId` is the lookup that
+ * lets `forge-write.ts` route such an edit through `assembleAndRenderBrief`
+ * instead of leaving the whole-brief render dormant.
+ *
+ * The lookup itself (`createForgeSource(...).getTranche(slug)`) goes through
+ * the forge-state `gh` module, whose `execFileSync('gh', ...)`
+ * calls run against a `PATH` snapshotted into a module-level constant at
+ * import time — a PATH-boundary fake bin placed after that snapshot is
+ * silently ignored, so only the local, network-free guard (no resolvable
+ * repo at all) is unit-testable here; the same live-network gap
+ * `apps/cli/tests/commands/brief-render.test.ts` documents for
+ * `assembleAndRenderBrief`'s own forge reads.
+ */
 describe('resolveTrancheTaskId', () => {
   it('returns null when the repo cannot be resolved at all', () => {
     const originalRepo = process.env.VINAYA_REPO
