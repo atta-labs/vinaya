@@ -23,6 +23,8 @@ import {
   checkIntroducedCommandsCovered,
   checkIntroducedConfigKeysCovered,
   checkPinnedFileChecksDecided,
+  checkDecisionsText,
+  findCheckDecisions,
   checkPinnedFileImportersCovered,
   decidePinnedFileImporters,
   surfaceForcedSet,
@@ -4195,5 +4197,73 @@ describe('checkPinnedFileChecksDecided', () => {
   it('passes once the check carries a decision naming how the change satisfies it', () => {
     const decided = body('`reader-resolvable-prose`: the new prose cites no Issue number and no tranche name.')
     expect(checkPinnedFileChecksDecided(decided, covering).status).toBe('pass')
+  })
+
+  it.each([
+    ['a hyphen', '-'],
+    ['an en dash', '–'],
+    ['an em dash', '—']
+  ])('accepts a decision whose separator is %s', (_name, sep) => {
+    const decided = body(`\`reader-resolvable-prose\` ${sep} the new prose cites no Issue number.`)
+    expect(checkPinnedFileChecksDecided(decided, covering).status).toBe('pass')
+  })
+
+  it('accepts a decision whose sentence begins on the next line', () => {
+    const decided = body('`reader-resolvable-prose`:\nthe new prose cites no Issue number.')
+    expect(checkPinnedFileChecksDecided(decided, covering).status).toBe('pass')
+  })
+
+  it('refuses a bare mention with no separator and sentence after it', () => {
+    expect(checkPinnedFileChecksDecided(body('`reader-resolvable-prose` is relevant here.'), covering).status).toBe(
+      'fail'
+    )
+  })
+})
+
+describe('findCheckDecisions', () => {
+  it('returns each decision from the check name to the end of its line, and ignores bare mentions', () => {
+    const text = [
+      '`a-check`: the change satisfies it here.',
+      '- `b-check` — the list item decides it too, and more.',
+      'Prose then `a-check` - decided inline by this sentence.',
+      '`c-check` is only mentioned in passing.',
+      '`not-a-check`: a sentence of several words.',
+      '`b-check`:',
+      'the sentence starts on the next line.'
+    ].join('\n')
+    expect(findCheckDecisions(text, ['a-check', 'b-check', 'c-check']).map((d) => d.text)).toEqual([
+      '`a-check`: the change satisfies it here.',
+      '`b-check` — the list item decides it too, and more.',
+      '`a-check` - decided inline by this sentence.',
+      '`b-check`:'
+    ])
+  })
+})
+
+describe('checkDecisionsText', () => {
+  const checks = ['a-check', 'b-check']
+  it('is null when the body carries no decision and no such section', () => {
+    expect(checkDecisionsText('## Objectives\n\nO1. x.\n\n`a-check` only named.\n', checks)).toBeNull()
+  })
+
+  it('carries a section whole and lists its decision once, with the others after it', () => {
+    const body = [
+      '## Covering checks',
+      '',
+      'These checks cover the pinned files:',
+      '`a-check`: satisfied by the change itself.',
+      '',
+      '## Origin',
+      '',
+      'Prose `b-check`: decided outside the section here.'
+    ].join('\n')
+    expect(checkDecisionsText(body, checks)).toBe(
+      [
+        'These checks cover the pinned files:',
+        '`a-check`: satisfied by the change itself.',
+        '',
+        '`b-check`: decided outside the section here.'
+      ].join('\n')
+    )
   })
 })

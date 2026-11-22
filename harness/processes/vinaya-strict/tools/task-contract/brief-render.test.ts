@@ -5,6 +5,7 @@ import { checkBriefSections, checkConsumerTests, checkPremiseCoverage, checkWork
 import { NEW_FILES_ONLY_PREMISE } from './premise-check'
 import { ISSUE_SECTIONS, RATIONALE_FIELD_SPECS } from './issue-sections'
 import {
+  checkDecisionsText,
   checkIssueRationale,
   parseIssueParts,
   parseIssueStopConditions,
@@ -1137,6 +1138,73 @@ describe('renderBrief — end-to-end from a real Issue body (#426 fixture)', () 
   })
 })
 
+describe('renderBrief — the `## Check decisions` section', () => {
+  const NAMES = ['changeset-coverage', 'doc-claims', 'atta-labs/process-version-bump']
+  const render = (body: string, overrides: Partial<BriefFacts> = {}) => {
+    const result = renderBrief(baseFacts({ checkDecisions: checkDecisionsText(body, NAMES), ...overrides }), TEMPLATE)
+    expect(result.ok).toBe(true)
+    return result.ok ? result.brief : ''
+  }
+  const sectionOf = (brief: string): string => {
+    const at = brief.indexOf('## Check decisions')
+    return at === -1 ? '' : brief.slice(at, brief.indexOf('\n## ', at + 1))
+  }
+
+  it('omits the heading when the Issue carries no decision and no such section', () => {
+    const brief = render('## Documentation\n\n- `changeset-coverage` is only named here (O1)\n')
+    expect(brief).not.toContain('## Check decisions')
+  })
+
+  it('carries decisions written at a line start, as a list item, inside a sentence and for a configuration-only check, each from its name to the end of its line', () => {
+    const brief = render(
+      [
+        '**Traps to avoid** — do not skip it.',
+        '`changeset-coverage`: one patch changeset for the package.',
+        '- `doc-claims` — no marker is added or removed here.',
+        'The Planner notes `atta-labs/process-version-bump` - no bump is required by this change, so none is made.',
+        ''
+      ].join('\n')
+    )
+    const section = sectionOf(brief)
+    expect(section).toContain('`changeset-coverage`: one patch changeset for the package.')
+    expect(section).toContain('`doc-claims` — no marker is added or removed here.')
+    expect(section).toContain('`atta-labs/process-version-bump` - no bump is required by this change, so none is made.')
+    expect(section).not.toContain('The Planner notes')
+    expect(brief.indexOf('## Check decisions')).toBeLessThan(brief.indexOf('## 2. Context'))
+  })
+
+  it('carries a Covering checks section whole, and lists its decision once', () => {
+    const brief = render(
+      '## Covering checks\n\nThe checks below cover the pinned files:\n`doc-claims`: no claim marker is added here.\n'
+    )
+    const section = sectionOf(brief)
+    expect(section).toContain('The checks below cover the pinned files:')
+    expect(section.split('`doc-claims`: no claim marker is added here.').length - 1).toBe(1)
+  })
+
+  it('writes a quoted command the way the rendered-for repository runs it', () => {
+    const brief = render('`doc-claims`: run `vinaya check doc-claims` before publishing.\n', {
+      cliInvocation: 'npx --yes @attalabs/vinaya@9.9.9'
+    })
+    expect(sectionOf(brief)).toContain('run `npx --yes @attalabs/vinaya@9.9.9 check doc-claims` before')
+  })
+
+  it('leaves out a Documentation entry, a bare mention and a code span that names no check', () => {
+    const brief = render(
+      [
+        '## Documentation',
+        '',
+        '- `harness/some/page.md` — the page the task reads (O1)',
+        '',
+        'The task touches `doc-claims` and `changeset-coverage`.',
+        '`not-a-check`: a sentence of several words.',
+        ''
+      ].join('\n')
+    )
+    expect(brief).not.toContain('## Check decisions')
+  })
+})
+
 /**
  * The Issue's premises render under their own
  * heading, so a Developer reads them as checked facts rather than as more
@@ -1382,6 +1450,7 @@ describe('renderBrief — every carried Issue section reaches the brief (the sha
         surface: { in: ['packages/core/src'], out: [`packages/${marker('surface')}`] },
         parts: [{ n: 1, objectiveIds: [1], text: `${marker('part')} work.` }],
         testPlan: { kind: 'commands', lines: [`bun test ${marker('testplan')} → 0 fail`], principal: [], live: [] },
+        checkDecisions: `\`doc-claims\`: ${marker('checks')} decided here.`,
         stopConditions: [`${marker('stop')} condition.`]
       }),
       TEMPLATE
@@ -1394,6 +1463,8 @@ describe('renderBrief — every carried Issue section reaches the brief (the sha
     Objectives: 'objective',
     Documentation: 'doc',
     Premises: 'premise',
+    'Check decisions': 'checks',
+    'Covering checks': 'checks',
     Surface: 'surface',
     Parts: 'part',
     'Test plan': 'testplan',
