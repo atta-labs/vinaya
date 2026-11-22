@@ -1193,6 +1193,63 @@ describe('renderBrief — the `## Premises` section', () => {
   })
 })
 
+describe('renderBrief — the documentation-update list carries the Docs to keep coherent field', () => {
+  const DOC_OWNERS = [
+    'packages/core/src/** docs/bound-one.md',
+    'packages/core/src/** docs/named.md',
+    'packages/core/src/** docs/named.md.old'
+  ].join('\n')
+  const bodyWithDocs = (docs: string): string => ISSUE_BODY.replace('**Docs to keep coherent** — no-doc-surface.', docs)
+  const section7 = (brief: string): string =>
+    /## 7\. Documentation-update list\n([\s\S]*?)\n\n## 8\./.exec(brief)?.[1] ?? ''
+  const render = (docs: string, docOwnersContent: string | null = DOC_OWNERS): string => {
+    const result = renderBrief(
+      baseFacts({ rationale: parseRationaleFields(bodyWithDocs(docs)), docOwnersContent }),
+      TEMPLATE
+    )
+    expect(result.ok).toBe(true)
+    return result.ok ? section7(result.brief) : ''
+  }
+
+  it('lists a doc the field names that no binding matches, with the Planner words about it', () => {
+    const list = render('**Docs to keep coherent** — `docs/unbound.md` — the flow chart changes here.', null)
+    expect(list).toContain('docs/unbound.md')
+    expect(list).toContain('the flow chart changes here')
+  })
+
+  it('lists a derived doc the field does not name, once', () => {
+    const list = render('**Docs to keep coherent** — `docs/unbound.md` — flow chart.')
+    expect(list).toContain('docs/unbound.md')
+    expect(list.split('docs/bound-one.md').length - 1).toBe(1)
+  })
+
+  it('lists a doc both sources name once, and does not let a path hide a longer path that starts with it', () => {
+    const list = render('**Docs to keep coherent** — `docs/named.md` — updated table.')
+    expect(list.match(/docs\/named\.md(?!\.old)/g)?.length).toBe(1)
+    expect(list).toContain('docs/named.md.old')
+  })
+
+  it('carries check decision lines written below the field', () => {
+    const list = render(
+      '**Docs to keep coherent** — `docs/unbound.md` — flow chart.\n`check-foo` — not affected: no rule changes.\n`check-bar` — affected: new row.'
+    )
+    expect(list).toContain('`check-foo` — not affected: no rule changes.')
+    expect(list).toContain('`check-bar` — affected: new row.')
+  })
+
+  it('shows the no-doc-surface sentinel with its reason', () => {
+    const list = render('**Docs to keep coherent** — no-doc-surface: the change touches no documented behaviour.', null)
+    expect(list).toContain('no-doc-surface: the change touches no documented behaviour.')
+  })
+
+  it('keeps the zero-binding sentence when the Issue has no such field and nothing is derived', () => {
+    const body = ISSUE_BODY.replace('**Docs to keep coherent** — no-doc-surface.', '')
+    const result = renderBrief(baseFacts({ rationale: parseRationaleFields(body) }), TEMPLATE)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(section7(result.brief)).toContain('no mechanically-derived doc updates')
+  })
+})
+
 // The render, the brief template and the PR report template once told the
 // Developer things the controller's own tools refuse or already do. One absence list, held against all three texts, so
 // none of them can carry a retired instruction back alone.
