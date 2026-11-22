@@ -77,7 +77,7 @@ test('seats read as recorded without seat names and by their reading names with 
     { [A.agentName]: 'developer', [A.errorType]: 'timeout' },
     { kind: 'span' }
   )
-  expect(narrate(failed, names)).toBeNull()
+  expect(narrate(failed, names)).toEqual({ kind: 'failed', text: 'The developer stopped on an error (timeout).' })
 })
 
 test('pauses and stops read from the reason table, and a round end carries the confidence clause', () => {

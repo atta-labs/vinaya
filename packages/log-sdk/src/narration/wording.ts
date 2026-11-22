@@ -75,7 +75,7 @@ function startOfSentence(phrase: string): string {
   return `${phrase[0]?.toUpperCase() ?? ''}${phrase.slice(1)}`
 }
 
-function roundLabel(round: number | null): string {
+export function roundLabel(round: number | null): string {
   return round === null ? 'The round' : `Round ${round}`
 }
 
@@ -228,8 +228,10 @@ export function driverExitedLine(detail: {
       }
     case 'signal':
       return { kind: 'failed', text: `The driver was stopped by a signal${exitWords}.` }
-    default:
-      return { kind: 'information', text: `The driver exited${exitWords}.` }
+    default: {
+      const named = codeOf(detail.reason)
+      return { kind: 'information', text: `The driver exited${named === null ? '' : `: ${named}`}${exitWords}.` }
+    }
   }
 }
 
@@ -264,4 +266,243 @@ export function turnEndedLine(detail: { subject: string; escalation: { class: st
     }
   }
   return { kind: 'done', text: `${who} finished its turn.` }
+}
+
+const line = (kind: NarrationKind, text: string): NarrationLine => ({ kind, text })
+
+/** The stage words the loop's follow view uses, by stage code. */
+const STAGE_WORDS: Record<string, string> = {
+  develop: 'develop',
+  local_checks: 'local checks',
+  review: 'review',
+  ready_push: 'ready push',
+  focused_checks: 'focused checks at ready',
+  pr_opened: 'pull request opened',
+  required_ci: 'waiting on required CI',
+  waiting_merge: 'waiting for merge',
+  paused_developer: 'paused for the Developer',
+  paused_operator: 'paused for the Operator',
+  paused_principal: 'paused for the Principal'
+}
+
+/** The step-kind words the agent line uses, by step kind, as a continuing action. */
+const STEP_WORDS: Record<string, string> = {
+  reading: 'reading',
+  searching: 'searching',
+  editing: 'editing',
+  creating: 'creating',
+  removing: 'removing',
+  running_tests: 'running tests',
+  type_checking: 'type-checking',
+  git: 'running git',
+  github: 'using GitHub',
+  tool_request: 'requesting tool',
+  skill: 'using skill',
+  fetching: 'fetching',
+  delegating: 'delegating'
+}
+
+/** What a person is asked to decide, in words, by decision code. A decision absent here reads as its code. */
+const DECISION_WORDS: Record<string, string> = { ruling: 'a ruling is owed' }
+
+function pullRequest(change: string | null): string {
+  return change === null ? 'The pull request' : `Pull request ${change}`
+}
+
+export function runStartedLine(): NarrationLine {
+  return line('starting', 'The run started.')
+}
+
+export function runEndedLine(outcome: string | null): NarrationLine {
+  if (outcome === 'ready') return line('done', 'The run ended: the work is ready.')
+  return line('information', outcome === null ? 'The run ended.' : `The run ended: ${outcome}.`)
+}
+
+export function aliveLine(round: number | null): NarrationLine {
+  return line('working', `${round === null ? 'The run' : roundLabel(round)} is still going.`)
+}
+
+export function stageChangedLine(stage: string | null, round: number | null): NarrationLine {
+  const code = codeOf(stage)
+  const words = code === null ? null : (STAGE_WORDS[code] ?? code)
+  const text = words === null ? `${roundLabel(round)}: the stage changed.` : `${roundLabel(round)}: ${words}.`
+  return line(code !== null && code.startsWith('paused_') && code in STAGE_WORDS ? 'waiting' : 'information', text)
+}
+
+export function pauseEndedLine(by: string | null): NarrationLine {
+  return line('information', `The pause ended${by === null ? '' : ` (${by})`}.`)
+}
+
+export function cancelledLine(by: string | null): NarrationLine {
+  return line('information', `The run was cancelled${by === null ? '' : ` by ${by}`}.`)
+}
+
+export function retriedLine(detail: {
+  failed: string | null
+  tries: number | null
+  recovered: boolean
+}): NarrationLine {
+  const what = detail.failed ?? 'a step'
+  const tries = detail.tries === null ? '' : ` after ${detail.tries} ${detail.tries === 1 ? 'try' : 'tries'}`
+  return detail.recovered
+    ? line('information', `Retried ${what}: it recovered${tries}.`)
+    : line('failed', `Retried ${what}: it did not recover${tries}.`)
+}
+
+export function phaseEndedLine(phase: string | null, errorType: string | null): NarrationLine {
+  const label = phase === null ? 'The phase' : `The ${phase} phase`
+  return errorType === null ? line('done', `${label} ended.`) : line('failed', `${label} failed (${errorType}).`)
+}
+
+export function agentFailedLine(subject: string, errorType: string | null): NarrationLine {
+  return line(
+    'failed',
+    `${startOfSentence(subject)} stopped on an error${errorType === null ? '' : ` (${errorType})`}.`
+  )
+}
+
+export function stepStartedLine(subject: string, kind: string | null, target: string | null): NarrationLine {
+  const doing = (kind === null ? undefined : STEP_WORDS[kind]) ?? 'working'
+  return line('working', `${startOfSentence(subject)} is ${doing}${target === null ? '' : ` ${target}`}.`)
+}
+
+export function stepEndedLine(tool: string | null, errorType: string | null): NarrationLine {
+  const label = tool === null ? 'A step' : `The ${tool} step`
+  return errorType === null ? line('done', `${label} finished.`) : line('failed', `${label} failed (${errorType}).`)
+}
+
+export function confidenceStatedLine(round: number | null, value: unknown): NarrationLine {
+  const stated = wholeOf(value) !== null ? `${value}` : '—'
+  return line('information', `${roundLabel(round)}: confidence stated as ${stated}.`)
+}
+
+export function usageRecordedLine(detail: {
+  input: number | null
+  output: number | null
+  unknownReason: string | null
+}): NarrationLine {
+  if (detail.input === null && detail.output === null)
+    return line('information', `Usage was not known${detail.unknownReason ? `: ${detail.unknownReason}` : ''}.`)
+  const parts: string[] = []
+  if (detail.input !== null) parts.push(`${detail.input} tokens in`)
+  if (detail.output !== null) parts.push(`${detail.output} out`)
+  return line('information', `Usage recorded: ${parts.join(', ')}.`)
+}
+
+export function findingsComparedLine(count: {
+  open: number
+  resolved: number
+  fresh: number
+  recurring: number
+}): NarrationLine {
+  return line(
+    'information',
+    `Findings compared: ${count.open} open, ${count.resolved} resolved, ${count.fresh} new, ${count.recurring} recurring.`
+  )
+}
+
+export function checksEndedLine(detail: {
+  where: string | null
+  result: string | null
+  ran: number | null
+  failed: number | null
+}): NarrationLine {
+  const where = detail.where === null ? 'The' : `The ${detail.where}`
+  const { result } = detail
+  if (result === 'passed' || result === 'green') return line('done', `${where} checks passed.`)
+  if (result === 'failed' || result === 'red') return line('failed', `${where} checks failed.`)
+  if (result === 'pending') return line('waiting', `${where} checks are pending.`)
+  if (result === null && detail.ran !== null && detail.failed !== null)
+    return detail.failed === 0 ? line('done', `${where} checks passed.`) : line('failed', `${where} checks failed.`)
+  return line('information', `${where} checks ended${result === null ? '' : `: ${result}`}.`)
+}
+
+export function checkNotPassedLine(name: string | null, result: string | null): NarrationLine {
+  return line(
+    'failed',
+    `${name === null ? 'A check' : `Check ${name}`} did not pass${result === null ? '' : ` (${result})`}.`
+  )
+}
+
+export function changeSavedLine(branch: string | null): NarrationLine {
+  return line('information', `The work was saved${branch === null ? '' : ` on branch ${branch}`}.`)
+}
+
+export function changePushedLine(result: string | null): NarrationLine {
+  if (result === 'passed') return line('done', 'The push passed its checks.')
+  if (result === 'refused') return line('failed', 'The push was refused.')
+  return line('information', 'The work was pushed.')
+}
+
+export function changeOpenedLine(change: string | null): NarrationLine {
+  return line('done', change === null ? 'Ready: a pull request.' : `Ready: pull request ${change}.`)
+}
+
+export function changeRecoveredLine(): NarrationLine {
+  return line('information', 'The pull request recovered from its conflict.')
+}
+
+export function changeMergedLine(change: string | null): NarrationLine {
+  return line('done', `${pullRequest(change)} was merged.`)
+}
+
+export function changeClosedLine(change: string | null): NarrationLine {
+  return line('information', `${pullRequest(change)} was closed without merging.`)
+}
+
+export function changeRevertedLine(change: string | null): NarrationLine {
+  return line('information', `${pullRequest(change)} was reverted.`)
+}
+
+export function changeIncidentLine(change: string | null, severity: string | null): NarrationLine {
+  return line('failed', `${pullRequest(change)} caused an incident${severity === null ? '' : ` (${severity})`}.`)
+}
+
+export function personAskedLine(decision: string | null, why: string | null): NarrationLine {
+  const code = codeOf(decision) ?? codeOf(why)
+  if (code === null) return line('waiting', 'Waiting for a person.')
+  return line('waiting', `Waiting for a person: ${DECISION_WORDS[code] ?? code}.`)
+}
+
+export function personAnsweredLine(answer: string | null): NarrationLine {
+  return line('information', `A person answered${answer === null ? '' : `: ${answer}`}.`)
+}
+
+function outside(action: string | null, target: string | null): string {
+  return [action, target].filter((part) => part !== null).join(' ') || 'an outside action'
+}
+
+export function forgeValidatedLine(action: string | null, target: string | null): NarrationLine {
+  return line('information', `Checked a forge write: ${outside(action, target)}.`)
+}
+
+export function forgeRefusedLine(action: string | null, target: string | null, why: string | null): NarrationLine {
+  return line('blocked', `A forge write was refused: ${outside(action, target)}${why === null ? '' : ` (${why})`}.`)
+}
+
+export function forgeWrittenLine(action: string | null, target: string | null): NarrationLine {
+  return line('done', `Wrote to the forge: ${outside(action, target)}.`)
+}
+
+export function actionVerifiedLine(action: string | null, target: string | null, result: string | null): NarrationLine {
+  const what = outside(action, target)
+  if (result === 'success') return line('done', `Verified: ${what}.`)
+  if (result === 'failure') return line('failed', `Verification failed: ${what}.`)
+  return line('information', `Could not be sure of: ${what}.`)
+}
+
+export function commandCompletedLine(
+  action: string | null,
+  target: string | null,
+  result: string | null
+): NarrationLine {
+  const what = outside(action, target)
+  if (result === 'ok') return line('done', `Command finished: ${what}.`)
+  if (result === 'error') return line('failed', `Command failed: ${what}.`)
+  if (result === 'timeout') return line('failed', `Command timed out: ${what}.`)
+  return line('information', `Command ended${result === null ? '' : ` (${result})`}: ${what}.`)
+}
+
+export function customEventLine(name: string): NarrationLine {
+  return line('information', `Event ${name} was recorded.`)
 }
