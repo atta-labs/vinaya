@@ -30,7 +30,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-lifecycle.ts",
-        "sha256": "958a547f82db1acd194c37e5ef37e886e57d68479c9c772c8ceafe5b0266b955"
+        "sha256": "5a01102a65836fc483c64fb1f93f86d26522bf0317bbc9e6e983d71eedc85a31"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/gate-reading.ts",
@@ -154,7 +154,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-start.ts",
-        "sha256": "de053e02efb84b77f82197a5c94e0ab7b6fe8a92d2fd455d73ce083101473592"
+        "sha256": "14a5dc00eb7ae4666303a6552a5a146d39862004f3326f558358e40260be5782"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-state.ts",

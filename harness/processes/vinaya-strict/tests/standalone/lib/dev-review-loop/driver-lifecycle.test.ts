@@ -48,12 +48,17 @@ describe('the run lifecycle through the run handle', () => {
       models: { developer: 'opus', security: 'sonnet' }
     }
   })
-  const write = (world: RunLifecycleWorld, recorder: RunRecorder, event: DevReviewLoopEventInput): void => {
+  const write = (
+    world: RunLifecycleWorld,
+    recorder: RunRecorder,
+    event: DevReviewLoopEventInput,
+    round?: number
+  ): void => {
     expect(
       writeRunLifecycleEvent(
         event,
         { runId: 'run-1', repository: 'atta-labs/vinaya' },
-        { recorder, runtimeDir: () => world.runtimeDir }
+        { recorder, runtimeDir: () => world.runtimeDir, ...(round === undefined ? {} : { round }) }
       )
     ).toBe(true)
   }
@@ -94,14 +99,16 @@ describe('the run lifecycle through the run handle', () => {
   it('writes the alive event after two minutes of silence, and the exit with its kind and code', async () => {
     const world = createRunLifecycleWorld()
     const recorder = world.process()
-    write(world, recorder, started)
+    write(world, recorder, started, 3)
     world.advance(119_000)
     expect(world.events().filter((e) => eventNameOf(e) === 'vinaya.run.alive')).toHaveLength(0)
     world.advance(2_000)
     await recorder.drain()
     const alive = world.events().filter((e) => eventNameOf(e) === 'vinaya.run.alive')
     expect(alive).toHaveLength(1)
-    // The standalone runner records no stage change, so its alive carries no phase.
+    // The standalone runner supplies the round it is in, and records no stage change, so its alive carries the round
+    // and no phase.
+    expect(attributeOf(alive[0], 'vinaya.round.number')).toBe(3)
     expect(attributeOf(alive[0], 'vinaya.phase.name')).toBeUndefined()
     write(
       world,

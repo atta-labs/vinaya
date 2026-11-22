@@ -84,6 +84,25 @@ const EXIT_KINDS: Readonly<Record<string, 'finished' | 'paused' | 'restarted' | 
 /** The handles this process has started, or carried on, a run on: a process works on a run from one start. */
 const startedHandles = new WeakSet<object>()
 
+/** The round each handle has open, so one round is started on it once. */
+const openRounds = new WeakMap<object, number>()
+
+/**
+ * Starts `number` as the open round on the run's handle, once per round, so the handle's automatic `run.alive`
+ * carries it. A process that carries on a run takes the open round from the copy; this only moves it on.
+ */
+export function startRoundOnHandle(
+  where: { runId: string; repository?: string | undefined },
+  number: number,
+  options: { recorder?: Pick<ReturnType<typeof runRecorder>, 'handle'> } = {}
+): void {
+  const log = (options.recorder ?? runRecorder()).handle(where.runId, where.repository)
+  if (log === undefined || !Number.isInteger(number) || number < 1) return
+  if (openRounds.get(log) === number) return
+  openRounds.set(log, number)
+  log.round.started({ number })
+}
+
 /** The runs a pause was written for in this process and not yet resumed: such a run is waiting, not ended. */
 const pausedRuns = new Set<string>()
 
@@ -100,7 +119,12 @@ const textOf = (value: unknown): string | undefined => (typeof value === 'string
 export function writeRunLifecycleEvent(
   event: DevReviewLoopEventInput | { kind?: unknown; event?: unknown },
   where: { runId: string; repository?: string | undefined },
-  options: { runtimeDir?: () => string; recorder?: Pick<ReturnType<typeof runRecorder>, 'handle'> } = {}
+  options: {
+    runtimeDir?: () => string
+    recorder?: Pick<ReturnType<typeof runRecorder>, 'handle'>
+    /** The round the run is in as this process starts or carries it on. */
+    round?: number
+  } = {}
 ): boolean {
   if (!isRunLifecycleEvent(event)) return false
   const e = event as unknown as Record<string, unknown>
@@ -135,6 +159,7 @@ export function writeRunLifecycleEvent(
         ...(policy.max_rounds === undefined ? {} : { roundLimit: policy.max_rounds }),
         seats
       })
+      if (options.round !== undefined) startRoundOnHandle(where, options.round, options)
       break
     }
     case 'paused':

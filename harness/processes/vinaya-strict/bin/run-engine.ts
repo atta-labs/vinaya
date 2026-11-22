@@ -1727,10 +1727,14 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   try {
     const loopState = options.taskInput?.loopState
     if (loopState !== undefined && options.sink.runId !== undefined)
-      writeRunLifecycleEvent(loopStartedEvent(loopState), {
-        runId: options.sink.runId,
-        ...(resolvedRepo === null ? {} : { repository: `${resolvedRepo.owner}/${resolvedRepo.repo}` })
-      })
+      writeRunLifecycleEvent(
+        loopStartedEvent(loopState),
+        {
+          runId: options.sink.runId,
+          ...(resolvedRepo === null ? {} : { repository: `${resolvedRepo.owner}/${resolvedRepo.repo}` })
+        },
+        { round: options.taskInput?.reviewRound?.() ?? 1 }
+      )
   } catch {
     // A run that cannot be started on its handle still runs.
   }

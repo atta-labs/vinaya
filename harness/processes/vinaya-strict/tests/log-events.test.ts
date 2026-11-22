@@ -773,12 +773,11 @@ describe('the Engine path writes the run lifecycle through the run Log handle', 
         policy: { max_rounds: 3, reviewers: ['code-reviewer', 'security'], models: { developer: 'opus' } }
       } as never,
       where,
-      { recorder, runtimeDir: () => world.runtimeDir }
+      { recorder, runtimeDir: () => world.runtimeDir, round: 2 }
     )
     const paused = await runLeg(run.translator, () => startProcessRun(run.options), { resumed: false })
     expect(paused.reason).toBe('paused')
     // The Engine records stage changes: the run is in review of round 2 when two minutes pass with no record.
-    recorder.handle(where.runId, where.repository)?.round.started({ number: 2 })
     recorder.stageChanged({ stage: 'review', round: 2 }, where.runId)
     world.advance(121_000)
     await recorder.drain()

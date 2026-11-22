@@ -65,7 +65,7 @@ import { rateLimitPauseDetail } from './round-assess.js'
 import { RateLimitWaitsSpent } from './round-assess.js'
 import type { StopEvent } from './stop-decision.js'
 import { pauseForDriverError } from './stop-decision.js'
-import { keepDriverLock, writeRunLifecycleEvent } from './driver-lifecycle.js'
+import { keepDriverLock, startRoundOnHandle, writeRunLifecycleEvent } from './driver-lifecycle.js'
 import { loopStartedEvent } from '../../../../tools/dev-review-policy/assess-round'
 import { spendsInfrastructureRetry } from './round-assess.js'
 
@@ -516,6 +516,11 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
     // record survived — the control store and the forge markers together
     // are the round-history source, never the Log.
     if (c.recoveredLoopState.status === 'ok') c.round = Math.max(c.round, c.recoveredLoopState.value.round)
+    // The round is settled: the run's handle holds it open, so its alive carries it.
+    startRoundOnHandle(
+      { runId: c.runId, ...(c.repo === null ? {} : { repository: `${c.repo.owner}/${c.repo.repo}` }) },
+      c.round
+    )
 
     // Held back from `logEvents` until `publishRound` (below) actually
     // succeeds — `assessRound`'s one `journal_finalized`/`merged_ready` event
