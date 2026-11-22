@@ -14,6 +14,7 @@ import {
   DRAFT_ISSUE_SENTINEL,
   fastForwardToRemoteIfSafe,
   readFileAtRevision,
+  readinessForRender,
   repoBriefCommandFacts,
   step0InstallCommand,
   resolveBoundaryPaths,
@@ -801,6 +802,48 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
     })
   })
 
+  it('a preview of a task that can start carries no waiting reason; a render made to start carries no waiting field', async () => {
+    const body = [
+      '**Project:** cli',
+      '',
+      '## Objectives',
+      '',
+      'O1. The fixture previews a task with nothing open.',
+      '',
+      '## Documentation',
+      '',
+      'None.',
+      '',
+      '## Surface',
+      '',
+      'in: src',
+      'out: —',
+      '',
+      '## Parts',
+      '',
+      'Part 1 (O1) — proves a task with nothing open previews with no reason.',
+      '',
+      '## Test plan',
+      '',
+      'Test Plan: unit-tests-only',
+      '',
+      '## Stop conditions',
+      '',
+      '- None.',
+      '',
+      RATIONALE
+    ].join('\n')
+    const draft = { title: '[fixture] draft issue', body, labels: [] }
+
+    const preview = await assembleAndRenderBriefForIssue(DRAFT_ISSUE_SENTINEL, draft, { preview: true })
+    expect(preview.ok, JSON.stringify(preview)).toBe(true)
+    if (preview.ok) expect(preview.waiting).toEqual([])
+
+    const start = await assembleAndRenderBriefForIssue(DRAFT_ISSUE_SENTINEL, draft)
+    expect(start.ok, JSON.stringify(start)).toBe(true)
+    if (start.ok) expect('waiting' in start).toBe(false)
+  })
+
   it('refuses (never rendering) when the override body carries a `vinaya/tranche:*` label — that shape belongs to the tranche path', () => {
     const result = assembleAndRenderBriefForIssue(DRAFT_ISSUE_SENTINEL, {
       title: '[fixture] draft issue',
@@ -832,6 +875,74 @@ describe('assembleAndRenderBriefForIssue — pre-write override', () => {
  * `apps/cli/tests/commands/brief-render.test.ts` documents for
  * `assembleAndRenderBrief`'s own forge reads.
  */
+describe('readinessForRender — what a preview and a start each hand the render', () => {
+  const dependency = {
+    class: 'depends-on-not-merged' as const,
+    message: 'dispatch-gate depends-on: task 2 depends on 1 (#10), whose PR is not merged yet'
+  }
+  const conflict = {
+    class: 'conflicts-with' as const,
+    message: 'dispatch-gate conflicts-with: task 2 conflicts with 3 (#11), whose PR is open or in-flight'
+  }
+  const unresolvable = { class: 'depends-on-unresolvable' as const, message: 'dispatch-gate depends-on: UNRESOLVABLE' }
+  const gateOf = (...details: Array<typeof dependency | typeof conflict | typeof unresolvable>) => ({
+    ready: details.length === 0,
+    blockers: details.map((d) => d.message),
+    blockerDetails: details
+  })
+
+  it('a preview of a task with an open dependency is ready, naming the dependency as waiting, and holds back deferred premises', () => {
+    expect(readinessForRender(gateOf(dependency), true)).toEqual({
+      ready: true,
+      blockers: [],
+      waiting: [dependency.message],
+      holdBackDeferredPremises: true
+    })
+  })
+
+  it('a preview of a task with an open conflicting task is ready, naming that task as waiting', () => {
+    const r = readinessForRender(gateOf(conflict), true)
+    expect(r.ready).toBe(true)
+    expect(r.waiting).toEqual([conflict.message])
+  })
+
+  it('a preview with both an open dependency and an open conflicting task names both and still holds back deferred premises', () => {
+    const r = readinessForRender(gateOf(dependency, conflict), true)
+    expect(r.ready).toBe(true)
+    expect(r.waiting).toEqual([dependency.message, conflict.message])
+    expect(r.holdBackDeferredPremises).toBe(true)
+  })
+
+  it('a render made to start refuses an open dependency with the same blocker as before', () => {
+    expect(readinessForRender(gateOf(dependency), false)).toEqual({
+      ready: false,
+      blockers: [dependency.message],
+      waiting: [],
+      holdBackDeferredPremises: true
+    })
+  })
+
+  it('a render made to start holds back deferred premises only when an open dependency is the only blocker', () => {
+    expect(readinessForRender(gateOf(dependency, conflict), false).holdBackDeferredPremises).toBe(false)
+  })
+
+  it('a preview still refuses when any blocker is not a waiting one', () => {
+    const r = readinessForRender(gateOf(dependency, unresolvable), true)
+    expect(r.ready).toBe(false)
+    expect(r.blockers).toEqual([dependency.message, unresolvable.message])
+    expect(r.waiting).toEqual([])
+  })
+
+  it('a task with nothing open previews ready with no waiting reason', () => {
+    expect(readinessForRender(gateOf(), true)).toEqual({
+      ready: true,
+      blockers: [],
+      waiting: [],
+      holdBackDeferredPremises: false
+    })
+  })
+})
+
 describe('resolveTrancheTaskId', () => {
   it('returns null when the repo cannot be resolved at all', () => {
     const originalRepo = process.env.VINAYA_REPO

@@ -46,7 +46,7 @@ function stubOps(
     },
     renderBrief: async (input) => {
       calls.push({ op: 'brief', arg: input })
-      return { ok: true, brief: '# brief' }
+      return { ok: true, brief: '# brief', waiting: [] }
     },
     ...over
   }
@@ -133,9 +133,33 @@ describe('success returns the library’s outcome', () => {
     const ops = stubOps()
     expect(await call(ops, 'brief_render', { tranche: 't', id: '3' })).toEqual({
       ok: true,
-      result: { brief: '# brief' }
+      result: { brief: '# brief', waiting: [] }
     })
     expect(ops.calls[0]?.arg).toEqual({ trancheSlug: 't', taskId: '3' })
+  })
+  it('brief_render returns the brief with the reasons the task cannot start yet', async () => {
+    const ops = stubOps({
+      renderBrief: async () => ({ ok: true, brief: '# brief', waiting: ['depends on task 1'] })
+    })
+    expect(await call(ops, 'brief_render', { tranche: 't', id: '3' })).toEqual({
+      ok: true,
+      result: { brief: '# brief', waiting: ['depends on task 1'] }
+    })
+  })
+  it('brief_render with an Issue number alone returns that Issue’s brief', async () => {
+    const ops = stubOps()
+    expect(await call(ops, 'brief_render', { issue: 12 })).toEqual({
+      ok: true,
+      result: { brief: '# brief', waiting: [] }
+    })
+    expect(ops.calls[0]?.arg).toEqual({ issue: 12 })
+  })
+  it('brief_render refuses an Issue number given with a tranche and task id, and an address with neither', async () => {
+    const ops = stubOps()
+    expect((await call(ops, 'brief_render', { issue: 12, tranche: 't', id: '3' })).ok).toBe(false)
+    expect((await call(ops, 'brief_render', { tranche: 't' })).ok).toBe(false)
+    expect((await call(ops, 'brief_render', {})).ok).toBe(false)
+    expect(ops.calls).toEqual([])
   })
 })
 

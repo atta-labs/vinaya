@@ -14,7 +14,7 @@ import {
   readIssueComments,
   readIssueFields
 } from '../../../../../kernel/adapters/code-host/github/forge-read.js'
-import { assembleAndRenderBrief } from '../../../tools/task-contract/brief-assembly.js'
+import { assembleAndRenderBrief, assembleAndRenderBriefForIssue } from '../../../tools/task-contract/brief-assembly.js'
 import { type FrozenBriefCandidate, resolveNewestFrozenBrief } from '../../../tools/task-contract/brief-validation'
 import { prepareTaskOrIssue } from '../../../tools/task-contract/dispatch-task.js'
 import { findTrancheSlug } from '../../../tools/task-contract/forge/labels'
@@ -312,20 +312,28 @@ export function printIssueSurface(args: string[]): SurfaceOutcome {
 
 // --- brief -------------------------------------------------------------------
 
-export type BriefOutcome = { ok: true; brief: string } | { ok: false; missing: string[] }
+/** `waiting` lists each reason the task cannot start yet; empty when it can. */
+export type BriefOutcome = { ok: true; brief: string; waiting: string[] } | { ok: false; missing: string[] }
 
-/** Renders a task's brief; a refusal lists the facts it could not find. */
+/** One address per render: a tranche task, or a single Issue by its number. */
+export type BriefInput = { trancheSlug: string; taskId: string; globs?: string[] } | { issue: number }
+
+/**
+ * Previews a task's brief; a refusal lists the facts it could not find. A task
+ * waiting on an unmerged dependency or an open conflicting task still renders
+ * in full, with each waiting reason beside the brief.
+ */
 export async function renderBrief(
-  input: {
-    trancheSlug: string
-    taskId: string
-    globs?: string[]
-  },
-  assemble: typeof assembleAndRenderBrief = assembleAndRenderBrief
+  input: BriefInput,
+  assemble: typeof assembleAndRenderBrief = assembleAndRenderBrief,
+  assembleIssue: typeof assembleAndRenderBriefForIssue = assembleAndRenderBriefForIssue
 ): Promise<BriefOutcome> {
-  const result = await assemble(input.trancheSlug, input.taskId, input.globs)
+  const result =
+    'issue' in input
+      ? await assembleIssue(input.issue, undefined, { preview: true })
+      : await assemble(input.trancheSlug, input.taskId, input.globs, undefined, { preview: true })
   if (!result.ok) return { ok: false, missing: result.missing }
-  return { ok: true, brief: result.brief }
+  return { ok: true, brief: result.brief, waiting: result.waiting ?? [] }
 }
 
 // --- objectives edit ---------------------------------------------------------
