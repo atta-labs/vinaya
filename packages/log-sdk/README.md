@@ -110,7 +110,7 @@ for (const record of records) {
 if (gaps.length) console.warn(gaps)
 ```
 
-A folder source takes the repository's Log folder. To read from another system, use `createOtlpSource({ name, supply })`, where `supply(cursor)` returns OTLP JSON documents and the next cursor. Readers expose `pull()` for incremental reads, `readAll()` for a snapshot, and `follow({ signal })` as an async iterator. Save the returned `position` to resume later, and abort the signal to stop following. `narrate(record, seatNames, earlierRecords)` produces a human-readable narration line when it recognizes the record.
+A folder source takes the repository's Log folder. To read from another system, use `createOtlpSource({ name, supply })`, where `supply(cursor)` returns OTLP JSON documents and the next cursor. Readers expose `pull()` for incremental reads, `readAll()` for a snapshot, and `follow({ signal })` as an async iterator. Save the returned `position` to resume later, and abort the signal to stop following. `narrate(record, seatNames, earlierRecords)` produces one human-readable narration line (a kind and a sentence) when it recognizes the record, and `null` otherwise; it never throws. It narrates every record type the SDK writes: the span ends (`invoke_workflow`, `vinaya.round`, `vinaya.phase`, `invoke_agent`, `execute_tool`, `vinaya.checks`, `vinaya.person`, `vinaya.pause`, with or without their filled-in part), every catalogue event, and a declared custom event. A step's agent is read from the `vinaya.agent.started` record among `earlierRecords` that has the step's parent span id; without one the step reads as "a role". A why, decision, stop rule, exit kind or result the wording does not know reads as its code. Content attributes are never narrated.
 
 ## Command line
 

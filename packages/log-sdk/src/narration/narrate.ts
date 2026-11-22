@@ -1,6 +1,38 @@
 import { ATTRIBUTE_NAMES as A, EARLIER_EVENT_PREFIX, EVENT_NAMES as E, SPAN_NAMES as S } from '../contract/catalogue.js'
 import {
+  actionVerifiedLine,
+  agentFailedLine,
+  aliveLine,
+  cancelledLine,
+  changeClosedLine,
+  changeIncidentLine,
+  changeMergedLine,
+  changeOpenedLine,
+  changePushedLine,
+  changeRecoveredLine,
+  changeRevertedLine,
+  changeSavedLine,
+  checkNotPassedLine,
+  checksEndedLine,
+  commandCompletedLine,
   type ConfidenceRead,
+  confidenceStatedLine,
+  customEventLine,
+  findingsComparedLine,
+  forgeRefusedLine,
+  forgeValidatedLine,
+  forgeWrittenLine,
+  pauseEndedLine,
+  personAnsweredLine,
+  personAskedLine,
+  phaseEndedLine,
+  retriedLine,
+  runEndedLine,
+  runStartedLine,
+  stageChangedLine,
+  stepEndedLine,
+  stepStartedLine,
+  usageRecordedLine,
   checksLine,
   codeOf,
   confidenceClause,
@@ -102,8 +134,13 @@ function nativeFields(record: NarratableRecord, event: string): Fields {
     case 'verdicts_read': {
       const seats = Array.isArray(a[A.seats]) ? (a[A.seats] as unknown[]) : []
       const verdicts = Array.isArray(a[A.verdicts]) ? (a[A.verdicts] as unknown[]) : []
-      const reviewers = seats.map((role, index) => ({ role, outcome: verdicts[index] }))
       const blockers = wholeOf(a[A.blockingCount])
+      // The record counts blocking findings for the whole round, so only a lone seat owns the whole count.
+      const reviewers = seats.map((role, index) => ({
+        role,
+        outcome: verdicts[index],
+        blockers: seats.length === 1 ? blockers : null
+      }))
       return {
         round,
         blockers,
@@ -274,6 +311,140 @@ function build(shape: Shape, seatNames: SeatNames | undefined, earlier: readonly
   }
 }
 
+const CUSTOM_NAME = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*$/
+
+function isSpanOf(record: NarratableRecord, base: string): boolean {
+  return record.kind === 'span' && (record.name === base || record.name.startsWith(`${base} `))
+}
+
+/** The part a span's name adds after its base: `review` in `vinaya.phase review`. */
+function partOf(record: NarratableRecord, base: string): string | null {
+  return textOf(record.name.slice(base.length + 1))
+}
+
+function countOf(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0
+}
+
+/** The pull request a record is about: its own change, else the change it is stamped with. */
+function changeOf(a: Readonly<Record<string, unknown>>): string | null {
+  const change = a[A.change] ?? a[A.workChange]
+  const text = typeof change === 'number' ? String(change) : textOf(change)
+  return text !== null && /^\d+$/.test(text) ? text : null
+}
+
+/** The parent agent's seat for a step: its started record among the records read before, by span id. */
+function parentSeat(record: NarratableRecord, earlier: readonly unknown[]): unknown {
+  const parent = textOf((record as { parentSpanId?: unknown }).parentSpanId)
+  if (parent === null) return null
+  for (const candidate of earlier) {
+    if (!isRecord(candidate) || candidate.name !== E.agentStarted) continue
+    if ((candidate as { spanId?: unknown }).spanId !== parent) continue
+    return candidate.attributes[A.agentName] ?? candidate.attributes[A.seat]
+  }
+  return null
+}
+
+/** The lines for every record the earlier wording does not cover: the other events, and the span ends. */
+function moreLines(
+  record: NarratableRecord,
+  seatNames: SeatNames | undefined,
+  earlier: readonly unknown[]
+): NarrationLine | null {
+  const a = record.attributes
+  const round = wholeOf(a[A.roundNumber]) ?? wholeOf(a[A.round])
+  const failed = a[A.errorType] !== undefined
+  const error = codeOf(a[A.errorType]) ?? (failed ? 'error' : null)
+  if (record.kind === 'span') {
+    if (isSpanOf(record, S.run)) return runEndedLine(textOf(a[A.runOutcome]))
+    if (isSpanOf(record, S.pause)) return pauseEndedLine(codeOf(a[A.pauseBy]))
+    if (isSpanOf(record, S.phase)) return phaseEndedLine(textOf(a[A.phaseName]) ?? partOf(record, S.phase), error)
+    if (isSpanOf(record, S.agent))
+      return agentFailedLine(seatSubject(a[A.agentName] ?? a[A.seat] ?? partOf(record, S.agent), seatNames), error)
+    if (isSpanOf(record, S.step)) return stepEndedLine(textOf(a[A.toolName]) ?? partOf(record, S.step), error)
+    if (isSpanOf(record, S.checks))
+      return checksEndedLine({
+        where: textOf(a[A.checkWhere]) ?? partOf(record, S.checks),
+        result: textOf(a[A.result]),
+        ran: wholeOf(a[A.checksRan]),
+        failed: wholeOf(a[A.checksFailed])
+      })
+    if (isSpanOf(record, S.person)) return personAnsweredLine(codeOf(a[A.personAnswer]))
+    return null
+  }
+  switch (record.name) {
+    case E.runStarted:
+      return runStartedLine()
+    case E.alive:
+      return aliveLine(round)
+    case E.stageChanged:
+      return stageChangedLine(textOf(a[A.stageTo]), round)
+    case E.cancelled:
+      return cancelledLine(codeOf(a[A.actor]))
+    case E.retried:
+      return retriedLine({
+        failed: codeOf(a[A.retryFailed]),
+        tries: wholeOf(a[A.retryTries]),
+        recovered: a[A.retryRecovered] === true
+      })
+    case E.stepStarted:
+      return stepStartedLine(
+        seatSubject(parentSeat(record, earlier), seatNames),
+        textOf(a[A.stepKind]),
+        textOf(a[A.stepTarget])
+      )
+    case E.confidenceStated:
+      return confidenceStatedLine(round, a[A.confidence])
+    case E.usageRecorded:
+      return usageRecordedLine({
+        input: wholeOf(a[A.usageInputTokens]),
+        output: wholeOf(a[A.usageOutputTokens]),
+        unknownReason: codeOf(a[A.usageUnknownReason])
+      })
+    case E.findingsCompared:
+      return findingsComparedLine({
+        open: countOf(a[A.findingsOpen]),
+        resolved: countOf(a[A.findingsResolved]),
+        fresh: countOf(a[A.findingsNew]),
+        recurring: countOf(a[A.findingsRecurring])
+      })
+    case E.checkNotPassed:
+      return checkNotPassedLine(textOf(a[A.checkName]), codeOf(a[A.result]))
+    case E.changeSaved:
+      return changeSavedLine(textOf(a[A.branch]))
+    case E.changePushed:
+      return changePushedLine(textOf(a[A.result]))
+    case E.changeOpened:
+      return changeOpenedLine(changeOf(a))
+    case E.changeRecovered:
+      return changeRecoveredLine()
+    case E.changeMerged:
+      return changeMergedLine(changeOf(a))
+    case E.changeClosed:
+      return changeClosedLine(changeOf(a))
+    case E.changeReverted:
+      return changeRevertedLine(changeOf(a))
+    case E.changeIncident:
+      return changeIncidentLine(changeOf(a), codeOf(a[A.severity]))
+    case E.personAsked:
+      return personAskedLine(codeOf(a[A.personDecision]), codeOf(a[A.personWhy]))
+    case E.forgeValidated:
+      return forgeValidatedLine(codeOf(a[A.action]), textOf(a[A.target]))
+    case E.forgeRefused:
+      return forgeRefusedLine(codeOf(a[A.action]), textOf(a[A.target]), codeOf(a[A.reason]))
+    case E.forgeWritten:
+      return forgeWrittenLine(codeOf(a[A.action]), textOf(a[A.target]))
+    case E.actionVerified:
+      return actionVerifiedLine(codeOf(a[A.action]), textOf(a[A.target]), codeOf(a[A.result]))
+    case E.commandCompleted:
+      return commandCompletedLine(codeOf(a[A.action]), textOf(a[A.target]), codeOf(a[A.result]))
+    default:
+      return record.name.length <= 64 && !record.name.startsWith('vinaya.') && CUSTOM_NAME.test(record.name)
+        ? customEventLine(record.name)
+        : null
+  }
+}
+
 /**
  * The one plain line for a record, or `null` when the record has no wording.
  * It never throws.
@@ -291,8 +462,9 @@ export function narrate(
 ): NarrationLine | null {
   try {
     if (!isRecord(record)) return null
+    const before = Array.isArray(earlier) ? earlier : []
     const shape = shapeOf(record)
-    return shape === null ? null : build(shape, seatNames, Array.isArray(earlier) ? earlier : [])
+    return shape === null ? moreLines(record, seatNames, before) : build(shape, seatNames, before)
   } catch {
     return null
   }
