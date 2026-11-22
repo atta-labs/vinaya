@@ -304,7 +304,7 @@ function engineOptions(spawnFn: EngineRunOptions['spawnFn'], emitted: unknown[])
     devToolsContext: {} as never,
     control: createRunControl(),
     out: () => {},
-    lifecycle: { handleSignals: false, setHeartbeat: () => () => {} },
+    lifecycle: { handleSignals: false },
     spawnFn
   }
 }

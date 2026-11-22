@@ -435,9 +435,7 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
     expect((result.finalDecision as { detail: string }).detail).toBe(
       `push never landed on ${world.branch}: head ${world.head} unchanged; 2 commit(s) ahead of the remote, worktree clean`
     )
-    const conditions = outboxLines(world)
-      .filter((l) => l.event === 'stop_condition_met')
-      .map((l) => l.condition)
+    const conditions = world.runEvents.filter((l) => l.event === 'stop_condition_met').map((l) => l.condition)
     expect(conditions).toContain('repeat_failure')
     const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
       string,
@@ -459,9 +457,7 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
     const result = await runLoopInProcessSafe(world, deps, { gatePollMaxAttempts: 2, gatePollIntervalMs: 5 })
 
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'no_push' })
-    const conditions = outboxLines(world)
-      .filter((l) => l.event === 'stop_condition_met')
-      .map((l) => l.condition)
+    const conditions = world.runEvents.filter((l) => l.event === 'stop_condition_met').map((l) => l.condition)
     expect(conditions).not.toContain('repeat_failure')
   })
 })

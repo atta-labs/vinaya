@@ -30,6 +30,7 @@ import {
   makeInProcessDeps,
   makeWorld,
   outboxLines as ipOutboxLines,
+  runRecords,
   runLoopInProcess,
   sha,
   taskRunDir as ipTaskRunDir,
@@ -346,34 +347,23 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     const resumed = await runLoopInProcess(world, { resumePr: world.prNumber, agent: 'claude' })
     expect(resumed.finalDecision.type).toBe('publish')
 
-    const lines = ipOutboxLines(world)
-    const resumedEvents = lines.filter((l) => l.event === 'resumed')
+    // The resume is written through the run's Log handle: the loop built it, and no earlier-format line carries it.
+    expect(ipOutboxLines(world).filter((l) => l.event === 'resumed' || l.event === 'loop_started')).toEqual([])
+    const resumedEvents = world.runEvents.filter((l) => l.event === 'resumed')
     expect(resumedEvents).toHaveLength(1)
     expect(resumedEvents[0]).toMatchObject({ kind: 'dev_review_loop', round: 1, by: 'principal' })
 
-    // Every line THIS resumed process itself logged — starting with its own
-    // `resumed` event — carries the identical `meta.lineage.run`, the
-    // resumed run's own `loopId`: a `dev_review_loop` event from the round
-    // loop itself and any `operation`/`effect` event a pause-adjacent write
-    // fires in the SAME process are provably part of the same one history,
-    // not two independently-correlated streams. (Lines from BEFORE the
-    // resume — the original paused run's own `loop_started`..`paused`/
-    // `journal_finalized` batch — belong to a DIFFERENT process and are
-    // correctly excluded: `resumed` is the first line the code under test
-    // logs.)
-    const resumedIdx = lines.findIndex((l) => l.event === 'resumed')
-    expect(resumedIdx).toBeGreaterThanOrEqual(0)
-    // A handoff's `raised`/`resolved` events carry the handoff's own lineage and can flush after the resumed run's
-    // lines, depending on timing, so they are not this process's history.
-    const resumedRunLines = lines.slice(resumedIdx).filter((l) => l.kind !== 'handoff')
-    const lineageRuns = new Set(resumedRunLines.map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run))
-    expect(lineageRuns.size).toBe(1)
-    expect([...lineageRuns][0]).not.toBeNull()
+    // The resumed process carried on the run the paused one wrote: one run start, one pause span ended by the resume.
+    const records = runRecords(world)
+    expect(records.names.events.filter((name) => name === 'vinaya.run.started')).toHaveLength(1)
+    const pauses = records.spans.filter((s) => s.name === 'vinaya.pause')
+    expect(pauses).toHaveLength(1)
+    const by = pauses[0].attributes.find((a: { key: string }) => a.key === 'vinaya.pause.by')
+    expect(by?.value.stringValue).toBe('person')
 
     // The first run's `loop_started` and the resumed run's own both name the task Issue's title.
-    const started = lines.filter((l) => l.kind === 'dev_review_loop' && l.event === 'loop_started')
+    const started = world.runEvents.filter((l) => l.kind === 'dev_review_loop' && l.event === 'loop_started')
     expect(started.length).toBe(2)
-    expect(lines.indexOf(started[1]!)).toBeGreaterThan(resumedIdx)
     for (const line of started) expect(line).toMatchObject({ task: world.task, title: world.issueTitle })
   })
 })

@@ -130,9 +130,7 @@ export type LoopRunContext = {
   preparedSourcesByRound: Map<number, RequiredSourceManifest>
   worktreeDependenciesInstalled: boolean
   MAX_PUBLISH_REASKS: number
-  stopHeartbeat: () => void
   recordDriverExited: ReturnType<typeof createDriverExitRecorder>
-  emitHeartbeat: () => void
 }
 
 /**

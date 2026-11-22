@@ -24,11 +24,7 @@ import {
 } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import { DEFAULT_REVIEWER_TIMEOUT_MS, DEFAULT_TIMEOUT_MS } from '../loops/dev-review/dispatch/dispatch'
 import type { LaunchRecord, ParsedLaunch } from '../loops/dev-review/dispatch/dispatch'
-import {
-  DRIVER_HEARTBEAT_INTERVAL_MS,
-  keepDriverLock,
-  type DriverLockExit
-} from '../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
+import { keepDriverLock, type DriverLockExit } from '../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
 import { loopHistoryFromComments } from '../loops/dev-review/standalone/dev-review-loop/journal-history'
 import {
   acquireDriverLockAtomic,
@@ -393,7 +389,7 @@ describe('one Engine runner per task', () => {
         )
       )
       .join('\n')
-    for (const call of ['createDriverExitRecorder(', 'emitDriverHeartbeat(', 'keepDriverLock(', 'seedLoopHistory('])
+    for (const call of ['createDriverExitRecorder(', 'keepDriverLock(', 'seedLoopHistory('])
       expect(source).toContain(call)
     expect(source).not.toContain('function recordDriverExited(')
     expect(source).not.toContain('function seedLoopHistory(')
@@ -1044,66 +1040,19 @@ describe('the ceiling each role launches with', () => {
   })
 })
 
-// --- narration, heartbeat and exit ---------------------------------------------------
+// --- narration and exit ---------------------------------------------------
 
-describe('the heartbeat and the exit record', () => {
-  /** A clock the test turns: the runner starts its timer here and the test decides when time passes. */
-  function fakeClock() {
-    const timers: Array<{ cb: () => void; every: number; at: number; stopped: boolean }> = []
-    let now = 0
-    return {
-      setHeartbeat: (cb: () => void, every: number) => {
-        const timer = { cb, every, at: every, stopped: false }
-        timers.push(timer)
-        return () => {
-          timer.stopped = true
-        }
-      },
-      advance(ms: number) {
-        now += ms
-        for (const timer of timers)
-          while (!timer.stopped && timer.at <= now) {
-            timer.at += timer.every
-            timer.cb()
-          }
-      },
-      timers
-    }
-  }
-
-  test('beats every five minutes with where the run is, stops before the exit, and records the exit once', async () => {
-    const clock = fakeClock()
-    const order: string[] = []
+describe('the exit record', () => {
+  test('keeps no heartbeat timer, and records the exit once with no exit code', async () => {
     const run = stubRun({
-      lifecycle: { setHeartbeat: clock.setHeartbeat },
       actions: {
-        'vinaya.reconcile-external-state': () => ({ exitCode: 0, stdout: JSON.stringify({ number: 31 }) }),
-        'harness.run-gates': () => {
-          clock.advance(DRIVER_HEARTBEAT_INTERVAL_MS - 1)
-          order.push(`beats:${run.events.filter((e) => e.event === 'driver_heartbeat').length}`)
-          clock.advance(1)
-          clock.advance(2 * DRIVER_HEARTBEAT_INTERVAL_MS)
-          return { exitCode: 0 }
-        }
+        'vinaya.reconcile-external-state': () => ({ exitCode: 0, stdout: JSON.stringify({ number: 31 }) })
       }
     })
     const result = await runEngine(run.options)
     expect(result.exitCode).toBe(0)
-    expect(DRIVER_HEARTBEAT_INTERVAL_MS).toBe(5 * 60 * 1000)
-    expect(clock.timers).toHaveLength(1)
-    expect(clock.timers[0]?.every).toBe(300_000)
-    expect(order).toEqual(['beats:0'])
-    const beats = run.events.filter((event) => event.event === 'driver_heartbeat')
-    expect(beats).toHaveLength(3)
-    expect(beats[0]).toMatchObject({
-      kind: 'dev_review_loop',
-      loop_id: 'lifecycle-test',
-      task: TASK,
-      phase: 'run-mechanical-gates',
-      pr: 31
-    })
-    // The timer is stopped before the exit line, and the exit is one line.
-    expect(clock.timers[0]?.stopped).toBe(true)
+    // The run's liveness is the Log handle's own, so the runner writes no heartbeat of its own.
+    expect(run.events.filter((event) => event.event === 'driver_heartbeat')).toEqual([])
     const exits = exitsOf(run.events)
     expect(exits).toHaveLength(1)
     // As on the standalone driver, a finished run's exit record carries no exit code.
@@ -1113,9 +1062,7 @@ describe('the heartbeat and the exit record', () => {
   })
 
   test('records one exit when the run fails, with the class of the failure', async () => {
-    const clock = fakeClock()
     const run = stubRun({
-      lifecycle: { setHeartbeat: clock.setHeartbeat },
       actions: {
         'harness.run-gates': () => {
           throw new Error('the gate broke')
@@ -1129,7 +1076,6 @@ describe('the heartbeat and the exit record', () => {
     expect(exits).toHaveLength(1)
     expect(exits[0]).toMatchObject({ reason: 'paused', last_decision: 'pause(infrastructure)' })
     expect(exits[0]).not.toHaveProperty('error_class')
-    expect(clock.timers[0]?.stopped).toBe(true)
     expect(run.driverLog()).toContain('driver exited (paused, pause(infrastructure))')
   })
 
