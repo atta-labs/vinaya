@@ -645,10 +645,9 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
   },
   {
     // Shared by the standalone loop and the Engine runner.
-    name: 'devReviewLoop driver lifecycle — the liveness heartbeat, the single exit record and the conflict re-entry',
+    name: 'devReviewLoop driver lifecycle — the single exit record and the conflict re-entry',
     files: [DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH],
     requires: [
-      { kind: 'dev_review_loop', event: 'driver_heartbeat' },
       { kind: 'dev_review_loop', event: 'driver_exited' },
       { kind: 'dev_review_loop', event: 'conflict_reentry' }
     ]
@@ -730,6 +729,9 @@ const LOG_COVERAGE_EXEMPTIONS: RequiredEvent[] = [
   { kind: 'dispatch', event: 'dispatch_failed' },
   { kind: 'role_attempt', event: 'attempted' },
   { kind: 'usage', event: 'observed' },
+  // The Log handle sends a run's alive itself, so the driver's own heartbeat is never written; the event stays in the
+  // schema so a line stored before that still reads.
+  { kind: 'dev_review_loop', event: 'driver_heartbeat' },
   { kind: 'forge_write', event: 'validated' },
   { kind: 'forge_write', event: 'refused' },
   { kind: 'forge_write', event: 'written' }
@@ -1052,8 +1054,26 @@ const RUN_ENGINE_PATH = 'harness/processes/vinaya-strict/bin/run-engine.ts'
 const ACTIONS_PATH = 'harness/processes/vinaya-strict/executing/actions.ts'
 const SUBJECT_OWNERS: Record<string, readonly string[]> = {
   agents: [DISPATCH_PATH, RUN_ENGINE_PATH, DEV_REVIEW_LOOP_ROUND_LOOP_PATH, ACTIONS_PATH],
-  usage: [DISPATCH_PATH, RUN_ENGINE_PATH]
+  usage: [DISPATCH_PATH, RUN_ENGINE_PATH],
+  // A run's lifecycle: its start, end, pause, resume, cancel, retry, stop rule and exit, both runners alike, written
+  // from the one driver lifecycle module; the earlier `loop_started`, `journal_finalized`, `paused`, `resumed`,
+  // `cancelled`, `infrastructure_retry`, `stop_condition_met`, `driver_heartbeat` and `driver_exited` lines are
+  // never written for them (`FAMILY_OWNERS` still names who builds those events, as data).
+  run: [DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH]
 }
+
+/** The functions of the run subject on the run's Log handle. */
+const RUN_FUNCTIONS: ReadonlySet<string> = new Set([
+  'started',
+  'ended',
+  'alive',
+  'paused',
+  'resumed',
+  'cancelled',
+  'retried',
+  'stopRuleMet',
+  'exited'
+])
 
 type SubjectWrite = { file: string; subject: string }
 
@@ -1079,6 +1099,9 @@ function subjectWritesOf(rel: string, source: string): SubjectWrite[] {
         if (callee.name.text === 'turn' && /\brunRecorder\(\)/.test(object.getText(sf))) found.add('agents')
         if (callee.name.text === 'sent' && ts.isPropertyAccessExpression(object) && object.name.text === 'agent')
           found.add('agents')
+        // `<handle>.run.started(...)` and the run's other functions record its lifecycle.
+        if (RUN_FUNCTIONS.has(callee.name.text) && ts.isPropertyAccessExpression(object) && object.name.text === 'run')
+          found.add('run')
         // `<turn>.usage(...)` and `<handle>.usage.recorded(...)` record tokens.
         if (callee.name.text === 'usage') found.add('usage')
         if (callee.name.text === 'recorded' && ts.isPropertyAccessExpression(object) && object.name.text === 'usage')

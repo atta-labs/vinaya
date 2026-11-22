@@ -638,6 +638,27 @@ function hasOwnLoopLine(path: string, priorSize: number, runId: string, event: D
 }
 
 /**
+ * The loop events that stand for a run's lifecycle. The process writes each through the run's Log handle, with the
+ * function that stands for it, and writes no earlier-format line for it; the loop still builds and reads the events
+ * as data.
+ */
+const RUN_LIFECYCLE_EVENTS: ReadonlySet<string> = new Set([
+  'loop_started',
+  'journal_finalized',
+  'paused',
+  'resumed',
+  'cancelled',
+  'infrastructure_retry',
+  'stop_condition_met',
+  'driver_exited'
+])
+
+/** Whether `event` is a run lifecycle event: one the process writes through the run's Log handle. */
+export function isRunLifecycleEvent(event: { kind?: unknown; event?: unknown }): boolean {
+  return event.kind === 'dev_review_loop' && typeof event.event === 'string' && RUN_LIFECYCLE_EVENTS.has(event.event)
+}
+
+/**
  * `log()` is fire-and-forget (`log-sink.ts`'s own `.then()` chain, no
  * returned promise) — a caller that fires the next `log()` call right after
  * can race a still-pending write, exactly `dispatch.ts`'s own
@@ -662,6 +683,8 @@ export async function waitForOwnLoopLine(
   sleep: (ms: number) => Promise<void>,
   timeoutMs = 5000
 ): Promise<void> {
+  // A run lifecycle event is written through the run's Log handle: no line lands, so none is waited for.
+  if (isRunLifecycleEvent(event)) return
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (hasOwnLoopLine(path, priorSize, runId, event)) return

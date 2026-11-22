@@ -710,7 +710,6 @@ console.log('DONE')
       // this fixture robust to exactly which folder that resolves to.
       const outboxRoot = join(home, '.vinaya')
       const otherOutboxPath = findOutboxFile(outboxRoot, '991.ndjson')
-      const cancelledOutboxPath = findOutboxFile(outboxRoot, '558.ndjson')
       const otherLines = readFileSync(otherOutboxPath, 'utf8').trim().split('\n').filter(Boolean)
       expect(otherLines).toHaveLength(1)
       const otherEvent = JSON.parse(otherLines[0] as string) as { subject: { issue: number }; operation: string }
@@ -719,10 +718,8 @@ console.log('DONE')
 
       // The OTHER task's own operation event never lands in the cancelled
       // task's outbox — no fabricated cross-task history.
-      const cancelledLines = readFileSync(cancelledOutboxPath, 'utf8').trim().split('\n').filter(Boolean)
-      expect(cancelledLines.every((l) => (JSON.parse(l) as { subject: { issue: number } }).subject.issue === 558)).toBe(
-        true
-      )
+      // The cancel itself is a record on the run's Log handle, so no earlier-format line lands for the cancelled task.
+      expect(() => findOutboxFile(outboxRoot, '558.ndjson')).toThrow()
     } finally {
       rmSync(scriptPath, { force: true })
       rmSync(home, { recursive: true, force: true })

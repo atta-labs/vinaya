@@ -33,9 +33,16 @@ const FROM_ASSESSMENT =
 const HANDOFF_DEFERRAL =
   'deferred: produced once a ruling on a handed-off pause is consumed and the run continues from it; the handoff only raises the pause'
 const FROM_HANDOFF = 'the handoff function'
+/** What a run lifecycle event becomes: a record on the run's Log handle, never an earlier-format line. */
+const AS_RUN = (fn: string): string => `written through the run's Log handle with ${fn}`
 
 export const LOG_INVENTORY: readonly InventoryRow[] = [
-  { family: 'dev_review_loop', events: ['loop_started'], status: 'produced', from: FROM_ASSESSMENT },
+  {
+    family: 'dev_review_loop',
+    events: ['loop_started'],
+    status: 'produced',
+    from: `${FROM_ASSESSMENT}; ${AS_RUN('run.started')}`
+  },
   { family: 'dev_review_loop', events: ['round_started'], status: 'produced', from: FROM_ASSESSMENT },
   { family: 'dev_review_loop', events: ['gate_result_read'], status: 'produced', from: FROM_ASSESSMENT },
   { family: 'dev_review_loop', events: ['verdicts_read'], status: 'produced', from: FROM_ASSESSMENT },
@@ -44,25 +51,25 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     family: 'dev_review_loop',
     events: ['stop_condition_met'],
     status: 'produced',
-    from: `${FROM_ASSESSMENT}; a run that exhausts a revision ceiling ends on max_rounds`
+    from: `${FROM_ASSESSMENT}; a run that exhausts a revision ceiling ends on max_rounds; ${AS_RUN('run.stopRuleMet')}`
   },
   {
     family: 'dev_review_loop',
     events: ['paused'],
     status: 'produced',
-    from: `${FROM_ASSESSMENT}; a halted leg, a failed step or an exhausted ceiling at the end of a leg`
+    from: `${FROM_ASSESSMENT}; a halted leg, a failed step or an exhausted ceiling at the end of a leg; ${AS_RUN('run.paused')}`
   },
   {
     family: 'dev_review_loop',
     events: ['resumed'],
     status: 'produced',
-    from: 'the start of a leg that continues a halted run'
+    from: `the start of a leg that continues a halted run; ${AS_RUN('run.resumed')}`
   },
   {
     family: 'dev_review_loop',
     events: ['cancelled'],
     status: 'produced',
-    from: 'the end of a leg the caller cancelled'
+    from: `the end of a leg the caller cancelled; ${AS_RUN('run.cancelled')}`
   },
   {
     family: 'dev_review_loop',
@@ -80,25 +87,29 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     family: 'dev_review_loop',
     events: ['journal_finalized'],
     status: 'produced',
-    from: 'the publish step, once the publication succeeded: result merged_ready, written from the close the assessment recorded and never while the assessment is read; a pause, a failed or exhausted leg, or a publication that failed ends its leg with result stopped from the head and totals the events carried, and writes none when no round was ever assessed'
+    from:
+      'the publish step, once the publication succeeded: result merged_ready, written from the close the assessment recorded and never while the assessment is read; a pause, a failed or exhausted leg, or a publication that failed ends its leg with result stopped from the head and totals the events carried, and writes none when no round was ever assessed; ' +
+      AS_RUN('run.ended') +
+      ', except that a pause leaves the run open for the leg that resumes it'
   },
   {
     family: 'dev_review_loop',
     events: ['infrastructure_retry'],
     status: 'produced',
-    from: `${FROM_HANDOFF}: a pause comment that took more than one attempt or never landed; no other step is retried`
+    from: `${FROM_HANDOFF}: a pause comment that took more than one attempt or never landed; no other step is retried; ${AS_RUN('run.retried')}`
   },
   {
     family: 'dev_review_loop',
     events: ['driver_heartbeat'],
-    status: 'produced',
-    from: 'the runner: one every five minutes while the run is alive, never one per node'
+    status: 'dropped',
+    reason:
+      'the Log handle sends run.alive itself after two minutes with no record, so the runner keeps no heartbeat of its own'
   },
   {
     family: 'dev_review_loop',
     events: ['driver_exited'],
     status: 'produced',
-    from: 'the runner: one when the run ends, whatever way it ends'
+    from: `the runner: one when the run ends, whatever way it ends; ${AS_RUN('run.exited')}`
   },
   {
     family: 'dev_review_loop',

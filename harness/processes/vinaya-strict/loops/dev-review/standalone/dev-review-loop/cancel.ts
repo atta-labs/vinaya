@@ -33,6 +33,7 @@ import { randomUUID } from 'node:crypto'
 import type { DevReviewLoopEventInput } from '../../../../tools/dev-review-policy/types'
 import { sizeOfSafe } from './round-assess.js'
 import { createVinayaLogSink } from '../../../../integration/log/log-sink-factory.js'
+import { taskRunId } from './driver-lifecycle.js'
 import { waitForOwnLoopLine } from './round-assess.js'
 
 // --- cancel (O3) -------------------------------------------------------
@@ -285,7 +286,7 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   // destination once, on its first write, so in a long-lived process whose
   // first write resolved another repo this line would land away from
   // `cancelOutboxPath` and the wait below would run out its bound.
-  const cancelSink = createVinayaLogSink({ ...d.logSink, resolveRepo: async () => repo })
+  const cancelSink = createVinayaLogSink({ ...d.logSink, resolveRepo: async () => repo, runId: taskRunId(root, task) })
   try {
     cancelSink.log(cancelEvent)
     await waitForOwnLoopLine(cancelOutboxPath, priorSize, cancelSink.runId, cancelEvent, d.sleep)

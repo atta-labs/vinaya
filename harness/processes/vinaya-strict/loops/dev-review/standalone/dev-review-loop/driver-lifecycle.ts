@@ -1,67 +1,228 @@
+import { randomUUID } from 'node:crypto'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../../../kernel/run-paths.js'
+import { runRecorder } from '../../../../../../kernel/log/run-recorder.js'
 import type { DevReviewLoopEventInput, LoopState } from '../../../../tools/dev-review-policy/types'
 import {
   isConcludedJournal,
   type ReconstructedJournal
 } from '../../../../tools/dev-review-policy/journal-reconstruction'
 import { appendRoleLine } from '../../../../../../kernel/log/client/loop-log.js'
-import { errorClassOf } from './round-assess.js'
+import { errorClassOf, isRunLifecycleEvent } from './round-assess.js'
 
 // What a task driver does around its rounds, shared by the standalone review
-// loop and the Engine runner: the liveness heartbeat, the single driver exit
-// record, the rule for keeping or clearing the driver lock, and the seeding of
-// the round journal from the forge. Each takes every value it needs as an
-// explicit parameter, so neither runner has to capture the other's state.
+// loop and the Engine runner: the run's lifecycle as the run's Log handle
+// records it, the single driver exit record, the rule for keeping or clearing
+// the driver lock, and the seeding of the round journal from the forge. Each
+// takes every value it needs as an explicit parameter, so neither runner has
+// to capture the other's state. The run's liveness is the Log handle's own: it
+// writes `run.alive` after two minutes with no record, so the driver keeps no
+// heartbeat of its own.
 
-/** The driver's liveness heartbeat interval — one `driver_heartbeat` at most every five minutes while the process is alive, well inside the Log server's own daily write limit for one loop. */
-export const DRIVER_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000
-
-/**
- * Starts a repeating timer that fires `cb` every `intervalMs`, whose handle is
- * `.unref()`'d so a still-pending timer never keeps the process alive after
- * the driver's own work has returned. The returned function stops it; the exit
- * record calls it before writing any `driver_exited`, so the heartbeat always
- * stops before the exit line.
- */
-export function defaultSetHeartbeat(cb: () => void, intervalMs: number): () => void {
-  const timer = setInterval(cb, intervalMs)
-  timer.unref?.()
-  return () => clearInterval(timer)
-}
-
-/** Where a driver is, as one heartbeat reports it. */
-export interface DriverHeartbeatFacts {
-  loopId: string
-  task: number
-  round: number
-  /** The phase the driver is in; `null` before its first phase. */
-  phase: string | null
-  /** The task's pull request, or 0 / negative while there is none. */
-  prNumber: number
-  log: (event: DevReviewLoopEventInput) => void
+/** Where a task's run identity is kept: the id every process that works on the task's run writes its records under. */
+function runIdPath(runtimeDir: string, task: number): string {
+  return runPath(runtimeDir, task, { area: 'task', file: 'log-run-id' })
 }
 
 /**
- * Emits one `driver_heartbeat`. Fire-and-forget: `log` never throws and a
- * failed delivery is dropped like any other event; a build or emit fault is
- * swallowed rather than left to crash the timer or the round.
+ * The id the task's run is written under, the same in every process that continues the run (a resumed leg, a
+ * `--resume` start, a re-exec, a cancel). The first process to ask names it; the id is kept until the run ends, so
+ * a later process carries on the run rather than starting another. It is a name for records, never read to decide
+ * anything about the run.
  */
-export function emitDriverHeartbeat(facts: DriverHeartbeatFacts): void {
+export function taskRunId(runtimeDir: string, task: number, fallback: () => string = () => randomUUID()): string {
+  const path = runIdPath(runtimeDir, task)
   try {
-    const event: DevReviewLoopEventInput = {
-      kind: 'dev_review_loop',
-      payload: {},
-      loop_id: facts.loopId,
-      event: 'driver_heartbeat',
-      task: facts.task,
-      round: facts.round,
-      phase: facts.phase ?? 'starting',
-      ...(facts.prNumber > 0 ? { pr: facts.prNumber } : {})
+    if (existsSync(path)) {
+      const kept = readFileSync(path, 'utf8').trim()
+      if (kept !== '') return kept
     }
-    facts.log(event)
   } catch {
-    // A heartbeat is pure telemetry — never a reason to crash the timer
-    // or the round. Dropped, exactly like a delivery that fails.
+    // An unreadable record names no run: this process names one.
   }
+  const named = process.env.VINAYA_RUN_ID || fallback()
+  try {
+    ensureRunDir(dirname(path), runtimeDir)
+    writeFileSync(path, `${named}\n`, { mode: 0o600 })
+  } catch {
+    // A run identity that cannot be kept is this process's alone.
+  }
+  return named
+}
+
+/** Forgets the task's run identity once its run has ended, so the next run of the task is a new one. */
+function forgetTaskRunId(runtimeDir: string, task: number): void {
+  try {
+    rmSync(runIdPath(runtimeDir, task), { force: true })
+  } catch {
+    // Nothing to forget.
+  }
+}
+
+const STOP_RULES: Readonly<Record<string, string>> = {
+  green: 'approved',
+  max_rounds: 'round_limit',
+  no_progress: 'no_progress',
+  escalated: 'escalated',
+  principal_stop: 'person_stop',
+  confidence: 'confidence',
+  reappearance: 'fixed_finding_returned',
+  repeat_finding: 'same_finding',
+  repeat_failure: 'same_failure',
+  time_budget: 'time_budget'
+}
+
+const EXIT_KINDS: Readonly<Record<string, 'finished' | 'paused' | 'restarted' | 'error' | 'signal'>> = {
+  finished: 'finished',
+  paused: 'paused',
+  reexec: 'restarted',
+  error: 'error',
+  signal: 'signal'
+}
+
+/** The handles this process has started, or carried on, a run on: a process works on a run from one start. */
+const startedHandles = new WeakSet<object>()
+
+/** The round each handle has open, so one round is started on it once. */
+const openRounds = new WeakMap<object, number>()
+
+/**
+ * Starts `number` as the open round on the run's handle, once per round, so the handle's automatic `run.alive`
+ * carries it. A process that carries on a run takes the open round from the copy; this only moves it on.
+ */
+export function startRoundOnHandle(
+  where: { runId: string; repository?: string | undefined },
+  number: number,
+  options: { recorder?: Pick<ReturnType<typeof runRecorder>, 'handle'> } = {}
+): void {
+  const log = (options.recorder ?? runRecorder()).handle(where.runId, where.repository)
+  if (log === undefined || !Number.isInteger(number) || number < 1) return
+  if (openRounds.get(log) === number) return
+  openRounds.set(log, number)
+  log.round.started({ number })
+}
+
+/** The runs a pause was written for in this process and not yet resumed: such a run is waiting, not ended. */
+const pausedRuns = new Set<string>()
+
+const numberOf = (value: unknown): number | undefined => (typeof value === 'number' ? value : undefined)
+const textOf = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
+
+/**
+ * Writes a run lifecycle event through the run's Log handle, with the function that stands for it:
+ * `run.started`, `run.ended`, `run.paused`, `run.resumed`, `run.cancelled`, `run.retried`, `run.stopRuleMet` and
+ * `run.exited`. Returns `true` when the event is one of these, and no earlier-format line is then written for it.
+ * The handle writes the start once per run, whatever process asks, and a process that did not start a span ends it
+ * whole from the start in the run's local copy.
+ */
+export function writeRunLifecycleEvent(
+  event: DevReviewLoopEventInput | { kind?: unknown; event?: unknown },
+  where: { runId: string; repository?: string | undefined },
+  options: {
+    runtimeDir?: () => string
+    recorder?: Pick<ReturnType<typeof runRecorder>, 'handle'>
+    /** The round the run is in as this process starts or carries it on. */
+    round?: number
+  } = {}
+): boolean {
+  if (!isRunLifecycleEvent(event)) return false
+  const e = event as unknown as Record<string, unknown>
+  const log = (options.recorder ?? runRecorder()).handle(where.runId, where.repository)
+  if (log === undefined) return true
+  const round = numberOf(e.round)
+  const forget = (): void => {
+    const task = numberOf(e.task) ?? Number(process.env.VINAYA_TASK)
+    if (Number.isInteger(task) && task > 0) forgetTaskRunId((options.runtimeDir ?? runtimeDirForThisRepo)(), task)
+  }
+  switch (e.event) {
+    case 'loop_started': {
+      const policy = (e.policy ?? {}) as {
+        max_rounds?: number
+        reviewers?: string[]
+        models?: Record<string, string>
+      }
+      const seats = ['developer', ...(policy.reviewers ?? [])].map((seat) => {
+        const model = policy.models?.[seat]
+        return model === undefined ? { seat } : { seat, model }
+      })
+      // One start per process: the handle already holds the run this process started or carried on.
+      if (startedHandles.has(log)) break
+      startedHandles.add(log)
+      const title = textOf(e.title)
+      const name = process.env.VINAYA_PROCESS_ID
+      const version = process.env.VINAYA_PROCESS_VERSION
+      log.run.started({
+        process: name || 'vinaya-strict',
+        ...(version ? { processVersion: version } : {}),
+        ...(title === undefined ? {} : { work: { title } }),
+        ...(policy.max_rounds === undefined ? {} : { roundLimit: policy.max_rounds }),
+        seats
+      })
+      if (options.round !== undefined) startRoundOnHandle(where, options.round, options)
+      break
+    }
+    case 'paused':
+      pausedRuns.add(where.runId)
+      log.run.paused({
+        ...(round === undefined ? {} : { round }),
+        why: textOf(e.reason_code) ?? textOf(e.reason) ?? 'paused'
+      })
+      break
+    case 'resumed':
+      pausedRuns.delete(where.runId)
+      log.run.resumed({ by: e.by === 'principal' ? 'person' : 'run', ...(round === undefined ? {} : { round }) })
+      break
+    case 'cancelled':
+      pausedRuns.delete(where.runId)
+      log.run.cancelled({ ...(round === undefined ? {} : { round }), by: 'person' })
+      // A cancelled run does not resume: its span ends here.
+      log.run.ended({ outcome: 'stopped' })
+      forget()
+      break
+    case 'infrastructure_retry':
+      log.run.retried({
+        ...(textOf(e.failure_kind) === undefined ? {} : { failed: textOf(e.failure_kind) as string }),
+        ...(numberOf(e.attempts) === undefined ? {} : { tries: numberOf(e.attempts) as number }),
+        recovered: e.outcome === 'recovered'
+      })
+      break
+    case 'stop_condition_met': {
+      const rule = STOP_RULES[String(e.condition)]
+      if (rule !== undefined) log.run.stopRuleMet({ rule: rule as Parameters<typeof log.run.stopRuleMet>[0]['rule'] })
+      break
+    }
+    case 'journal_finalized': {
+      // A pause leaves the run open for the leg that resumes it: the run's one span ends with the run.
+      if (e.result !== 'merged_ready' && pausedRuns.has(where.runId)) break
+      log.run.ended({
+        ...(numberOf(e.rounds) === undefined ? {} : { rounds: numberOf(e.rounds) as number }),
+        ...(numberOf(e.total_wall_ms) === undefined ? {} : { totalMs: numberOf(e.total_wall_ms) as number }),
+        ...(numberOf(e.time_to_green_ms) === undefined
+          ? {}
+          : { timeToGreenMs: numberOf(e.time_to_green_ms) as number }),
+        ...(numberOf(e.files_changed_total) === undefined
+          ? {}
+          : { filesChanged: numberOf(e.files_changed_total) as number }),
+        outcome: e.result === 'merged_ready' ? 'ready' : 'stopped'
+      })
+      forget()
+      break
+    }
+    case 'driver_exited': {
+      const kind = EXIT_KINDS[String(e.reason)]
+      if (kind === undefined) break
+      log.run.exited({
+        kind,
+        ...(numberOf(e.exit_code) === undefined ? {} : { code: numberOf(e.exit_code) as number }),
+        ...(textOf(e.error_class) === undefined ? {} : { errorType: textOf(e.error_class) as string })
+      })
+      // A finished run is over: the next run of the task is a new one, not a carry-on of this id.
+      if (kind === 'finished') forget()
+      break
+    }
+  }
+  return true
 }
 
 /** One automatic conflict re-entry of a published pull request, as both runners narrate it. */
@@ -99,15 +260,13 @@ export interface DriverExitRecorderFacts {
   loopLogPath: string
   /** The driver's last decision, read when the exit is recorded. */
   describeDecision: () => string
-  /** Stops the heartbeat; called before any exit line is written. */
-  stopHeartbeat: () => void
   log: (event: DevReviewLoopEventInput) => void
 }
 
 /**
  * Builds the driver's exit recorder. The returned function records the exit
- * once: a second call, from any exit path, does nothing. It stops the
- * heartbeat first, traces an abnormal exit in the per-task driver log, and
+ * once: a second call, from any exit path, does nothing. It traces an
+ * abnormal exit in the per-task driver log, and
  * emits the `driver_exited` Log event.
  */
 export function createDriverExitRecorder(
@@ -117,7 +276,6 @@ export function createDriverExitRecorder(
   return (reason, detail = {}) => {
     if (written) return
     written = true
-    facts.stopHeartbeat()
     const describedDecision = facts.describeDecision()
     // The role log stays DIAGNOSTIC, not routine (`harness/processes/vinaya-strict/loops/dev-review/loop.md`,
     // "A driver that exits with no decision on record"): only the abnormal
@@ -131,9 +289,8 @@ export function createDriverExitRecorder(
         `driver_exited: reason=${reason} last_decision=${describedDecision}`
       )
     }
-    // The Log event, on EVERY exit path — the lifecycle twin of
-    // `driver_heartbeat`, so Mission Control can tell a loop that finished or
-    // paused from one that is still running or died. Fire-and-forget: `log`
+    // The Log event, on EVERY exit path, written as `run.exited` on the run's Log handle so a reader can tell a loop
+    // that finished or paused from one that is still running or died. Fire-and-forget: `log`
     // never throws and a failed delivery is dropped like any other event.
     // Guarded so a build/emit fault never undoes an exit already in progress.
     try {
@@ -195,7 +352,7 @@ export interface LoopHistorySeed {
 
 /**
  * Seeds a loop's state from the round journal rebuilt from the forge markers
- * on the task's own pull request — never a log event or the telemetry outbox.
+ * on the task's own pull request — never a log event or the telemetry files.
  * A journal that is already concluded does not seed, so a rerun never doubles
  * a round in the published table; one that is not (a crash before a published
  * summary, a reopened pull request) seeds its rounds, so the next round is
