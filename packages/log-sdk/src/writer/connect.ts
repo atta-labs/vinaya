@@ -35,6 +35,44 @@ import * as run from './run.js'
 import { type LogsSetting, type PassedSettings, resolveSettings, type ResolvedSettings } from './settings.js'
 import { writeWholeSpan } from './whole-span.js'
 
+/** What ran the run, given by the caller; each part given is a resource attribute on every record. */
+export type RunIdentity = {
+  runnerName?: string
+  runnerVersion?: string
+  cliVersion?: string
+  flowId?: string
+  flowVersion?: string
+  processDigest?: string
+  settingsDigest?: string
+  /** Whether the run is in CI; the SDK reads `CI` when this is not given. */
+  ci?: boolean
+}
+
+/** OpenTelemetry's os.type value for Node's platform name. */
+function osType(platform: string = process.platform): string {
+  if (platform === 'win32') return 'windows'
+  if (platform === 'sunos') return 'solaris'
+  if (platform === 'android') return 'linux'
+  return platform
+}
+
+function inCi(value: string | undefined = process.env.CI): boolean {
+  return value !== undefined && value !== '' && value !== 'false'
+}
+
+function identityAttributes(identity: RunIdentity | undefined): Record<string, string> {
+  const named: [string, string | undefined][] = [
+    [ATTRIBUTE_NAMES.runnerName, identity?.runnerName],
+    [ATTRIBUTE_NAMES.runnerVersion, identity?.runnerVersion],
+    [ATTRIBUTE_NAMES.cliVersion, identity?.cliVersion],
+    [ATTRIBUTE_NAMES.flowId, identity?.flowId],
+    [ATTRIBUTE_NAMES.flowVersion, identity?.flowVersion],
+    [ATTRIBUTE_NAMES.processDigest, identity?.processDigest],
+    [ATTRIBUTE_NAMES.settingsDigest, identity?.settingsDigest]
+  ]
+  return Object.fromEntries(named.filter((pair): pair is [string, string] => pair[1] !== undefined))
+}
+
 export type ConnectOptions = {
   /** The run every record belongs to; the trace id derives from it alone. */
   runId: string
@@ -57,6 +95,8 @@ export type ConnectOptions = {
   trust?: RecordTrust
   /** The handle's clock and timers; a test supplies its own. */
   timers?: run.Timers
+  /** What ran the run; each part given is carried on every record as a resource attribute. */
+  identity?: RunIdentity
   processName?: string
   serviceVersion?: string
   /** Additional processors for spans written to the local copy. */
@@ -263,7 +303,10 @@ export function connect(options: ConnectOptions): LogHandle {
         ...(options.repository !== undefined ? { [ATTRIBUTE_NAMES.repository]: options.repository } : {}),
         [ATTRIBUTE_NAMES.hostId]: createHash('sha256').update(hostname()).digest('hex').slice(0, 32),
         [ATTRIBUTE_NAMES.sdkVersion]: SDK_VERSION,
-        [ATTRIBUTE_NAMES.semconvVersion]: GENAI_CONVENTIONS_VERSION
+        [ATTRIBUTE_NAMES.semconvVersion]: GENAI_CONVENTIONS_VERSION,
+        [ATTRIBUTE_NAMES.osType]: osType(),
+        [ATTRIBUTE_NAMES.ci]: options.identity?.ci ?? inCi(),
+        ...identityAttributes(options.identity)
       })
       const files = createFileExporters({
         runId,
