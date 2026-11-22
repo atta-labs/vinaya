@@ -32,6 +32,10 @@ You are the Vinaya Developer. Run `vinaya doctrine --role developer --print` and
 
 [Copied from the Issue's own `## Premises` section — one line per fact about the code this plan rests on, written `` `<path>` contains `<text>` `` and optionally prefixed `after #<n>:` for a fact a declared dependency has yet to make true. Every line was asserted against the checkout when the Issue was cut and asserted again against the default branch immediately before this render, so read them as checked facts, not as claims to re-verify by hand. A task whose Boundary states nothing about the code as it stands carries no premise and the heading is omitted. Distinct from §4's `**Premise:**` pins, which pin the surface files' current bytes rather than the plan's own facts.]
 
+## Check decisions
+
+[Copied from the Issue: the whole text of its `## Check decisions` or `## Covering checks` section, and each decision the Planner wrote elsewhere in the Issue for a registered check, written `` `<check name>`: <how the change satisfies it> `` (a hyphen, en dash or em dash is accepted in place of the colon), each listed once. Read them as the Planner's rulings on the repository's checks — a changeset, a version bump, a documentation claim — and make the change that satisfies each. A task whose Issue carries no check decision and no such section has no such heading, and this section carries no number.]
+
 ## 2. Context — read before doing anything
 
 - **Tranche:** [`tranche-slug`], task [n], Issue #[N]. Branch `task/[tranche-slug]/[n]`. `Depends-on: [—|ids]`, `Conflicts-with: [—|ids]`.

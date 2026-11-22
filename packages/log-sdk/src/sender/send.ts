@@ -3,6 +3,7 @@ import { constants, lstatSync } from 'node:fs'
 import { lstat, mkdir, open, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { Worker } from 'node:worker_threads'
+import { checkReservedNames, describeContractFailure, type ReservedName, reservedNamesOf } from '../contract/check.js'
 import { repoSegment } from '../writer/settings.js'
 
 type Signal = 'traces' | 'logs'
@@ -129,26 +130,29 @@ async function recordReceipt(path: string, content: string | Uint8Array): Promis
   }
 }
 
-function validateJson(bytes: Uint8Array): boolean {
+type Inspection = { valid: boolean; names: ReservedName[] }
+
+/** One parse of a line: whether it is JSON, and the `vinaya.*` names its records carry. Self-contained, so a worker can run it. */
+function inspectLine(bytes: Uint8Array, collect: (document: unknown) => ReservedName[]): Inspection {
   try {
-    JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes))
-    return true
+    const document: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes))
+    return { valid: true, names: collect(document) }
   } catch {
-    return false
+    return { valid: false, names: [] }
   }
 }
 
-function validateLargeLine(line: Buffer, signal: AbortSignal): Promise<boolean> {
+function inspectLargeLine(line: Buffer, signal: AbortSignal): Promise<Inspection> {
   const worker = new Worker(
     `const { parentPort, workerData } = require('node:worker_threads');
-     parentPort.postMessage((${validateJson.toString()})(workerData));`,
+     parentPort.postMessage((${inspectLine.toString()})(workerData, (${reservedNamesOf.toString()})));`,
     { eval: true, workerData: line }
   )
   const abort = () => void worker.terminate()
-  return new Promise<boolean>((resolve, reject) => {
+  return new Promise<Inspection>((resolve, reject) => {
     worker.once('message', resolve)
     worker.once('error', reject)
-    worker.once('exit', () => reject(new Error('JSON validation ended')))
+    worker.once('exit', () => reject(new Error('line inspection ended')))
     signal.addEventListener('abort', abort, { once: true })
   }).finally(() => {
     signal.removeEventListener('abort', abort)
@@ -342,10 +346,11 @@ export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<Loca
         if (!bytes || stopped || Date.now() >= deadline) continue
         const line = bytes.subarray(0, -1)
         const large = line.length > 64 * 1024
-        const valid = large ? await validateLargeLine(line, stop.signal) : validateJson(line)
+        const { valid, names } = large ? await inspectLargeLine(line, stop.signal) : inspectLine(line, reservedNamesOf)
         if (stopped || Date.now() >= deadline) return
         const body = large ? (line as Uint8Array<ArrayBuffer>) : line.toString('utf8')
-        let reason = valid ? undefined : 'invalid JSON'
+        const failure = valid ? checkReservedNames(names) : null
+        let reason = !valid ? 'invalid JSON' : failure ? `contract: ${describeContractFailure(failure)}` : undefined
         if (!reason) {
           if (rejectedBeforePost(rejected)) continue
           const status = await post(options.fetch ?? fetch, endpoints[signal], headers, body, deadline)
