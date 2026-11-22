@@ -19,6 +19,8 @@ import { afterEach, describe, expect, it as bunIt } from 'bun:test'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { readOtlpDocument } from '../../../../../../packages/log-sdk/src/index.js'
+import { createRunRecorder } from '../../../../../kernel/log/run-recorder.js'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { readdirSync, statSync } from 'node:fs'
@@ -41,12 +43,7 @@ import {
   captureSettledChildSnapshot,
   type ProcessSnapshot
 } from '../../../loops/dev-review/dispatch/dispatch.js'
-import {
-  claimLaunchAttribution,
-  createEngineLogSink,
-  launchUsageEvents,
-  withDispatchUsage
-} from '../../../bin/run-engine'
+import { claimLaunchAttribution, endLaunchTurn, startLaunchTurn, withDispatchUsage } from '../../../bin/run-engine'
 import {
   CLI_ROOT,
   INDEX,
@@ -61,6 +58,9 @@ import {
   spawnBudgeted as spawnFixtureBudgeted,
   writeFakeBinary,
   writeIdentityStableFakeBinary,
+  agentTurnsOf,
+  type RecordedAgentTurn,
+  localCopyFolderOf,
   outboxLines,
   PROMPT_FILE_CONTENT,
   SESSION_ID,
@@ -302,25 +302,21 @@ describe('dispatchRole — a successful dispatch', () => {
 
     expect(readFileSync(stdinOut, 'utf8')).toBe(PROMPT_FILE_CONTENT)
 
-    const lines = outboxLines(home, 9001) as Array<Record<string, unknown>>
-    const dispatched = lines.find((l) => l.event === 'dispatched')
-    const outcome = lines.find((l) => l.event === 'outcome_received')
-    for (const line of lines) {
-      expect(line.meta).toMatchObject({
-        work: { change: null, revision: null },
-        lineage: { attempt: 1, parent: null },
-        provenance: 'parent_attributed'
-      })
-    }
-    expect(dispatched).toBeDefined()
-    expect((dispatched as { prompt_hash: string }).prompt_hash).toMatch(/^sha256:[0-9a-f]{64}$/)
-    expect(outcome).toBeDefined()
-    expect((outcome as { usage: { input: number; output: number } }).usage).toEqual({ input: 11, output: 22 })
-    expect((outcome as { target_role: string }).target_role).toBe('developer')
-    // O2: the vendor name is never recorded in this field — the defect this
-    // task closes. No `--model` was given here, so the placeholder for "the
-    // vendor's own default ran" is recorded instead of `'claude'`.
-    expect((outcome as { model: string }).model).toBe('default')
+    // The turn is one `invoke_agent` span in the run's local copy, with its usage on it; the earlier queue holds no
+    // `dispatch`, `role_attempt` or `usage` event for it.
+    const turns = agentTurnsOf(localCopyFolderOf(home))
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({
+      seat: 'developer',
+      outcome: 'done',
+      attempt: 1,
+      usage: { input: 11, output: 22 }
+    })
+    expect(turns[0]?.errorType).toBeUndefined()
+    // The vendor name is never recorded as the model: no `--model` was given, so none was requested.
+    expect(turns[0]?.requestModel).toBeUndefined()
+    const earlier = outboxLines(home, 9001) as Array<{ kind: string }>
+    expect(earlier.filter((line) => ['dispatch', 'role_attempt', 'usage'].includes(line.kind))).toEqual([])
   })
 
   for (const explicitPr of [true, false]) {
@@ -354,20 +350,12 @@ describe('dispatchRole — a successful dispatch', () => {
           { VINAYA_PR: '978' }
         )
         expect(result.status).toBe(0)
-        const lines = outboxLines(home, 9001) as Array<{
-          kind: string
-          attempt?: number
-          meta: { work: { change: string }; lineage: { attempt: number }; provenance: string }
-        }>
-        const current = lines.filter((line) => line.meta.lineage.attempt === attempt)
-        expect(new Set(current.map((line) => line.kind))).toEqual(new Set(['dispatch', 'role_attempt', 'usage']))
-        for (const line of current) {
-          expect(line.meta.work.change).toBe(explicitPr ? '977' : '978')
-          expect(line.meta.provenance).toBe('parent_attributed')
-          if (line.kind === 'role_attempt') expect(line.attempt).toBe(attempt)
-        }
-        expect(current.length).toBe(4)
-        expect(lines.length).toBe(attempt * 4)
+        // Each attempt is one more turn in the local copy, carrying its own attempt number and usage.
+        const turns = agentTurnsOf(localCopyFolderOf(home))
+        expect(turns.map((turn) => turn.attempt)).toEqual(Array.from({ length: attempt }, (_, i) => i + 1))
+        expect(turns.at(-1)).toMatchObject({ seat: 'developer', outcome: 'done', usage: { input: 11, output: 22 } })
+        const earlier = outboxLines(home, 9001) as Array<{ kind: string }>
+        expect(earlier.filter((line) => ['dispatch', 'role_attempt', 'usage'].includes(line.kind))).toEqual([])
         const childEnv = readFileSync(envOut, 'utf8')
         expect(childEnv).toBe('VINAYA_PR=978\nVINAYA_ATTEMPT=\n')
       }
@@ -494,15 +482,10 @@ describe('dispatchRole — a crashing child', () => {
     )
     expect(r.status).toBe(1)
 
-    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    const failed = lines.find((l) => l.event === 'dispatch_failed')
-    expect(failed).toBeDefined()
-    // The `dispatch_failed` log event's own `reason` field is validated
-    // against `@attalabs/process-vinaya`'s schema (out of this task's surface) and
-    // keeps reporting the real event class unchanged — `DispatchHandle`'s
-    // own, CLI-local `failureReason` is where the finer `'unbound'`
-    // distinction lives (Issue #636, O5; see the describe block below).
-    expect((failed as { reason: string }).reason).toBe('crash')
+    // The agent span ends with the generic `crash` error type; `DispatchHandle`'s own, CLI-local `failureReason` is
+    // where the finer `'unbound'` distinction lives (see the describe block below).
+    const [turn] = agentTurnsOf(localCopyFolderOf(home))
+    expect(turn).toMatchObject({ seat: 'developer', errorType: 'crash' })
   })
 })
 
@@ -637,19 +620,18 @@ describe('dispatchRole — no matching binary on PATH', () => {
     )
     expect(r.status).toBe(1)
 
-    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    // A refused attempt now also logs its own
-    // `role_attempt`/`usage` lines alongside the pre-existing
-    // `dispatch_failed` — three lines, one per family, for one attempt.
-    // `log()` writes each asynchronously (`log-sink.ts`'s own
-    // `resolveRepo().then(...)`), so the three calls' lines can land in
-    // either order — never asserted on position.
-    expect(lines).toHaveLength(3)
-    const dispatchLine = lines.find((l) => l.kind === 'dispatch')
-    expect(dispatchLine?.event).toBe('dispatch_failed')
-    expect((dispatchLine as { reason: string }).reason).toBe('refused')
-    expect(lines.find((l) => l.kind === 'role_attempt')).toMatchObject({ outcome: 'capability_refused' })
-    expect(lines.find((l) => l.kind === 'usage')).toMatchObject({ units: { input: null, output: null, cache: null } })
+    // A refused attempt is one agent span that ends `refused`, its usage unknown with the reason and no figure.
+    const turns = agentTurnsOf(localCopyFolderOf(home))
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({ seat: 'developer', errorType: 'refused' })
+    expect(turns[0]?.usage.unknownReason).toContain('binary not resolvable on PATH')
+    expect(turns[0]?.usage.input).toBeUndefined()
+    expect(turns[0]?.usage.output).toBeUndefined()
+    expect(
+      outboxLines(home, 'none').filter((line) =>
+        ['dispatch', 'role_attempt', 'usage'].includes((line as { kind: string }).kind)
+      )
+    ).toEqual([])
   })
 })
 
@@ -685,30 +667,13 @@ describe('dispatchRole — a task continued on another agent', () => {
       expect(r.status).toBe(0)
     }
 
-    const lines = outboxLines(home, 9001) as Array<Record<string, unknown>>
-    for (const [agent, model] of [
-      ['codex', 'gpt-5.6-terra'],
-      ['claude', 'claude-opus-5-5']
-    ] as const) {
-      const ofAgent = lines.filter((l) => (l.model as string | undefined)?.includes(model))
-      expect(
-        ofAgent.some((l) => l.kind === 'dispatch'),
-        `${agent} dispatch event`
-      ).toBe(true)
-      expect(
-        ofAgent.some((l) => l.kind === 'usage'),
-        `${agent} usage event`
-      ).toBe(true)
-    }
-    // Each dispatch's usage event names its own model, not the other's.
-    expect(
-      lines
-        .filter((l) => l.kind === 'usage')
-        .map((l) => l.model)
-        .sort()
-    ).toEqual(
-      expect.arrayContaining([expect.stringContaining('claude-opus-5-5'), expect.stringContaining('gpt-5.6-terra')])
-    )
+    // Each dispatch is its own agent span, naming the model it asked for and carrying its own usage.
+    const turns = agentTurnsOf(localCopyFolderOf(home))
+    expect(turns).toHaveLength(2)
+    expect(turns.map((turn) => [turn.requestModel, turn.usage.input, turn.usage.output])).toEqual([
+      ['gpt-5.6-terra', 3, 4],
+      ['claude-opus-5-5', 11, 22]
+    ])
   })
 })
 
@@ -730,11 +695,9 @@ describe('dispatchRole — present but not executable', () => {
       `${binDir}:${pathWithoutRealVendors()}`
     )
     expect(r.status).toBe(1)
-    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    expect(lines).toHaveLength(3)
-    const dispatchLine = lines.find((l) => l.kind === 'dispatch')
-    expect((dispatchLine as { reason: string }).reason).toBe('refused')
-    expect(lines.find((l) => l.kind === 'role_attempt')).toMatchObject({ outcome: 'capability_refused' })
+    const turns = agentTurnsOf(localCopyFolderOf(home))
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({ seat: 'developer', errorType: 'refused' })
   })
 })
 
@@ -842,11 +805,7 @@ describe('dispatchRole — timeout ceiling', () => {
     writeFakeBinary(binDir, 'claude', `#!${process.execPath}\nprocess.stdin.resume()\nsetInterval(() => {}, 1 << 30)\n`)
     const reviewer = runDispatch(['code-reviewer', '--agent', 'claude', '--prompt-file', promptFile], cwd, home, path)
     expect(reviewer.status).toBe(1)
-    expect(
-      (outboxLines(home, 'none') as Array<Record<string, unknown>>).some(
-        (line) => line.event === 'dispatch_failed' && line.reason === 'timeout'
-      )
-    ).toBe(true)
+    expect(agentTurnsOf(localCopyFolderOf(home)).some((turn) => turn.errorType === 'timeout')).toBe(true)
 
     // A Developer child that stays alive past the reviewer's ceiling — it
     // cannot exit sooner than twice that ceiling after its own start, which
@@ -884,9 +843,7 @@ describe('dispatchRole — timeout ceiling', () => {
     const result = dispatchWithCeilingOnReady({ home, cwd, binDir }, readyFile)
     expect(result.timedOut).toBe(true)
 
-    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    const failed = lines.find((l) => l.event === 'dispatch_failed')
-    expect((failed as { reason: string }).reason).toBe('timeout')
+    expect(agentTurnsOf(localCopyFolderOf(home))[0]?.errorType).toBe('timeout')
 
     const pid = Number(readFileSync(readyFile, 'utf8').trim())
     expect(() => process.kill(pid, 0)).toThrow()
@@ -905,15 +862,13 @@ describe('dispatchRole — timeout ceiling', () => {
 
     const result = dispatchWithCeilingOnReady({ home, cwd, binDir }, readyFile)
     expect(result.timedOut).toBe(true)
-    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    const failed = lines.find((l) => l.event === 'dispatch_failed')
-    expect((failed as { reason: string }).reason).toBe('timeout')
+    expect(agentTurnsOf(localCopyFolderOf(home))[0]?.errorType).toBe('timeout')
   })
 
   // O10 — a run's token record survives the manner of its death: the parent
   // captures usage from the accumulated stdout AT THE MOMENT it ends the
   // child, not only on a clean exit.
-  it('a killed child still leaves real usage figures in the dispatch_failed line, not a hardcoded null', () => {
+  it('a killed child still leaves real usage figures on its failed agent span, not a hardcoded null', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
@@ -932,22 +887,10 @@ describe('dispatchRole — timeout ceiling', () => {
     const result = dispatchWithCeilingOnReady({ home, cwd, binDir }, readyFile)
     expect(result.timedOut).toBe(true)
 
-    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    const failed = lines.find((l) => l.event === 'dispatch_failed') as
-      | { reason: string; usage: { input: number; output: number } | null }
-      | undefined
-    expect(failed?.reason).toBe('timeout')
-    expect(failed?.usage).toEqual({ input: 184327, output: 22190 })
-
-    // The richer `usage` family event survives the
-    // kill exactly the same way — including the cache breakout the
-    // pre-existing `dispatch` family's own usage field has no room for.
-    const usageEvent = lines.find((l) => l.kind === 'usage') as
-      | { units: { input: number | null; output: number | null; cache: number | null }; unknown_reason: string | null }
-      | undefined
-    expect(usageEvent?.units).toEqual({ input: 184327, output: 22190, cache: 500 })
-    expect(usageEvent?.unknown_reason).toBeNull()
-    expect(lines.find((l) => l.kind === 'role_attempt')).toMatchObject({ outcome: 'timed_out' })
+    // The one span ends with the timeout and carries every figure the stream gave, the cache read included.
+    const [turn] = agentTurnsOf(localCopyFolderOf(home))
+    expect(turn?.errorType).toBe('timeout')
+    expect(turn?.usage).toEqual({ input: 184327, output: 22190, cacheRead: 500 })
   })
 })
 
@@ -974,14 +917,9 @@ describe('dispatchRole — transcript usage fallback', () => {
       `${binDir}:${pathWithoutRealVendors()}`
     )
     expect(r.status).toBe(0)
-    const usageEvents = (outboxLines(home, 'none') as Array<Record<string, unknown>>).filter((l) => l.kind === 'usage')
-    expect(usageEvents).toHaveLength(1)
-    expect(usageEvents[0]).toMatchObject({
-      source: 'claude-transcript',
-      semantics: 'cumulative',
-      units: { input: 101, output: 22, cache: 77 },
-      unknown_reason: null
-    })
+    const turns = agentTurnsOf(localCopyFolderOf(home))
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.usage).toEqual({ input: 101, output: 22, cacheRead: 77 })
   })
 
   it('a killed dispatch still records the usage its transcript holds so far', () => {
@@ -997,13 +935,9 @@ describe('dispatchRole — transcript usage fallback', () => {
 
     const result = dispatchWithCeilingOnReady({ home, cwd, binDir }, readyFile)
     expect(result.timedOut).toBe(true)
-    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    expect(lines.find((l) => l.event === 'dispatch_failed')).toMatchObject({ reason: 'timeout' })
-    expect(lines.find((l) => l.kind === 'usage')).toMatchObject({
-      source: 'claude-transcript',
-      units: { input: 7, output: 8, cache: 19 },
-      unknown_reason: null
-    })
+    const [turn] = agentTurnsOf(localCopyFolderOf(home))
+    expect(turn?.errorType).toBe('timeout')
+    expect(turn?.usage).toEqual({ input: 7, output: 8, cacheRead: 19 })
   })
 
   it('with neither a stream usage line nor a transcript the units are unknown and the reason names both', () => {
@@ -1021,15 +955,13 @@ describe('dispatchRole — transcript usage fallback', () => {
       `${binDir}:${pathWithoutRealVendors()}`
     )
     expect(r.status).toBe(0)
-    const usage = (outboxLines(home, 'none') as Array<Record<string, unknown>>).find((l) => l.kind === 'usage') as {
-      source: string
-      units: Record<string, unknown>
-      unknown_reason: string
-    }
-    expect(usage.source).toBe('claude')
-    expect(usage.units).toEqual({ input: null, output: null, cache: null })
-    expect(usage.unknown_reason).toContain('claude emitted no stream-json line')
-    expect(usage.unknown_reason).toContain('session transcript')
+    // Usage that is not known is recorded with its reason and no figure, never as zero.
+    const [turn] = agentTurnsOf(localCopyFolderOf(home))
+    expect(turn?.usage.input).toBeUndefined()
+    expect(turn?.usage.output).toBeUndefined()
+    expect(turn?.usage.cacheRead).toBeUndefined()
+    expect(turn?.usage.unknownReason).toContain('claude emitted no stream-json line')
+    expect(turn?.usage.unknownReason).toContain('session transcript')
   })
 })
 
@@ -1059,23 +991,18 @@ describe("dispatchRole — a dispatched role's usage event survives the PR-body 
     )
     expect(r.status).toBe(0)
 
-    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    const usageEvents = lines.filter((l) => l.kind === 'usage')
-    expect(usageEvents).toHaveLength(1)
-    expect(usageEvents[0]).toMatchObject({
-      event: 'observed',
-      // Both Anthropic cache fields sum into one figure — see `parseUsageDetail`.
-      units: { input: 91442, output: 7318, cache: 100 },
-      unknown_reason: null
-    })
+    const turns = agentTurnsOf(localCopyFolderOf(home))
+    expect(turns).toHaveLength(1)
+    // The cache read is its own figure: the creation tokens are not part of it.
+    expect(turns[0]?.usage).toEqual({ input: 91442, output: 7318, cacheRead: 60 })
     // The turn itself is a clean one, so no failure path supplied these numbers.
-    expect(lines.find((l) => l.event === 'dispatch_failed')).toBeUndefined()
-    expect(lines.find((l) => l.event === 'outcome_received')).toBeDefined()
+    expect(turns[0]?.errorType).toBeUndefined()
+    expect(turns[0]?.outcome).toBe('done')
   })
 })
 
 describe('dispatchRole — stderr content never decides the outcome', () => {
-  it('a child that writes to stderr but exits 0 is still outcome_received, not a failure', () => {
+  it('a child that writes to stderr but exits 0 still returns its turn, not a failure', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')
     const binDir = tempDir('vinaya-dispatch-bin-')
@@ -1090,9 +1017,9 @@ describe('dispatchRole — stderr content never decides the outcome', () => {
       `${binDir}:${pathWithoutRealVendors()}`
     )
     expect(r.status).toBe(0)
-    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    expect(lines.find((l) => l.event === 'outcome_received')).toBeDefined()
-    expect(lines.find((l) => l.event === 'dispatch_failed')).toBeUndefined()
+    const [turn] = agentTurnsOf(localCopyFolderOf(home))
+    expect(turn?.outcome).toBe('done')
+    expect(turn?.errorType).toBeUndefined()
   })
 })
 
@@ -1213,15 +1140,19 @@ describe('dispatchRole — two dispatches in the same process', () => {
 
     runScriptWithBudget(script, cwd, spawnEnv)
 
-    // Each call's own `dispatched`/`role_attempt`/`usage`/`outcome_received`
-    // quartet (added alongside dispatched/outcome_received) legitimately shares
-    // ONE run_id (one `createLogSink()` call per `dispatchRole` invocation)
-    // — the invariant under test is exactly two DISTINCT run_ids (one per
-    // call), not that every line's run_id is unique.
-    const lines = outboxLines(home, 'none') as Array<{ meta: { run_id: string } }>
-    expect(lines.length).toBe(8)
-    const runIds = new Set(lines.map((l) => l.meta.run_id))
-    expect(runIds.size).toBe(2)
+    // Each call's turn is one agent span on its own run's trace (one run id per `dispatchRole` invocation) — the
+    // invariant under test is exactly two DISTINCT traces, one per call.
+    const spans = readdirSync(join(localCopyFolderOf(home), 'unresolved'))
+      .filter((name) => name.endsWith('.traces.jsonl'))
+      .flatMap((name) =>
+        readFileSync(join(localCopyFolderOf(home), 'unresolved', name), 'utf8')
+          .trim()
+          .split('\n')
+          .flatMap((line) => readOtlpDocument(JSON.parse(line), name) ?? [])
+      )
+      .filter((record) => record.name === 'invoke_agent developer')
+    expect(spans).toHaveLength(2)
+    expect(new Set(spans.map((record) => record.traceId)).size).toBe(2)
   })
 })
 
@@ -1675,43 +1606,13 @@ describe('dispatchRole — a shared run_id (a nested dispatch inheriting VINAYA_
       stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
     )
 
-    const lines = outboxLines(home, 'none') as Array<{
-      kind: string
-      meta: { run_id: string }
-      effect_id?: string
-      event: string
-      target_role?: string
-    }>
-    // Two concurrent dispatches, each now a `dispatched`/`role_attempt`/
-    // `usage`/`outcome_received` quartet — eight lines.
-    expect(lines.length).toBe(8)
-
-    // Both calls really did share one run_id — the scenario under test,
-    // not a fixture that accidentally avoided it.
-    const runIds = new Set(lines.map((l) => l.meta.run_id))
-    expect(runIds).toEqual(new Set(['shared-run-id-fixture']))
-
-    // Despite the shared run_id, every `dispatch`/`role_attempt` line is
-    // unambiguously attributable to its own call via effect_id — exactly
-    // two distinct effect_ids, each carrying exactly one 'dispatched', one
-    // 'attempted', and one 'outcome_received' line, agreeing on which role
-    // they belong to (never a 'developer' line and a 'code-reviewer' line
-    // sharing one effect_id). `usage` lines carry no `effect_id` at all
-    // (`log/schema.ts`'s `usage` family) — excluded from this grouping,
-    // never silently bucketed under an `undefined` key.
-    const attributable = lines.filter((l) => l.kind !== 'usage')
-    const byEffectId = new Map<string, typeof attributable>()
-    for (const line of attributable) {
-      const group = byEffectId.get(line.effect_id as string) ?? []
-      group.push(line)
-      byEffectId.set(line.effect_id as string, group)
+    // Both calls share one run id — the scenario under test — and each turn is still its own span with its own
+    // seat and usage: two turns, never one merged or lost.
+    const turns = agentTurnsOf(localCopyFolderOf(home), 'shared-run-id-fixture')
+    expect(turns.map((turn) => turn.seat).sort()).toEqual(['code-reviewer', 'developer'])
+    for (const turn of turns) {
+      expect(turn).toMatchObject({ outcome: 'done', usage: { input: 11, output: 22 } })
     }
-    expect(byEffectId.size).toBe(2)
-    for (const group of byEffectId.values()) {
-      expect(group.map((l) => l.event).sort()).toEqual(['attempted', 'dispatched', 'outcome_received'])
-    }
-    const dispatchLines = lines.filter((l) => l.kind === 'dispatch')
-    expect(new Set(dispatchLines.map((l) => l.target_role))).toEqual(new Set(['developer', 'code-reviewer']))
   })
 })
 
@@ -2577,10 +2478,9 @@ describe('dispatchRole — an agent usage limit is its own outcome, never a cras
     expect(r.status).toBe(1)
     const parsed = JSON.parse(r.stdout) as { data: { failureReason: string | null } }
     expect(parsed.data.failureReason).toBe('usage-limit')
-    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    const failed = lines.find((l) => l.event === 'dispatch_failed')
-    expect(failed?.reason).toBe('usage_limit')
-    expect(failed?.usage_limit).toEqual({ agent: 'claude', reset_at: new Date(1789783200 * 1000).toISOString() })
+    const [turn] = agentTurnsOf(localCopyFolderOf(home))
+    expect(turn?.errorType).toBe('usage_limit')
+    expect(turn?.resetAt).toBe(new Date(1789783200 * 1000).toISOString())
   })
 })
 
@@ -2611,16 +2511,30 @@ describe('dispatch usage envelopes match between runners', () => {
                 { type: 'thread.started', thread_id: 'parity-thread' },
                 { type: 'turn.completed', usage: { input_tokens: 101, output_tokens: 17, cached_input_tokens: 6 } }
               ]
-        const stdout = events.map((event) => JSON.stringify(event)).join('\n') + '\n'
+        const stdout = `${events.map((event) => JSON.stringify(event)).join('\n')}\n`
         const script = `#!${process.execPath}\nprocess.stdin.resume(); process.stdin.on('end', () => process.stdout.write(${JSON.stringify(stdout)}))\n`
         writeFakeBinary(bin, agent, script)
         const runDir = join(cwd, 'engine-run')
         const folder = join(cwd, 'engine-logs')
-        const family = (row: any) => row.kind === 'usage' || (row.kind === 'role_attempt' && row.actor === agent)
-        const comparable = (row: any) => {
-          const { meta, subject, effect_id, duration_ms, ...fields } = row
-          expect(typeof effect_id === 'string' || row.kind === 'usage').toBe(true)
-          return { ...fields, subject, provenance: meta.provenance, attemptLineage: meta.lineage.attempt }
+        // The Engine side writes through a run recorder of its own, into a folder of its own.
+        const recorder = createRunRecorder({
+          runId: () => 'parity-run',
+          workRef: () => '9001',
+          repository: () => undefined,
+          place: (repository) => ({ folder, repository }),
+          processIdentity: () => undefined,
+          sender: () => ({ request: () => {}, remember: () => {}, drain: async () => {} }),
+          home: () => home,
+          cwd: () => tempDir('dispatch-parity-root-'),
+          onError: (error) => {
+            throw error
+          }
+        })
+        // What a turn carries on either runner: the seat, the model it asked for and the one that ran, the outcome,
+        // the attempt, the round and the usage; never the timing or the run's own ids.
+        const comparable = (turn: RecordedAgentTurn) => {
+          const { steps, ...fields } = turn
+          return { ...fields, steps: steps.length }
         }
         for (const round of [1, 2]) {
           const result = runDispatch(
@@ -2643,22 +2557,7 @@ describe('dispatch usage envelopes match between runners', () => {
             { VINAYA_LOG_FOLDER_ONLY: '1' }
           )
           expect(result.status, result.stderr).toBe(0)
-          const standalone = (outboxLines(home, 9001) as any[]).filter(family)
-          const sink = createEngineLogSink({
-            env: () => ({
-              VINAYA_ROLE: 'operator',
-              VINAYA_TASK: '9001',
-              VINAYA_RUNTIME: agent,
-              VINAYA_LOG_FOLDER_ONLY: '1'
-            }),
-            cwd: () => cwd,
-            home: () => home,
-            readConfig: () => null,
-            resolveRepo: async () => null,
-            resolveBranchIssue: async () => null,
-            resolveLogDestination: () => ({ kind: 'folder', folder }),
-            unresolvedLogDestination: () => ({ kind: 'folder', folder })
-          })
+          const standalone = agentTurnsOf(localCopyFolderOf(home))
           const launchRole = role === 'code-reviewer' ? 'reviewer' : role
           const attribution = claimLaunchAttribution(runDir, 'resumed-thread', launchRole, round)
           const launcherRole = role === 'security' ? 'security-reviewer' : role
@@ -2677,28 +2576,25 @@ describe('dispatch usage envelopes match between runners', () => {
             },
             join(cwd, 'generated'),
             agent,
-            (launch) => {
-              for (const event of launchUsageEvents(launch, agent, `launch-${role}-${round}`, 'parity-model'))
-                sink.log(event as never, launch.attribution)
-            },
+            (launch) => endLaunchTurn(launch, null),
             Date.now,
-            () => attribution
+            () => attribution,
+            (launchedRole, launchAttribution, startedAt) =>
+              startLaunchTurn(
+                { agent, model: 'parity-model', loopId: 'launch', recorder },
+                launchedRole,
+                launchAttribution,
+                startedAt
+              )
           )
           const child = wrapped('fixture', ['--settings', join(cwd, 'generated', launcherRole, 'settings.json')], {
             cwd,
             env: { CODEX_HOME: agent === 'codex' ? join(cwd, 'generated', launcherRole) : undefined }
           })
           await new Promise<void>((resolve) => child.on('close', () => resolve()))
-          await sink.drain()
-          const engine = readFileSync(join(folder, 'unresolved', '9001.ndjson'), 'utf8')
-            .trim()
-            .split('\n')
-            .map((line) => JSON.parse(line))
-            .filter(family)
+          const engine = agentTurnsOf(folder)
           expect(engine.map(comparable)).toEqual(standalone.map(comparable))
-          expect(engine.filter((row) => row.kind === 'role_attempt').map((row) => row.attempt)).toEqual(
-            Array.from({ length: round }, (_, index) => index + 1)
-          )
+          expect(engine.map((turn) => turn.attempt)).toEqual(Array.from({ length: round }, (_, index) => index + 1))
         }
       })
 })

@@ -38,7 +38,8 @@ import {
 } from '../../../../tools/task-contract/review-input-manifest'
 import type { EscalationRecord } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
 import { keepDriverLock } from './driver-lifecycle.js'
-import { appendDriverLine, appendRoleLine } from '../../../../../../kernel/log/client/loop-log.js'
+import { appendDriverLine, appendRoleLine, narrateAgentRecord } from '../../../../../../kernel/log/client/loop-log.js'
+import { runRecorder } from '../../../../../../kernel/log/run-recorder.js'
 import { checkPremiseAtHead, pollMergeableState, renderConflictPrompt } from './gate-reading.js'
 import { noPushPauseDetail, unpushedWorkResumeDetail } from './unpushed-work.js'
 import { describeObjectivesEdit } from './developer-dispatch.js'
@@ -890,18 +891,25 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
         // (`ReviewerInfrastructureFailure`). `null` only in the
         // structurally unreachable case where no attempt ever produced
         // a handle at all.
-        log({
-          kind: 'role_attempt',
-          event: 'attempted',
-          payload: {},
-          actor: err.role,
-          attempt: null,
-          effect_id: err.attemptEffectId ?? randomUUID(),
-          model: dispatchAgent,
-          outcome: err instanceof ReviewerInfrastructureFailure ? 'infrastructure_failed' : 'incomplete',
-          usage: null,
-          duration_ms: err.attemptDurationMs ?? d.now() - c.roundStartMs
-        })
+        // A reviewer that delivered no usable review ended its own turn as `dispatchRole` ended the launch, so the
+        // Log carries an infrastructure failure once. A result the loop rejected, or one written outside the
+        // reviewer's place, is one more agent turn on the run's Log handle, ended with why.
+        if (!(err instanceof ReviewerInfrastructureFailure)) {
+          const duration = err.attemptDurationMs ?? d.now() - c.roundStartMs
+          runRecorder()
+            .turn({
+              seat: err.role,
+              provider: dispatchAgent,
+              codingAgent: dispatchAgent,
+              round: c.round,
+              key: err.attemptEffectId ?? randomUUID(),
+              runId: c.runId,
+              ...(c.repo === null ? {} : { repository: `${c.repo.owner}/${c.repo.repo}` }),
+              startTime: d.now() - duration,
+              narrate: (record) => narrateAgentRecord(c.loopLogPath, record)
+            })
+            .failed({ errorType: err instanceof ReviewerConfinementViolation ? 'wrote_outside_its_place' : 'rejected' })
+        }
         const stats = computeStats(c, head, c.roundStartMs)
         // No round verdict exists, so the round is never closed here: no
         // `round_ended` (whose only outcome on this path would claim

@@ -155,6 +155,8 @@ function standaloneDispatch(
       'claude',
       '--prompt-file',
       promptFile,
+      '--round',
+      '1',
       '--role-log-path',
       roleLogPath
     ]) as string[],
@@ -206,6 +208,10 @@ const STANDALONE_LAUNCH_LINE =
  */
 const STANDALONE_DRIVER_LINE =
   /^(?:# Loop {3}(?:Developer starting round \d+ with claude|Reviewers starting round \d+)|> Loop {3}(?:security_scan|review_bound): .*)$/
+
+/** The line the Log SDK's narration gives for an agent record: a turn starting, and the turn ending. */
+const AGENT_TURN_LINE =
+  /^[>+] Loop {3}The (?:developer|code reviewer|security reviewer) (?:is working on round \d+|is reviewing round \d+|finished its turn)\.$/
 
 /** A round's measured length, the one value in a narrated line that is a clock reading. */
 const withoutDuration = (line: string): string => line.replace(/ after \d+m \d+s:/, ' after <duration>:')
@@ -335,7 +341,22 @@ describe('the Engine runner narrates a run into the driver log as the standalone
       ...engineOnlyNarration,
       engineMilestones[2]
     ].map((line) => withoutDuration(line ?? ''))
-    expect(engine.map(withoutDuration)).toEqual(expected)
+    // Each agent turn's lines are the Log SDK's narration of its records, with the harness's seat names: the same
+    // six lines on both runners. The reviewers' turns overlap on the Engine and run one after the other on the
+    // standalone loop, so their lines are compared as a set, and everything else line for line.
+    const turnLinesOf = (lines: readonly string[]): string[] =>
+      lines.filter((line) => AGENT_TURN_LINE.test(line)).sort()
+    const restOf = (lines: readonly string[]): string[] => lines.filter((line) => !AGENT_TURN_LINE.test(line))
+    expect(restOf(engine.map(withoutDuration))).toEqual(restOf(expected))
+    expect(turnLinesOf(engine)).toEqual(turnLinesOf(expected))
+    expect(turnLinesOf(engine)).toEqual([
+      '+ Loop   The code reviewer finished its turn.',
+      '+ Loop   The developer finished its turn.',
+      '+ Loop   The security reviewer finished its turn.',
+      '> Loop   The code reviewer is reviewing round 1.',
+      '> Loop   The developer is working on round 1.',
+      '> Loop   The security reviewer is reviewing round 1.'
+    ])
     // The comparison covers each turn and each narrated event.
     expect(expected).toContain('[call=toolu_replay]  > Developer   Running ')
     expect(expected).toContain('[call=toolu_replay]  > Security   Reading ')

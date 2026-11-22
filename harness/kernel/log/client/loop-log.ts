@@ -32,6 +32,12 @@ import {
 } from 'node:fs'
 import { redact } from '../redact'
 import { type NarrationKind, narrate } from './narration'
+import {
+  type NarratableRecord,
+  narrate as narrateRecord,
+  type SeatNames
+} from '../../../../packages/log-sdk/src/index.js'
+import { lookupRole, registeredRoles } from '../roles'
 import { homedir } from 'node:os'
 import { dirname } from 'node:path'
 import { runPath, runtimeDirForThisRepo } from '../../run-paths.js'
@@ -185,6 +191,31 @@ export function narrateDriverEvent(path: string, event: unknown, earlier: readon
     ? `${line.text} The Operator's task_resume for task ${task} continues this run, bound to ${pause}, once the person has decided or repaired it.`
     : line.text
   appendDriverLine(path, words, marksByKind[line.kind])
+}
+
+/** The seats the process registered, as the Log SDK's narration reads them: a reading name, and whether the seat reviews. */
+export function registeredSeatNames(): SeatNames {
+  const seats: Record<string, { reading: string; reviews: boolean }> = {}
+  for (const name of registeredRoles()) {
+    const role = lookupRole(name)
+    if (role !== undefined) seats[name] = { reading: role.reading, reviews: role.reviews }
+  }
+  return seats
+}
+
+/**
+ * The plain line for one agent record the run's Log handle just wrote — the Log SDK's `narrate` for that very
+ * record, with the harness's seat names (the developer, the code reviewer, the security reviewer): into the driver
+ * log and onto the terminal, as the driver's own lines are. A record with no wording writes nothing.
+ */
+export function narrateAgentRecord(
+  path: string,
+  record: NarratableRecord,
+  seatNames: SeatNames = registeredSeatNames()
+): void {
+  const line = narrateRecord(record, seatNames)
+  if (!line) return
+  appendDriverLine(path, line.text, marksByKind[line.kind])
 }
 
 export type FollowLoopLogDeps = {

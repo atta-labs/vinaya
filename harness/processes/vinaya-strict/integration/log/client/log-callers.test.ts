@@ -611,17 +611,6 @@ type ProducerBoundary = {
 
 const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
   {
-    name: 'dispatchRole — every per-attempt exit path (pre-spawn refusal, spawn crash, timeout, clean exit)',
-    files: [DISPATCH_PATH],
-    requires: [
-      { kind: 'dispatch', event: 'dispatched' },
-      { kind: 'dispatch', event: 'outcome_received' },
-      { kind: 'dispatch', event: 'dispatch_failed' },
-      { kind: 'role_attempt', event: 'attempted' },
-      { kind: 'usage', event: 'observed' }
-    ]
-  },
-  {
     name: "assessRound's pure round-decision layer",
     files: [ASSESS_ROUND_PATH],
     requires: [
@@ -637,7 +626,7 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
     ]
   },
   {
-    name: 'devReviewLoop driver — resume, cancel, unpushed-work resume and a failed reviewer report',
+    name: 'devReviewLoop driver — resume, cancel and unpushed-work resume',
     files: [
       DEV_REVIEW_LOOP_SETUP_PATH,
       DEV_REVIEW_LOOP_CANCEL_PATH,
@@ -651,8 +640,7 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
       { kind: 'dev_review_loop', event: 'resumed' },
       { kind: 'dev_review_loop', event: 'unpushed_work_resume' },
       { kind: 'dev_review_loop', event: 'cancelled' },
-      { kind: 'dev_review_loop', event: 'infrastructure_retry' },
-      { kind: 'role_attempt', event: 'attempted' }
+      { kind: 'dev_review_loop', event: 'infrastructure_retry' }
     ]
   },
   {
@@ -734,6 +722,14 @@ const LOG_COVERAGE_EXEMPTIONS: RequiredEvent[] = [
   // before a write recorded one final event still reads; nothing emits them.
   { kind: 'effect', event: 'attempted' },
   { kind: 'effect', event: 'observed' },
+  // An agent turn and its usage are written through the run's Log handle, an `invoke_agent` span carrying its
+  // tokens (`SUBJECT_OWNERS`); the earlier `dispatch`, `role_attempt` and `usage` events stay in the schema so a
+  // line stored before that still reads, and nothing emits them.
+  { kind: 'dispatch', event: 'dispatched' },
+  { kind: 'dispatch', event: 'outcome_received' },
+  { kind: 'dispatch', event: 'dispatch_failed' },
+  { kind: 'role_attempt', event: 'attempted' },
+  { kind: 'usage', event: 'observed' },
   { kind: 'forge_write', event: 'validated' },
   { kind: 'forge_write', event: 'refused' },
   { kind: 'forge_write', event: 'written' }
@@ -868,9 +864,11 @@ describe('log coverage — every schema event maps to a producer boundary', () =
  * wrapper, named in `FAMILY_EMITTERS`.
  */
 const FAMILY_OWNERS: Record<string, readonly string[]> = {
-  dispatch: [DISPATCH_PATH],
-  role_attempt: [DISPATCH_PATH, DEV_REVIEW_LOOP_ROUND_LOOP_PATH],
-  usage: [DISPATCH_PATH],
+  // The schema keeps these so an old line still parses; an agent turn and its usage are written through the run's
+  // Log handle, and `SUBJECT_OWNERS` names who writes them.
+  dispatch: [],
+  role_attempt: [],
+  usage: [],
   dev_review_loop: [
     DEV_REVIEW_LOOP_SETUP_PATH,
     DEV_REVIEW_LOOP_CANCEL_PATH,
@@ -1042,6 +1040,134 @@ function familiesDeclaredBySchema(schemaSource: string): string[] {
   }
   return families
 }
+
+/**
+ * Per-subject ownership for what the harness writes through the run's Log handle rather than as an earlier-format
+ * event: an agent turn (an `invoke_agent` span, opened through the recorder's `turn`), and the tokens on it. A file
+ * writes the agents subject when it opens a turn, and the usage subject when it records tokens on one. The walk
+ * reads the syntax tree, so a name in a string or a comment is never a write. A file named for a subject must write
+ * it, and a file that writes it must be named.
+ */
+const RUN_ENGINE_PATH = 'harness/processes/vinaya-strict/bin/run-engine.ts'
+const ACTIONS_PATH = 'harness/processes/vinaya-strict/executing/actions.ts'
+const SUBJECT_OWNERS: Record<string, readonly string[]> = {
+  agents: [DISPATCH_PATH, RUN_ENGINE_PATH, DEV_REVIEW_LOOP_ROUND_LOOP_PATH, ACTIONS_PATH],
+  usage: [DISPATCH_PATH, RUN_ENGINE_PATH]
+}
+
+type SubjectWrite = { file: string; subject: string }
+
+/** The source the subject scan reads: the harness process and the kernel, whole, so a new writer anywhere in them is found. */
+function subjectScanFiles(): [string, string][] {
+  return [
+    ...sourceFiles(join(REPO_ROOT, 'harness/processes/vinaya-strict'), 'harness/processes/vinaya-strict'),
+    ...sourceFiles(join(REPO_ROOT, 'harness/kernel'), 'harness/kernel')
+  ].filter(([rel]) => !rel.split('/').includes('tests') && rel !== 'harness/kernel/log/run-recorder.ts')
+}
+
+/** The subjects a source text writes through the run's Log handle, read from its syntax tree. */
+function subjectWritesOf(rel: string, source: string): SubjectWrite[] {
+  const sf = ts.createSourceFile(rel, source, ts.ScriptTarget.Latest, true)
+  const found = new Set<string>()
+  const visit = (n: ts.Node): void => {
+    if (ts.isCallExpression(n)) {
+      const callee = n.expression
+      if (ts.isPropertyAccessExpression(callee)) {
+        const object = callee.expression
+        // `runRecorder().turn(...)` opens a turn; `<handle>.agent.sent(...)` does too.
+        if (
+          callee.name.text === 'turn' &&
+          ts.isCallExpression(object) &&
+          ts.isIdentifier(object.expression) &&
+          object.expression.text === 'runRecorder'
+        )
+          found.add('agents')
+        if (callee.name.text === 'sent' && ts.isPropertyAccessExpression(object) && object.name.text === 'agent')
+          found.add('agents')
+        // `<turn>.usage(...)` and `<handle>.usage.recorded(...)` record tokens.
+        if (callee.name.text === 'usage') found.add('usage')
+        if (callee.name.text === 'recorded' && ts.isPropertyAccessExpression(object) && object.name.text === 'usage')
+          found.add('usage')
+      } else if (ts.isIdentifier(callee) && callee.text === 'recordUsage') {
+        // The one helper that puts a launch's tokens on its turn.
+        found.add('usage')
+      }
+    }
+    ts.forEachChild(n, visit)
+  }
+  visit(sf)
+  return [...found].sort().map((subject) => ({ file: rel, subject }))
+}
+
+/** A file writing a subject it is not named for, and a row naming a file that does not write it. */
+function subjectViolations(
+  owners: Readonly<Record<string, readonly string[]>>,
+  writes: readonly SubjectWrite[],
+  existingFiles: ReadonlySet<string>
+): string[] {
+  const violations: string[] = []
+  for (const { file, subject } of writes) {
+    if (!(owners[subject] ?? []).includes(file))
+      violations.push(`${file} writes the ${subject} subject but is not one of its owners`)
+  }
+  const written = new Set(writes.map((w) => `${w.file}\0${w.subject}`))
+  for (const [subject, files] of Object.entries(owners)) {
+    for (const file of files) {
+      if (!existingFiles.has(file)) violations.push(`${subject} names ${file}, which does not exist`)
+      else if (!written.has(`${file}\0${subject}`))
+        violations.push(`${subject} names ${file}, which no longer writes it`)
+    }
+  }
+  return violations
+}
+
+describe('log-callers — agents and usage are written through the run handle, only from their owning files', () => {
+  const files = subjectScanFiles()
+  const existing = new Set(files.map(([rel]) => rel))
+  const writes = files.flatMap(([rel, abs]) => subjectWritesOf(rel, readFileSync(abs, 'utf8')))
+
+  it('every write of a subject is from a file named for it, and every named file still writes it', () => {
+    expect(subjectViolations(SUBJECT_OWNERS, writes, existing)).toEqual([])
+  })
+
+  it('a write from a file outside the row fails, naming the file and the subject', () => {
+    const planted: SubjectWrite[] = [...writes, { file: RUNNER_PATH, subject: 'agents' }]
+    expect(subjectViolations(SUBJECT_OWNERS, planted, existing)).toEqual([
+      `${RUNNER_PATH} writes the agents subject but is not one of its owners`
+    ])
+  })
+
+  it('a row naming a file that no longer writes its subject fails', () => {
+    const owners = { ...SUBJECT_OWNERS, usage: [...(SUBJECT_OWNERS.usage as string[]), ACTIONS_PATH] }
+    expect(subjectViolations(owners, writes, existing)).toEqual([
+      `usage names ${ACTIONS_PATH}, which no longer writes it`
+    ])
+  })
+
+  it('a row naming a file that does not exist fails', () => {
+    const owners = {
+      ...SUBJECT_OWNERS,
+      agents: [...(SUBJECT_OWNERS.agents as string[]), 'harness/kernel/not-a-file.ts']
+    }
+    expect(subjectViolations(owners, writes, existing)).toEqual([
+      'agents names harness/kernel/not-a-file.ts, which does not exist'
+    ])
+  })
+
+  it('reads the syntax tree: a name in a string or a comment is not a write, and a turn and its tokens are', () => {
+    const quiet = [
+      "// runRecorder().turn({ seat: 'developer' })",
+      'const text = "turn.usage({})"',
+      'export const f = () => text'
+    ].join('\n')
+    expect(subjectWritesOf('harness/kernel/x.ts', quiet)).toEqual([])
+    const loud = [
+      "import { runRecorder } from './run-recorder.js'",
+      "export function a() { const turn = runRecorder().turn({ seat: 'developer' }); turn.usage({ inputTokens: 1 }) }"
+    ].join('\n')
+    expect(subjectWritesOf('harness/kernel/x.ts', loud).map((w) => w.subject)).toEqual(['agents', 'usage'])
+  })
+})
 
 describe('log-callers — each family is emitted only from its owning files', () => {
   const declaredFamilies = new Set(familiesDeclaredBySchema(readFileSync(join(REPO_ROOT, SCHEMA_PATH), 'utf8')))
