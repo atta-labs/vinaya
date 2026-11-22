@@ -1,3 +1,4 @@
+import { checkRecordContract, describeContractFailure } from '../contract/check.js'
 import { createOrdering, type ReadGap } from './order.js'
 import type { OtelRecord } from './records.js'
 import { applyTrust } from './trust.js'
@@ -92,10 +93,22 @@ export function createReader(source: RecordSource, options: ReaderOptions = {}):
   async function pull(): Promise<ReaderUpdate> {
     const batch = await source.read(position)
     position = batch.position
-    const trusted = batch.records.map((record) =>
+    const problems: ReadGap[] = [...batch.problems]
+    const fitting = batch.records.filter((record) => {
+      const failure = checkRecordContract(record)
+      if (failure === null) return true
+      problems.push({
+        kind: 'contract',
+        writerId: record.writerId,
+        place: `${record.source} ${record.kind} "${record.name}" at ${record.time}`,
+        detail: describeContractFailure(failure)
+      })
+      return false
+    })
+    const trusted = fitting.map((record) =>
       applyTrust(record, { foreign: source.foreign, ...(options.home === undefined ? {} : { home: options.home }) })
     )
-    return finish(ordering.push(trusted), batch.problems)
+    return finish(ordering.push(trusted), problems)
   }
 
   return {

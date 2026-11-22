@@ -3,6 +3,8 @@ import { constants, lstatSync } from 'node:fs'
 import { lstat, mkdir, open, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { Worker } from 'node:worker_threads'
+import { checkRecordContract, describeContractFailure } from '../contract/check.js'
+import { readOtlpDocument } from '../reader/lines.js'
 import { repoSegment } from '../writer/settings.js'
 
 type Signal = 'traces' | 'logs'
@@ -136,6 +138,20 @@ function validateJson(bytes: Uint8Array): boolean {
   } catch {
     return false
   }
+}
+
+/** The first name in an OTLP line outside the contract, as a reason; `undefined` when every record fits. */
+function contractReason(line: Uint8Array): string | undefined {
+  try {
+    const document: unknown = JSON.parse(new TextDecoder('utf-8', { ignoreBOM: true }).decode(line))
+    for (const record of readOtlpDocument(document, 'local copy') ?? []) {
+      const failure = checkRecordContract(record)
+      if (failure) return `contract: ${describeContractFailure(failure)}`
+    }
+  } catch {
+    // A line that cannot be read here was already judged by the JSON check.
+  }
+  return undefined
 }
 
 function validateLargeLine(line: Buffer, signal: AbortSignal): Promise<boolean> {
@@ -345,7 +361,7 @@ export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<Loca
         const valid = large ? await validateLargeLine(line, stop.signal) : validateJson(line)
         if (stopped || Date.now() >= deadline) return
         const body = large ? (line as Uint8Array<ArrayBuffer>) : line.toString('utf8')
-        let reason = valid ? undefined : 'invalid JSON'
+        let reason = valid ? contractReason(line) : 'invalid JSON'
         if (!reason) {
           if (rejectedBeforePost(rejected)) continue
           const status = await post(options.fetch ?? fetch, endpoints[signal], headers, body, deadline)

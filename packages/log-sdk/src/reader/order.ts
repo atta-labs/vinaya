@@ -3,7 +3,7 @@ import { identityOf, type OtelRecord, spanKeyOf } from './records.js'
 
 /** Something a reader could not hand, reported with its place. */
 export type ReadGap = {
-  kind: 'sequence' | 'file_missing' | 'unreadable_line' | 'unrecognised_document' | 'source_unavailable'
+  kind: 'sequence' | 'file_missing' | 'unreadable_line' | 'unrecognised_document' | 'source_unavailable' | 'contract'
   writerId: string | null
   place: string
   detail: string
