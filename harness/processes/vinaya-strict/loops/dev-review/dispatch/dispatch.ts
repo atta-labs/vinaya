@@ -99,7 +99,8 @@ import { type AgentTurn, runRecorder } from '../../../../../kernel/log/run-recor
 import { createVinayaLogSink } from '../../../integration/log/log-sink-factory.js'
 // The command line installs the process's sink factory through the dispatch module it already loads.
 export { installVinayaLogSinkFactory } from '../../../integration/log/log-sink-factory.js'
-import { appendRoleLine, narrateAgentRecord } from '../../../../../kernel/log/client/loop-log.js'
+import { narrateAgentRecord } from '../../../../../kernel/log/client/agent-record-line.js'
+import { appendRoleLine } from '../../../../../kernel/log/client/loop-log.js'
 import { registeredSeatNames } from '../../../executing/seat-names.js'
 import { createAgentStreamRenderer } from '../../../../../kernel/adapters/agents/agent-stream.js'
 import {
