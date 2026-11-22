@@ -21,6 +21,7 @@
 
 import type { IssueDocumentation } from '@attalabs/harness/issue-documentation'
 import { packagesNamedIn } from './brief-validation'
+import { carriedSectionHeading, rationaleFieldPattern } from './issue-sections'
 import { deriveSection7 } from './derive-section7'
 import { NEW_FILES_ONLY_PREMISE } from './premise-check'
 import type { GateCutovers } from './gate-cutovers'
@@ -73,7 +74,7 @@ function renderDocumentation(documentation: IssueDocumentation): string {
  */
 function renderPremises(premises: readonly IssuePremise[]): string {
   return [
-    '## Premises',
+    carriedSectionHeading('Premises'),
     '',
     'Checked against the code when this task Issue was cut, and again against the default branch at dispatch — facts, not claims.',
     '',
@@ -101,15 +102,15 @@ export type RationaleFieldKey =
  * from a file outside this task's boundary.
  */
 const RATIONALE_FIELD_PATTERNS: Record<RationaleFieldKey, string> = {
-  boundary: 'Boundary',
-  dependencyRationale: 'Dependency rationale|Depends[- ]on',
-  trapsToAvoid: 'Traps',
-  suggestedAgentClass: '(?:Suggested\\s+)?agent-class',
-  stopAndEscalate: 'Stop-and-escalate'
+  boundary: rationaleFieldPattern('boundary'),
+  dependencyRationale: rationaleFieldPattern('dependencyRationale'),
+  trapsToAvoid: rationaleFieldPattern('trapsToAvoid'),
+  suggestedAgentClass: rationaleFieldPattern('suggestedAgentClass'),
+  stopAndEscalate: rationaleFieldPattern('stopAndEscalate')
 }
 
 /** The label the Issue write gate reads the docs field by (`checkRationaleNamesDocs`). Not in the table above: the field is carried when present, never required here. */
-const DOCS_TO_KEEP_COHERENT_PATTERN = 'Docs to keep coherent|§7'
+const DOCS_TO_KEEP_COHERENT_PATTERN = rationaleFieldPattern('docsToKeepCoherent')
 
 const RATIONALE_FIELD_NAMES: Record<RationaleFieldKey, string> = {
   boundary: 'Boundary',
