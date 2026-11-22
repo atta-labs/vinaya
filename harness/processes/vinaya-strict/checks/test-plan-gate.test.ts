@@ -120,6 +120,49 @@ describe('evaluateTestPlanGate — unticked boxes', () => {
   })
 })
 
+describe('evaluateTestPlanGate — a [principal] item due after merge', () => {
+  it('PASSes a body whose unticked [principal] items all begin `After merge:`, stating the count', () => {
+    const body = [
+      '## Test Plan',
+      '',
+      '- [ ] **[principal]** After merge: sign in and look',
+      '- [ ] **[principal]** AFTER MERGE: look again'
+    ].join('\n')
+    const result = evaluateTestPlanGate(body, TASK_BRANCH)
+    expect(result.verdict).toBe('pass')
+    const joined = result.messages.join('\n')
+    expect(joined).toContain('due after merge: 2')
+    expect(result.messages.some((m) => /^\s*[-*]\s+\[\s\]/.test(m))).toBe(false)
+  })
+
+  it('FAILs a mixed body and lists the unmarked item alone', () => {
+    const body = [
+      '## Test Plan',
+      '',
+      '- [ ] **[principal]** After merge: sign in and look',
+      '- [ ] **[principal]** check before merge'
+    ].join('\n')
+    const result = evaluateTestPlanGate(body, TASK_BRANCH)
+    expect(result.verdict).toBe('fail')
+    const joined = result.messages.join('\n')
+    expect(joined).toContain('check before merge')
+    expect(joined).not.toContain('sign in and look')
+    expect(joined).toContain('due after merge: 1')
+  })
+
+  it('treats a mark that is not at the start of the text as an ordinary item', () => {
+    const body = ['## Test Plan', '', '- [ ] **[principal]** Do it. After merge: later'].join('\n')
+    expect(evaluateTestPlanGate(body, TASK_BRANCH).verdict).toBe('fail')
+  })
+
+  it('a ticked marked item changes no verdict', () => {
+    const body = ['## Test Plan', '', '- [x] **[principal]** After merge: done', '- [ ] **[principal]** open'].join(
+      '\n'
+    )
+    expect(evaluateTestPlanGate(body, TASK_BRANCH).verdict).toBe('fail')
+  })
+})
+
 describe('evaluateTestPlanGate — the [agent] half is never graded here (task 12, #387)', () => {
   it('PASSes (advisory) a body whose Test Plan is a fenced [agent] command list with no [principal] item at all', () => {
     const body = ['## Test Plan', '', '```', 'bun run test → 0 fail', '```'].join('\n')

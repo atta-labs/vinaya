@@ -34,6 +34,22 @@ describe('buildPrincipalTestPlanWaitErrors (O1)', () => {
     expect(buildPrincipalTestPlanWaitErrors(body, TASK_BRANCH)).toEqual([])
   })
 
+  it('unticked [principal] items that all begin `After merge:` raise no error', () => {
+    const body = UNTICKED_PRINCIPAL_BODY.replace('**[principal]** sign in', '**[principal]** After merge: sign in')
+    expect(buildPrincipalTestPlanWaitErrors(body, TASK_BRANCH)).toEqual([])
+  })
+
+  it('a mixed body raises an error naming the unmarked item alone', () => {
+    const body = UNTICKED_PRINCIPAL_BODY.replace(
+      '- [ ] **[principal]** sign in and verify',
+      '- [ ] **[principal]** After merge: look at prod\n- [ ] **[principal]** sign in and verify'
+    )
+    const errors = buildPrincipalTestPlanWaitErrors(body, TASK_BRANCH)
+    expect(errors.length).toBe(1)
+    expect(errors[0]?.message).toContain('sign in and verify')
+    expect(errors[0]?.message).not.toContain('look at prod')
+  })
+
   it('no [principal] items at all passes', () => {
     const body = '## 9. Test Plan\n\n- [x] **[agent]** did the thing\n\n## 10. Stop conditions\n\nx'
     expect(buildPrincipalTestPlanWaitErrors(body, TASK_BRANCH)).toEqual([])
