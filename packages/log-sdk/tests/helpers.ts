@@ -9,10 +9,15 @@ import { type ConnectOptions, connect } from '../src/index.js'
 /** A directory with no settings files, so a test never reads the real repository's. */
 export const NO_SETTINGS_ROOT = '/nonexistent-log-sdk-test-root'
 
-const runtimeDir = mkdtempSync(join(tmpdir(), 'log-sdk-writer-'))
-afterAll(() => rmSync(runtimeDir, { recursive: true, force: true }))
+const runtimeDirs: string[] = []
+afterAll(() => {
+  for (const dir of runtimeDirs) rmSync(dir, { recursive: true, force: true })
+})
 
+/** Each handle gets its own local copy, so no test finds another test's open run in it. */
 export function harness(options: Partial<ConnectOptions> = {}) {
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'log-sdk-writer-'))
+  runtimeDirs.push(runtimeDir)
   const spans = new InMemorySpanExporter()
   const logs = new InMemoryLogRecordExporter()
   const errors: unknown[] = []
