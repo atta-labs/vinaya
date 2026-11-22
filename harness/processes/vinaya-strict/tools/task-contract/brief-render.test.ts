@@ -626,6 +626,17 @@ describe('renderBrief', () => {
     expect(result.brief).toContain('- [ ] **[principal]** Verify in a real browser.')
   })
 
+  it('§9 carries a `[principal]` item marked `After merge:` unchanged', () => {
+    const item = 'After merge: open the portal and look at the page.'
+    const result = renderBrief(
+      baseFacts({ testPlan: { kind: 'commands', lines: ['bun test → 0 fail'], principal: [item], live: [] } }),
+      TEMPLATE
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.brief).toContain(`- [ ] **[principal]** ${item}`)
+  })
+
   it('§9 emits each `[live]` item as an unboxed line after the `[principal]` boxes, and the Issue parser reads it back', () => {
     const live =
       'VINAYA_LIVE_CONFORMANCE=1 bun test harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/claude.test.ts'

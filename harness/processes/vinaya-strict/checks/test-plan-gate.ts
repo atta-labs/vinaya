@@ -19,7 +19,9 @@
  *     unticked line. A `[agent]`-tagged checkbox (an older body, still
  *     grandfathered by `brief-shape`'s own rollout) is never graded here —
  *     see the module doc comment above.
- *   - All `[principal]` boxes ticked (or none exist at all) → `pass`.
+ *   - A `[principal]` item whose text begins `After merge:` is due after merge:
+ *     it is counted and stated, never graded, ticked or not.
+ *   - All `[principal]` boxes due before merge ticked (or none exist) → `pass`.
  *
  * The driver's `VINAYA:LIVE` record (`live-record.ts`) is graded alongside: each
  * unticked `[live]` line — a run that failed, or one the loop's host could not
@@ -36,6 +38,9 @@
 import { type LiveRecordLine, readLiveRecord } from '../tools/task-contract/live-record'
 import { locateTestPlanSection } from '../tools/task-contract/test-plan-section'
 import { parseTaskBranchIdentity } from '../tools/task-contract/task-branch-identity'
+
+/** The mark of a `[principal]` item due after merge: `After merge:` right after the tag, in any letter case. */
+const AFTER_MERGE_MARK_RE = /^[-*]\s+\[[ xX]\]\s*\*{0,2}\[principal\]\*{0,2}\s*After merge:/i
 
 export type TestPlanGateVerdict = 'pass' | 'fail'
 export type TestPlanGateResult = {
@@ -125,15 +130,28 @@ export function evaluateTestPlanGate(body: string, branch: string, live?: LiveGa
   // An older body may still carry them (grandfathered by `brief-shape`'s
   // own rollout); this gate simply does not look at that tag at all any
   // more, ticked or not.
-  const checkboxLines = [
-    ...section
-      .split('\n')
-      .map((line) => line.trimStart())
-      .filter((line) => /^[-*]\s+\[[ xX]\]\s*\*{0,2}\[principal\]\*{0,2}/i.test(line)),
-    ...liveLines
-  ]
+  const principalLines = section
+    .split('\n')
+    .map((line) => line.trimStart())
+    .filter((line) => /^[-*]\s+\[[ xX]\]\s*\*{0,2}\[principal\]\*{0,2}/i.test(line))
+  // A `[principal]` item whose text begins `After merge:` is a check only the
+  // Principal can make once the change is merged: it is counted, never graded,
+  // ticked or not, and never printed as a checkbox line.
+  const dueAfterMerge = principalLines.filter((line) => AFTER_MERGE_MARK_RE.test(line)).length
+  const checkboxLines = [...principalLines.filter((line) => !AFTER_MERGE_MARK_RE.test(line)), ...liveLines]
+  const afterMergeNote = `Test Plan [principal] items due after merge: ${dueAfterMerge}.`
 
   if (checkboxLines.length === 0) {
+    if (dueAfterMerge > 0) {
+      return {
+        verdict: 'pass',
+        messages: [
+          'Test Plan section has no `[principal]` item due before merge.',
+          afterMergeNote,
+          'PASS — an item due after merge does not hold the merge.'
+        ]
+      }
+    }
     return {
       verdict: 'pass',
       messages: [
@@ -146,7 +164,10 @@ export function evaluateTestPlanGate(body: string, branch: string, live?: LiveGa
   const unchecked = checkboxLines.filter((line) => /^[-*]\s+\[\s\]/.test(line))
   const checked = checkboxLines.filter((line) => /^[-*]\s+\[[xX]\]/.test(line))
 
-  const messages = [`Test Plan [principal] items: ${checked.length} ticked, ${unchecked.length} unticked.`]
+  const messages = [
+    `Test Plan [principal] items: ${checked.length} ticked, ${unchecked.length} unticked.`,
+    ...(dueAfterMerge > 0 ? [afterMergeNote] : [])
+  ]
 
   if (unchecked.length > 0) {
     messages.push('', 'FAIL — the following [principal] Test Plan items are unticked:')

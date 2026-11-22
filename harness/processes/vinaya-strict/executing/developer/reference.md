@@ -335,7 +335,7 @@ A failed `[agent]` command makes the PR unmergeable (`vinaya-pr-report`'s own ex
 
 ### The `[principal]` half — not yours
 
-The Principal executes the auth-gated, key-dependent and visual items in a browser and ticks those boxes. Never tick one because the `[agent]` items passed: they prove different properties. Never re-tag a `[principal]` item as `[agent]` to complete your half — that asymmetry is the whole point of the split, and erasing it is the failure this phase exists to prevent.
+The Principal executes the auth-gated, key-dependent and visual items in a browser and ticks those boxes. A `[principal]` item whose text begins `After merge:` checks something only possible once the change is merged: copy it into the report unchanged, never drop or rewrite the mark; it is counted, never graded. Never tick one because the `[agent]` items passed: they prove different properties. Never re-tag a `[principal]` item as `[agent]` to complete your half — that asymmetry is the whole point of the split, and erasing it is the failure this phase exists to prevent.
 
 ### What this phase does not do
 
@@ -349,7 +349,7 @@ The merge waits on three conditions, which `review-gate` and `evidence-fresh` ch
 
 1. **Reviewer approved.** The PR carries an approving verdict — from a human, an installed review-bot GitHub App, or another agent.
 2. **`[agent]` evidence fresh.** The `VINAYA:EVIDENCE` block's third group (the §9 fenced command list, run by `vinaya-pr-report`) matches a fresh recompute at the PR head.
-3. **Principal confirmation.** The PR body's Test Plan section has no unchecked `- [ ] **[principal]**` lines.
+3. **Principal confirmation.** The PR body's Test Plan section has no unchecked `- [ ] **[principal]**` lines due before merge. An item whose text begins `After merge:` is due after merge: copy it unchanged, and it does not hold the merge.
 
 Before any merge-adjacent action (commenting "MERGE", helping the Principal merge, or pushing a "fix CI" commit after review), read the three: under the review loop through `read_pull_request`; working manually through `gh pr view <n> --json reviews,statusCheckRollup,body`. If any is missing, say exactly which — your turn result under the loop, a PR comment working manually — and stop. The Principal decides what to do next.
 

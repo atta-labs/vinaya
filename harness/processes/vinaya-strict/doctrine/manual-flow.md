@@ -145,7 +145,7 @@ Before the Principal merges (Step 8), any Developer helping merge or pushing a "
 
 1. **Reviewer approved?** The JSON `reviews` array contains at least one entry with `state: APPROVED`.
 2. **Test Plan `[agent]` items ticked?** The PR body's Test Plan section contains no unchecked `- [ ] **[agent]**` lines (Step 7a complete).
-3. **Test Plan `[principal]` items ticked?** The PR body's Test Plan section contains no unchecked `- [ ] **[principal]**` lines (Step 7b complete).
+3. **Test Plan `[principal]` items ticked?** The PR body's Test Plan section contains no unchecked `- [ ] **[principal]**` lines due before merge (Step 7b complete); an item whose text begins `After merge:` is due after merge and does not hold the merge.
 
 If any fails: post a comment listing the exact items missing. The Principal decides whether to proceed.
 
