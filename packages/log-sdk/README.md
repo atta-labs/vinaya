@@ -30,6 +30,8 @@ try {
 
 Pass `identity` to `connect` to say what ran the run: any of `runnerName`, `runnerVersion`, `cliVersion`, `flowId`, `flowVersion`, `processDigest` and `settingsDigest`. Each part given is written once, as a resource attribute on every record (`vinaya.runner.name`, `vinaya.runner.version`, `vinaya.cli.version`, `vinaya.flow.id`, `vinaya.flow.version`, `vinaya.process.digest`, `vinaya.settings.digest`); a part not given is not written. The SDK fills `os.type` (OpenTelemetry's value for the machine's operating system, such as `darwin`, `linux` or `windows`) and `vinaya.ci` (`true` when the `CI` environment variable is set to anything but empty or `false`; `identity.ci` overrides it) itself. `log.agent.sent` takes an optional `effort` text, written as `vinaya.agent.effort` on the agent's started event and span.
 
+Every text value the SDK writes is at most 500 characters after redaction; a longer one is cut so that it ends with `…`, which counts within the 500. A declared custom event's text field over 500 characters is still refused.
+
 Reuse the handle for the life of a run. Call `flush()` to flush processors during the run and `shutdown()` when finished.
 
 ## Settings
