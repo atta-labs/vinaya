@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
@@ -111,6 +111,14 @@ describe('the driver-log module and the Log SDK', () => {
   it('names no Log SDK path, so the round-test progress observer loads without it', () => {
     const source = readFileSync(join(import.meta.dir, '../../../../../kernel/log/client/loop-log.ts'), 'utf8')
     expect(source).not.toContain('log-sdk')
+  })
+
+  it('names the Log SDK index in no file of the client directory but the agent-record module', () => {
+    const clientDir = join(import.meta.dir, '../../../../../kernel/log/client')
+    const naming = readdirSync(clientDir)
+      .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
+      .filter((file) => readFileSync(join(clientDir, file), 'utf8').includes('packages/log-sdk/src/index'))
+    expect(naming).toEqual(['agent-record-line.ts'])
   })
 })
 
