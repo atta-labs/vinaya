@@ -33,6 +33,7 @@ import {
   readIssueBody,
   readIssueComments
 } from '../../../../../kernel/adapters/code-host/github/forge-read'
+import { checkQuotedCommandsExist } from '../named-commands'
 import { checkConditionWordsNeedPremise, checkProsePathsExist } from '../prose-facts'
 import {
   boundaryPinnedFiles,
@@ -1804,6 +1805,8 @@ const ISSUE_CONTENT_RECOVERY = {
     "Add a `## Premises` section pinning what the named field or Part says about the code — one `` `<path>` contains `<text>` `` line per claim — or reword it so it no longer states the code's current condition. Then re-run `{cmd}`.",
   prosePathsExist:
     "Write the full repository path of a file that exists, or — when this task creates the file — name it in the Boundary's `Pinned files:` clause, or — when a task this one depends on creates it — add a `## Premises` line `` after #<n>: `<path>` contains `<text>` `` and the `Depends-on` edge. Then re-run `{cmd}`.",
+  quotedCommandsExist:
+    'Rewrite the named code span or `## Test plan` line to quote a command the command reference carries — a separate program is written with its own hyphenated name — or introduce the command in the Objectives or Parts. Then re-run `{cmd}`.',
   crossTaskValuesPinned:
     'Add a `## Premises` line `` after #<n>: `<path>` contains `<value>` `` for the named value, on the `Depends-on` task that creates it, or say in the same sentence that this task adds it. Then re-run `{cmd}`.'
 } as const
@@ -1953,6 +1956,7 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [checkBoundaryClaimsNeedPremise(input.body).errors, 'boundaryClaimsNeedPremise'],
     [checkConditionWordsNeedPremise(input.body).errors, 'conditionWordsNeedPremise'],
     [checkProsePathsExist(input.body, input.trackedFiles ?? []).errors, 'prosePathsExist'],
+    [checkQuotedCommandsExist(input.body, input.commandReference).errors, 'quotedCommandsExist'],
     [checkCrossTaskValuesPinned(input.body, input.existsInTree).errors, 'crossTaskValuesPinned']
   ]
   const errors: CheckError[] = []

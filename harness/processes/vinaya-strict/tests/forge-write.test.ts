@@ -12,6 +12,7 @@ import {
   extractLabels,
   extractTitle,
   locateBody,
+  readCommandReference,
   readSharedPackages,
   resolveShippableArgs,
   runBodyChecks,
@@ -466,6 +467,37 @@ describe('validateIssueContent — the content checks', () => {
     expect(errors.length).toBe(1)
     expect(errors[0]?.check).toBe('issue-content')
     expect(errors[0]?.message).toContain('apps/cli/specs/surface.md')
+  })
+
+  it('refuses an Issue quoting a missing command in its Traps, through the whole gate', () => {
+    const issue = {
+      labels: ['vinaya/tranche:demo'],
+      sharedPackages: [],
+      projectPaths: [{ name: 'vinaya', path: '.' }],
+      retryCommand: cmd,
+      issueNumber: null,
+      briefSectionsSinceIssue: null,
+      resolvesToFile: () => true,
+      readFile: () => null,
+      docOwnersContent: null,
+      milestoneSiblings: null,
+      subjectRef: '',
+      collisionPeers: null,
+      subjectFiles: [],
+      collisionThreshold: DEFAULT_COLLISION_THRESHOLD,
+      commandReference: readCommandReference(),
+      configReference: DORMANT_CONFIG_REFERENCE,
+      pinnedFileImporters: [],
+      existsInTree: () => false
+    }
+    const named = (body: string) =>
+      validateIssueContent({ ...issue, body }).filter((e) => e.message.includes('Commands/named'))
+    const traps = `${validIssue}\n\n**Traps to avoid** — Run \`vinaya frobnicate --now\` before anything else.\n`
+    const refused = named(traps)
+    expect(refused.length).toBe(1)
+    expect(refused[0]?.message).toContain('vinaya frobnicate')
+    expect(refused[0]?.agent_recovery_prompt).toContain('task_issue_create')
+    expect(named(validIssue)).toEqual([])
   })
 
   it('passes the same Surface once the bound document is moved inside `in:`', () => {
