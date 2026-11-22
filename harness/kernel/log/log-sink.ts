@@ -33,11 +33,14 @@ import { type Host, type LogEvent, LogEventSchema, type Provenance } from './sch
 import { type OverflowDiagnostic, recordIdentity } from './store'
 import { redact } from './redact'
 import { loadDeferredLogSinkFactory } from './deferred-sink-factory.js'
-import { createLocalCopyWriter, type OtlpAddressDecision } from './local-copy-writer.js'
 import {
-  defaultRuntimeDir as sdkDefaultRuntimeDir,
-  resolveSettings as sdkResolveSettings
-} from '../../../packages/log-sdk/src/writer/settings.js'
+  createLocalCopySender,
+  createLocalCopyWriter,
+  type LocalCopyPlace,
+  type LocalCopySender,
+  type OtlpAddressDecision,
+  resolveLocalCopyFolder
+} from './local-copy-writer.js'
 import { configProvider, type ProvidedConfig } from '../config/loader/config-provider.js'
 import {
   type LogsDestination,
@@ -1571,18 +1574,7 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
   const localCopy = createLocalCopyWriter({
     warn: (message) => warnOnce(message),
     home: () => deps.home(),
-    address:
-      deps.otlp?.address ??
-      (async () => {
-        const { resolveOtlpAddress } = await import('./otlp-address.js')
-        const unattended = isUnattendedProcess(process.env)
-        return resolveOtlpAddress({
-          localConfig: deps.readConfig(),
-          trustAnchorConfig: unattended ? await processTrustAnchor(repoRootSync()) : null,
-          unattended,
-          env: deps.env()
-        })
-      }),
+    address: deps.otlp?.address ?? (() => resolveProcessOtlpAddress({ readConfig: deps.readConfig, env: deps.env })),
     fetch: deps.otlp?.fetch,
     ...(deps.otlp?.sendBoundMs === undefined ? {} : { sendBoundMs: deps.otlp.sendBoundMs }),
     ...(deps.otlp?.sendIntervalMs === undefined ? {} : { sendIntervalMs: deps.otlp.sendIntervalMs })
@@ -1597,26 +1589,15 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
   const localFolderFor = (repository: string | undefined): string | undefined => {
     const memo = repository ?? ''
     if (localCopyFolders.has(memo)) return localCopyFolders.get(memo)
-    const vinayaHome = join(deps.home(), '.vinaya')
-    const handed = deps.env()[RUNTIME_DIR_ENV_KEY]
-    let folder: string | undefined
-    if (handed) folder = join(handed, 'logs')
-    else if (isUnattendedProcess(process.env)) folder = join(sdkDefaultRuntimeDir(repository, vinayaHome), 'logs')
-    else {
-      const resolved = sdkResolveSettings({
-        repoRoot: deps.cwd(),
-        ...(repository === undefined ? {} : { repository }),
-        vinayaHome
-      })
-      if (resolved.ok && resolved.settings.logs !== false) {
-        const configured = (resolved.settings.logs || undefined)?.folder
-        // A configured folder inside the working tree is never used; the runtime directory's is.
-        folder =
-          configured !== undefined && !isInsideRepo(configured, deps.cwd())
-            ? configured
-            : join(resolved.settings.runtimeDir, 'logs')
-      }
-    }
+    const folder = resolveLocalCopyFolder(
+      {
+        home: deps.home(),
+        cwd: deps.cwd(),
+        handedRuntimeDir: deps.env()[RUNTIME_DIR_ENV_KEY],
+        unattended: isUnattendedProcess(process.env)
+      },
+      repository
+    )
     localCopyFolders.set(memo, folder)
     return folder
   }
@@ -2110,4 +2091,56 @@ export function warmupLogSink(): void {
  */
 export async function drainLogSink(): Promise<void> {
   await defaultSinkSlot.built()?.drain()
+  for (const drain of extraDrains) await drain().catch(() => undefined)
+}
+
+const extraDrains = new Set<() => Promise<void>>()
+
+/** Adds a writer the process's one drain at exit also waits for, such as the run recorder's. */
+export function registerLogDrain(drain: () => Promise<void>): void {
+  extraDrains.add(drain)
+}
+
+/**
+ * The OpenTelemetry address the harness's rule resolves for this process (recording off, trust anchor, CI credential):
+ * the one rule behind every send of a local copy, whichever writer asks.
+ */
+export async function resolveProcessOtlpAddress(source: {
+  readConfig: () => ProvidedConfig | null
+  env: () => NodeJS.ProcessEnv
+}): Promise<OtlpAddressDecision> {
+  const { resolveOtlpAddress } = await import('./otlp-address.js')
+  const unattended = isUnattendedProcess(process.env)
+  return resolveOtlpAddress({
+    localConfig: source.readConfig(),
+    trustAnchorConfig: unattended ? await processTrustAnchor(repoRootSync()) : null,
+    unattended,
+    env: source.env()
+  })
+}
+
+/** Where this process's local copy of a repository's runs is kept, from the process's own settings; `undefined` when recording is off. */
+export function processLocalCopyPlace(repository: string | undefined): LocalCopyPlace | undefined {
+  const base = defaultDeps()
+  const folder = resolveLocalCopyFolder(
+    {
+      home: base.home(),
+      cwd: base.cwd(),
+      handedRuntimeDir: base.env()[RUNTIME_DIR_ENV_KEY],
+      unattended: isUnattendedProcess(process.env)
+    },
+    repository
+  )
+  return folder === undefined ? undefined : { folder, repository }
+}
+
+let processSender: LocalCopySender | undefined
+
+/** The sender every process-level writer of a run's local copy shares: one address decision, one send at a time. */
+export function processLocalCopySender(): LocalCopySender {
+  processSender ??= createLocalCopySender({
+    warn: (message) => void process.stderr.write(message),
+    address: () => resolveProcessOtlpAddress(defaultDeps())
+  })
+  return processSender
 }

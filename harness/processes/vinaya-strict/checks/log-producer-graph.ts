@@ -8,7 +8,8 @@ import { extractImportRecords, resolveRelativeImport, walkFiles } from '../integ
  * change or write to the forge reaches a log producer — gathered with the import
  * resolution the test selector already has, so no second source search exists.
  * A producer is a CLI, process-folder or kernel source file that imports the
- * sink's `log` or `logSync`; reaching one is confined to those sources, leaving out any file
+ * sink's `log` or `logSync`, or takes the run's Log handle (`runRecorder`) to
+ * write through it; reaching one is confined to those sources, leaving out any file
  * under a `tests` folder there and every `.test.ts` file.
  */
 
@@ -17,6 +18,8 @@ const PROCESSES_DIR = 'harness/processes'
 const KERNEL_DIR = 'harness/kernel'
 const LOG_SINK_PATHS = ['apps/cli/src/lib/log-sink.ts', 'harness/kernel/log/log-sink.ts'] as const
 const LOG_SINK_PRODUCER_NAMES: readonly string[] = ['log', 'logSync']
+const RUN_RECORDER_PATH = 'harness/kernel/log/run-recorder.ts'
+const RUN_RECORDER_PRODUCER_NAMES: readonly string[] = ['runRecorder', 'createRunRecorder']
 
 const G7_EXEMPTIONS_PATH = '.vinaya/g7-exemptions.json'
 
@@ -66,7 +69,10 @@ export function gatherLogProducerGraph(root: string): { producers: Set<string>; 
   const known = new Set(files)
   const sinkPath = LOG_SINK_PATHS.find((path) => existsSync(join(root, path))) ?? LOG_SINK_PATHS[0]
   const sink = join(root, sinkPath)
+  const recorder = join(root, RUN_RECORDER_PATH)
   const producers = new Set<string>([sinkPath])
+  // The run's Log handle is a producer: the file that holds it, and every file that takes it to write through it.
+  if (known.has(recorder)) producers.add(RUN_RECORDER_PATH)
   const imports = new Map<string, string[]>()
   for (const file of files) {
     const deps: string[] = []
@@ -75,6 +81,13 @@ export function gatherLogProducerGraph(root: string): { producers: Set<string>; 
       if (target === null) continue
       deps.push(relative(root, target))
       if (target === sink && record.kind === 'named' && record.names.some((n) => LOG_SINK_PRODUCER_NAMES.includes(n))) {
+        producers.add(relative(root, file))
+      }
+      if (
+        target === recorder &&
+        record.kind === 'named' &&
+        record.names.some((n) => RUN_RECORDER_PRODUCER_NAMES.includes(n))
+      ) {
         producers.add(relative(root, file))
       }
     }

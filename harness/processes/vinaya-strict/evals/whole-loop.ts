@@ -36,6 +36,13 @@
  * task run.
  */
 
+import {
+  ATTRIBUTE_NAMES,
+  EVENT_NAMES,
+  type OtelRecord,
+  readOtlpDocument,
+  SPAN_NAMES
+} from '../../../../packages/log-sdk/src/index.js'
 import { PUBLISHED_MARKER_LINE } from '../tools/dev-review-policy/journal-reconstruction'
 import { COMMENT_MARKER_PREFIX_PATTERN, REGION_PREFIXES } from '../tools/legacy-markers'
 import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'
@@ -451,33 +458,39 @@ export function roundsOf(comments: readonly ForgeComment[]): number | null {
 }
 
 /**
- * The tokens the run's Log reported: the input and output of every
- * dispatch's received outcome, in every `.ndjson` file under the folder.
- * `null` when no dispatch reported usage.
+ * The tokens the run's agents used, from the usage records in the run's local copy: the input and output tokens an
+ * agent turn's span carries, and those a usage-recorded event carries when its span lives in another writer's file,
+ * in every `.traces.jsonl` and `.logs.jsonl` file under the folder. A turn whose usage is not known, which carries a
+ * reason and no figure, adds nothing. `null` when no record reported usage.
  */
 export function tokensReported(logFolder: string): { input: number; output: number } | null {
   if (!existsSync(logFolder)) return null
   let input = 0
   let output = 0
   let seen = false
+  const count = (record: OtelRecord): void => {
+    const isAgent =
+      record.kind === 'span' && (record.name === SPAN_NAMES.agent || record.name.startsWith(`${SPAN_NAMES.agent} `))
+    if (!isAgent && record.name !== EVENT_NAMES.usageRecorded) return
+    const inputTokens = record.attributes[ATTRIBUTE_NAMES.usageInputTokens]
+    const outputTokens = record.attributes[ATTRIBUTE_NAMES.usageOutputTokens]
+    if (typeof inputTokens !== 'number' || typeof outputTokens !== 'number') return
+    input += inputTokens
+    output += outputTokens
+    seen = true
+  }
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const path = join(dir, entry.name)
       if (entry.isDirectory()) walk(path)
-      else if (entry.isFile() && entry.name.endsWith('.ndjson')) {
+      else if (entry.isFile() && (entry.name.endsWith('.traces.jsonl') || entry.name.endsWith('.logs.jsonl'))) {
         for (const line of readFileSync(path, 'utf8').split('\n')) {
           if (line.trim() === '') continue
-          let event: { kind?: unknown; event?: unknown; usage?: { input?: unknown; output?: unknown } | null }
           try {
-            event = JSON.parse(line)
+            for (const record of readOtlpDocument(JSON.parse(line), path) ?? []) count(record)
           } catch {
-            continue
+            // A line that is not a document is not a usage record.
           }
-          if (event.kind !== 'dispatch' || event.event !== 'outcome_received' || !event.usage) continue
-          if (typeof event.usage.input !== 'number' || typeof event.usage.output !== 'number') continue
-          input += event.usage.input
-          output += event.usage.output
-          seen = true
         }
       }
     }

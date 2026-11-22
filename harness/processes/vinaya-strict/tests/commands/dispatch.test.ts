@@ -18,6 +18,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { agentTurnsOf, localCopyFolderOf } from '../lib/dispatch/dispatch-fixtures.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..', 'apps', 'cli')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')
@@ -173,13 +174,14 @@ describe('vinaya dispatch — --task attribution', () => {
       `${binDir}:${process.env.PATH}`
     )
 
-    const lines = outboxLines(home, 555).filter((l) => (l as { kind: string }).kind === 'dispatch')
-    expect(lines.length).toBeGreaterThan(0)
-    for (const l of lines) {
-      const subject = l.subject as { issue: number | null; role: string }
-      expect(subject.issue).toBe(555)
-      expect(subject.role).toBe('developer')
-    }
+    // The turn is one `invoke_agent` span in the run's local copy, attributed to the seat and the task.
+    const turns = agentTurnsOf(localCopyFolderOf(home))
+    expect(turns.length).toBe(1)
+    expect(turns[0]?.seat).toBe('developer')
+    expect(turns[0]?.workRef).toBe('555')
+    expect(
+      outboxLines(home, 555).filter((l) => ['dispatch', 'role_attempt', 'usage'].includes(String(l.kind)))
+    ).toEqual([])
   })
 
   it('carries issue: null and the role from the argument — never unattributed — when --task is absent', () => {
@@ -197,14 +199,10 @@ describe('vinaya dispatch — --task attribution', () => {
       `${binDir}:${process.env.PATH}`
     )
 
-    const lines = outboxLines(home, 'none')
-    expect(lines.length).toBeGreaterThan(0)
-    for (const l of lines) {
-      const subject = l.subject as { issue: number | null; role: string }
-      expect(subject.issue).toBeNull()
-      expect(subject.role).toBe('developer')
-      expect(subject.role).not.toBe('unattributed')
-    }
+    const turns = agentTurnsOf(localCopyFolderOf(home))
+    expect(turns.length).toBe(1)
+    expect(turns[0]?.seat).toBe('developer')
+    expect(turns[0]?.workRef).toBeUndefined()
   })
 })
 

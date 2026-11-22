@@ -1,5 +1,7 @@
 import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { randomUUID } from 'node:crypto'
+import { agentTurnsOf, processLocalCopyFolder } from './lib/dispatch/dispatch-fixtures'
 import { PAUSE_REASON_PROFILE } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { usageLimitPauseDetail } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
 import { newestStage, PAUSED_STAGE_ACTOR, parseDriverLogLine, STAGES } from '../tools/follow-view'
@@ -421,12 +423,23 @@ describe('a stub run on the Engine path', () => {
     expect(drain).toBeGreaterThan(lastLog)
     expect(calls.filter((call) => call === 'drain')).toHaveLength(1)
     const kinds = emitted.map((event) => `${(event as { kind: string }).kind}.${(event as { event: string }).event}`)
-    // The stub assessment records no round, so beside each agent launch's attempt and usage the only event is the
-    // single exit record: no node writes a heartbeat, and a version 1 run writes no step time (version 2's alone).
-    expect(kinds).toEqual([
-      ...Array.from({ length: 3 }, () => ['role_attempt.attempted', 'usage.observed']).flat(),
-      'dev_review_loop.driver_exited'
-    ])
+    // The stub assessment records no round, so the only event is the single exit record: no node writes a heartbeat,
+    // a version 1 run writes no step time (version 2's alone), and an agent launch writes no earlier-format event,
+    // its turn being one span in the run's local copy.
+    expect(kinds).toEqual(['dev_review_loop.driver_exited'])
+  })
+
+  test("each agent launch writes one invoke_agent span with its usage to the run's local copy, and no earlier-format agent event", async () => {
+    const run = stubRun()
+    run.options.sink.runId = `stub-run-${randomUUID()}`
+    await runEngine(run.options)
+    const turns = agentTurnsOf(processLocalCopyFolder(), run.options.sink.runId)
+    expect(turns.map((turn) => turn.seat)).toEqual(['developer', 'code-reviewer', 'security'])
+    for (const turn of turns)
+      expect(turn).toMatchObject({ outcome: 'done', usage: { unknownReason: expect.any(String) } })
+    expect(
+      run.emitted.filter((event) => ['dispatch', 'role_attempt', 'usage'].includes((event as { kind: string }).kind))
+    ).toEqual([])
   })
 
   test('starts the host before the Developer and writes the executable shim', async () => {
@@ -1876,18 +1889,14 @@ describe('launch usage attribution', () => {
   test('each role launch snapshots its review round and durable attempt before completion', async () => {
     const run = stubRun()
     run.options.taskInput.reviewRound = () => 2
-    const observed: unknown[] = []
-    run.options.sink.log = (event, attribution) => {
-      if ((event as { kind: string }).kind === 'usage') observed.push(attribution)
-    }
+    run.options.sink.runId = `stub-run-${randomUUID()}`
     await runEngine(run.options)
-    expect(observed).toEqual(
-      expect.arrayContaining([
-        { role: 'developer', round: 2, attempt: 1 },
-        { role: 'code-reviewer', round: 2, attempt: 1 },
-        { role: 'security', round: 2, attempt: 1 }
-      ])
-    )
+    const turns = agentTurnsOf(processLocalCopyFolder(), run.options.sink.runId)
+    expect(turns.map(({ seat, round, attempt }) => ({ seat, round, attempt }))).toEqual([
+      { seat: 'developer', round: 2, attempt: 1 },
+      { seat: 'code-reviewer', round: 2, attempt: 1 },
+      { seat: 'security', round: 2, attempt: 1 }
+    ])
     const first = claimLaunchAttribution(run.runtimeDir, 'resumed-thread', 'reviewer', 2)
     const resumed = claimLaunchAttribution(run.runtimeDir, 'resumed-thread', 'reviewer', 2)
     expect([first.attempt, resumed.attempt]).toEqual([1, 2])
@@ -1899,16 +1908,12 @@ describe('launch usage model attribution', () => {
     test(`all roles preserve the requested model or explicit unknown (${requested ?? 'unknown'})`, async () => {
       const run = stubRun()
       run.options.args.model = requested
+      run.options.sink.runId = `stub-run-${randomUUID()}`
       await runEngine(run.options)
-      const attempts = run.emitted.filter(
-        (event: any) => event.kind === 'role_attempt' && event.actor === 'claude'
-      ) as Array<{ model: string | null }>
-      expect(attempts).toHaveLength(3)
-      expect(attempts.map((event) => event.model)).toEqual([
-        requested ? `requested:${requested}` : null,
-        requested ? `requested:${requested}` : null,
-        requested ? `requested:${requested}` : null
-      ])
+      const turns = agentTurnsOf(processLocalCopyFolder(), run.options.sink.runId)
+      expect(turns).toHaveLength(3)
+      // The model a turn asked for is on its span; with none requested there is none, never a vendor name.
+      expect(turns.map((turn) => turn.requestModel)).toEqual([requested, requested, requested])
     })
 })
 

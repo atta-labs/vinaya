@@ -37,8 +37,7 @@ import {
   type EngineArgs,
   type EngineForge,
   type EngineRunOptions,
-  type RunTrace,
-  isAgentLaunchEvent
+  type RunTrace
 } from '../bin/run-engine'
 import { createDeveloperDevToolContext } from '../loops/dev-review/actions/developer-dev-tools-context'
 import { manifestDigest } from '../executing/code-reviewer/review-result'
@@ -1140,9 +1139,6 @@ function recordingSink(eventFile: string, logSink: Partial<LogSinkDeps> | undefi
   const shared = logSink ? createVinayaLogSink(logSink) : null
   return {
     log: (event) => {
-      // An agent launch's own lines are the dispatch's, never the loop's: the standalone side's in-process dispatch
-      // writes none, so the replay judges the loop's lines on both runners and leaves the launch's out of both.
-      if (isAgentLaunchEvent(event as { kind?: unknown; actor?: unknown })) return
       append(eventFile, event)
       shared?.log(event as Parameters<typeof shared.log>[0])
     },

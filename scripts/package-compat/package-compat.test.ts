@@ -1,9 +1,9 @@
 /**
  * The package-compatibility suite: every published package's consumer surface,
  * read from a packed install outside this repository, matches the committed
- * snapshot (`scripts/package-compat/snapshot.json`). One package is published,
- * the command-line package, and its tarball carries the tool bridge program
- * beside the bundle.
+ * snapshot (`scripts/package-compat/snapshot.json`). Two packages are published,
+ * the command-line package and the Log SDK; the command-line tarball carries the
+ * tool bridge program beside the bundle, and the Log SDK's its built `dist/`.
  *
  * It deliberately imports the packages' public subpaths — from the scratch
  * install, never from the workspace — and the build job runs it on every pull
@@ -75,10 +75,13 @@ describe('every published package matches the snapshot from a scratch install ou
     expect(Object.keys(snapshot.packages).sort()).toEqual(published.map((p) => p.name).sort())
   })
 
-  test('the command-line package is the one published package, and its tarball carries the bridge program', () => {
-    expect(published.map((p) => p.name)).toEqual(['@attalabs/vinaya'])
+  test('the command-line package and the Log SDK are the published packages, and each tarball carries its built entry', () => {
+    expect(published.map((p) => p.name).sort()).toEqual(['@attalabs/vinaya', '@attalabs/vinaya-log-sdk'])
     expect(tarballFiles(run.tarballs['@attalabs/vinaya'] as string)).toContain(
       'dist/kernel/tools/host/dev-tools-bridge.js'
+    )
+    expect(tarballFiles(run.tarballs['@attalabs/vinaya-log-sdk'] as string)).toEqual(
+      expect.arrayContaining(['dist/index.js', 'dist/index.d.ts', 'dist/bin/vinaya-log.js'])
     )
   })
 

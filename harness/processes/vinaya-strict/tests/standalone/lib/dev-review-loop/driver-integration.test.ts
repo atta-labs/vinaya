@@ -50,6 +50,7 @@ import { reviewerCandidateInputPaths } from '../../../../loops/dev-review/standa
 import { renderDeferredFindingsIssueBody } from '../../../../tools/task-contract/forge/forge-write.js'
 import { buildReexecArgs, setStandaloneLogIdentity } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
 import { objectivesVersion } from '../../../../tools/task-contract/objectives'
+import { agentTurnsOf, localCopyFolderOf } from '../../../lib/dispatch/dispatch-fixtures.js'
 import { REVIEW_FINDING_DESCRIPTION_MAX_LENGTH } from '../../../../../../kernel/log/schema'
 import {
   CLEAN_REVIEWER,
@@ -1811,28 +1812,11 @@ describe('devReviewLoop — a rejected reviewer result is an infrastructure paus
       // security role's own failed attempt explicitly.
       const events = outboxLines(home)
       expect(events.some((e) => e.event === 'verdicts_read')).toBe(false)
-      // `dispatchRole`'s own per-attempt `role_attempt` lines (developer,
-      // both reviewer attempts) are ALSO present now
-      // — this is the additional one dev-review-loop.ts logs for the
-      // security role's own invalid result, distinguished by its outcome.
-      const failureAttempt = events.find(
-        (e) => e.kind === 'role_attempt' && e.outcome === 'infrastructure_failed' && e.actor === 'security'
-      ) as { effect_id: string; duration_ms: number } | undefined
-      expect(failureAttempt).toMatchObject({ actor: 'security', outcome: 'infrastructure_failed', usage: null })
-
-      // Round 2 review, MAJOR (fixed): this failure's own `effect_id` must be
-      // the SAME id the failing security attempt's own `dispatch` line(s)
-      // carry — never a freshly minted, unjoinable one — and its `duration_ms`
-      // must be that one attempt's own duration, not the whole round's.
-      const securityDispatchOutcomeLines = events.filter(
-        (e) =>
-          e.kind === 'dispatch' &&
-          (e as { target_role?: string }).target_role === 'security' &&
-          e.event !== 'dispatched'
-      ) as Array<{ effect_id: string; duration_ms: number }>
-      const matching = securityDispatchOutcomeLines.find((l) => l.effect_id === failureAttempt?.effect_id)
-      expect(matching).toBeDefined()
-      expect(failureAttempt?.duration_ms).toBe(matching?.duration_ms)
+      // The security role's agent turns are `invoke_agent` spans on the run's Log handle, never earlier-format
+      // `dispatch`, `role_attempt` or `usage` lines.
+      expect(events.filter((e) => ['dispatch', 'role_attempt', 'usage'].includes(String(e.kind)))).toEqual([])
+      const securityTurns = agentTurnsOf(localCopyFolderOf(home)).filter((turn) => turn.seat === 'security')
+      expect(securityTurns.length).toBeGreaterThan(0)
     },
     45000
   )

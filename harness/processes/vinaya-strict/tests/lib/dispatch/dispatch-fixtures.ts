@@ -12,6 +12,14 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readdirSync } from 'node:fs'
+import { processLocalCopyPlace } from '../../../../../kernel/log/log-sink.js'
+import {
+  ATTRIBUTE_NAMES,
+  type OtelRecord,
+  readOtlpDocument,
+  SPAN_NAMES,
+  traceIdFor
+} from '../../../../../../packages/log-sdk/src/index.js'
 import {
   openOutputTee,
   timeoutWarningLeadMs,
@@ -303,12 +311,108 @@ export function outboxLines(home: string, issue: number | 'none'): unknown[] {
   // `~/.vinaya/outbox/` these fixtures resolve to `unresolved` (no git
   // origin in the scratch `cwd`).
   const p = join(home, '.vinaya', 'runtime', 'unresolved', 'logs', 'unresolved', `${issue}.ndjson`)
+  // No earlier-format event is written for an agent turn, so a run may leave no file at all.
+  if (!existsSync(p)) return []
   return readFileSync(p, 'utf8')
     .trim()
     .split('\n')
     .filter(Boolean)
     .map((l) => JSON.parse(l))
     .filter((e) => !(e.kind === 'operation' && e.operation === 'cli_command'))
+}
+
+/** One agent turn as the run's local copy holds it: the `invoke_agent` span, its usage, and the steps under it. */
+export type RecordedAgentTurn = {
+  seat: string
+  requestModel?: string
+  responseModel?: string
+  outcome?: string
+  errorType?: string
+  attempt?: number
+  resetAt?: string
+  round?: number
+  workRef?: string
+  usage: { input?: number; output?: number; cacheRead?: number; unknownReason?: string }
+  steps: { tool: string; errorType?: string }[]
+}
+
+const asNumber = (value: unknown): number | undefined => (typeof value === 'number' ? value : undefined)
+const asText = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
+
+/**
+ * The agent turns a run wrote to its local copy under `logFolder` (the Log folder, searched whole), each as one span
+ * with its usage and the steps nested under it, in the order the turns started. `runId` limits them to one run.
+ */
+export function agentTurnsOf(logFolder: string, runId?: string): RecordedAgentTurn[] {
+  const records: OtelRecord[] = []
+  const walk = (dir: string): void => {
+    if (!existsSync(dir)) return
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) walk(path)
+      else if (entry.name.endsWith('.traces.jsonl')) {
+        for (const line of readFileSync(path, 'utf8').split('\n')) {
+          if (line.trim() === '') continue
+          records.push(...(readOtlpDocument(JSON.parse(line), path) ?? []))
+        }
+      }
+    }
+  }
+  walk(logFolder)
+  const wanted = runId === undefined ? undefined : traceIdFor(runId)
+  const spans = records.filter(
+    (record) => record.kind === 'span' && (wanted === undefined || record.traceId === wanted)
+  )
+  const agents = spans
+    .filter((record) => record.name === SPAN_NAMES.agent || record.name.startsWith(`${SPAN_NAMES.agent} `))
+    .sort((a, b) => (BigInt(a.startTime ?? '0') < BigInt(b.startTime ?? '0') ? -1 : 1))
+  return agents.map((agent) => {
+    const a = agent.attributes
+    const turn: RecordedAgentTurn = {
+      seat: asText(a[ATTRIBUTE_NAMES.agentName]) ?? '',
+      usage: {},
+      steps: spans
+        .filter((span) => span.parentSpanId === agent.spanId && span.name.startsWith(`${SPAN_NAMES.step} `))
+        .map((span) => ({
+          tool: asText(span.attributes[ATTRIBUTE_NAMES.toolName]) ?? '',
+          ...(asText(span.attributes[ATTRIBUTE_NAMES.errorType]) === undefined
+            ? {}
+            : { errorType: asText(span.attributes[ATTRIBUTE_NAMES.errorType]) as string })
+        }))
+    }
+    const set = <K extends keyof RecordedAgentTurn>(key: K, value: RecordedAgentTurn[K] | undefined): void => {
+      if (value !== undefined) turn[key] = value
+    }
+    set('requestModel', asText(a[ATTRIBUTE_NAMES.requestModel]))
+    set('responseModel', asText(a[ATTRIBUTE_NAMES.responseModel]))
+    set('outcome', asText(a[ATTRIBUTE_NAMES.agentOutcome]))
+    set('errorType', asText(a[ATTRIBUTE_NAMES.errorType]))
+    set('attempt', asNumber(a[ATTRIBUTE_NAMES.attempt]))
+    set('resetAt', asText(a[ATTRIBUTE_NAMES.agentResetAt]))
+    set('round', asNumber(a[ATTRIBUTE_NAMES.roundNumber]))
+    set('workRef', asText(a[ATTRIBUTE_NAMES.workRef]))
+    const input = asNumber(a[ATTRIBUTE_NAMES.usageInputTokens])
+    const output = asNumber(a[ATTRIBUTE_NAMES.usageOutputTokens])
+    const cacheRead = asNumber(a[ATTRIBUTE_NAMES.usageCacheReadInputTokens])
+    const unknownReason = asText(a[ATTRIBUTE_NAMES.usageUnknownReason])
+    if (input !== undefined) turn.usage.input = input
+    if (output !== undefined) turn.usage.output = output
+    if (cacheRead !== undefined) turn.usage.cacheRead = cacheRead
+    if (unknownReason !== undefined) turn.usage.unknownReason = unknownReason
+    return turn
+  })
+}
+
+/** The Log folder this test process's own run recorder writes its local copy under, from the process's private runtime directory. */
+export function processLocalCopyFolder(): string {
+  const place = processLocalCopyPlace(undefined)
+  if (place === undefined) throw new Error('the test process records no local copy')
+  return place.folder
+}
+
+/** The Log folder a fixture home's unattended dispatch writes its local copy under (its runtime directory's `logs`). */
+export function localCopyFolderOf(home: string): string {
+  return join(home, '.vinaya', 'runtime', 'unresolved', 'logs')
 }
 
 export const PROMPT_FILE_CONTENT = 'do the thing'

@@ -83,12 +83,12 @@ describe('the log inventory', () => {
     expect(named.filter((name) => !known.has(name))).toEqual([])
   })
 
-  test('no row is dropped: the role attempt and the unpushed-work resume are written by the deciding steps', () => {
+  test('only the role attempt is dropped, an agent turn being a span on the run Log handle; the unpushed-work resume is written by a deciding step', () => {
     const dropped = LOG_INVENTORY.flatMap((row) => (row.status === 'dropped' ? [row] : []))
-    expect(dropped).toEqual([])
+    expect(dropped.map((row) => `${row.family}/${row.events.join(',')}`)).toEqual(['role_attempt/attempted'])
+    expect(dropped[0]?.status === 'dropped' && dropped[0].reason).toContain('invoke_agent span')
     const from = (family: string, event: string) =>
       rowsFor(family, event).map((row) => (row.status === 'produced' ? row.from : row.status))
-    expect(from('role_attempt', 'attempted')).toEqual([expect.stringMatching(/^the validate-reviewer-outputs step/)])
     expect(from('dev_review_loop', 'unpushed_work_resume')).toEqual([
       expect.stringMatching(/^the validate-developer-output step/)
     ])
@@ -597,7 +597,7 @@ describe('the deciding steps write their own rows', () => {
     return (events ?? []).map((event) => `${event.kind}/${event.event}`)
   }
 
-  test('a reviewer with no usable review on its fresh retry writes its role attempt, then the pause', async () => {
+  test('a reviewer with no usable review on its fresh retry writes the pause and no role attempt, its turn being a span on the run Log handle', async () => {
     const task = {
       runtimeDir: fixtureDir('log-reviewers-'),
       issueNumber: 1570,
@@ -635,8 +635,6 @@ describe('the deciding steps write their own rows', () => {
       } as never
     })
     expect(written('validate-reviewer-outputs', result)).toEqual([
-      'role_attempt/attempted',
-      'role_attempt/attempted',
       'dev_review_loop/stop_condition_met',
       'dev_review_loop/paused',
       'dev_review_loop/journal_finalized'

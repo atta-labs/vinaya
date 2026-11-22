@@ -152,7 +152,8 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
   {
     family: 'role_attempt',
     events: ['attempted'],
-    status: 'produced',
-    from: 'the validate-reviewer-outputs step: one per reviewer role that gave no usable review on its fresh retry, before the infrastructure pause'
+    status: 'dropped',
+    reason:
+      "an agent turn is an invoke_agent span written through the run's Log handle, which the launch, and the validate-reviewer-outputs step for a rejected review, write as the turn ends; no earlier-format role_attempt event is written"
   }
 ]

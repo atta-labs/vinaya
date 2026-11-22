@@ -101,7 +101,7 @@ family the schema declares, the file(s) that actually call `log()` with
 that kind today — "ownership" in the literal sense: which file is on the
 hook when a family's shape needs to change. Each producer file named in the table is bound to a literal it still holds.
 
-<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:kind: 'role_attempt' -->
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts contains:runRecorder().turn( -->
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-setup.ts contains:kind: 'dev_review_loop' -->
 <!-- VINAYA:CLAIM: harness/kernel/gates/checks/runner.ts contains:kind: 'gate' -->
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts contains:kind: 'operation' -->
@@ -116,16 +116,20 @@ hook when a family's shape needs to change. Each producer file named in the tabl
 
 | Kind | Producer(s) | Records |
 | ---- | ----------- | ------- |
-| `dispatch` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts` (`dispatchRole`) | A vendor CLI launch, its outcome, and the usage it reported. |
+| `dispatch` | none today | Declared in the schema so a stored line still parses; an agent turn is an `invoke_agent` span written through the run's Log handle (below), and no file emits this family. |
 | `dev_review_loop` | `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/` phase modules (see the loop specification’s module map) | The round-by-round loop lifecycle — start, gate, verdicts, pause/resume/cancel, journal. |
 | `forge_write` | none today | Declared in the schema so an already-posted comment line still parses; no file emits it — the comment-posting flush and the artifact commands are removed, and logs never reach a tracker or a code host. |
 | `gate` | `harness/kernel/gates/checks/runner.ts` | One check's terminal outcome (pass/fail/wait/skip/invalid/unavailable/timeout/cancelled). |
 | `operation` | `harness/processes/vinaya-strict/loops/dev-review/run-control/resume.ts`, `cancel.ts`, `harness/kernel/tools/host/broker.ts`, `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `harness/kernel/log/client/log-custom.ts`, `harness/kernel/log/client/cli-operation-log.ts` | A normalized tool-call or broker-authorized operation's outcome (ok/error/refused/timeout/cancelled/unavailable) — this is the family a registered task tool's own call emits; `conformance.md` Section D captures one real instance. |
-| `usage` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts` | Vendor token usage, every unit nullable rather than defaulted to zero when a vendor doesn't report one. |
-| `role_attempt` | `harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `dev-review-loop/round-loop.ts` | A dispatched role's own normalized attempt outcome, distinct from the Controller-side `dispatch` view of the same attempt. |
+| `usage` | none today | Declared in the schema so a stored line still parses; tokens are written with `log.usage.recorded` on the agent span (below), and no file emits this family. |
+| `role_attempt` | none today | Declared in the schema so a stored line still parses; the attempt rides on the agent span's return or failure (below), and no file emits this family. |
 | `handoff` | `harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts` | A human escalation, raised and resolved. |
 | `effect` | `harness/kernel/effects/effects.ts` | A generic external effect's attempted/observed/verified outcome, additive to `forge_write`, never replacing it. |
 | `custom` | `harness/kernel/log/client/log-custom.ts` (`emitCustomEvent`) | An operator-declared event, named and shaped by the loaded configuration. |
+
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/bin/run-engine.ts contains:recordUsage(turn, -->
+
+Agents and usage are written through the run's Log handle, not as earlier-format events: each agent turn is one `invoke_agent {seat}` span opened with `log.agent.sent` and ended with `log.agent.returned` or `log.agent.failed`, and its tokens are written with `log.usage.recorded` on that span, with the reason when they are unknown. Four files write the agents subject (`harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.ts`, `harness/processes/vinaya-strict/bin/run-engine.ts`, `dev-review-loop/round-loop.ts`, `harness/processes/vinaya-strict/executing/actions.ts`) and two the usage subject (`dispatch.ts`, `run-engine.ts`). `log-callers.test.ts` checks both ways: a file it names must write the subject, and a file that writes it must be named.
 
 Every event's own attribution is carried in its `meta` envelope
 (`log/schema.ts` schema v2: `event_id`, `process_id`, `actor_id`,

@@ -161,6 +161,7 @@ import {
 } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
 import { resolveTrustAnchorSecurityScanCommand } from '../loops/dev-review/standalone/dev-review-loop/security-scan-command'
 import { fetchPrBody } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
+import { runRecorder } from '../../../kernel/log/run-recorder'
 import {
   postMarkedComment,
   upsertDeferredFindingsIssue,
@@ -1855,23 +1856,21 @@ function validateReviewerOutputs(task: TaskInput, context: ActionContext): { exi
       const note = keepSiblingVerdict(task, round, role, accepted[role]!)
       return note === null ? [] : [note]
     })
-    for (const miss of missing)
-      events.push({
-        kind: 'role_attempt',
-        event: 'attempted',
-        payload: {},
-        actor: miss.role,
-        // As on the standalone driver: no attempt number at this site, and the model the role was dispatched under.
-        attempt: null,
-        effect_id: `${loopIdOf(state)}:${round}:${attempt}:${miss.role}`,
-        model:
-          (state.config.models as Readonly<Record<string, string>>)[
-            miss.role === 'reviewer' ? 'code-reviewer' : miss.role
-          ] ?? null,
-        outcome: miss.rejected !== null ? 'incomplete' : 'infrastructure_failed',
-        usage: task.usageOf?.(miss.role) ?? null,
-        duration_ms: 0
-      })
+    // A review the loop rejected is one more agent turn, ended with why. A launch that delivered no review already
+    // ended its own turn as the launch itself ended, so the Log carries it once.
+    for (const miss of missing) {
+      if (miss.rejected === null) continue
+      const seat = miss.role === 'reviewer' ? 'code-reviewer' : miss.role
+      const model = (state.config.models as Readonly<Record<string, string>>)[seat]
+      runRecorder()
+        .turn({
+          seat,
+          round,
+          key: `${loopIdOf(state)}:${round}:${attempt}:${miss.role}`,
+          ...(model === undefined ? {} : { model })
+        })
+        .failed({ errorType: 'rejected' })
+    }
     events.push(
       ...driverDecidedPauseEvents(
         loopIdOf(state),
