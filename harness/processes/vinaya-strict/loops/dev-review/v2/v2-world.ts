@@ -99,6 +99,8 @@ export interface Scenario {
   developer?: (attempt: number, world: World) => Launch | undefined
   /** Deletes this test's Developer socket marker during this launch, exercising same-turn host replacement. */
   loseDeveloperToolsAt?: number
+  /** Takes each event the run hands its sink, as the runner's own sink does: a test routes them to the run's Log handle. */
+  onEvent?: (event: Record<string, unknown>) => void
   /** A reviewer's launches, by role and attempt; the default approves every objective, bound to its prompt. */
   reviewer?: (role: Role, attempt: number, world: World, prompt: string) => Launch | 'approve' | 'request-changes'
   /** Runs after the named step's action, with the world. */
@@ -860,7 +862,13 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     handoffDeps,
     actions: actions(),
     control,
-    sink: { log: (event) => void rawEvents.push(event as Record<string, unknown>), drain: async () => {} },
+    sink: {
+      log: (event) => {
+        rawEvents.push(event as Record<string, unknown>)
+        scenario.onEvent?.(event as Record<string, unknown>)
+      },
+      drain: async () => {}
+    },
     ...(scenario.loseDeveloperToolsAt === undefined ? {} : { hostKey: `world-${basename(root)}` }),
     startHost: async ({ socketPath, role }) => {
       if (scenario.loseDeveloperToolsAt === undefined) return { close: async () => {} }

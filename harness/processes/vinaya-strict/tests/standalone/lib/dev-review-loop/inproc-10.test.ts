@@ -80,7 +80,8 @@ function expectOneEnd(world: LoopWorld, state: 'merged' | 'closed'): void {
   const attribute = (key: string) =>
     ended[0].attributes?.find((a: { key: string }) => a.key === key)?.value?.stringValue
   expect(attribute('vinaya.run.id')).toBe(world.runId)
-  expect(attribute('vinaya.actor')).toBe('octocat')
+  // Only a merge names who ended it: the forge names no closer.
+  expect(attribute('vinaya.actor')).toBe(state === 'merged' ? 'octocat' : undefined)
   // The same trace as the run's own start.
   const start = records.events.find((e) => e.eventName === 'vinaya.run.started')
   expect(ended[0].traceId).toBe(start.traceId)

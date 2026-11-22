@@ -1309,7 +1309,7 @@ export async function runDriverLoopInProcess(
       recordChangeEnded: (ended) =>
         recordWatchedChangeEnded(ended, {
           ...(world.runId === undefined ? {} : { runId: world.runId }),
-          readEnd: () => ({ by: 'octocat' })
+          readEnd: () => (ended.state === 'merged' ? { by: 'octocat' } : {})
         }),
       logEvent: (event) => {
         world.watchEvents.push(event)

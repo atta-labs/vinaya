@@ -1611,6 +1611,9 @@ export interface EngineLifecycleOptions {
   publishedWatch?: PublishedWatch
   /** Where a watched pull request's merge or close is recorded: the run's own Log record, linked to the run. */
   recordChangeEnded?: (ended: { state: 'merged' | 'closed'; task: number; pr: number }) => void
+  /** The recorder and the forge read the default merge or close record uses; absent, the process's own. */
+  changeRecorder?: Pick<RunRecorder, 'handle'>
+  readChangeEnd?: (pr: number) => { when?: number; by?: string }
   /**
    * Where the execution round is mirrored and the effect records a resume checks it against; absent, a resume still
    * restores the round from its checkpoint but writes and checks no mirror.
@@ -1842,7 +1845,9 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       ((e) =>
         recordWatchedChangeEnded(e, {
           ...(options.sink.runId === undefined ? {} : { runId: options.sink.runId }),
-          ...(resolvedRepo === null ? {} : { repository: `${resolvedRepo.owner}/${resolvedRepo.repo}` })
+          ...(resolvedRepo === null ? {} : { repository: `${resolvedRepo.owner}/${resolvedRepo.repo}` }),
+          ...(lifecycle.changeRecorder === undefined ? {} : { recorder: lifecycle.changeRecorder }),
+          ...(lifecycle.readChangeEnd === undefined ? {} : { readEnd: lifecycle.readChangeEnd })
         }))
     )(ended)
   const recordExit = createDriverExitRecorder({

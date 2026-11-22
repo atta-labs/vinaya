@@ -47,8 +47,7 @@ const STRUCTURAL_EXCLUSIONS: Readonly<Record<string, string>> = {
 const STANDALONE_DEFECTS: Readonly<Record<string, ((lines: Line[]) => Line[]) | null>> = {
   // A round revisited after a red gate starts again in standalone's Log; the Engine starts each round once. Round
   // starts are records on the run's Log handle now, so no earlier-format line carries the defect and there is nothing
-  // left to leave out of the lines; the scenario's unique-round-starts expectation still shows it in the loop's own
-  // events (the architecture exit gate).
+  // left to leave out of the lines; the architecture exit gate still asserts the scenario shows the defect (a repeated round start in the loop's own events), so it stays checked there.
   'DEF-03': null
 }
 

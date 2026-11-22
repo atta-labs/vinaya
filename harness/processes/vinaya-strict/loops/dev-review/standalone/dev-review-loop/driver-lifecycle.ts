@@ -353,13 +353,22 @@ export interface ForgeChangeEnd {
   by?: string
 }
 
-/** Reads, from the forge, when and by whom a pull request the run watches was merged or closed. Never throws. */
-export function readForgeChangeEnd(pr: number): ForgeChangeEnd {
+/**
+ * Reads, from the forge, when a pull request the run watches was merged or closed, and who merged it; the forge names
+ * no closer, so a close carries a time alone. Reads the run's own repository when it is known, within a time bound.
+ * Never throws.
+ */
+export function readForgeChangeEnd(pr: number, repository?: string): ForgeChangeEnd {
   try {
-    const out = execFileSync('gh', ['pr', 'view', String(pr), '--json', 'mergedAt,closedAt,mergedBy'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore']
-    })
+    const out = execFileSync(
+      'gh',
+      ['pr', 'view', String(pr), ...(repository ? ['--repo', repository] : []), '--json', 'mergedAt,closedAt,mergedBy'],
+      {
+        timeout: 15_000,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      }
+    )
     const read = JSON.parse(out) as {
       mergedAt?: string | null
       closedAt?: string | null
@@ -411,7 +420,7 @@ export function recordWatchedChangeEnded(
     const log = (options.recorder ?? runRecorder()).handle(runId, options.repository)
     if (log === undefined) return
     writtenEnds.add(key)
-    const end = (options.readEnd ?? readForgeChangeEnd)(ended.pr)
+    const end = (options.readEnd ?? ((pr) => readForgeChangeEnd(pr, options.repository)))(ended.pr)
     const detail = {
       runId,
       ...(end.when === undefined ? {} : { when: end.when }),
