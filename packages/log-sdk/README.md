@@ -95,7 +95,7 @@ const report = await sendLocalCopy({
 console.log(report.sent, report.setAside, report.failures)
 ```
 
-Supply the base folder and the same repository name used for recording. The sender posts to the collector's `/v1/traces` and `/v1/logs` endpoints and uses `.otlp-delivery` in the repository's local Log folder to track delivery. Call it again to pick up new data or retry delivery failures. Pass `headers` to authenticate to the collector. A line holding a record that fails the Log's contract (a `vinaya.*` span name, event name or attribute name outside the catalogue) is never posted: it is set aside with a rejected receipt naming the first failing name, listed in `report.setAside`, and not posted by a later send.
+Supply the base folder and the same repository name used for recording. The sender posts to the collector's `/v1/traces` and `/v1/logs` endpoints and uses `.otlp-delivery` in the repository's local Log folder to track delivery. Call it again to pick up new data or retry delivery failures. Pass `headers` to authenticate to the collector. A line holding a record that fails the Log's contract (a `vinaya.*` span name, event name or attribute name outside the catalogue) is never posted: it is set aside with a rejected receipt naming the first failing name, listed in `report.setAside`, and not posted by a later send. A line that is valid JSON but holds no OTLP record is posted as before.
 
 ## Read, follow and narrate
 

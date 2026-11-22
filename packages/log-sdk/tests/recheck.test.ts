@@ -239,3 +239,53 @@ test('the check keeps the catalogue, filled-in span names and the earlier namesp
   ).toBeNull()
   expect(checkRecordContract(record({ kind: 'span', name: 'vinaya.round3' }))?.name).toBe('vinaya.round3')
 })
+
+test('a withheld record from a sequenced writer leaves no hole: the records around it are handed at once', async () => {
+  const folder = join(root, `case-${counter++}`)
+  mkdirSync(folder, { recursive: true })
+  const sequenced = (seq: number, name: string, extra: ReturnType<typeof str>[] = []) =>
+    JSON.stringify({
+      resourceLogs: [
+        {
+          resource: { attributes: [] },
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  eventName: name,
+                  ...ids,
+                  timeUnixNano: String(5_000 + seq),
+                  attributes: [
+                    str('vinaya.writer.id', 'seq-writer'),
+                    { key: 'vinaya.seq', value: { intValue: String(seq) } },
+                    str('vinaya.event.id', `seq-writer:${seq}`),
+                    ...extra
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    })
+  writeFileSync(
+    join(folder, 'run-1~seq-writer~000000000000.logs.jsonl'),
+    [sequenced(0, 'team.a'), sequenced(1, 'team.b', [str('vinaya.made_up', 'x')]), sequenced(2, 'team.c')]
+      .map((line) => `${line}\n`)
+      .join('')
+  )
+  const update = await createReader(createFolderSource({ folder, runId: 'run-1' })).pull()
+  expect(update.records.map((record) => record.name)).toEqual(['team.a', 'team.c'])
+  expect(update.gaps.map((gap) => gap.kind)).toEqual(['contract'])
+})
+
+test('a large line that fails is set aside by name, and a large line that fits is posted', async () => {
+  const filler = 'x'.repeat(80 * 1024)
+  const big = (name: string) => eventLine(name, [str('team.filler', filler)])
+  const fits = big('team.big')
+  const fails = big('vinaya.made_up_big')
+  const result = await run([fits, fails])
+  expect(result.report.setAside).toHaveLength(1)
+  expect(result.report.setAside[0]?.reason).toContain('"vinaya.made_up_big"')
+  expect(result.posted).toEqual([fits])
+})

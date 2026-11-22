@@ -48,7 +48,19 @@ function range(from: number, to: number): string {
  *   in arrival order and never claims a gap.
  */
 export function createOrdering(
-  options: { patience?: number; fromStart?: boolean; firstSequence?: number; remember?: number; maxHeld?: number } = {}
+  options: {
+    patience?: number
+    fromStart?: boolean
+    firstSequence?: number
+    remember?: number
+    maxHeld?: number
+    /**
+     * Withholds a record that is ready to leave, reporting the gap it returns.
+     * The record still takes its place in its writer's sequence, so the
+     * records around it are not held behind a number that never comes.
+     */
+    withhold?: (record: OtelRecord) => ReadGap | null
+  } = {}
 ) {
   const patience = Math.max(1, options.patience ?? 2)
   const fromStart = options.fromStart ?? false
@@ -176,7 +188,12 @@ export function createOrdering(
         }
       } else writer.age = 0
     }
-    const ready = merge(queues)
+    const ready = merge(queues).filter((record) => {
+      const refusal = options.withhold?.(record) ?? null
+      if (refusal === null) return true
+      gaps.push(refusal)
+      return false
+    })
     track(ready)
     return { ready, gaps, duplicates }
   }
