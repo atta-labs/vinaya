@@ -18,8 +18,11 @@ import {
   type DeveloperPromptFacts,
   developerPrompt,
   FLOW_V2_NOTE,
+  roundTestFailureOf,
   withDefaultMergeConflict
 } from '../executing/developer-prompt'
+import type { TaskInput } from '../executing/actions'
+import { runRoundTestsStep } from '../loops/dev-review/v2/v2-actions'
 
 const FACTS: DeveloperPromptFacts = {
   brief: '# Frozen brief\nDo the one thing.\n\n**Revision:** abc',
@@ -358,5 +361,80 @@ describe('withDefaultMergeConflict', () => {
 
   test('leaves the prompt alone when the merge did not conflict', () => {
     expect(withDefaultMergeConflict('THE PROMPT', null)).toBe('THE PROMPT')
+  })
+})
+
+describe('a round sent back on a failed selected test', () => {
+  const HEAD = 'd'.repeat(40)
+  const dispatched = mech(0, JSON.stringify({ round: 1, attempt: 1, inputs: { manifest: { headSha: HEAD } } }))
+  const failedResults = (firstFailure: object, otherFailures: object[] = []) => ({
+    'dispatch-reviewers': dispatched,
+    'run-round-tests': mech(
+      0,
+      JSON.stringify({ round: 1, head: HEAD, result: { outcome: 'failed', firstFailure, otherFailures } })
+    )
+  })
+  const failure = (test: string, directory?: string) => ({
+    test,
+    location: `${test}:3`,
+    excerpt: 'error: boom',
+    ...(directory !== undefined ? { directory } : {})
+  })
+
+  test('gives each failing file with a recorded directory the command from that directory, and the rerun rule', () => {
+    const text =
+      roundTestFailureOf(
+        failedResults(failure('pkg/tests/a.test.ts', 'pkg'), [failure('root.test.ts', '.'), failure('lib/b.test.ts')])
+      ) ?? ''
+    expect(text).toContain('`pkg/tests/a.test.ts` from `pkg`: `bun test ./tests/a.test.ts`')
+    expect(text).toContain('`root.test.ts` from the repository root: `bun test ./root.test.ts`')
+    expect(text).toContain(
+      'its own timeout and isolation settings and its own environment, which these commands do not carry'
+    )
+    expect(text).toContain('one passing run does not clear it')
+    expect(text).toContain('twenty times in one invocation, with `--rerun-each=20`')
+    expect(text).toContain(
+      "For the other failing file(s) the round recorded no directory: run that one invocation from the directory of the file's package, not from the repository root."
+    )
+  })
+
+  test('a failing file with no recorded directory, or one the directory does not contain, gets no command', () => {
+    const none = roundTestFailureOf(failedResults(failure('pkg/a.test.ts'))) ?? ''
+    expect(none).not.toContain('bun test ./')
+    expect(none).toContain('For each failing file the round recorded no directory')
+    for (const directory of ['other', '../pkg', '/pkg', 'pkg; x'])
+      expect(roundTestFailureOf(failedResults(failure('pkg/a.test.ts', directory))) ?? '').not.toContain('bun test ./')
+  })
+
+  test('the recorded copy of a failing file carries its directory only while it is a plain path', async () => {
+    const run = async (directory: string | undefined) => {
+      const task = {
+        reviewRound: () => 1,
+        v2: {
+          runRoundTests: async (input: { head: string }) => ({
+            head: input.head,
+            outcome: 'failed',
+            wallMs: 1,
+            firstFailure: failure('pkg/a.test.ts', directory),
+            otherFailures: [failure('pkg/b.test.ts', directory)]
+          })
+        }
+      } as unknown as TaskInput
+      const context = { results: { 'dispatch-reviewers': dispatched } } as unknown as Parameters<
+        typeof runRoundTestsStep
+      >[1]
+      const { stdout } = await runRoundTestsStep(task, context)
+      return JSON.parse(stdout).result as {
+        firstFailure: { directory?: string }
+        otherFailures: Array<{ directory?: string }>
+      }
+    }
+    const kept = await run('pkg')
+    expect(kept.firstFailure.directory).toBe('pkg')
+    expect(kept.otherFailures[0]?.directory).toBe('pkg')
+    const dropped = await run('../pkg')
+    expect(dropped.firstFailure.directory).toBeUndefined()
+    expect(dropped.otherFailures[0]?.directory).toBeUndefined()
+    expect((await run(undefined)).firstFailure.directory).toBeUndefined()
   })
 })
