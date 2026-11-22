@@ -43,10 +43,30 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     status: 'produced',
     from: `${FROM_ASSESSMENT}; ${AS_RUN('run.started')}`
   },
-  { family: 'dev_review_loop', events: ['round_started'], status: 'produced', from: FROM_ASSESSMENT },
-  { family: 'dev_review_loop', events: ['gate_result_read'], status: 'produced', from: FROM_ASSESSMENT },
-  { family: 'dev_review_loop', events: ['verdicts_read'], status: 'produced', from: FROM_ASSESSMENT },
-  { family: 'dev_review_loop', events: ['findings_compared'], status: 'produced', from: FROM_ASSESSMENT },
+  {
+    family: 'dev_review_loop',
+    events: ['round_started'],
+    status: 'produced',
+    from: `${FROM_ASSESSMENT}; ${AS_RUN('round.started')}`
+  },
+  {
+    family: 'dev_review_loop',
+    events: ['gate_result_read'],
+    status: 'produced',
+    from: `${FROM_ASSESSMENT}; ${AS_RUN('checks.read, and agent.confidenceStated when the read carries a stated confidence')}`
+  },
+  {
+    family: 'dev_review_loop',
+    events: ['verdicts_read'],
+    status: 'produced',
+    from: `${FROM_ASSESSMENT}; ${AS_RUN('review.verdicts')}`
+  },
+  {
+    family: 'dev_review_loop',
+    events: ['findings_compared'],
+    status: 'produced',
+    from: `${FROM_ASSESSMENT}; ${AS_RUN('review.findingsCompared')}`
+  },
   {
     family: 'dev_review_loop',
     events: ['stop_condition_met'],
@@ -75,13 +95,15 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     family: 'dev_review_loop',
     events: ['unpushed_work_resume'],
     status: 'produced',
-    from: 'the validate-developer-output step: a turn sent back for a red gate that left the remote head unchanged and work unpushed, resumed once with the commit-and-push instructions'
+    from:
+      'the validate-developer-output step: a turn sent back for a red gate that left the remote head unchanged and work unpushed, resumed once with the commit-and-push instructions; ' +
+      AS_RUN('change.recovered')
   },
   {
     family: 'dev_review_loop',
     events: ['round_ended'],
     status: 'produced',
-    from: `${FROM_ASSESSMENT}; a red gate is a gate observation like a green one, so its round ends with the diffstat of the head the gate read`
+    from: `${FROM_ASSESSMENT}; a red gate is a gate observation like a green one, so its round ends with the diffstat of the head the gate read; ${AS_RUN('round.ended')}`
   },
   {
     family: 'dev_review_loop',
@@ -115,13 +137,17 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     family: 'dev_review_loop',
     events: ['conflict_reentry'],
     status: 'produced',
-    from: 'the runner: one each time its watch of a published pull request finds it conflicting and starts a fresh run, up to the re-entry bound'
+    from:
+      'the runner: one each time its watch of a published pull request finds it conflicting and starts a fresh run, up to the re-entry bound; ' +
+      AS_RUN('change.conflicted')
   },
   {
     family: 'dev_review_loop',
     events: ['storage_push'],
     status: 'produced',
-    from: 'the runner, version 2 only: one per Developer push that landed while no pull request is open (a storage push: cheap checks, no tests, no CI)'
+    from:
+      'the runner, version 2 only: one per Developer push that landed while no pull request is open (a storage push: cheap checks, no tests, no CI); ' +
+      AS_RUN('change.saved')
   },
   {
     family: 'dev_review_loop',
@@ -133,13 +159,17 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     family: 'dev_review_loop',
     events: ['ready_push', 'failed_tests_rerun'],
     status: 'produced',
-    from: 'the runner, version 2 only, at its ready-push step: one ready_push per approval it pushes, and failed_tests_rerun when that push re-ran only what a refused one failed plus what the fix affects'
+    from:
+      'the runner, version 2 only, at its ready-push step: one ready_push per approval it pushes, and failed_tests_rerun when that push re-ran only what a refused one failed plus what the fix affects; the ready_push is ' +
+      AS_RUN('change.pushed')
   },
   {
     family: 'dev_review_loop',
     events: ['pr_opened'],
     status: 'produced',
-    from: 'the runner, version 2 only, at its open-pull-request step: once, when the approved head opens the pull request'
+    from:
+      'the runner, version 2 only, at its open-pull-request step: once, when the approved head opens the pull request; ' +
+      AS_RUN('change.opened')
   },
   {
     family: 'dev_review_loop',
@@ -151,7 +181,9 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     family: 'dev_review_loop',
     events: ['phase_time'],
     status: 'produced',
-    from: 'every step of a version 2 run (never version 1), when it completes or fails: the wall time it spent, counted toward its phase'
+    from:
+      'every step of a version 2 run (never version 1), when it completes or fails: the wall time it spent, counted toward its phase; ' +
+      AS_RUN('phase.ended')
   },
   {
     family: 'handoff',

@@ -521,7 +521,7 @@ export type WatchResult =
   /** The resolution was refused; `message` says why. */
   | { kind: 'refused'; message: string }
   /** The pause's pull request was merged or closed: the run ends, and no resolution is claimed. */
-  | { kind: 'ended'; state: 'merged' | 'closed' }
+  | { kind: 'ended'; state: 'merged' | 'closed'; pr: number }
   /** The watch was stopped, or the run holds no pause that a ruling continues. */
   | { kind: 'stopped' }
 
@@ -654,8 +654,8 @@ export async function watchForRuling(
     let ended: WatchResult | null = null
     if (pr !== null) {
       const state = forgeRead(() => deps.fetchPrState(pr), 'OPEN' as PrOpenState)
-      if (state === 'MERGED') ended = { kind: 'ended', state: 'merged' }
-      if (state === 'CLOSED') ended = { kind: 'ended', state: 'closed' }
+      if (state === 'MERGED') ended = { kind: 'ended', state: 'merged', pr }
+      if (state === 'CLOSED') ended = { kind: 'ended', state: 'closed', pr }
     }
     if (ended !== null) return ended
     const newest = forgeRead(() => rulingOrdinalOf(deps, held, task), null)

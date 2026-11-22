@@ -73,7 +73,10 @@ import { DEFAULT_REVIEW_POLICY } from '../../../tools/task-contract/review-polic
 import type { IssueSurface } from '../../../tools/task-contract/issue-validation'
 import { objectivesOf, objectivesVersion, renderObjectives } from '../../../tools/task-contract/objectives'
 import { FIXTURE_REPO, isolatedConfigFixture } from '../../../../../kernel/conformance/unit/process-fixture.js'
-import { writeRunLifecycleEvent } from '../../../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
+import {
+  recordWatchedChangeEnded,
+  writeRunLifecycleEvent
+} from '../../../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
 
 /** A fake reviewer/security dispatch's outcome, in a compact line grammar `fakeReviewOutput` turns into the structured ReviewResult it returns. */
 export type RoleOutcome = {
@@ -137,6 +140,8 @@ export type LoopWorld = {
   runEvents: Array<Record<string, unknown>>
   /** How many earlier-format lines the outbox held when each run event was handed to the Log: where each stands among them. */
   runEventAfter: number[]
+  /** The run the loop wrote its records under: the one a watch of its pull request links a merge or close to. */
+  runId: string | undefined
   /** Flips true the first time the Developer role is dispatched — the head then resolves and the PR opens, exactly as the fake `gh` keyed on `.fake-dev-invoked`. */
   developerPushed: boolean
   /**
@@ -403,6 +408,7 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     watchEvents: [],
     runEvents: [],
     runEventAfter: [],
+    runId: undefined,
     developerPushed: false,
     remoteBranchExists: false,
     worktreeHead: sha('a'),
@@ -683,6 +689,7 @@ export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
     // Every sink the run builds hands a run lifecycle event to the run's Log handle; the world keeps what it was given.
     logSink: {
       routeEvent: (event, where) => {
+        world.runId = where.runId
         const routed = writeRunLifecycleEvent(event, where)
         if (routed) {
           world.runEvents.push({ ...(event as unknown as Record<string, unknown>) })
@@ -1298,6 +1305,12 @@ export async function runDriverLoopInProcess(
       },
       fetchPrState: (_pr) => world.prState,
       fetchMergeableState: (_pr) => world.mergeable,
+      // The run's own watch records a merge or close on the run's handle; the forge read of who did it is a fake.
+      recordChangeEnded: (ended) =>
+        recordWatchedChangeEnded(ended, {
+          ...(world.runId === undefined ? {} : { runId: world.runId }),
+          readEnd: () => ({ by: 'octocat' })
+        }),
       logEvent: (event) => {
         world.watchEvents.push(event)
       },

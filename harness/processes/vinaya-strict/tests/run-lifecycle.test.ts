@@ -24,7 +24,12 @@ import {
 } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
 import { DEFAULT_REVIEWER_TIMEOUT_MS, DEFAULT_TIMEOUT_MS } from '../loops/dev-review/dispatch/dispatch'
 import type { LaunchRecord, ParsedLaunch } from '../loops/dev-review/dispatch/dispatch'
-import { keepDriverLock, type DriverLockExit } from '../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
+import {
+  keepDriverLock,
+  recordWatchedChangeEnded,
+  type DriverLockExit
+} from '../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
+import { attributeOf, createRunLifecycleWorld, eventNameOf } from './run-lifecycle-world'
 import { loopHistoryFromComments } from '../loops/dev-review/standalone/dev-review-loop/journal-history'
 import {
   acquireDriverLockAtomic,
@@ -59,6 +64,7 @@ import {
   roleTimeouts,
   runIdentityOfTask,
   takeDriverLock,
+  watchPublishedPullRequest,
   type RecoveryDeps
 } from '../bin/run-lifecycle'
 import {
@@ -1319,4 +1325,67 @@ describe('no orphaned agent', () => {
     expect(log).toContain('driver exited (signal, cancel); driver lock cleared')
     spawnSync('sh', ['-c', `kill $(cat ${record}.child) 2>/dev/null; true`])
   }, 40_000)
+})
+
+describe('a watched pull request that ends is recorded on the run', () => {
+  const where = { runId: 'run-1', repository: 'atta-labs/vinaya' }
+  const watchOf = (states: Array<'OPEN' | 'MERGED' | 'CLOSED'>) => {
+    let read = -1
+    return {
+      fetchPrState: () => states[Math.min(++read, states.length - 1)]!,
+      fetchMergeableState: () => 'MERGEABLE' as const,
+      pollMs: 0,
+      sleep: async () => {}
+    }
+  }
+  const mergedAt = Date.parse('2026-11-22T03:00:00Z')
+
+  test('a pull request the run waits on that merges writes one merge, linked to the run, by whoever merged it', async () => {
+    const world = createRunLifecycleWorld()
+    const recorder = world.process()
+    const read = await watchPublishedPullRequest(328, watchOf(['OPEN', 'MERGED']), new AbortController().signal)
+    expect(read).toBe('merged')
+    const ended = { state: 'merged' as const, task: 8, pr: 328 }
+    recordWatchedChangeEnded(ended, { ...where, recorder, readEnd: () => ({ when: mergedAt, by: 'octocat' }) })
+    await recorder.drain()
+    const merged = world.events().filter((e) => eventNameOf(e) === 'vinaya.change.merged')
+    expect(merged).toHaveLength(1)
+    expect(attributeOf(merged[0], 'vinaya.run.id')).toBe('run-1')
+    expect(attributeOf(merged[0], 'vinaya.actor')).toBe('octocat')
+    expect(world.events().some((e) => eventNameOf(e) === 'vinaya.change.closed')).toBe(false)
+    expect(world.errors).toEqual([])
+  })
+
+  test('a pull request closed without merging writes one close and no merge', async () => {
+    const world = createRunLifecycleWorld()
+    const recorder = world.process()
+    const read = await watchPublishedPullRequest(329, watchOf(['CLOSED']), new AbortController().signal)
+    expect(read).toBe('closed')
+    recordWatchedChangeEnded(
+      { state: 'closed', task: 8, pr: 329 },
+      { ...where, recorder, readEnd: () => ({ when: mergedAt, by: 'octocat' }) }
+    )
+    await recorder.drain()
+    const closed = world.events().filter((e) => eventNameOf(e) === 'vinaya.change.closed')
+    expect(closed).toHaveLength(1)
+    expect(attributeOf(closed[0], 'vinaya.run.id')).toBe('run-1')
+    expect(world.events().some((e) => eventNameOf(e) === 'vinaya.change.merged')).toBe(false)
+  })
+
+  test('an end the run cannot link to a run is not written', async () => {
+    const world = createRunLifecycleWorld()
+    const recorder = world.process()
+    const saved = process.env.VINAYA_RUN_ID
+    delete process.env.VINAYA_RUN_ID
+    try {
+      recordWatchedChangeEnded(
+        { state: 'merged', task: 987654, pr: 320 },
+        { recorder, runtimeDir: () => world.runtimeDir, readEnd: () => ({}) }
+      )
+    } finally {
+      if (saved !== undefined) process.env.VINAYA_RUN_ID = saved
+    }
+    await recorder.drain()
+    expect(world.events().some((e) => eventNameOf(e) === 'vinaya.change.merged')).toBe(false)
+  })
 })

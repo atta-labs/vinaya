@@ -40,7 +40,7 @@ import { loopLogPathFor } from '../../../../../../kernel/log/client/loop-log.js'
 import { appendDriverLine } from '../../../../../../kernel/log/client/loop-log.js'
 import { readPublishedPullRequest } from './gate-reading.js'
 import { MAX_AUTOMATIC_CONFLICT_REENTRIES } from './gate-reading.js'
-import { conflictReentryEvent } from './driver-lifecycle.js'
+import { conflictReentryEvent, recordWatchedChangeEnded } from './driver-lifecycle.js'
 import { randomUUID } from 'node:crypto'
 import { narrateDriverEvent } from '../../../../../../kernel/log/client/loop-log.js'
 import { conflictReentryBoundDetail } from './gate-reading.js'
@@ -185,6 +185,8 @@ export type DriverWatchDeps = {
   fetchMergeableState: typeof fetchMergeableState
   /** Where an automatic conflict re-entry's `conflict_reentry` event goes — the Vinaya Log. */
   logEvent: (event: DevReviewLoopEventInput) => void
+  /** Where a watched pull request's merge or close goes: the run's own Log record, linked to the run. */
+  recordChangeEnded: (ended: { state: 'merged' | 'closed'; task: number; pr: number }) => void
 }
 
 /** One driver run's count of automatic rate-limit resumes, kept across pauses so the bound survives each re-watch; keyed by the round the pauses belong to. */
@@ -212,7 +214,8 @@ export function defaultDriverWatchDeps(): DriverWatchDeps {
     now: () => Date.now(),
     findOpenPrForBranch,
     fetchMergeableState,
-    logEvent: (event) => logToDefaultSink(event)
+    logEvent: (event) => logToDefaultSink(event),
+    recordChangeEnded: (ended) => recordWatchedChangeEnded(ended)
   }
 }
 
@@ -461,8 +464,10 @@ export async function watchPauseThenResume(
     // watch: the pause's own comment says so and names the command that continues it.
     if (isUsageLimitPause && !isBoundedRetry) return { kind: 'unwatched' }
     const prState = watchReadOrFallback('pull-request state', () => w.fetchPrState(prNumber), 'OPEN' as const)
-    if (prState === 'MERGED') return { kind: 'ended', reason: 'merged' }
-    if (prState === 'CLOSED') return { kind: 'ended', reason: 'closed' }
+    if (prState === 'MERGED' || prState === 'CLOSED') {
+      w.recordChangeEnded({ state: prState === 'MERGED' ? 'merged' : 'closed', task, pr: prNumber })
+      return { kind: 'ended', reason: prState === 'MERGED' ? 'merged' : 'closed' }
+    }
 
     const watchedEscalationId = escalationId
     if (watchedEscalationId) {
@@ -717,7 +722,10 @@ export async function watchPublishedPullRequest(
       () => readPublishedPullRequest(prNumber, w),
       'watching' as const
     )
-    if (read === 'merged' || read === 'closed') return { kind: 'ended', reason: read }
+    if (read === 'merged' || read === 'closed') {
+      w.recordChangeEnded({ state: read, task, pr: prNumber })
+      return { kind: 'ended', reason: read }
+    }
     if (read === 'conflicting') {
       const continuation: LoopInput = { task, agent, ...(model ? { model } : {}) }
       const boundSpent = reentries.count >= MAX_AUTOMATIC_CONFLICT_REENTRIES

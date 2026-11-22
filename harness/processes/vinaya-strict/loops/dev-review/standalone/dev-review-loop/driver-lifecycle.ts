@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../../../kernel/run-paths.js'
@@ -9,7 +10,7 @@ import {
   type ReconstructedJournal
 } from '../../../../tools/dev-review-policy/journal-reconstruction'
 import { appendRoleLine } from '../../../../../../kernel/log/client/loop-log.js'
-import { errorClassOf, isRunLifecycleEvent } from './round-assess.js'
+import { errorClassOf, isHandleEvent } from './round-assess.js'
 
 // What a task driver does around its rounds, shared by the standalone review
 // loop and the Engine runner: the run's lifecycle as the run's Log handle
@@ -94,13 +95,25 @@ const openRounds = new WeakMap<object, number>()
 export function startRoundOnHandle(
   where: { runId: string; repository?: string | undefined },
   number: number,
-  options: { recorder?: Pick<ReturnType<typeof runRecorder>, 'handle'> } = {}
+  options: { recorder?: Pick<ReturnType<typeof runRecorder>, 'handle'>; startingCommit?: string } = {}
 ): void {
   const log = (options.recorder ?? runRecorder()).handle(where.runId, where.repository)
   if (log === undefined || !Number.isInteger(number) || number < 1) return
   if (openRounds.get(log) === number) return
   openRounds.set(log, number)
-  log.round.started({ number })
+  // The round names its own span, so a process that starts the round a run already holds open still writes one span.
+  log.round.started({
+    number,
+    key: `round:${number}`,
+    ...(options.startingCommit === undefined || options.startingCommit === ''
+      ? {}
+      : { startingCommit: options.startingCommit })
+  })
+}
+
+/** Takes the round off the handle's open rounds once its span ends, so the same number can be opened again. */
+function closeRoundOnHandle(log: object): void {
+  openRounds.delete(log)
 }
 
 /** The runs a pause was written for in this process and not yet resumed: such a run is waiting, not ended. */
@@ -109,10 +122,25 @@ const pausedRuns = new Set<string>()
 const numberOf = (value: unknown): number | undefined => (typeof value === 'number' ? value : undefined)
 const textOf = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
 
+const confidenceOf = (e: Record<string, unknown>): { given: boolean; value?: number; reason?: string } => {
+  if (e.confidence_unavailable === true) return { given: true }
+  const value = numberOf(e.confidence_value)
+  if (value === undefined) return { given: false }
+  const reason = textOf(e.confidence_reason)
+  return { given: true, value, ...(reason === undefined ? {} : { reason }) }
+}
+
+type EventFinding = { id?: unknown; severity?: unknown; location?: unknown; policy_treatment?: unknown }
+type EventReviewer = { role?: unknown; outcome?: unknown }
+const listOf = (value: unknown): string[] => (Array.isArray(value) ? value.map(String) : [])
+
 /**
- * Writes a run lifecycle event through the run's Log handle, with the function that stands for it:
- * `run.started`, `run.ended`, `run.paused`, `run.resumed`, `run.cancelled`, `run.retried`, `run.stopRuleMet` and
- * `run.exited`. Returns `true` when the event is one of these, and no earlier-format line is then written for it.
+ * Writes a run, round, review, gate-read or change event through the run's Log handle, with the function that stands
+ * for it: `run.started`, `run.ended`, `run.paused`, `run.resumed`, `run.cancelled`, `run.retried`, `run.stopRuleMet`
+ * and `run.exited`; `round.started`, `round.ended` and `phase.ended`; `review.verdicts`, `review.findingsCompared`,
+ * `checks.read` and `agent.confidenceStated`; `change.saved`, `change.pushed`, `change.opened`,
+ * `change.conflicted` and `change.recovered`. Returns `true` when the event is one of these, and no earlier-format
+ * line is then written for it.
  * The handle writes the start once per run, whatever process asks, and a process that did not start a span ends it
  * whole from the start in the run's local copy.
  */
@@ -126,7 +154,7 @@ export function writeRunLifecycleEvent(
     round?: number
   } = {}
 ): boolean {
-  if (!isRunLifecycleEvent(event)) return false
+  if (!isHandleEvent(event)) return false
   const e = event as unknown as Record<string, unknown>
   const log = (options.recorder ?? runRecorder()).handle(where.runId, where.repository)
   if (log === undefined) return true
@@ -209,6 +237,100 @@ export function writeRunLifecycleEvent(
       forget()
       break
     }
+    case 'round_started': {
+      const number = numberOf(e.round)
+      const startingCommit = textOf(e.base_head)
+      if (number !== undefined)
+        startRoundOnHandle(where, number, {
+          ...(options.recorder === undefined ? {} : { recorder: options.recorder }),
+          ...(startingCommit === undefined ? {} : { startingCommit })
+        })
+      break
+    }
+    case 'round_ended':
+      log.round.ended({
+        ...(numberOf(e.files_changed) === undefined ? {} : { filesChanged: numberOf(e.files_changed) as number }),
+        ...(numberOf(e.insertions) === undefined ? {} : { linesAdded: numberOf(e.insertions) as number }),
+        ...(numberOf(e.deletions) === undefined ? {} : { linesRemoved: numberOf(e.deletions) as number }),
+        ...(textOf(e.outcome) === undefined ? {} : { outcome: textOf(e.outcome) as string })
+      })
+      closeRoundOnHandle(log)
+      break
+    case 'phase_time': {
+      const phase = textOf(e.phase)
+      if (phase === undefined) break
+      const endTime = Date.now()
+      log.phase.ended({
+        phase,
+        ...(textOf(e.step) === undefined ? {} : { step: textOf(e.step) as string }),
+        startTime: endTime - Math.max(0, numberOf(e.wall_ms) ?? 0),
+        endTime
+      })
+      break
+    }
+    case 'gate_result_read': {
+      log.checks.read({ ...(round === undefined ? {} : { round }), green: e.green === true })
+      const confidence = confidenceOf(e)
+      if (confidence.given)
+        log.agent.confidenceStated({
+          ...(confidence.value === undefined ? {} : { confidence: confidence.value }),
+          ...(confidence.reason === undefined ? {} : { reason: confidence.reason }),
+          afterExtraTurn: e.extra_turn_spent === true
+        })
+      break
+    }
+    case 'verdicts_read': {
+      const reviewers = (Array.isArray(e.reviewers) ? e.reviewers : []) as EventReviewer[]
+      const findings = (Array.isArray(e.findings) ? e.findings : []) as EventFinding[]
+      log.review.verdicts({
+        seats: reviewers.map((r) => ({ seat: String(r.role ?? ''), verdict: String(r.outcome ?? '') })),
+        blockingCount: numberOf(e.blockers) ?? 0,
+        findings: findings.map((f) => ({
+          id: String(f.id ?? ''),
+          severity: String(f.severity ?? ''),
+          place: String(f.location ?? ''),
+          blocking: f.policy_treatment === 'blocking'
+        }))
+      })
+      break
+    }
+    case 'findings_compared':
+      log.review.findingsCompared({
+        open: listOf(e.open),
+        resolved: listOf(e.resolved),
+        new: listOf(e.new),
+        recurring: listOf(e.recurring)
+      })
+      break
+    case 'storage_push':
+      log.change.saved({
+        ...(textOf(e.branch) === undefined ? {} : { branch: textOf(e.branch) as string }),
+        ...(textOf(e.head) === undefined ? {} : { commit: textOf(e.head) as string })
+      })
+      break
+    case 'ready_push':
+      log.change.pushed({
+        result: e.outcome === 'refused' ? 'refused' : 'passed',
+        ...(numberOf(e.selected) === undefined ? {} : { picked: numberOf(e.selected) as number }),
+        ...(numberOf(e.failed) === undefined ? {} : { failed: numberOf(e.failed) as number }),
+        ...(numberOf(e.wall_ms) === undefined ? {} : { ms: numberOf(e.wall_ms) as number })
+      })
+      break
+    case 'pr_opened':
+      if (numberOf(e.pr) !== undefined)
+        log.change.opened({
+          change: String(numberOf(e.pr)),
+          ...(textOf(e.head) === undefined ? {} : { commit: textOf(e.head) as string })
+        })
+      break
+    case 'conflict_reentry':
+      log.change.conflicted({
+        ...(numberOf(e.attempt) === undefined ? {} : { reentry: numberOf(e.attempt) as number })
+      })
+      break
+    case 'unpushed_work_resume':
+      log.change.recovered()
+      break
     case 'driver_exited': {
       const kind = EXIT_KINDS[String(e.reason)]
       if (kind === undefined) break
@@ -223,6 +345,83 @@ export function writeRunLifecycleEvent(
     }
   }
   return true
+}
+
+/** When and by whom the forge says a pull request was merged or closed; each part the forge does not name is absent. */
+export interface ForgeChangeEnd {
+  when?: number
+  by?: string
+}
+
+/** Reads, from the forge, when and by whom a pull request the run watches was merged or closed. Never throws. */
+export function readForgeChangeEnd(pr: number): ForgeChangeEnd {
+  try {
+    const out = execFileSync('gh', ['pr', 'view', String(pr), '--json', 'mergedAt,closedAt,mergedBy'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+    const read = JSON.parse(out) as {
+      mergedAt?: string | null
+      closedAt?: string | null
+      mergedBy?: { login?: string } | null
+    }
+    const at = Date.parse(read.mergedAt ?? read.closedAt ?? '')
+    return {
+      ...(Number.isFinite(at) ? { when: at } : {}),
+      ...(read.mergedBy?.login ? { by: read.mergedBy.login } : {})
+    }
+  } catch {
+    return {}
+  }
+}
+
+/** The pull requests whose end this process wrote, by run: a watch that reads the same end twice writes it once. */
+const writtenEnds = new Set<string>()
+
+/**
+ * Records a pull request the run watches as merged (`log.change.merged`) or closed without merging
+ * (`log.change.closed`), written on the run's own Log handle and linked to the run's trace. It is called only from
+ * the run's own watch of its pull request, whether the run is waiting for the merge or paused. The run is the one
+ * this process names (`VINAYA_RUN_ID`, set by both runners) or the task's kept run; a process that can name none
+ * writes nothing, since a merge linked to no run is not a record of the run.
+ */
+export function recordWatchedChangeEnded(
+  ended: { state: 'merged' | 'closed'; task: number; pr: number },
+  options: {
+    runId?: string
+    repository?: string
+    runtimeDir?: () => string
+    recorder?: Pick<ReturnType<typeof runRecorder>, 'handle'>
+    readEnd?: (pr: number) => ForgeChangeEnd
+  } = {}
+): void {
+  try {
+    let runId = options.runId ?? (process.env.VINAYA_RUN_ID || undefined)
+    if (runId === undefined) {
+      try {
+        const path = runIdPath((options.runtimeDir ?? runtimeDirForThisRepo)(), ended.task)
+        if (existsSync(path)) runId = readFileSync(path, 'utf8').trim() || undefined
+      } catch {
+        // No kept run: nothing to link to.
+      }
+    }
+    if (runId === undefined) return
+    const key = `${runId}\0${ended.pr}\0${ended.state}`
+    if (writtenEnds.has(key)) return
+    const log = (options.recorder ?? runRecorder()).handle(runId, options.repository)
+    if (log === undefined) return
+    writtenEnds.add(key)
+    const end = (options.readEnd ?? readForgeChangeEnd)(ended.pr)
+    const detail = {
+      runId,
+      ...(end.when === undefined ? {} : { when: end.when }),
+      ...(end.by === undefined ? {} : { by: end.by })
+    }
+    if (ended.state === 'merged') log.change.merged(detail)
+    else log.change.closed(detail)
+  } catch {
+    // The record of an end is never a reason to fail the watch that saw it.
+  }
 }
 
 /** One automatic conflict re-entry of a published pull request, as both runners narrate it. */

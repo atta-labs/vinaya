@@ -142,17 +142,13 @@ describe('devReviewLoop — the mechanical gate excludes the review gate’s own
       expect(r.status, r.stderr).toBe(0)
       expect(r.stdout).toMatch(/publish/)
 
-      const loopEvents = outboxLines(home)
-        .filter((l) => l.kind === 'dev_review_loop')
-        .map((l) => l.event)
       // A red gate would have dispatched the developer again instead of the
-      // reviewers — `gate_result_read` with `green: true` proves the review
+      // reviewers — a checks read that is green proves the review
       // gate's own failing check-run was excluded, not merely tolerated.
-      const gateRead = outboxLines(home).find((l) => l.event === 'gate_result_read') as
-        | Record<string, unknown>
-        | undefined
-      expect(gateRead?.green).toBe(true)
-      expect(loopEvents).toContain('verdicts_read')
+      const records = homeRecords(home)
+      const gateRead = records.events.find((e) => e.eventName === 'vinaya.checks.read')
+      expect(recordAttribute(gateRead, 'vinaya.checks.green')).toBe(true)
+      expect(records.names.events).toContain('vinaya.review.verdicts')
     },
     45000
   )
@@ -181,9 +177,11 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a
       // never via a flush-then-forge-read round trip ([task-files-v1] 5, O3).
       const r1 = runLoopNoPauseCommentRetry(home, cwd, path)
       expect(r1.status).not.toBe(0)
-      const linesAfterCrash = outboxLines(home)
-      expect(linesAfterCrash.some((l) => l.event === 'round_ended' && l.outcome === 'green')).toBe(true)
-      expect(linesAfterCrash.some((l) => l.event === 'journal_finalized')).toBe(false)
+      // The round and the run's end are written through the run's Log handle: the green round's span carries its
+      // outcome, and the run's span is never written as ready.
+      const afterCrash = homeRecords(home)
+      for (const span of afterCrash.spans.filter((s) => s.name === 'vinaya.round 1'))
+        expect(recordAttribute(span, 'vinaya.round.outcome')).toBe('green')
       for (const span of readRunRecords(join(home, '.vinaya', 'runtime', 'unresolved', 'logs')).spans)
         if (span.name.startsWith('invoke_workflow'))
           expect(
@@ -577,28 +575,38 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     const result = await runLoopInProcess(world)
     expect(result.finalDecision.type).toBe('publish')
 
-    const lines = ipOutboxLines(world)
-    const loopEvents = lines.filter((l) => l.kind === 'dev_review_loop').map((l) => l.event)
+    // The round, its review and its gate read are written through the run's Log handle: no earlier-format line lands.
+    expect(ipOutboxLines(world).filter((l) => l.kind === 'dev_review_loop')).toEqual([])
+    const lines = world.runEvents
     // Derived directly from assess-round.ts's own assessGate (round 1, green
     // → 3 events, no roundEnded yet) then assessVerdicts (clean → 5 events)
     // — the exact sequence `assessRound` returns for this scripted scenario,
-    // not guessed.
-    expect(loopEvents).toEqual([
+    // not guessed. They and the run's lifecycle are written through the run's Log handle, in the order the loop built
+    // them.
+    expect(world.runEvents.map((l) => l.event)).toEqual([
+      'loop_started',
       'round_started',
       'gate_result_read',
       'verdicts_read',
       'findings_compared',
-      'round_ended'
-    ])
-    // The run's lifecycle is written through the run's Log handle, in the order the loop built it.
-    expect(world.runEvents.map((l) => l.event)).toEqual([
-      'loop_started',
       'stop_condition_met',
+      'round_ended',
       'journal_finalized',
       // #949, O2: the lifecycle event the driver now emits on its clean
       // publish exit, after everything the round itself logged.
       'driver_exited'
     ])
+    // One round span, written with the records of its review and its gate read.
+    const records = runRecords(world)
+    expect(records.names.spans.filter((name) => name === 'vinaya.round 1')).toHaveLength(1)
+    expect(records.names.events).toEqual(
+      expect.arrayContaining([
+        'vinaya.round.started',
+        'vinaya.checks.read',
+        'vinaya.review.verdicts',
+        'vinaya.review.findings_compared'
+      ])
+    )
 
     const gateResult = lines.find((l) => l.event === 'gate_result_read') as Record<string, unknown>
     expect(gateResult.green).toBe(true)
@@ -740,7 +748,26 @@ const EARLIER_RUN_EVENTS = [
   'infrastructure_retry',
   'stop_condition_met',
   'driver_heartbeat',
-  'driver_exited'
+  'driver_exited',
+  // A round, its review and gate read, and the change are records on the run's Log handle too.
+  'round_started',
+  'round_ended',
+  'phase_time',
+  'verdicts_read',
+  'findings_compared',
+  'gate_result_read',
+  'storage_push',
+  'ready_push',
+  'pr_opened',
+  'conflict_reentry',
+  'unpushed_work_resume'
+]
+/** The records one clean round writes as events (the round itself is a span): its start, gate read, review and comparison. */
+const ROUND_1_RECORD_EVENTS = [
+  'vinaya.round.started',
+  'vinaya.checks.read',
+  'vinaya.review.verdicts',
+  'vinaya.review.findings_compared'
 ]
 const recordAttribute = (
   record: { attributes?: Array<{ key: string; value: Record<string, unknown> }> },
@@ -822,14 +849,15 @@ describe('devReviewLoop — the run lifecycle written through the run Log handle
     expect(runSpans).toHaveLength(1)
     expect(recordAttribute(runSpans[0], 'vinaya.run.outcome')).toBe('ready')
 
-    // This world's pull request is already open when the driver starts, so
-    // every event the driver records carries its number in the header subject.
-    expect(typeof lines.find((l) => l.event === 'verdicts_read')?.subject?.pr).toBe('number')
-    const verdicts = lines.find((l) => l.event === 'verdicts_read') as Record<string, unknown> | undefined
+    // The review is written through the run's Log handle: each seat's verdict and the blocking count.
+    const verdicts = world.runEvents.find((l) => l.event === 'verdicts_read') as Record<string, unknown> | undefined
     expect(verdicts?.reviewers).toEqual([
       { role: 'code-reviewer', outcome: 'approve', blockers: 0 },
       { role: 'security', outcome: 'approve', blockers: 0 }
     ])
+    const verdictRecords = records.events.filter((e) => e.eventName === 'vinaya.review.verdicts')
+    expect(verdictRecords).toHaveLength(1)
+    expect(recordAttribute(verdictRecords[0], 'vinaya.review.blocking_count')).toBe(0)
     // Restored on return: the environment is as the loop found it.
     expect(process.env.VINAYA_PR).toBe(priorPr)
 
@@ -1063,7 +1091,7 @@ describe('devReviewLoop — deferred findings tracked in one Issue per pull requ
     expect(unchangedEntry).toBeDefined()
 
     const body = renderDeferredFindingsIssueBody(world.prNumber, entries)
-    const logged = ipOutboxLines(world)
+    const logged = world.runEvents
       .filter((l) => l.event === 'verdicts_read')
       .flatMap(
         (l) => (l.findings ?? []) as Array<{ deferral_reason?: string; description?: string; location?: string }>
@@ -1155,16 +1183,6 @@ describe('devReviewLoop — deferred findings tracked in one Issue per pull requ
 // "equivalent lineage" a real claim about the controller's own behavior,
 // not an artifact of skipping the second run's own assessment.
 describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalent lineage, idempotent identities, visible gaps', () => {
-  // The run's own lifecycle (its start, stop rule, end and exit) is written through the run's Log handle, so this
-  // shape holds the round's events alone.
-  const CANONICAL_ROUND_1_SHAPE = [
-    'round_started',
-    'gate_result_read',
-    'verdicts_read',
-    'findings_compared',
-    'round_ended'
-  ]
-
   // REAL PROCESS: publishRound's real gh/EffectExecutor round-trip (postPrCommentOnce shells out to real gh directly, bypassing every injected dep) cannot be exercised via the in-process fake publis
   it.skipIf(process.platform === 'darwin')(
     'a second whole-task run reproduces the SAME dev_review_loop event shape under a DIFFERENT lineage.run — two genuine runs, never one fabricated as a continuation of the other',
@@ -1173,29 +1191,38 @@ describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalen
 
       const r1 = runLoop(home, cwd, path)
       expect(r1.status).toBe(0)
-      const linesAfterR1 = outboxLines(home)
-      const loopEventsR1 = linesAfterR1.filter((l) => l.kind === 'dev_review_loop').map((l) => l.event)
-      expect(loopEventsR1).toEqual(CANONICAL_ROUND_1_SHAPE)
+      const afterR1 = homeRecords(home)
+      expect(
+        afterR1.events
+          .filter((e) => ROUND_1_RECORD_EVENTS.includes(e.eventName))
+          .map((e) => e.eventName)
+          .sort()
+      ).toEqual([...ROUND_1_RECORD_EVENTS].sort())
 
       const r2 = runLoop(home, cwd, path)
       expect(r2.status).toBe(0)
 
-      const allLines = outboxLines(home)
-      const loopLines = allLines.filter((l) => l.kind === 'dev_review_loop')
-      // Every dev_review_loop line partitions cleanly by lineage.run into
+      const all = homeRecords(home)
+      const roundEvents = all.events.filter((e) => ROUND_1_RECORD_EVENTS.includes(e.eventName))
+      // Every round record partitions cleanly by the run's trace into
       // exactly two runs — the SAME canonical shape twice, never one merged
-      // 16-event stream and never a shape that only makes sense assuming the
+      // stream and never a shape that only makes sense assuming the
       // two processes shared state they never actually shared.
-      const runsInOrder = [...new Set(loopLines.map((l) => (l.meta as { lineage: { run: string } }).lineage.run))]
+      const runsInOrder = [...new Set(roundEvents.map((e) => String(e.traceId)))]
       expect(runsInOrder).toHaveLength(2)
       for (const run of runsInOrder) {
         expect(
-          loopLines.filter((l) => (l.meta as { lineage: { run: string } }).lineage.run === run).map((l) => l.event)
-        ).toEqual(CANONICAL_ROUND_1_SHAPE)
+          roundEvents
+            .filter((e) => String(e.traceId) === run)
+            .map((e) => e.eventName)
+            .sort()
+        ).toEqual([...ROUND_1_RECORD_EVENTS].sort())
+        // One round span in each run.
+        expect(all.spans.filter((s) => String(s.traceId) === run && s.name === 'vinaya.round 1')).toHaveLength(1)
       }
       // The restart itself is visible directly in the data, not inferred: two
-      // distinct process identities, never a single lineage.run silently
-      // spanning both runs as if nothing happened in between.
+      // distinct runs, never a single run silently
+      // spanning both as if nothing happened in between.
       expect(runsInOrder[0]).not.toBe(runsInOrder[1])
     },
     45000
@@ -1590,14 +1617,14 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
       // the process package's schema, so this is driver-built, reusing the schema's
       // existing `'principal_stop'`/`'principal_item'` values, never a new
       // schema value — see that function's own doc comment).
-      const loopEvents = ipOutboxLines(world)
-        .filter((l) => l.kind === 'dev_review_loop')
-        .map((l) => l.event)
-      expect(loopEvents).toEqual(['round_started', 'gate_result_read'])
-      expect(ipOutboxLines(world).some((l) => l.event === 'round_ended')).toBe(false)
-      // The pause and the stop are written through the run's Log handle, with the run left open for its resume.
+      expect(ipOutboxLines(world).filter((l) => l.kind === 'dev_review_loop')).toEqual([])
+      expect(world.runEvents.some((l) => l.event === 'round_ended')).toBe(false)
+      // The round, its gate read, the pause and the stop are written through the run's Log handle, with the run left
+      // open for its resume.
       expect(world.runEvents.map((l) => l.event)).toEqual([
         'loop_started',
+        'round_started',
+        'gate_result_read',
         'stop_condition_met',
         'paused',
         'journal_finalized',
@@ -1765,7 +1792,7 @@ describe('devReviewLoop — a rejected reviewer result is an infrastructure paus
       // saw a `verdicts` observation), but a `role_attempt` line names the
       // security role's own failed attempt explicitly.
       const events = outboxLines(home)
-      expect(events.some((e) => e.event === 'verdicts_read')).toBe(false)
+      expect(homeRecords(home).names.events).not.toContain('vinaya.review.verdicts')
       // The security role's agent turns are `invoke_agent` spans on the run's Log handle, never earlier-format
       // `dispatch`, `role_attempt` or `usage` lines.
       expect(events.filter((e) => ['dispatch', 'role_attempt', 'usage'].includes(String(e.kind)))).toEqual([])
@@ -1992,23 +2019,20 @@ describe('devReviewLoop — a principal-owed red never redispatches the develope
       // Proof the gate itself read green, and no second gate/developer round
       // happened first — a red-gate retry would insert a second
       // gate_result_read/round_started pair before verdicts_read.
-      const loopEvents = outboxLines(home)
-        .filter((l) => l.kind === 'dev_review_loop')
-        .map((l) => l.event)
-      expect(loopEvents).toEqual([
-        'round_started',
-        'gate_result_read',
-        'verdicts_read',
-        'findings_compared',
-        'round_ended'
-      ])
+      // The round, its gate read and its review are written through the run's Log handle: one round span, one gate
+      // read, one review.
+      const records = homeRecords(home)
+      expect(records.names.spans.filter((name) => name.startsWith('vinaya.round'))).toEqual(['vinaya.round 1'])
+      expect(records.names.events.filter((name) => ROUND_1_RECORD_EVENTS.includes(name)).sort()).toEqual(
+        [...ROUND_1_RECORD_EVENTS].sort()
+      )
       // The run's own lifecycle is written through the run's Log handle: its start, stop rule, end and exit.
-      const runEventNames = homeRecords(home).names.events
+      const runEventNames = records.names.events
       expect(runEventNames.filter((name) => name === 'vinaya.run.started')).toHaveLength(1)
       expect(runEventNames.filter((name) => name === 'vinaya.run.stop_rule_met')).toHaveLength(1)
       expect(runEventNames.filter((name) => name === 'vinaya.run.exited')).toHaveLength(1)
-      const gateResult = outboxLines(home).find((l) => l.event === 'gate_result_read') as Record<string, unknown>
-      expect(gateResult.green).toBe(true)
+      const gateResult = records.events.find((e) => e.eventName === 'vinaya.checks.read')
+      expect(recordAttribute(gateResult, 'vinaya.checks.green')).toBe(true)
     },
     45000
   )

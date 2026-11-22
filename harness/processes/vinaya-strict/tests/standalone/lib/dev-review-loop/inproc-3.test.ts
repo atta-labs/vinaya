@@ -252,7 +252,7 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
     // event's own `findings` array — not just the rendered comment —
     // carrying its real, uncapped severity, the scale it's read against,
     // and that it counted as blocking under this repo's default policy.
-    const round1VerdictsRead = ipOutboxLines(world).find(
+    const round1VerdictsRead = world.runEvents.find(
       (l) => l.kind === 'dev_review_loop' && l.event === 'verdicts_read' && (l as { round: number }).round === 1
     ) as { findings: Array<Record<string, unknown>> } | undefined
     expect(round1VerdictsRead?.findings).toEqual([
@@ -266,10 +266,12 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
       }
     ])
 
-    const lines = ipOutboxLines(world)
-    const loopEvents = lines.filter((l) => l.kind === 'dev_review_loop').map((l) => l.event)
-    // The run's lifecycle is written through the run's Log handle, so no earlier-format line carries it.
-    expect(loopEvents).toEqual([
+    const lines = world.runEvents
+    // The run's lifecycle, its rounds and its review are written through the run's Log handle, so no earlier-format
+    // line carries them.
+    expect(ipOutboxLines(world).filter((l) => l.kind === 'dev_review_loop')).toEqual([])
+    expect(world.runEvents.map((l) => l.event)).toEqual([
+      'loop_started',
       'round_started',
       'gate_result_read',
       'verdicts_read',
@@ -279,16 +281,17 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
       'gate_result_read',
       'verdicts_read',
       'findings_compared',
-      'round_ended'
-    ])
-    expect(world.runEvents.map((l) => l.event)).toEqual([
-      'loop_started',
       'stop_condition_met',
+      'round_ended',
       'journal_finalized',
       // #949, O2: the driver's clean-publish exit event, last.
       'driver_exited'
     ])
     const records = runRecords(world)
+    // Two rounds are two round spans, one each, however many records each round holds.
+    expect(records.names.spans.filter((name) => name === 'vinaya.round 1')).toHaveLength(1)
+    expect(records.names.spans.filter((name) => name === 'vinaya.round 2')).toHaveLength(1)
+    expect(records.names.events.filter((name) => name === 'vinaya.round.started')).toHaveLength(2)
     expect(records.names.events.filter((name) => name === 'vinaya.run.started')).toHaveLength(1)
     expect(records.names.events.filter((name) => name === 'vinaya.run.stop_rule_met')).toHaveLength(1)
     expect(records.names.events.filter((name) => name === 'vinaya.run.exited')).toHaveLength(1)

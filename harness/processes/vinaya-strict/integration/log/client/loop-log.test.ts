@@ -243,9 +243,10 @@ describe('devReviewLoop — the host attribution set at loop start', () => {
     expect(seenHosts.length).toBeGreaterThan(0)
     expect(seenHosts.every((h) => h === 'loop')).toBe(true)
 
-    const lines = outboxLines(world)
-    expect(lines.length).toBeGreaterThan(0)
-    expect(lines.every((l) => (l.meta as { host?: string } | undefined)?.host === 'loop')).toBe(true)
+    // The round, its review and the run's lifecycle are records on the run's Log handle, which carry no host; every
+    // earlier-format line the run still writes keeps it.
+    expect(world.runEvents.length).toBeGreaterThan(0)
+    expect(outboxLines(world).every((l) => (l.meta as { host?: string } | undefined)?.host === 'loop')).toBe(true)
 
     expect(hostAfterReturn).toBeUndefined()
   })
@@ -274,9 +275,8 @@ describe('devReviewLoop — the host attribution set at loop start', () => {
     expect(seenHosts.length).toBeGreaterThan(0)
     expect(seenHosts.every((h) => h === 'hook')).toBe(true)
 
-    const lines = outboxLines(world)
-    expect(lines.length).toBeGreaterThan(0)
-    expect(lines.every((l) => (l.meta as { host?: string } | undefined)?.host === 'hook')).toBe(true)
+    expect(world.runEvents.length).toBeGreaterThan(0)
+    expect(outboxLines(world).every((l) => (l.meta as { host?: string } | undefined)?.host === 'hook')).toBe(true)
 
     expect(hostAfterReturn).toBe('hook')
   })
@@ -485,16 +485,17 @@ describe('devReviewLoop — the driver lines of a whole run', () => {
     expect(driverLog).toMatch(/Round 1 verdicts: /)
     expect(driverLog).toMatch(/Round 1 ended after \d+m \d+s: approved\./)
     expect(driverLog).not.toMatch(/sweep — /)
-    // The Log events are the sequence the driver wrote before its lines were narrated: the round's own events as
-    // lines, and the run's lifecycle as the loop built it for the run's Log handle.
-    expect(
-      outboxLines(world)
-        .filter((l) => l.kind === 'dev_review_loop')
-        .map((l) => l.event)
-    ).toEqual(['round_started', 'gate_result_read', 'verdicts_read', 'findings_compared', 'round_ended'])
+    // The Log events are the sequence the driver wrote before its lines were narrated: the round, its review and the
+    // run's lifecycle, as the loop built them for the run's Log handle, and no earlier-format line for any of them.
+    expect(outboxLines(world).filter((l) => l.kind === 'dev_review_loop')).toEqual([])
     expect(world.runEvents.map((l) => l.event)).toEqual([
       'loop_started',
+      'round_started',
+      'gate_result_read',
+      'verdicts_read',
+      'findings_compared',
       'stop_condition_met',
+      'round_ended',
       'journal_finalized',
       'driver_exited'
     ])

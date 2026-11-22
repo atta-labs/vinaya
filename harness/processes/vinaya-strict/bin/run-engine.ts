@@ -194,6 +194,7 @@ import {
 import {
   conflictReentryEvent,
   createDriverExitRecorder,
+  recordWatchedChangeEnded,
   taskRunId,
   writeRunLifecycleEvent
 } from '../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
@@ -1608,6 +1609,8 @@ export interface EngineLifecycleOptions {
    * conflict with the default branch; absent ends the runner at completion.
    */
   publishedWatch?: PublishedWatch
+  /** Where a watched pull request's merge or close is recorded: the run's own Log record, linked to the run. */
+  recordChangeEnded?: (ended: { state: 'merged' | 'closed'; task: number; pr: number }) => void
   /**
    * Where the execution round is mirrored and the effect records a resume checks it against; absent, a resume still
    * restores the round from its checkpoint but writes and checks no mirror.
@@ -1833,6 +1836,15 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   /** Set when the ruling watch found the pause's pull request merged or closed: the run ends and leaves no lock. */
   let endedByWatch = false
   let described = 'starting'
+  const recordChangeEnded = (ended: { state: 'merged' | 'closed'; task: number; pr: number }): void =>
+    (
+      lifecycle.recordChangeEnded ??
+      ((e) =>
+        recordWatchedChangeEnded(e, {
+          ...(options.sink.runId === undefined ? {} : { runId: options.sink.runId }),
+          ...(resolvedRepo === null ? {} : { repository: `${resolvedRepo.owner}/${resolvedRepo.repo}` })
+        }))
+    )(ended)
   const recordExit = createDriverExitRecorder({
     loopId: options.loopId,
     task: args.task,
@@ -2480,6 +2492,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         narrate(`watching PR #${published} after its publication, until it is merged or closed`)
         narrateStage({ round: stageRound(), stage: 'waiting_merge' })
         const read = await watchPublishedPullRequest(published, lifecycle.publishedWatch, stopWatching.signal, narrate)
+        if (read === 'merged' || read === 'closed') recordChangeEnded({ state: read, task: args.task, pr: published })
         if (read !== 'conflicting' && read !== 'red') {
           narrate(read === 'stopped' ? 'the watch was stopped; ending' : `PR #${published} was ${read}; ending`)
           break
@@ -2571,6 +2584,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         // A person merged or closed the pull request while the run was halted: nothing is left to continue, no
         // resolution is claimed, and the driver lock is released.
         endedByWatch = true
+        recordChangeEnded({ state: watched.state, task: args.task, pr: watched.pr })
         narrate(`the pull request was ${watched.state} while the run was halted; ending`)
       } else if (watched.kind === 'consumed') narrate('another process claimed the resolution and owns the run; ending')
       else if (watched.kind === 'refused') narrate(`the resolution was refused: ${watched.message}`)
