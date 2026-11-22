@@ -1,5 +1,32 @@
 # @attalabs/vinaya
 
+## 0.46.0
+
+### Minor Changes
+
+- b2ccbc0: The Log SDK and the command-line package release on one version. A handle given no service version writes no `service.version` resource attribute instead of the SDK's version in its place.
+
+### Patch Changes
+
+- 9d94fd8: A `[principal]` Test Plan item whose text begins `After merge:` no longer holds the merge: the Test Plan gate and the Principal Test Plan wait check count it and state how many are due after merge, and fail only for unticked items without the mark.
+- 4d03914: A rendered brief's documentation-update list now carries the docs the Issue's Docs to keep coherent field names, together with the docs bound to the files the task changes.
+- 296c222: The Planner's brief render tool now returns the full brief of a task waiting on an unmerged dependency or an open conflicting task, with each reason beside it, and takes a single Issue by its number alone; a render made to start a task refuses as before.
+- 2766b3f: The Evidence placeholder in a pull request body and the freshness check's refusals that tell the reader to run the report program again now name `vinaya-pr-report` with its write option's body-file argument, and the report template's placeholder line is held equal to the one the check recognises.
+- 2fd434f: A pull request whose Evidence block cannot be written now pauses the run for the infrastructure before its CI read, naming the pull request, the head and the reason, instead of sending the Developer back for a failure that is not in the code. A continued run writes the Evidence for the pull request that is already open and then reads CI.
+- a4e75b2: `vinaya task status --follow` shows the narrative again on every runner: a run that records no steps of its own (the Engine runner today) shows each agent step from the driver log, an agent turn converted from an earlier role attempt is narrated with its seat ("The developer finished its turn." instead of "A role finished its turn."), and a run read from its local copy no longer reports a false "sequence 0 never arrived" gap, because a Log SDK writer numbers its records from 1.
+- 0a8f911: A task that has been launched in the background and holds no driver lock yet no longer fails another task's test run: the end-of-run check on the real runtime directory also reads a task as live when its run record names a running process.
+- e0aaf65: An Issue quoting a command the command line does not have is refused: a code span outside the Objectives and Parts, or a Test plan line, that names a command the command reference lacks fails the Issue write naming the command, and names the separate program when one stands for those words.
+- f44f55b: After the review loop merges a default branch that changed dependencies, the worktree is installed again before the Developer turn. A failed install pauses the run for the infrastructure, and the resumed run installs before its first Developer turn.
+- 1a909e1: A paused run that waits for a ruling now reads the forge less and less often, up to one read every five minutes, and waits the full five minutes after a read that says the forge's rate limit is spent. It still reads its own cancel and resolution on the configured interval, and acts on a ruling at the next forge read.
+- 599681d: The Planner's standalone Issue script refuses what the Planner tools refuse: its validate-only run, create, edit and dependency-edge amendment decide through the validation the Planner tools call, print each finding with its check name, and write nothing when one blocks. A task Issue that leaves an importer of a pinned file undecided is now refused by the script, and a test proves a task whose Issue lists an in-repository Documentation source the checkout lacks does not start.
+- ec271c8: The Issue write gate now refuses a task whose prose names a file the tree does not hold without pinning it to create or stating it as a premise, and one whose Dependency rationale, Traps, agent-class, Stop-and-escalate or Parts state the code's present condition with no premise declared.
+- 8735fb5: A repair push that defers its selected tests to required CI now runs the approved Test Plan's explicit commands on the pushed head, so its Evidence composes with a green receipt for each.
+- 037fc76: Reviewers on the Engine now see the task's own change: the reviewers' diff and the review-input manifest start from the newest default-branch commit the judged head contains, read from the remote, instead of from the checkout's possibly older local default-branch ref.
+- 7512357: A round that both reviewers approved and a failing selected test blocked now records both reviewers as approving in its verdicts record, while it still ends as changes requested with the test as a blocking finding. The driver log line for failed round tests names the first failing test file, its location and its error line, also for a failure with no test name.
+- dd8658c: A failed round test now reports what differed, keeps the first failing file's lines and location to its own output, and finds a file's output when the runner printed its header relative to the group's directory.
+- 76fa107: Asking the task command for help, with the long or the short help flag, lists its subcommands on standard output and exits successfully; an unknown word or no subcommand still prints the usage error and exits with status two.
+- 613c14c: Two task starts that prepare the same clean checkout at once both finish: a start whose fetch or fast-forward lost to the other reads the checkout again and continues when it is at the remote tip, with no request to update it by hand.
+
 ## 0.45.0
 
 ### Minor Changes
