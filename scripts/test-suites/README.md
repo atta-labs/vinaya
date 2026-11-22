@@ -28,7 +28,16 @@ configuration, environment and preload. The watchdog is therefore a per-file
 limit: `GROUP_TIME_LIMIT_MS`, fifteen minutes, applies to each runner start in
 CI, on a push and in a review round alike. A runner still running at the limit
 is stopped with `SIGKILL`, its file is run once more alone, and a second stop
-fails that file alone as interrupted; no other file's result is discarded. The
+fails that file alone as interrupted; no other file's result is discarded. A
+runner that exits non-zero with a readable report naming a failing file is also
+started once more, alone, under the same environment, folder and limits; a signal,
+a stop at the limit, an unreadable report, a report naming no failing file and a
+call of the real GitHub CLI are not retried. The file passes only when the second
+run exits zero and its report names exactly its file as executed with none
+failing, and it is then listed as passed on retry, with its failed file, on
+standard error, in the step summary and in the run's result; otherwise the second
+run's report decides it. Progress, the failed-runner list and the failed-files
+record count only the deciding run. The
 kill reaches only the runner itself, so a stopped file's own children may
 outlive it. A push still stops after its first failing runner, which is now one
 file. The failed-tests record is rewritten as each file's runner ends, so a file
