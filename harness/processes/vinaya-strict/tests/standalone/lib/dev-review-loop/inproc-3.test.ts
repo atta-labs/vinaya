@@ -22,6 +22,7 @@ import {
   makeInProcessDeps,
   makeWorld,
   outboxLines as ipOutboxLines,
+  runRecords,
   roundDir as ipRoundDir,
   runLoopInProcess,
   type LoopWorld,
@@ -93,11 +94,16 @@ describe('devReviewLoop — --cancel (O3)', () => {
     const cancelled = await cancelInProcess(world)
     expect(cancelled.task).toBe(world.task)
 
-    const cancelledEvents = ipOutboxLines(world).filter((l) => l.event === 'cancelled')
+    // The cancel is written through the run's Log handle, on the run the paused process wrote, never as an earlier line.
+    expect(ipOutboxLines(world).filter((l) => l.event === 'cancelled')).toEqual([])
+    const records = runRecords(world)
+    const cancelledEvents = records.events.filter((e) => e.eventName === 'vinaya.run.cancelled')
     expect(cancelledEvents).toHaveLength(1)
-    const cancelledEvent = cancelledEvents[0] as { kind: string; round: number; by: string; subject: { issue: number } }
-    expect(cancelledEvent).toMatchObject({ kind: 'dev_review_loop', round: 1, by: 'principal' })
-    expect(cancelledEvent.subject.issue).toBe(world.task)
+    const round = cancelledEvents[0].attributes.find((a: { key: string }) => a.key === 'vinaya.round.number')
+    expect(Number(round?.value.intValue)).toBe(1)
+    // The run's one span ends with the cancel; no second start was written.
+    expect(records.names.events.filter((name) => name === 'vinaya.run.started')).toHaveLength(1)
+    expect(records.names.spans.filter((name) => name.startsWith('invoke_workflow'))).toHaveLength(1)
   })
 
   it('refuses to cancel with no Principal ruling authenticating it', async () => {
@@ -262,23 +268,31 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
 
     const lines = ipOutboxLines(world)
     const loopEvents = lines.filter((l) => l.kind === 'dev_review_loop').map((l) => l.event)
+    // The run's lifecycle is written through the run's Log handle, so no earlier-format line carries it.
     expect(loopEvents).toEqual([
+      'round_started',
+      'gate_result_read',
+      'verdicts_read',
+      'findings_compared',
+      'round_ended',
+      'round_started',
+      'gate_result_read',
+      'verdicts_read',
+      'findings_compared',
+      'round_ended'
+    ])
+    expect(world.runEvents.map((l) => l.event)).toEqual([
       'loop_started',
-      'round_started',
-      'gate_result_read',
-      'verdicts_read',
-      'findings_compared',
-      'round_ended',
-      'round_started',
-      'gate_result_read',
-      'verdicts_read',
-      'findings_compared',
       'stop_condition_met',
-      'round_ended',
       'journal_finalized',
       // #949, O2: the driver's clean-publish exit event, last.
       'driver_exited'
     ])
+    const records = runRecords(world)
+    expect(records.names.events.filter((name) => name === 'vinaya.run.started')).toHaveLength(1)
+    expect(records.names.events.filter((name) => name === 'vinaya.run.stop_rule_met')).toHaveLength(1)
+    expect(records.names.events.filter((name) => name === 'vinaya.run.exited')).toHaveLength(1)
+    expect(records.names.spans.filter((name) => name.startsWith('invoke_workflow'))).toHaveLength(1)
     const rounds = lines.filter((l) => l.event === 'round_started').map((l) => (l as Record<string, unknown>).round)
     expect(rounds).toEqual([1, 2])
   })
@@ -308,7 +322,7 @@ describe('devReviewLoop — a paused loop for reason escalation still logs its c
     // unconditional filter, and only the `publish` branch ever flushed it —
     // so a `pause` never logged it. Fixed: `routeCompletionEvents` only
     // defers for a `publish` decision.
-    const journalFinalized = ipOutboxLines(world).find((l) => l.event === 'journal_finalized') as
+    const journalFinalized = world.runEvents.find((l) => l.event === 'journal_finalized') as
       | Record<string, unknown>
       | undefined
     expect(journalFinalized).toBeDefined()

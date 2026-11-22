@@ -65,7 +65,7 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
 
     // The regression: `journal_finalized`/`merged_ready` must never be
     // logged for a run whose `publishRound` never actually returned.
-    const journalFinalizedLines = ipOutboxLines(world).filter((l) => l.event === 'journal_finalized')
+    const journalFinalizedLines = world.runEvents.filter((l) => l.event === 'journal_finalized')
     expect(journalFinalizedLines.some((l) => l.result === 'merged_ready')).toBe(false)
   })
 
@@ -83,7 +83,7 @@ describe('devReviewLoop — a crash mid-publish never logs merged_ready (regress
 
     // The events themselves still landed — live, in the local default
     // destination — even though nothing ever shipped them anywhere else.
-    const journalFinalizedLines = ipOutboxLines(world).filter((l) => l.event === 'journal_finalized')
+    const journalFinalizedLines = world.runEvents.filter((l) => l.event === 'journal_finalized')
     expect(journalFinalizedLines.length).toBeGreaterThan(0)
   })
 

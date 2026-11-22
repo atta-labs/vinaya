@@ -182,7 +182,12 @@ describe('the live check inside the round', () => {
     expect(calls[0]?.timeoutMs).toBe(1_000)
     // The log records round 1 as changes requested, never green: the
     // approval was withdrawn, so its green stop is not logged.
-    const loop = outboxLines(world) as Array<{ event?: string; round?: number; condition?: string; outcome?: string }>
+    const loop = [...outboxLines(world), ...world.runEvents] as Array<{
+      event?: string
+      round?: number
+      condition?: string
+      outcome?: string
+    }>
     expect(loop.filter((l) => l.event === 'stop_condition_met').map((l) => [l.round, l.condition])).toEqual([
       [2, 'green']
     ])

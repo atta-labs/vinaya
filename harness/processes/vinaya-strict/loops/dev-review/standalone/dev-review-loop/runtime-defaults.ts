@@ -61,7 +61,6 @@ import { defaultResolveTaskSurface } from './git-defaults.js'
 import { resolveRoleDoctrineText } from '../../../../integration/roles/plan.js'
 import { resolveDeveloperDoctrineText } from './developer-dispatch.js'
 import { fetchLoopHistory } from './journal-history.js'
-import { defaultSetHeartbeat } from './driver-lifecycle.js'
 import { readWorktreeHead } from './gate-reading.js'
 import { readUnpushedWorkDetail } from './unpushed-work.js'
 import { defaultReadWorktreeBranch } from './git-defaults.js'
@@ -384,7 +383,6 @@ export function defaultDeps(): LoopDeps {
     now: () => Date.now(),
     readRateLimitReset: defaultReadRateLimitReset,
     isGitHubReachable: defaultIsGitHubReachable,
-    setHeartbeat: defaultSetHeartbeat,
     // O3: env-overridable the same way the gate poll
     // budget already is (`gatePollEnvOverride`'s own doc comment) — a real
     // subprocess test exercising the PR-poll timeout path needs this in
