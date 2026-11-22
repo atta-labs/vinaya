@@ -7,7 +7,6 @@ import { COMMENT_MARKER_PREFIX, REGION_PREFIX } from '../legacy-markers'
 import { escapeForPattern } from '../legacy-paths'
 import { describe, expect, it } from 'vitest'
 import { fenceShapes } from '../../tests/fixtures/fence-shapes'
-import { parseLiveTestPlanItems } from './issue-validation'
 import {
   boundaryPinnedFiles,
   BRIEF_SECTIONS_SINCE_ISSUE,
@@ -75,7 +74,8 @@ import {
   parseIssueTestPlan,
   type TaskFileFacts,
   type TaskIssueFacts,
-  type TaskSurfaceFacts
+  type TaskSurfaceFacts,
+  parseLiveTestPlanItems
 } from './issue-validation'
 
 // The recorded Issue bodies under fixtures/ name the core package by its retired

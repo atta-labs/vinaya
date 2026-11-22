@@ -64,7 +64,7 @@ Part 1 (O1) — ${fill.part ?? 'The greeting returns a sentence naming the calle
 ## Test plan
 
 \`\`\`
-bun test apps/demo/tests/greeting.test.ts → 0 fail
+bun test apps/demo/tests/greeting.test.ts → 0 fail (O1)
 \`\`\`
 
 ## Stop conditions
