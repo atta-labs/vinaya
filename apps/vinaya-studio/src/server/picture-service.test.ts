@@ -452,6 +452,140 @@ describe('silence is the clock’s alone', () => {
   })
 })
 
+describe('the board data: waiting age, story identity and the shared clock', () => {
+  const paused = (task: number, at: number, code = 'max_rounds') =>
+    raw(task, loop('paused', { round: 1, reason: 'escalation', reason_code: code }), at, 'build-box-3')
+  const heartbeat = (task: number, at: number) =>
+    raw(task, loop('driver_heartbeat', { task, round: 1, phase: 'dispatch_developer' }), at)
+
+  test('the wait starts at the event that opened it and survives heartbeats, repeats and a reconnect backlog', async () => {
+    const opening = [started(5, T0, 'build-box-3'), paused(5, T0 + 2 * MIN)]
+    const s = serverFactory(opening)
+    const clock = clockAt(T0 + 3 * MIN)
+    const service = createPictureService({ repositories: [serverRepo()], createSource: s.factory, clock: clock.now })
+    await service.start()
+    expect(taskOf(service.snapshot('/r/server'), 5)).toMatchObject({
+      state: 'needs_you',
+      attentionSince: T0 + 2 * MIN,
+      machine: 'build-box-3'
+    })
+    const sink = (s.calls[0] as Followed).sink
+    sink.state?.({ state: 'live' })
+    clock.set(T0 + 20 * MIN)
+    sink.line({ raw: heartbeat(5, T0 + 19 * MIN), position: '3' })
+    sink.line({ raw: paused(5, T0 + 20 * MIN, 'no_progress'), position: '4' })
+    // The server drops, returns and replays what it had: the same events add nothing, and age is not reset.
+    sink.state?.({ state: 'waiting-to-reconnect', reason: 'closed', waitMs: 1000 })
+    sink.state?.({ state: 'live' })
+    sink.line({ raw: opening[1] as string, position: '2' })
+    sink.line({ raw: heartbeat(5, T0 + 21 * MIN), position: '5' })
+    const task = taskOf(service.snapshot('/r/server'), 5)
+    expect(task?.state).toBe('needs_you')
+    expect(task?.attentionSince).toBe(T0 + 2 * MIN)
+    await service.close()
+  })
+
+  test('a story entry keeps one identity across a replay at another position and carries the command of its moment', async () => {
+    const pr = raw(
+      6,
+      {
+        kind: 'dispatch',
+        event: 'outcome_received',
+        loop_id: 'loop-ps',
+        target_role: 'developer',
+        model: 'opus',
+        round: 1,
+        effect_id: 'eff-6',
+        outcome: { type: 'pr_opened', pr: 60, head: 'abc' },
+        usage: null
+      },
+      T0 + MIN
+    )
+    const early = paused(6, T0 + 2 * MIN)
+    const s = serverFactory([started(6, T0), early])
+    const service = createPictureService({
+      repositories: [serverRepo()],
+      createSource: s.factory,
+      clock: clockAt(T0 + 3 * MIN).now
+    })
+    await service.start()
+    const before = service.snapshot('/r/server')?.picture.tasks[0]?.feed ?? []
+    const sink = (s.calls[0] as Followed).sink
+    sink.state?.({ state: 'live' })
+    sink.line({ raw: pr, position: '3' })
+    sink.line({ raw: early, position: '9' })
+    const after = service.snapshot('/r/server')?.picture.tasks[0]?.feed ?? []
+    expect(after.slice(0, before.length).map((f) => f.id)).toEqual(before.map((f) => f.id))
+    expect(new Set(after.map((f) => f.id)).size).toBe(after.length)
+    const pause = after.find((f) => f.personNeeded)
+    expect(pause?.command).toBeNull() // read before any pull request was known: it never borrows the later one
+    await service.close()
+  })
+
+  test('amber at five minutes and presumed dead at ten move only on the one timer, and stay distinct from paused and stopped', async () => {
+    const s = serverFactory([started(8, T0), started(9, T0), paused(9, T0 + 0.5 * MIN), green(8, T0 + 0.5 * MIN)])
+    const clock = clockAt(T0 + MIN)
+    const t = fakeTimers()
+    const service = createPictureService({
+      repositories: [serverRepo()],
+      createSource: s.factory,
+      clock: clock.now,
+      timers: t.timers
+    })
+    await service.start()
+    clock.set(T0 + 0.5 * MIN + 5 * MIN - 1)
+    t.fire()
+    expect(taskOf(service.snapshot('/r/server'), 8)).toMatchObject({ state: 'ready_to_merge', amber: false })
+    clock.set(T0 + 0.5 * MIN + 10 * MIN)
+    t.fire()
+    // Neither a paused task nor a stopped one is ever read as silent, however long the silence.
+    expect(taskOf(service.snapshot('/r/server'), 9)).toMatchObject({
+      state: 'needs_you',
+      attentionSince: T0 + 0.5 * MIN
+    })
+    expect(taskOf(service.snapshot('/r/server'), 8)?.state).toBe('ready_to_merge')
+    await service.close()
+  })
+
+  test('a silent running task crosses amber and dead exactly at the shared clock’s lines', async () => {
+    const s = serverFactory([started(3, T0), heartbeat(3, T0 + MIN)])
+    const clock = clockAt(T0 + MIN)
+    const t = fakeTimers()
+    const service = createPictureService({
+      repositories: [serverRepo()],
+      createSource: s.factory,
+      clock: clock.now,
+      timers: t.timers
+    })
+    await service.start()
+    const at = (ms: number) => {
+      clock.set(T0 + MIN + ms)
+      t.fire()
+      return taskOf(service.snapshot('/r/server'), 3)
+    }
+    expect(at(5 * MIN - 1)).toMatchObject({ state: 'running', amber: false, attentionSince: null })
+    expect(at(5 * MIN)).toMatchObject({ state: 'running', amber: true, attentionSince: null })
+    expect(at(10 * MIN - 1)).toMatchObject({ state: 'running', amber: true })
+    expect(at(10 * MIN)).toMatchObject({ state: 'presumed_dead', amber: false, attentionSince: T0 + 11 * MIN })
+    await service.close()
+  })
+
+  test('an unreadable recorded time leaves the attention start unknown', async () => {
+    const s = serverFactory([
+      started(2, T0),
+      raw(2, loop('paused', { round: 1, reason: 'escalation', reason_code: 'max_rounds' }), 'not a time')
+    ])
+    const service = createPictureService({
+      repositories: [serverRepo()],
+      createSource: s.factory,
+      clock: clockAt(T0 + MIN).now
+    })
+    await service.start()
+    expect(taskOf(service.snapshot('/r/server'), 2)).toMatchObject({ state: 'needs_you', attentionSince: null })
+    await service.close()
+  })
+})
+
 describe('folder source', () => {
   const m1 = [started(4, T0, 'm1'), round(4, 1, T0 + 2 * MIN, 'm1')]
   const m2 = [round(4, 2, T0 + 3 * MIN, 'm2'), green(4, T0 + 4 * MIN, 'm2')]

@@ -29,10 +29,11 @@ function task(n: number, over: Partial<TaskPicture> = {}): TaskPicture {
     tokens: {},
     model: null,
     models: {},
+    attentionSince: null,
     machine: 'mac',
     reviewerRoles: [],
     loopIds: [],
-    signals: { pause: null, handoff: null, stop: null, endedReady: false, exit: null },
+    signals: { pause: null, handoff: null, stop: null, endedReady: false, exit: null, wait: null },
     gateReads: { '1': { finding: SECRET_FINDING } },
     ...over
   }
@@ -175,6 +176,81 @@ describe('live socket endpoint', () => {
       task: { task: 1, state: 'needs_you' }
     })
     expect(JSON.stringify(c.sent)).not.toContain(SECRET_FINDING)
+  })
+
+  test('the snapshot, a whole-task replacement and a resync carry the same story identities and shared attribution, and no source identity', () => {
+    const own = { role: 'tests', outcome: 'changes_requested' as const, blocking: 1, findings: null, shared: false }
+    const shared = {
+      role: 'security',
+      outcome: 'changes_requested' as const,
+      blocking: null,
+      findings: null,
+      shared: true
+    }
+    const rich = (over: Partial<TaskPicture> = {}) =>
+      task(1, {
+        state: 'needs_you',
+        attentionSince: 4242,
+        machine: 'build-box-3',
+        reviewerRoles: ['tests', 'security'],
+        feed: [
+          {
+            id: 'run-SENTINEL-RUN:7',
+            position: 3,
+            at: 100,
+            kind: 'blocked',
+            text: 'The loop paused for a person: the round limit was reached.',
+            personNeeded: true,
+            command: 'vinaya pr rule 5 --file <ruling.md>'
+          }
+        ],
+        rounds: [
+          {
+            n: 1,
+            startedAt: 1,
+            endedAt: 2,
+            wallMs: 1,
+            outcome: 'changes_requested',
+            checksGreen: true,
+            agents: {},
+            confidence: null,
+            reviewers: [own, shared],
+            findings: null
+          }
+        ],
+        ...over
+      })
+    const { endpoint, service } = setup()
+    const c = fakeSocket()
+    service.set(snapshot([rich()]))
+    endpoint.handler(c.socket)
+    service.emit({
+      type: 'changed',
+      repository: ROOT,
+      tasks: [1],
+      snapshot: snapshot([rich({ attentionSince: 4242 })])
+    })
+    c.fire('message', JSON.stringify({ v: 1, type: 'resync' }))
+    const frames = c.sent.filter((m) => m.type === 'snapshot' || m.type === 'task')
+    expect(frames).toHaveLength(3)
+    const tasks = frames.map((m) =>
+      m.type === 'snapshot' ? m.repositories[0]?.tasks[0] : m.type === 'task' ? m.task : null
+    )
+    expect(tasks.map((t) => t?.story.map((s) => s.id))).toEqual([
+      tasks[0]?.story.map((s) => s.id),
+      tasks[0]?.story.map((s) => s.id),
+      tasks[0]?.story.map((s) => s.id)
+    ])
+    for (const t of tasks) {
+      expect(t).toMatchObject({ machine: 'build-box-3', attentionSince: 4242, reviewerRoles: ['tests', 'security'] })
+      expect(t?.rounds[0]?.reviewers.map((r) => [r.role, r.shared])).toEqual([
+        ['tests', false],
+        ['security', true]
+      ])
+      expect(t?.story[0]).toMatchObject({ personNeeded: true, command: 'vinaya pr rule 5 --file <ruling.md>' })
+    }
+    const wire = JSON.stringify(c.sent)
+    for (const forbidden of ['SENTINEL-RUN', ROOT, SECRET_FINDING]) expect(wire).not.toContain(forbidden)
   })
 
   test('status frames carry connection and coverage, so a dropped source is never shown as live', () => {

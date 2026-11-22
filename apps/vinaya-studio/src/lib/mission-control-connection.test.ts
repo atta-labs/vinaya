@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { NARRATION_KINDS } from '../../../../harness/kernel/log/client/narration.ts'
 import {
   type ConnectionSocket,
   createMissionControlConnection,
@@ -6,7 +7,12 @@ import {
 } from './mission-control-connection.ts'
 import {
   RECONNECT_DELAYS_MS,
+  NARRATION_KIND_NAMES,
+  parseServerMessage,
   RECONNECT_MAX_ATTEMPTS,
+  REVIEWER_ROLES_MAX,
+  STORY_PER_TASK_MAX,
+  TEXT_MAX,
   SILENCE_LIMIT_MS,
   type RepositoryView,
   type TaskView
@@ -26,6 +32,10 @@ function taskView(n: number, over: Partial<TaskView> = {}): TaskView {
     whoActs: 'the loop',
     command: null,
     model: null,
+    machine: null,
+    reviewerRoles: [],
+    attentionSince: null,
+    story: [],
     rounds: [],
     tokens: {},
     ...over
@@ -278,5 +288,85 @@ describe('mission control connection', () => {
     expect(calls).toBe(before)
     expect(h.connection.getState().phase).toBe('disposed')
     expect(h.sockets).toHaveLength(1)
+  })
+})
+
+describe('the board fields of a task frame are validated, whole, with their bounds', () => {
+  const entry = { id: 'a'.repeat(24), at: 5, kind: 'blocked', text: 'Paused.', personNeeded: true, command: null }
+  const frame = (task: unknown) => JSON.stringify({ v: 1, type: 'task', generation: 1, repository: 'r1', task })
+  const accepted = (over: Record<string, unknown>) => parseServerMessage(frame({ ...taskView(1), ...over })) !== null
+
+  test('a task with the new fields in their valid shapes is accepted; unknown time and unknown machine are valid', () => {
+    expect(accepted({})).toBe(true)
+    expect(accepted({ machine: 'build-box-3', reviewerRoles: ['tests'], attentionSince: 10, story: [entry] })).toBe(
+      true
+    )
+    expect(accepted({ story: [{ ...entry, at: null, command: 'vinaya pr rule 5 --file <ruling.md>' }] })).toBe(true)
+  })
+
+  test('a task missing any added field, or carrying one of the wrong type, is refused', () => {
+    for (const key of ['machine', 'reviewerRoles', 'attentionSince', 'story']) {
+      const { [key]: _removed, ...rest } = taskView(1) as unknown as Record<string, unknown>
+      expect(parseServerMessage(frame(rest))).toBeNull()
+    }
+    expect(accepted({ machine: 7 })).toBe(false)
+    expect(accepted({ attentionSince: 'soon' })).toBe(false)
+    expect(accepted({ attentionSince: -1 })).toBe(false)
+    expect(accepted({ reviewerRoles: [1] })).toBe(false)
+    expect(accepted({ story: 'x' })).toBe(false)
+  })
+
+  test('story entries are checked field by field: identity shape, kind, classification, command and bounds', () => {
+    expect(accepted({ story: [{ ...entry, id: 'run-1:42' }] })).toBe(false)
+    expect(accepted({ story: [{ ...entry, id: 'A'.repeat(24) }] })).toBe(false)
+    expect(accepted({ story: [{ ...entry, kind: 'shouting' }] })).toBe(false)
+    expect(accepted({ story: [{ ...entry, personNeeded: 'yes' }] })).toBe(false)
+    expect(accepted({ story: [{ ...entry, personNeeded: undefined }] })).toBe(false)
+    expect(accepted({ story: [{ ...entry, at: 'now' }] })).toBe(false)
+    expect(accepted({ story: [{ ...entry, command: 3 }] })).toBe(false)
+    expect(accepted({ story: [{ ...entry, text: 'x'.repeat(TEXT_MAX + 1) }] })).toBe(false)
+    expect(accepted({ story: [{ ...entry, command: 'x'.repeat(TEXT_MAX + 1) }] })).toBe(false)
+    expect(accepted({ story: ['not an entry'] })).toBe(false)
+    expect(accepted({ story: Array.from({ length: STORY_PER_TASK_MAX }, () => entry) })).toBe(true)
+    expect(accepted({ story: Array.from({ length: STORY_PER_TASK_MAX + 1 }, () => entry) })).toBe(false)
+  })
+
+  test('machine and reviewer roles are bounded; a reviewer verdict must say whether its findings are shared', () => {
+    expect(accepted({ machine: 'm'.repeat(TEXT_MAX + 1) })).toBe(false)
+    expect(accepted({ reviewerRoles: Array.from({ length: REVIEWER_ROLES_MAX + 1 }, () => 'r') })).toBe(false)
+    expect(accepted({ reviewerRoles: ['r'.repeat(TEXT_MAX + 1)] })).toBe(false)
+    const reviewer = { role: 'tests', outcome: 'changes_requested', blocking: 1, shared: false }
+    expect(accepted({ rounds: [{ n: 1, reviewers: [reviewer] }] })).toBe(true)
+    expect(accepted({ rounds: [{ n: 1, reviewers: [{ ...reviewer, shared: true }] }] })).toBe(true)
+    expect(accepted({ rounds: [{ n: 1, reviewers: [{ ...reviewer, shared: undefined }] }] })).toBe(false)
+    expect(accepted({ rounds: [{ n: 1, reviewers: [{ ...reviewer, outcome: 'maybe' }] }] })).toBe(false)
+    expect(accepted({ rounds: [{ n: 1, reviewers: [{ ...reviewer, blocking: -1 }] }] })).toBe(false)
+  })
+
+  test('a reconnect snapshot keeps story identity and own and shared attribution as received', () => {
+    const own = { role: 'tests', outcome: 'changes_requested', blocking: 1, shared: false }
+    const shared = { role: 'security', outcome: 'changes_requested', blocking: null, shared: true }
+    const view = taskView(1, {
+      story: [entry as TaskView['story'][number]],
+      rounds: [{ n: 1, reviewers: [own, shared] } as unknown as TaskView['rounds'][number]]
+    })
+    const h = harness()
+    h.connection.connect()
+    const first = h.sockets[0] as FakeSocket
+    first.receive(snapshot(1, [view]))
+    first.drop()
+    h.fire(RECONNECT_DELAYS_MS[0] as number)
+    const again = h.sockets[1] as FakeSocket
+    again.receive(snapshot(2, [view]))
+    const task = h.connection.getState().repositories.r1?.tasks[1]
+    expect(task?.story.map((e) => e.id)).toEqual([entry.id])
+    expect(task?.rounds[0]?.reviewers.map((r) => [r.role, r.shared])).toEqual([
+      ['tests', false],
+      ['security', true]
+    ])
+  })
+
+  test('the narration kinds the wire accepts are exactly the Log wording’s', () => {
+    expect([...NARRATION_KIND_NAMES]).toEqual([...NARRATION_KINDS])
   })
 })

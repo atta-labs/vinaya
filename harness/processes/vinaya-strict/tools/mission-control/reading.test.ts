@@ -13,7 +13,7 @@ import {
   TASK_STATES,
   type TaskPicture
 } from './picture'
-import { reduce, reduceAll, tick } from './reading'
+import { permittedRecord, reduce, reduceAll, tick } from './reading'
 
 type Fields = Record<string, unknown>
 
@@ -632,7 +632,10 @@ describe('O5 — feed lines are the Log narration, with no reasoning and no find
         .map((record, index) => narrate(record, records.slice(0, index)))
         .filter((l) => l !== null)
         .map((l) => l.text)
-      expect(only(replay(eventsOf(name))).feed.map((f) => f.text)).toEqual(terminal)
+      // The one difference: the terminal prints a recorded escalation class; the board's narration never does.
+      expect(only(replay(eventsOf(name))).feed.map((f) => f.text)).toEqual(
+        terminal.map((t) => t.replace(/ raised an escalation \([^)]*\)\./, ' raised an escalation.'))
+      )
     }
   })
 
@@ -653,6 +656,192 @@ describe('O5 — feed lines are the Log narration, with no reasoning and no find
   })
 })
 
+describe('the board contract — waiting age, replay-stable story entries, event-time commands', () => {
+  /** A developer turn that opened a pull request: the dispatch record that tells the reading the task's PR. */
+  const prTurn = {
+    kind: 'dispatch',
+    event: 'outcome_received',
+    target_role: 'developer',
+    model: 'opus',
+    round: 1,
+    effect_id: 'eff-pr',
+    usage: null
+  }
+  const escalation = (round: number, klass = 'strategy') => ({
+    kind: 'dispatch',
+    event: 'outcome_received',
+    target_role: 'developer',
+    model: 'opus',
+    round,
+    effect_id: `eff-${round}`,
+    outcome: { type: 'escalation', class: klass, comment_id: 1234 },
+    usage: null
+  })
+
+  it('a wait starts at the event that opened it and a heartbeat, a repeat or a handoff never restart it', () => {
+    const events = stream(70, [
+      [0, loopStarted(70)],
+      [1, { ...prTurn, outcome: { type: 'pr_opened', pr: 700, head: 'abc' } }],
+      [2, loopBody('paused', { round: 1, reason: 'escalation', reason_code: 'max_rounds' })],
+      [5, heartbeat(70)],
+      [6, loopBody('paused', { round: 1, reason: 'escalation', reason_code: 'max_rounds' })],
+      [7, { kind: 'handoff', event: 'raised', class: 'authority', reason: 'r', requested_decision: null }]
+    ])
+    expect(only(replay(events.slice(0, 2))).attentionSince).toBeNull()
+    for (const upTo of [3, 4, 5, 6]) {
+      const task = only(replay(events.slice(0, upTo)))
+      expect(task.state).toBe('needs_you')
+      expect(task.attentionSince).toBe(T0 + 2 * MIN)
+    }
+  })
+
+  it('a wait that was answered ends, and the next one starts at its own event', () => {
+    const events = stream(71, [
+      [0, loopStarted(71)],
+      [1, loopBody('paused', { round: 1, reason: 'escalation', reason_code: 'max_rounds' })],
+      [3, loopBody('resumed', { round: 1, by: 'principal' })],
+      [4, loopBody('round_started', { round: 2, base_head: 'abc' })],
+      [9, loopBody('paused', { round: 2, reason: 'escalation', reason_code: 'no_progress' })]
+    ])
+    expect(only(replay(events.slice(0, 4))).attentionSince).toBeNull()
+    expect(only(replay(events)).attentionSince).toBe(T0 + 9 * MIN)
+  })
+
+  it('an unreadable event time leaves the start unknown, and a later event does not invent one', () => {
+    const [started, paused, beat] = stream(72, [
+      [0, loopStarted(72)],
+      [1, loopBody('paused', { round: 1, reason: 'escalation', reason_code: 'max_rounds' })],
+      [2, heartbeat(72)]
+    ]) as [ReadingEvent, ReadingEvent, ReadingEvent]
+    const task = only(replay([started, { ...paused, receivedAt: 0 }, beat]))
+    expect(task.state).toBe('needs_you')
+    expect(task.attentionSince).toBeNull()
+  })
+
+  it('a task running or merely amber has no attention start; a presumed-dead one starts at the ten-minute line', () => {
+    const events = stream(73, [
+      [0, loopStarted(73)],
+      [1, heartbeat(73)]
+    ])
+    expect(stateAt(events, 1 + 5)).toMatchObject({ state: 'running', amber: true, attentionSince: null })
+    expect(stateAt(events, 1 + 10)).toMatchObject({
+      state: 'presumed_dead',
+      attentionSince: T0 + 1 * MIN + PRESUMED_DEAD_AFTER_MS
+    })
+    expect(stateAt(events, 1 + 9.5).state).toBe('running')
+  })
+
+  it('every story entry carries the source event identity, the classification and the command of its own moment', () => {
+    const events = stream(74, [
+      [0, loopStarted(74)],
+      [1, loopBody('round_started', { round: 1, base_head: 'abc' })],
+      [2, loopBody('paused', { round: 1, reason: 'escalation', reason_code: 'max_rounds' })],
+      [3, { ...prTurn, outcome: { type: 'pr_opened', pr: 740, head: 'abc' } }],
+      [4, loopBody('resumed', { round: 1, by: 'principal' })],
+      [5, loopBody('paused', { round: 1, reason: 'escalation', reason_code: 'no_progress' })]
+    ])
+    const feed = only(replay(events)).feed
+    expect(feed.every((f) => f.id.startsWith('evt-test-'))).toBe(true)
+    const [started, firstPause, , secondPause] = feed
+    expect(feed).toHaveLength(4)
+    expect(started).toMatchObject({ personNeeded: false, command: null })
+    // The first pause came before any pull request was known: it never borrows the later command.
+    expect(firstPause).toMatchObject({ personNeeded: true, command: null })
+    expect(secondPause).toMatchObject({ personNeeded: true, command: 'vinaya pr rule 740 --file <ruling.md>' })
+  })
+
+  it('a replayed event, delivered again at a new position, is the same entry and not a second one', () => {
+    const events = stream(75, [
+      [0, loopStarted(75)],
+      [1, loopBody('round_started', { round: 1, base_head: 'abc' })]
+    ])
+    const again = events.map((e, i) => ({ ...e, position: 10 + i }))
+    expect(only(replay([...events, ...again])).feed).toHaveLength(1)
+  })
+
+  it('poison payloads never reach the narration, the now-line or the classification', () => {
+    const events = stream(76, [
+      [0, loopStarted(76)],
+      [1, escalation(1)],
+      [2, loopBody('paused', { round: 1, reason: 'escalation', reason_code: 'brand_new_reason_SECRET' })],
+      [3, loopBody('stop_condition_met', { condition: 'brand_new_condition_hunter2' })],
+      [4, loopBody('driver_exited', { task: 76, reason: 'error', last_decision: 'publish', error_class: 'ENOENT' })],
+      [5, loopBody('paused', { round: 1, reason: 'escalation', reason_code: 'developer_turn_needs_ruling' })]
+    ])
+    const task = only(replay(events))
+    const words = [task.nowLine, ...task.feed.map((f) => f.text)].join('\n')
+    for (const secret of ['SECRET', 'hunter2', 'brand_new']) expect(words).not.toContain(secret)
+    expect(task.feed.map((f) => [f.text, f.personNeeded])).toEqual([
+      ['The developer raised an escalation. A person has to decide.', true],
+      ['Paused.', false],
+      ['The driver stopped on an error.', false],
+      ['Paused: developer_turn_needs_ruling.', true]
+    ])
+  })
+})
+
+describe('the permitted input projection', () => {
+  it('copies whole numbers, flags and closed-vocabulary words only; every recorded string outside them is dropped', () => {
+    const poison = 'SECRET /home/dev/.ssh sk-live-1'
+    const dispatched = permittedRecord({
+      kind: 'dispatch',
+      event: 'outcome_received',
+      target_role: poison,
+      outcome: { type: 'escalation', class: poison, detail: poison },
+      usage: { input: 1 }
+    })
+    expect(dispatched).toEqual({
+      kind: 'dispatch',
+      event: 'outcome_received',
+      target_role: null,
+      outcome: { type: 'escalation' }
+    })
+    expect(
+      permittedRecord({
+        kind: 'dev_review_loop',
+        event: 'paused',
+        loop_id: 'loop-x',
+        round: 2,
+        reason_code: poison,
+        reason: 'escalation',
+        detail: poison
+      })
+    ).toEqual({
+      kind: 'dev_review_loop',
+      event: 'paused',
+      loop_id: 'loop-x',
+      round: 2,
+      reason_code: null,
+      reason: null
+    })
+    expect(
+      permittedRecord({ kind: 'dev_review_loop', event: 'stop_condition_met', condition: poison, extra: poison })
+    ).toMatchObject({ condition: null })
+    expect(
+      permittedRecord({
+        kind: 'dev_review_loop',
+        event: 'driver_exited',
+        reason: poison,
+        exit_code: 3,
+        error_class: poison,
+        last_decision: poison
+      })
+    ).toMatchObject({ reason: null, exit_code: 3 })
+    expect(
+      JSON.stringify(
+        permittedRecord({
+          kind: 'dev_review_loop',
+          event: 'verdicts_read',
+          reviewers: [{ role: poison, outcome: poison, blockers: 1, findings: [poison] }],
+          findings: [poison]
+        })
+      )
+    ).not.toContain('SECRET')
+    expect(permittedRecord({ kind: 'dev_review_loop', event: 'heartbeat_unknown' })).toBeNull()
+    expect(permittedRecord({ kind: 'gate', event: 'checked' })).toBeNull()
+  })
+})
+
 describe('the reading is bundlable', () => {
   it('imports only the kernel narration, the normaliser row type and its own picture — no Node built-in, no I/O', () => {
     for (const file of ['reading.ts', 'picture.ts']) {
@@ -661,6 +850,7 @@ describe('the reading is bundlable', () => {
       for (const specifier of specifiers) {
         expect([
           '../../../../kernel/log/client/narration',
+          '../../../../kernel/log/roles',
           '../../../../kernel/log/sync/row',
           '../../integration/log/log-roles',
           './picture'

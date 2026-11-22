@@ -120,11 +120,23 @@ export type RoleTokens = {
   unknownTurns: number
 }
 
+/**
+ * One narrated event of a task's bounded story. `id` is the source event's own stable identity (the normalised row's
+ * identity), kept internally so a replay or a reconnect reads the same event as the same entry; it is never sent as
+ * it is — the browser projection hashes it. `text` is the Log's own narration, generated only from the permitted
+ * input projection (`permittedRecord` in `./reading.ts`), never from raw payload text. `personNeeded` is the
+ * reading's own classification of the event, and `command` the next command as the task stood when the event was
+ * read — never a later task command.
+ */
 export type FeedLine = {
+  id: string
   position: number
+  /** As received; `0` when the event carried no readable recorded time. */
   at: number
   kind: NarrationKind
   text: string
+  personNeeded: boolean
+  command: string | null
 }
 
 /** The facts the state rules read. Each is set and cleared by the events the README names. */
@@ -139,6 +151,12 @@ export type TaskSignals = {
   endedReady: boolean
   /** The newest driver exit, while no other loop record came after it. */
   exit: { reason: string; lastDecision: string } | null
+  /**
+   * The wait a person is in, opened by the event that moved the task out of running: when that event was received
+   * (`since` is `null` when its time was unknown). Every later event keeps it while the wait lasts, so a heartbeat or
+   * a repeated record never restarts it. `null` while the task is running on events alone.
+   */
+  wait: { since: number | null } | null
 }
 
 export type TaskPicture = {
@@ -170,6 +188,11 @@ export type TaskPicture = {
   model: string | null
   /** Every role's model, the same way. */
   models: Record<string, string>
+  /**
+   * When the current wait for a person began, as the event that opened it was received; `null` when the task is
+   * running or that time is unknown. A presumed-dead task's wait began when its silence crossed the ten-minute line.
+   */
+  attentionSince: number | null
   /** The machine the newest loop record came from. */
   machine: string | null
   /** The reviewer roles the loop's policy named; empty when no start record was read. */

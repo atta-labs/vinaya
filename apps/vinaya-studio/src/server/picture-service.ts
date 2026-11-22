@@ -26,6 +26,8 @@ import type { LogSourceSpec, StudioRepository } from './repositories.ts'
  *  - Historical lines keep their recorded time; only lines received live (first connection, state `live`) take the
  *    local receipt time. An unreadable recorded time is unknown freshness, read as time 0 — never a new heartbeat.
  *  - Only the one thirty-second timer moves silence (`tick`); an event never does.
+ *  - A feed entry keeps the identity of the source event (the normalised row's), never the per-service sequence, the
+ *    receipt time or a socket generation; a wait's start is the receipt time of the event that opened it.
  *  - Anything the service cannot know is declared as a coverage limit, never a claim of a complete or live picture.
  */
 

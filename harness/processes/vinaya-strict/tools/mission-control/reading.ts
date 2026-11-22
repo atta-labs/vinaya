@@ -13,6 +13,7 @@
  */
 
 import { narrate, reasonWaitsOn } from '../../../../kernel/log/client/narration'
+import { lookupRole } from '../../../../kernel/log/roles'
 import '../../integration/log/log-roles'
 import type { DatasetRow } from '../../../../kernel/log/sync/row'
 import {
@@ -122,10 +123,38 @@ function nowLineOf(task: TaskPicture, standing: Standing): string {
   }
 }
 
+/**
+ * When the wait for a person began. A running task has none. A presumed-dead task's wait began when its silence
+ * crossed the ten-minute line — the one rule the shared clock owns — and is unknown when no sign has a readable time.
+ * Every other waiting state keeps the time of the event that opened the wait, or `null` when that time was unknown.
+ */
+function attentionOf(task: TaskPicture, state: TaskState): number | null {
+  if (state === 'running') return null
+  if (state === 'presumed_dead') return task.lastSign > 0 ? task.lastSign + PRESUMED_DEAD_AFTER_MS : null
+  return task.signals.wait?.since ?? null
+}
+
 /** The task with its state and everything worked out from the state brought up to `now`. */
 function settle(task: TaskPicture, now: number | null): TaskPicture {
   const standing = standingOf(task, now)
-  return { ...task, ...standing, ...whoAndCommand(task, standing.state), nowLine: nowLineOf(task, standing) }
+  return {
+    ...task,
+    ...standing,
+    ...whoAndCommand(task, standing.state),
+    attentionSince: attentionOf(task, standing.state),
+    nowLine: nowLineOf(task, standing)
+  }
+}
+
+/**
+ * Opens, keeps or closes the task's wait after an event. The event's own standing is worked out with no silence, so
+ * only events move a wait: one that leaves the task waiting keeps the wait it found (a heartbeat, a repeated pause or
+ * a second handoff never restarts the age), one that opens it records its receipt time, one that clears it closes it.
+ */
+function withWait(task: TaskPicture, receivedAt: number): TaskPicture {
+  if (standingOf(task, null).state === 'running') return { ...task, signals: { ...task.signals, wait: null } }
+  if (task.signals.wait) return task
+  return { ...task, signals: { ...task.signals, wait: { since: receivedAt > 0 ? receivedAt : null } } }
 }
 
 function ordered(tasks: TaskPicture[]): TaskPicture[] {
@@ -153,10 +182,11 @@ function newTask(task: number, at: number): TaskPicture {
     tokens: {},
     model: null,
     models: {},
+    attentionSince: null,
     machine: null,
     reviewerRoles: [],
     loopIds: [],
-    signals: { pause: null, handoff: null, stop: null, endedReady: false, exit: null },
+    signals: { pause: null, handoff: null, stop: null, endedReady: false, exit: null, wait: null },
     gateReads: {}
   }
 }
@@ -272,12 +302,134 @@ function roundOf(record: Fields, row: DatasetRow): number | null {
   return whole(record.round) ?? row.round
 }
 
-function addFeed(task: TaskPicture, record: Fields, event: ReadingEvent): TaskPicture {
+const ROUND_OUTCOMES: readonly unknown[] = ['green', 'changes_requested', 'escalated']
+const REVIEWER_OUTCOMES: readonly unknown[] = ['approve', 'changes_requested', 'not_reviewed']
+const DRIVER_EXIT_REASONS: readonly unknown[] = ['finished', 'paused', 'reexec', 'error', 'signal']
+/** The two three-value pause reasons the narration's table knows; any other reason is not shown. */
+const PAUSE_REASONS: readonly unknown[] = ['escalation', 'principal_item']
+
+/** A pause code or stop condition the narration's table knows, or a pause code the loop writes for a person. */
+function knownCode(value: unknown): string | null {
+  const code = text(value)
+  if (code === null) return null
+  return reasonWaitsOn(code) !== null || PERSON_NEEDED_PAUSE_CODES.includes(code) ? code : null
+}
+
+function knownRole(value: unknown): string | null {
+  const role = text(value)
+  return role !== null && lookupRole(role) ? role : null
+}
+
+/**
+ * The only fields of a record the narration may read, copied one by one: whole numbers, flags, and words from a
+ * closed vocabulary. Every other value — an escalation's class, a pause or stop reason the table does not know, an
+ * error class, a role the Log does not know, any payload text — is left out, so the words a browser later shows are
+ * generated from known facts and never carry a recorded string. `null` for a record the narration has no wording for.
+ */
+export function permittedRecord(record: Fields): Fields | null {
+  const { kind, event } = record
+  if (kind === 'dispatch') {
+    if (event === 'dispatched') {
+      return { kind, event, target_role: knownRole(record.target_role), round: whole(record.round) }
+    }
+    if (event === 'outcome_received') {
+      const outcome = fieldsOf(record.outcome)
+      return {
+        kind,
+        event,
+        target_role: knownRole(record.target_role),
+        outcome: outcome?.type === 'escalation' ? { type: 'escalation' } : { type: 'other' }
+      }
+    }
+    return null
+  }
+  if (kind !== 'dev_review_loop') return null
+  const base = { kind, event, loop_id: record.loop_id, round: whole(record.round) }
+  switch (event) {
+    case 'round_started':
+      return base
+    case 'gate_result_read':
+      return { ...base, green: typeof record.green === 'boolean' ? record.green : null }
+    case 'verdicts_read':
+      return {
+        ...base,
+        blockers: whole(record.blockers),
+        all_approve: record.all_approve === true,
+        reviewers: Array.isArray(record.reviewers)
+          ? record.reviewers
+              .map(fieldsOf)
+              .filter((r): r is Fields => r !== null)
+              .map((r) => ({
+                role: knownRole(r.role),
+                outcome: REVIEWER_OUTCOMES.includes(r.outcome) ? r.outcome : null,
+                blockers: whole(r.blockers)
+              }))
+          : []
+      }
+    case 'round_ended':
+      return {
+        ...base,
+        wall_ms: typeof record.wall_ms === 'number' ? record.wall_ms : null,
+        outcome: ROUND_OUTCOMES.includes(record.outcome) ? record.outcome : null
+      }
+    case 'paused':
+      // A recorded code takes precedence over the three-value reason, as in the state rules; a code the table does
+      // not know is not shown, and its reason is not read in its place.
+      if (text(record.reason_code) !== null)
+        return { ...base, reason_code: knownCode(record.reason_code), reason: null }
+      return { ...base, reason_code: null, reason: PAUSE_REASONS.includes(record.reason) ? record.reason : null }
+    case 'stop_condition_met':
+      return { ...base, condition: record.condition === 'green' ? 'green' : knownCode(record.condition) }
+    case 'driver_exited':
+      return {
+        ...base,
+        reason: DRIVER_EXIT_REASONS.includes(record.reason) ? record.reason : null,
+        exit_code: whole(record.exit_code)
+      }
+    case 'conflict_reentry':
+      return { ...base, pr: whole(record.pr), attempt: whole(record.attempt), bound: whole(record.bound) }
+    default:
+      return null
+  }
+}
+
+/** Whether the event itself is one a person has to answer, read from the same tables the state rules use. */
+function personNeededBy(record: Fields): boolean {
+  if (record.kind === 'dispatch') return fieldsOf(record.outcome)?.type === 'escalation'
+  switch (record.event) {
+    case 'round_ended':
+      return record.outcome === 'escalated'
+    case 'paused': {
+      const code = text(record.reason_code)
+      if (code !== null && PERSON_NEEDED_PAUSE_CODES.includes(code)) return true
+      return reasonWaitsOn(code, text(record.reason)) === 'person'
+    }
+    case 'stop_condition_met':
+      return reasonWaitsOn(text(record.condition)) === 'person'
+    default:
+      return false
+  }
+}
+
+function addFeed(task: TaskPicture, record: Fields, row: DatasetRow, event: ReadingEvent): TaskPicture {
+  const permitted = permittedRecord(record)
+  if (!permitted) return task
+  // A replayed event carries the identity it had: it is the same entry, never a second one.
+  if (task.feed.some((f) => f.id === row.identity)) return task
   const round = whole(record.round)
   const read = round === null ? undefined : task.gateReads[String(round)]
-  const line = narrate(record, read ? [read] : [])
+  const line = narrate(permitted, read ? [read] : [])
   if (!line) return task
-  const entry: FeedLine = { position: event.position, at: event.receivedAt, kind: line.kind, text: line.text }
+  const entry: FeedLine = {
+    id: row.identity,
+    position: event.position,
+    at: event.receivedAt,
+    kind: line.kind,
+    text: line.text,
+    personNeeded: personNeededBy(permitted),
+    // The command as the task stood when this event was read: kept with the entry, never refreshed from a later one.
+    command: whoAndCommand(task, standingOf(task, null).state).command
+  }
   return { ...task, feed: [...task.feed, entry] }
 }
 
@@ -343,7 +495,7 @@ function readLoopRecord(task: TaskPicture, record: Fields, row: DatasetRow, even
               event: 'gate_result_read',
               loop_id: record.loop_id,
               round,
-              confidence_value: record.confidence_value,
+              confidence_value: whole(record.confidence_value),
               confidence_unavailable: record.confidence_unavailable,
               extra_turn_spent: record.extra_turn_spent
             }
@@ -494,7 +646,8 @@ export function reduce(picture: Picture, event: ReadingEvent): Picture {
   if (family === 'dev_review_loop') task = readLoopRecord(task, record, row, event)
   else if (family === 'dispatch') task = readDispatchRecord(task, record, row)
   else task = readHandoffRecord(task, record)
-  task = addFeed(task, record, event)
+  task = withWait(task, event.receivedAt)
+  task = addFeed(task, record, row, event)
 
   const loopId = text(record.loop_id)
   const loops = loopId && read.loops[loopId] !== id ? { ...read.loops, [loopId]: id } : read.loops

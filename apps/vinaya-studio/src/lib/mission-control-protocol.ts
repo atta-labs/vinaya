@@ -22,6 +22,24 @@ export const RECONNECT_MAX_ATTEMPTS = 20
 export const CLIENT_MESSAGE_MAX_BYTES = 256
 export const TEXT_MAX = 500
 export const TASKS_PER_REPOSITORY_MAX = 10_000
+/** The newest story entries one task sends, and the most reviewer roles one task names. A story is never a full event log. */
+export const STORY_PER_TASK_MAX = 50
+export const REVIEWER_ROLES_MAX = 16
+/** The shape of an opaque story-entry identity: a truncated hash, never a run id, a path or a counter. */
+export const STORY_ID_PATTERN = /^[0-9a-f]{24}$/
+
+/** The narration kinds the Log's wording knows; a test holds this list equal to the kernel's. */
+export const NARRATION_KIND_NAMES = [
+  'starting',
+  'working',
+  'done',
+  'failed',
+  'waiting',
+  'paused',
+  'blocked',
+  'information'
+] as const
+export type NarrationKindName = (typeof NARRATION_KIND_NAMES)[number]
 
 export const TASK_STATE_NAMES = [
   'needs_you',
@@ -39,6 +57,22 @@ export type ReviewerView = {
   role: string
   outcome: 'approve' | 'changes_requested' | 'not_reviewed'
   blocking: number | null
+  /** `true` when the record gave this reviewer no findings of its own: the round's counts are shared by its reviewers. */
+  shared: boolean
+}
+
+/**
+ * One bounded story entry. `id` is opaque and the same for the same source event across replay and reconnect; `at` is
+ * the recorded time, `null` when unknown; `text` is the Log's narration generated from permitted facts only;
+ * `personNeeded` is the server's classification; `command` is the next command as recorded for this event.
+ */
+export type StoryEntryView = {
+  id: string
+  at: number | null
+  kind: NarrationKindName
+  text: string
+  personNeeded: boolean
+  command: string | null
 }
 
 export type RoundView = {
@@ -68,6 +102,14 @@ export type TaskView = {
   whoActs: string
   command: string | null
   model: string | null
+  /** The machine the newest loop record came from; `null` when unknown. A bounded display name, never a path. */
+  machine: string | null
+  /** The reviewer roles the loop's policy named; empty when none was read. */
+  reviewerRoles: string[]
+  /** When the current wait for a person began; `null` when the task is not waiting or the time is unknown. */
+  attentionSince: number | null
+  /** The newest narrated events, oldest first. */
+  story: StoryEntryView[]
   rounds: RoundView[]
   tokens: Record<string, { input: number | null; output: number | null; unknownTurns: number }>
 }
@@ -102,6 +144,38 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v)
 const isNullableInt = (v: unknown): boolean => v === null || isInt(v)
 const isNullableText = (v: unknown): boolean => v === null || typeof v === 'string'
+
+const isBoundedText = (v: unknown): v is string => typeof v === 'string' && v.length <= TEXT_MAX
+const isNullableBoundedText = (v: unknown): boolean => v === null || isBoundedText(v)
+const isNullableTime = (v: unknown): boolean => v === null || (typeof v === 'number' && Number.isFinite(v) && v >= 0)
+
+function isReviewer(v: unknown): v is ReviewerView {
+  return (
+    isRecord(v) &&
+    isBoundedText(v.role) &&
+    (v.outcome === 'approve' || v.outcome === 'changes_requested' || v.outcome === 'not_reviewed') &&
+    (v.blocking === null || (isInt(v.blocking) && v.blocking >= 0)) &&
+    typeof v.shared === 'boolean'
+  )
+}
+
+function isRound(v: unknown): boolean {
+  return isRecord(v) && Array.isArray(v.reviewers) && v.reviewers.every(isReviewer)
+}
+
+function isStoryEntry(v: unknown): v is StoryEntryView {
+  return (
+    isRecord(v) &&
+    typeof v.id === 'string' &&
+    STORY_ID_PATTERN.test(v.id) &&
+    isNullableTime(v.at) &&
+    typeof v.kind === 'string' &&
+    (NARRATION_KIND_NAMES as readonly string[]).includes(v.kind) &&
+    isBoundedText(v.text) &&
+    typeof v.personNeeded === 'boolean' &&
+    isNullableBoundedText(v.command)
+  )
+}
 
 function isStatus(v: unknown): v is StatusView {
   return (
@@ -138,7 +212,16 @@ function isTask(v: unknown): v is TaskView {
     typeof v.whoActs === 'string' &&
     isNullableText(v.command) &&
     isNullableText(v.model) &&
+    isNullableBoundedText(v.machine) &&
+    Array.isArray(v.reviewerRoles) &&
+    v.reviewerRoles.length <= REVIEWER_ROLES_MAX &&
+    v.reviewerRoles.every(isBoundedText) &&
+    isNullableTime(v.attentionSince) &&
+    Array.isArray(v.story) &&
+    v.story.length <= STORY_PER_TASK_MAX &&
+    v.story.every(isStoryEntry) &&
     Array.isArray(v.rounds) &&
+    v.rounds.every(isRound) &&
     isRecord(v.tokens)
   )
 }

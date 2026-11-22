@@ -24,6 +24,10 @@ function task(n: number, over: Partial<TaskView> = {}): TaskView {
     whoActs: 'developer',
     command: null,
     model: 'opus',
+    machine: null,
+    reviewerRoles: [],
+    attentionSince: null,
+    story: [],
     rounds: [],
     tokens: {},
     ...over
