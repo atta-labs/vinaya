@@ -18,7 +18,7 @@ import {
   type RecordTrust
 } from '../contract/catalogue.js'
 import { redact } from '../contract/redact.js'
-import type { CustomFieldValue } from '../contract/custom.js'
+import { CUSTOM_TEXT_MAX_LENGTH, type CustomFieldValue } from '../contract/custom.js'
 import { type RunIdGenerator, type SpanParent, spanIdFor } from '../contract/ids.js'
 
 export type AttributeValue = string | number | boolean | string[] | boolean[] | undefined
@@ -83,7 +83,16 @@ export function guard<T>(core: Pick<WriterCore, 'report'>, fn: () => T, fallback
   }
 }
 
-/** Checks names against the catalogue, drops content attributes and undefined values, redacts strings. */
+/** Cuts text to at most the cap, ending with `…` and never splitting a surrogate pair. */
+function bound(text: string): string {
+  if (text.length <= CUSTOM_TEXT_MAX_LENGTH) return text
+  let end = CUSTOM_TEXT_MAX_LENGTH - 1
+  const last = text.charCodeAt(end - 1)
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1
+  return `${text.slice(0, end)}…`
+}
+
+/** Checks names against the catalogue, drops content attributes and undefined values, redacts strings, then caps each at 500 characters. */
 export function sanitize(
   core: Pick<WriterCore, 'home'>,
   attrs: Attrs
@@ -95,9 +104,9 @@ export function sanitize(
     if (value === undefined) continue
     out[name] =
       typeof value === 'string'
-        ? redact(value, core.home)
+        ? bound(redact(value, core.home))
         : Array.isArray(value)
-          ? (value.map((v) => (typeof v === 'string' ? redact(v, core.home) : v)) as string[] | boolean[])
+          ? (value.map((v) => (typeof v === 'string' ? bound(redact(v, core.home)) : v)) as string[] | boolean[])
           : value
   }
   return out
