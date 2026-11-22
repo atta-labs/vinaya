@@ -266,9 +266,12 @@ describe('validateIssueContent — the content checks', () => {
       pinnedFileImporters: [],
       existsInTree: () => false
     })
-    expect(errors.length).toBe(1)
-    expect(errors[0]?.check).toBe('issue-content')
-    expect(errors[0]?.message).toContain('Technical surface map')
+    // The brief-shaped heading is also not a known Issue section, so the
+    // section list refuses it by name too; this case grades the brief-content rule.
+    const briefContent = errors.filter((e) => e.message.includes('brief content'))
+    expect(briefContent.length).toBe(1)
+    expect(briefContent[0]?.check).toBe('issue-content')
+    expect(briefContent[0]?.message).toContain('Technical surface map')
   })
 
   it('refuses an Issue whose `## Premises` line the checkout does not hold', () => {

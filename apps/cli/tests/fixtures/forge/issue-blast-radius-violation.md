@@ -1,10 +1,5 @@
 ## Task Issue — Planner rationale
 
-## Surface
-
-in: packages/ui/**
-out: —
-
 **Boundary** — Restyle the shared `packages/ui/Button.tsx` component used by every consuming app.
 
 **Sizing** — One task; a component edit plus its test.
@@ -20,3 +15,8 @@ out: —
 **Stop-and-escalate** — Halt if the component is consumed outside this repo's own apps.
 
 **Docs to keep coherent** — §7: `apps/cli/README.md`'s command reference row.
+
+## Surface
+
+in: packages/ui/**
+out: —

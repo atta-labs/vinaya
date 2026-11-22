@@ -47,10 +47,12 @@ import { applyTierFloor, deriveTierFromDiff, readTierFromPrBody } from './pr-tie
  */
 function renderDocumentation(documentation: IssueDocumentation): string {
   if (documentation.kind === 'none') {
-    return ['## Documentation', '', 'None — no normative external source governs this task.'].join('\n')
+    return [carriedSectionHeading('Documentation'), '', 'None — no normative external source governs this task.'].join(
+      '\n'
+    )
   }
   return [
-    '## Documentation',
+    carriedSectionHeading('Documentation'),
     '',
     ...documentation.sources.map((s) => {
       const citation = s.objectiveIds.length > 0 ? ` (${s.objectiveIds.map((id) => `O${id}`).join(', ')})` : ''
