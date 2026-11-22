@@ -71,10 +71,10 @@ Part 2 (O2) — [SECOND PART OUTCOME — numbered contiguously from 1, one line 
 
 ## Test plan
 
-[TEST PLAN NOTE — a fenced command list, one command per line, each naming the test file or `vinaya-check` it runs and its expected observable after a literal `→`, plus any auth-gated or visual item the Principal checks as a principal checkbox line; a principal line whose text begins `After merge:` is a check only possible once the change is merged and does not hold the merge. A pure-logic task with no runtime-observable surface replaces the whole section's content with the single line `Test plan: unit-tests-only`.]
+[TEST PLAN NOTE — a fenced command list, one command per line, each naming the test file or `vinaya-check` it runs, its expected observable after a literal `→`, and after the observable the objective ids it proves in parentheses; plus any auth-gated or visual item the Principal checks as a principal checkbox line, whose objective ids sit in one code span such as `(O2)` in backticks. Every objective is proven by at least one line or item, and every line or item names at least one objective; a task has no sentinel form, so a pure-logic task names its test files as fenced lines. A principal line whose text begins `After merge:` is a check only possible once the change is merged and does not hold the merge.]
 
 ```
-[COMMAND — a command the dispatched Developer can run, naming the test file or check it runs] → [EXPECTED — the observable it prints]
+[COMMAND — a command the dispatched Developer can run, naming the test file or check it runs] → [EXPECTED — the observable it prints] ([TEST OBJECTIVES — the objective ids this line proves, comma-separated, such as O1, O2])
 ```
 
 ## Stop conditions
