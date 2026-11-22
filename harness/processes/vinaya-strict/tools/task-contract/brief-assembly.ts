@@ -145,7 +145,6 @@ export function step0InstallCommand(repoRoot: string): string {
   return DEFAULT_STEP0_INSTALL
 }
 
-/** This checkout's git toplevel — the anchor every path in `repoBriefCommandFacts` resolves against. Falls back to the process cwd when `git` cannot answer, the same degradation `git()` itself takes. */
 /**
  * The names of the registered checks: the core checks merged with the checks
  * the repository's configuration registers — the same resolution the Issue
@@ -157,6 +156,7 @@ export function registeredCheckNames(): string[] {
   return resolveChecks(coreCheckRegistry(), configChecks).resolved.map((rc) => rc.spec.name)
 }
 
+/** This checkout's git toplevel — the anchor every path in `repoBriefCommandFacts` resolves against. Falls back to the process cwd when `git` cannot answer, the same degradation `git()` itself takes. */
 function repoRootOrCwd(): string {
   return git(['rev-parse', '--show-toplevel']) || process.cwd()
 }
