@@ -30,7 +30,7 @@ import {
   type LoopWorld,
   makeInProcessDeps,
   makeWorld,
-  outboxLines,
+  loopLog,
   type RoleOutcome,
   runLoopInProcess,
   withWorldEnv
@@ -170,7 +170,7 @@ function decisionOf(result: LoopResult): string {
 
 /** Reads every observable fact of `world` after a run. */
 export function observe(world: LoopWorld, decision: string, refusal: string | null = null): Observation {
-  const lines = outboxLines(world)
+  const lines = loopLog(world)
   const events = lines.map((l) =>
     l.kind === 'dev_review_loop' ? String(l.event) : `${String(l.kind)}:${String(l.event)}`
   )
@@ -239,7 +239,7 @@ function cancelInProcess(world: LoopWorld) {
         fetchNewestRulingAuthor: () => world.rulingAuthor,
         runtimeDir: () => world.runtimeDir,
         resolveRepo: async () => null,
-        ...(injectedLogSink ? { logSink: injectedLogSink } : {}),
+        logSink: injectedLogSink ?? makeInProcessDeps(world).logSink,
         terminateInFlightLaunchesOnShutdown: () => {},
         sleep: (ms) => new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
       }

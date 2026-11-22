@@ -40,6 +40,8 @@ import { AGENT_STEP_ROLES, createVinayaLogProducers, handoffHaltReason } from '.
 import { LOG_INVENTORY } from '../executing/log-inventory'
 import { createHandoff } from '../executing/handoff'
 import { recordedHandoff } from './handoff-fakes'
+import { writeRunLifecycleEvent } from '../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
+import { attributeOf, createRunLifecycleWorld, eventNameOf } from './run-lifecycle-world'
 
 const processFolder = resolve(import.meta.dir, '..')
 const loaded = loadProcess(processFolder, { flow: 'v1' })
@@ -83,10 +85,13 @@ describe('the log inventory', () => {
     expect(named.filter((name) => !known.has(name))).toEqual([])
   })
 
-  test('only the role attempt is dropped, an agent turn being a span on the run Log handle; the unpushed-work resume is written by a deciding step', () => {
+  test('only the role attempt and the heartbeat are dropped: an agent turn is a span, and liveness is the run alive event; the unpushed-work resume is written by a deciding step', () => {
     const dropped = LOG_INVENTORY.flatMap((row) => (row.status === 'dropped' ? [row] : []))
-    expect(dropped.map((row) => `${row.family}/${row.events.join(',')}`)).toEqual(['role_attempt/attempted'])
-    expect(dropped[0]?.status === 'dropped' && dropped[0].reason).toContain('invoke_agent span')
+    expect(dropped.map((row) => `${row.family}/${row.events.join(',')}`)).toEqual([
+      'dev_review_loop/driver_heartbeat',
+      'role_attempt/attempted'
+    ])
+    expect(dropped[1]?.status === 'dropped' && dropped[1].reason).toContain('invoke_agent span')
     const from = (family: string, event: string) =>
       rowsFor(family, event).map((row) => (row.status === 'produced' ? row.from : row.status))
     expect(from('dev_review_loop', 'unpushed_work_resume')).toEqual([
@@ -185,6 +190,8 @@ interface Scenario {
   /** What each pass of the assess-round step reports. */
   assess?: Array<{ exitCode: number; stdout: string }>
   onAction?: (step: string) => void
+  /** Takes each event the translator emits, as the sink would. */
+  emit?: (event: LogEventInput) => void
 }
 
 function fakeAgent(): SpawnedProcessLike {
@@ -285,9 +292,10 @@ function setup(scenario: Scenario = {}) {
 
   const startSlices: LogEventInput[][] = []
   const emitted: Array<{ event: LogEventInput; enveloped: Record<string, unknown> }> = []
-  const translator: LogTranslator = createLogTranslator(createVinayaLogProducers(config), (event) =>
+  const translator: LogTranslator = createLogTranslator(createVinayaLogProducers(config), (event) => {
     emitted.push({ event, enveloped: { ...event, ...envelope(emitted.length) } })
-  )
+    scenario.emit?.(event)
+  })
 
   const roles = createRoleLaunchers({ vendor: 'claude-code', generatedRoot: fixtureDir('log-roles-') })
   // The role launcher stubs are plain spawn stubs: nothing here hands them the emit function.
@@ -737,6 +745,75 @@ describe('the handoff writes its rows', () => {
       if (!parsed.success) throw new Error(`${String(event.event)} does not parse: ${parsed.error.message}`)
       seen.add(`${event.kind}/${event.event}`)
     }
+  })
+})
+
+describe('the Engine path writes the run lifecycle through the run Log handle', () => {
+  test('a start, a pause, a resume in a new leg and an end give one run span and one pause span, and alive carries the round and phase', async () => {
+    const world = createRunLifecycleWorld()
+    const where = { runId: 'run-1', repository: 'atta-labs/vinaya' }
+    let recorder = world.process()
+    const control = createRunControl()
+    const run = setup({
+      onAction: (step) => {
+        if (step === 'validate-developer-output') control.halt('stop here')
+      },
+      emit: (event) =>
+        void writeRunLifecycleEvent(event as never, where, { recorder, runtimeDir: () => world.runtimeDir })
+    })
+    run.options.control = control
+    // The runner starts the run on its handle as the first leg begins, before any step has been assessed.
+    writeRunLifecycleEvent(
+      {
+        kind: 'dev_review_loop',
+        payload: {},
+        loop_id: config.loopId,
+        event: 'loop_started',
+        task: config.task,
+        policy: { max_rounds: 3, reviewers: ['code-reviewer', 'security'], models: { developer: 'opus' } }
+      } as never,
+      where,
+      { recorder, runtimeDir: () => world.runtimeDir }
+    )
+    const paused = await runLeg(run.translator, () => startProcessRun(run.options), { resumed: false })
+    expect(paused.reason).toBe('paused')
+    // The Engine records stage changes: the run is in review of round 2 when two minutes pass with no record.
+    recorder.handle(where.runId, where.repository)?.round.started({ number: 2 })
+    recorder.stageChanged({ stage: 'review', round: 2 }, where.runId)
+    world.advance(121_000)
+    await recorder.drain()
+    const alive = world.events().filter((e) => eventNameOf(e) === 'vinaya.run.alive')
+    expect(alive).toHaveLength(1)
+    expect(attributeOf(alive[0], 'vinaya.round.number')).toBe(2)
+    expect(attributeOf(alive[0], 'vinaya.phase.name')).toBe('review')
+
+    // The next leg is a new process: it carries on the same run and ends the pause the first one began.
+    recorder = world.process()
+    const resumed = await runLeg(
+      run.translator,
+      () => resumeProcessRun({ ...run.options, control: undefined }, paused.identity),
+      { resumed: true }
+    )
+    expect(resumed.reason).toBe('completed')
+    await recorder.drain()
+
+    expect(world.events().filter((e) => eventNameOf(e) === 'vinaya.run.started')).toHaveLength(1)
+    const runSpans = world.spans().filter((s) => s.name.startsWith('invoke_workflow'))
+    expect(runSpans).toHaveLength(1)
+    expect(attributeOf(runSpans[0], 'vinaya.run.outcome')).toBe('ready')
+    const pauses = world.spans().filter((s) => s.name === 'vinaya.pause')
+    expect(pauses).toHaveLength(1)
+    expect(attributeOf(pauses[0], 'vinaya.pause.by')).toBe('person')
+    // No two run ids: every record of both legs is on the one run.
+    expect(
+      new Set(
+        world
+          .events()
+          .map((e) => attributeOf(e, 'vinaya.run.id'))
+          .filter(Boolean)
+      )
+    ).toEqual(new Set(['run-1']))
+    expect(world.errors).toEqual([])
   })
 })
 

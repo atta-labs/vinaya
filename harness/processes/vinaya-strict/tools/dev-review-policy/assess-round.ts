@@ -95,7 +95,7 @@ function loopEventEnvelope(state: LoopState): {
   return { kind: 'dev_review_loop', payload: {}, loop_id: state.config.loopId }
 }
 
-function loopStartedEvent(state: LoopState): DevReviewLoopEventInput {
+export function loopStartedEvent(state: LoopState): DevReviewLoopEventInput {
   return {
     ...loopEventEnvelope(state),
     event: 'loop_started',

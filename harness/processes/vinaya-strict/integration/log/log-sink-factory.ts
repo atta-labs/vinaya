@@ -25,6 +25,7 @@ import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
 import './log-roles'
 import { resolveBranchIssue } from './branch-issue.js'
 import { vinayaDoctrineIdentity } from './doctrine-version.js'
+import { writeRunLifecycleEvent } from '../../loops/dev-review/standalone/dev-review-loop/driver-lifecycle.js'
 
 type BranchReadInputs = Pick<Partial<LogSinkDeps>, 'cwd' | 'env'>
 
@@ -51,11 +52,14 @@ function branchReader(inputs: BranchReadInputs): LogSinkDeps['resolveBranchIssue
 export function createVinayaLogSink(overrides: Partial<LogSinkDeps> = {}): LogSink {
   const vinayaVersion = overrides.vinayaVersion ?? readVinayaVersion
   const doctrineIdentity = overrides.doctrineIdentity ?? vinayaDoctrineIdentity
+  // A run's lifecycle is written through the run's Log handle, whichever runner's sink the event is logged to.
+  const routeEvent = overrides.routeEvent ?? ((event, where) => writeRunLifecycleEvent(event, where))
   if (overrides.resolveBranchIssue !== undefined) {
     return createLogSink({
       ...overrides,
       vinayaVersion,
       doctrineIdentity,
+      routeEvent,
       resolveBranchIssue: overrides.resolveBranchIssue
     })
   }
@@ -63,6 +67,7 @@ export function createVinayaLogSink(overrides: Partial<LogSinkDeps> = {}): LogSi
     ...overrides,
     vinayaVersion,
     doctrineIdentity,
+    routeEvent,
     resolveBranchIssue: branchReader(overrides),
     shareBranchIssue: true
   })

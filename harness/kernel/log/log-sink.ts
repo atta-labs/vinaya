@@ -199,6 +199,12 @@ export type LogSinkDeps = {
    */
   resolveBranchIssue: (repo: string | null) => Promise<number | null>
   /**
+   * Takes an event the process writes through the run's Log handle instead of as an earlier-format line: returns
+   * `true` when it wrote the event there, and the sink then writes no line of its own for it. Absent, every event is
+   * an earlier-format line.
+   */
+  routeEvent?: (event: LogEventInput, where: { runId: string; repository: string | undefined }) => boolean
+  /**
    * The doctrine version `meta.doctrine` records, given the sink's `cwd` and
    * the package version. The process that builds the sink owns the rule (its
    * sink factory supplies it); called once per sink, under the same deadline
@@ -1791,11 +1797,23 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
     }
   }
 
+  /** Whether the process wrote the event through the run's Log handle: no earlier-format line is written for it. */
+  function routed(e: LogEventInput, repo: RepoRef | null): boolean {
+    if (deps.routeEvent === undefined) return false
+    try {
+      return deps.routeEvent(e, { runId, repository: repo ? `${repo.owner}/${repo.repo}` : undefined })
+    } catch (err) {
+      warnOnce(`vinaya: the run record failed — ${err instanceof Error ? err.message : String(err)}\n`)
+      return true
+    }
+  }
+
   function log(e: LogEventInput, attribution?: LaunchLogAttribution, opts: LogOptions = {}): void {
     try {
       const call = snapshot(attribution)
       const write = async (): Promise<void> => {
         const ctx = await context()
+        if (routed(e, ctx.repo)) return
         // Never awaited: a due re-resolution of an `anchor-unreadable`
         // fallback runs beside this write, which lands where `ctx` says.
         try {
@@ -1880,6 +1898,7 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
         }
         ctx = { repo: null, doctrine: 'unknown', destination }
       }
+      if (routed(e, ctx.repo)) return
       const branchIssue = ctx.destination.kind === 'none' || call.envFields.task ? null : branchIssueIfSettled(ctx.repo)
       const headSha = e.kind === 'gate' && ctx.destination.kind !== 'none' ? headShaIfSettled() : null
       writeEvent(e, call, ctx, branchIssue, headSha, false, opts.unattributedStream)
@@ -1928,6 +1947,8 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
   const drain = async (): Promise<void> => {
     if (pendingWrites.size > 0) await Promise.allSettled(Array.from(pendingWrites))
     await drainChain.catch(() => undefined)
+    // Records written through the run's Log handle are flushed to the local copy too.
+    for (const drainExtra of extraDrains) await drainExtra().catch(() => undefined)
     // Every record written so far is in the local copy before this resolves; sending it waits no longer than the bound.
     await localCopy.drain().catch(() => undefined)
   }

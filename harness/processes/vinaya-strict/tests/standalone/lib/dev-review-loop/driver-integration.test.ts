@@ -61,6 +61,8 @@ import {
   makeInProcessDeps,
   makeWorld,
   outboxLines as ipOutboxLines,
+  readRunRecords,
+  runRecords,
   roundDir as ipRoundDir,
   runLoopInProcess,
   taskRunDir as ipTaskRunDir
@@ -181,7 +183,12 @@ describe('devReviewLoop — O9 (task-run-v1 21, #541, round 2 review BLOCKER): a
       expect(r1.status).not.toBe(0)
       const linesAfterCrash = outboxLines(home)
       expect(linesAfterCrash.some((l) => l.event === 'round_ended' && l.outcome === 'green')).toBe(true)
-      expect(linesAfterCrash.some((l) => l.event === 'journal_finalized' && l.result === 'merged_ready')).toBe(false)
+      expect(linesAfterCrash.some((l) => l.event === 'journal_finalized')).toBe(false)
+      for (const span of readRunRecords(join(home, '.vinaya', 'runtime', 'unresolved', 'logs')).spans)
+        if (span.name.startsWith('invoke_workflow'))
+          expect(
+            span.attributes.find((a: { key: string }) => a.key === 'vinaya.run.outcome')?.value.stringValue
+          ).not.toBe('ready')
 
       // Swap to a `gh` with no crash logic — round 2's own posts must succeed
       // — then reattach with a plain `--task`, exactly as an operator
@@ -518,7 +525,7 @@ describe('devReviewLoop — every event names the standalone runner, the Vinaya 
     const paused = await runLoopInProcess(world)
     expect(paused.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
     const freshLines = ipOutboxLines(world)
-    expect(freshLines.some((l) => l.event === 'loop_started')).toBe(true)
+    expect(world.runEvents.some((l) => l.event === 'loop_started')).toBe(true)
     expect(new Set(identitiesOf(freshLines).map((i) => JSON.stringify(i)))).toEqual(
       new Set([JSON.stringify(expectedIdentity)])
     )
@@ -540,7 +547,7 @@ describe('devReviewLoop — every event names the standalone runner, the Vinaya 
     const resumed = await runLoopInProcess(world, { resumePr: world.prNumber })
     expect(resumed.finalDecision.type).toBe('publish')
     const resumeLines = ipOutboxLines(world).slice(freshLines.length)
-    expect(resumeLines.some((l) => l.event === 'loop_started')).toBe(true)
+    expect(world.runEvents.filter((l) => l.event === 'loop_started')).toHaveLength(2)
     expect(new Set(identitiesOf(resumeLines).map((i) => JSON.stringify(i)))).toEqual(
       new Set([JSON.stringify(expectedIdentity)])
     )
@@ -577,13 +584,16 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     // — the exact sequence `assessRound` returns for this scripted scenario,
     // not guessed.
     expect(loopEvents).toEqual([
-      'loop_started',
       'round_started',
       'gate_result_read',
       'verdicts_read',
       'findings_compared',
+      'round_ended'
+    ])
+    // The run's lifecycle is written through the run's Log handle, in the order the loop built it.
+    expect(world.runEvents.map((l) => l.event)).toEqual([
+      'loop_started',
       'stop_condition_met',
-      'round_ended',
       'journal_finalized',
       // #949, O2: the lifecycle event the driver now emits on its clean
       // publish exit, after everything the round itself logged.
@@ -598,7 +608,7 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     expect(verdictsRead.all_approve).toBe(true)
     expect(verdictsRead.blockers).toBe(0)
 
-    const stopCondition = lines.find((l) => l.event === 'stop_condition_met') as Record<string, unknown>
+    const stopCondition = world.runEvents.find((l) => l.event === 'stop_condition_met') as Record<string, unknown>
     expect(stopCondition.condition).toBe('green')
 
     const roundEnded = lines.find((l) => l.event === 'round_ended') as Record<string, unknown>
@@ -609,7 +619,7 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     expect(roundEnded.insertions).toBe(10)
     expect(roundEnded.deletions).toBe(3)
 
-    const journalFinalized = lines.find((l) => l.event === 'journal_finalized') as Record<string, unknown>
+    const journalFinalized = world.runEvents.find((l) => l.event === 'journal_finalized') as Record<string, unknown>
     expect(journalFinalized.result).toBe('merged_ready')
   })
 
@@ -720,80 +730,37 @@ describe('devReviewLoop — round 1 clean, ends on publish', () => {
     expect(roleLog).toContain('fake-always-refuse-body: fixture forces a body-check refusal')
   })
 })
-describe('devReviewLoop — the driver heartbeat (#949, O1)', () => {
+/** The earlier-format run events the harness no longer writes: each is a record on the run's Log handle. */
+const EARLIER_RUN_EVENTS = [
+  'loop_started',
+  'journal_finalized',
+  'paused',
+  'resumed',
+  'cancelled',
+  'infrastructure_retry',
+  'stop_condition_met',
+  'driver_heartbeat',
+  'driver_exited'
+]
+const recordAttribute = (
+  record: { attributes?: Array<{ key: string; value: Record<string, unknown> }> },
+  key: string
+) => {
+  const value = record.attributes?.find((a) => a.key === key)?.value
+  if (value === undefined) return undefined
+  return value.stringValue ?? value.boolValue ?? (value.intValue === undefined ? undefined : Number(value.intValue))
+}
+/** The run records a spawned fixture's driver wrote under its isolated `$HOME`. */
+const homeRecords = (home: string) => readRunRecords(join(home, '.vinaya', 'runtime', 'unresolved', 'logs'))
+describe('devReviewLoop — the run is alive through the Log handle, with no driver heartbeat (#949, O1)', () => {
   afterEach(cleanupWorlds)
 
-  it('emits driver_heartbeat with round/phase while alive — no pr on the first turn, the pr once it exists', async () => {
+  it('writes no driver heartbeat event and keeps no heartbeat timer of its own', async () => {
     const world = makeWorld()
-    let captured: (() => void) | null = null
-    let started = 0
-    // A separate world-backed deps instance whose real `dispatchRole` the
-    // override below delegates to after firing one heartbeat tick, so the
-    // round still proceeds to publish exactly as the clean fixture does.
-    const base = makeInProcessDeps(world)
-    const result = await runLoopInProcess(
-      world,
-      { task: world.task, agent: 'claude' },
-      {
-        setHeartbeat: (cb) => {
-          captured = cb
-          started += 1
-          return () => {}
-        },
-        // Fire a five-minute tick synchronously mid-dispatch: during the long
-        // Developer turn (no PR yet) and during a later reviewer dispatch
-        // (PR resolved) — the two liveness moments O1 names.
-        dispatchRole: async (role, agent, prompt, opts) => {
-          captured?.()
-          return base.dispatchRole!(role, agent, prompt, opts)
-        }
-      }
-    )
+    const result = await runLoopInProcess(world)
     expect(result.finalDecision.type).toBe('publish')
-    // The driver started exactly one heartbeat timer.
-    expect(started).toBe(1)
-
-    const heartbeats = ipOutboxLines(world).filter((l) => l.event === 'driver_heartbeat')
-    expect(heartbeats.length).toBeGreaterThan(0)
-    for (const hb of heartbeats) {
-      expect(hb.kind).toBe('dev_review_loop')
-      expect(hb.task).toBe(world.task)
-      expect(typeof hb.round).toBe('number')
-      expect(typeof hb.phase).toBe('string')
-    }
-    // The Developer turn fired before any PR existed — at least one heartbeat
-    // carries no `pr` at all (the Boundary's "first Developer turn" case)...
-    expect(heartbeats.some((hb) => hb.pr === undefined)).toBe(true)
-    // ...and once the developer pushed and the PR resolved, a later heartbeat
-    // carries exactly that pull request.
-    expect(heartbeats.some((hb) => hb.pr === world.prNumber)).toBe(true)
-  })
-
-  it('a heartbeat that throws on emit never crashes the round (#949, Traps)', async () => {
-    const world = makeWorld()
-    let captured: (() => void) | null = null
-    const base = makeInProcessDeps(world)
-    const result = await runLoopInProcess(
-      world,
-      { task: world.task, agent: 'claude' },
-      {
-        setHeartbeat: (cb) => {
-          captured = cb
-          return () => {}
-        },
-        dispatchRole: async (role, agent, prompt, opts) => {
-          // The driver wraps its own emit in a try/catch; invoking the real
-          // callback here (which only ever calls fire-and-forget `log`) can
-          // never reject the dispatch, and the round still publishes.
-          captured?.()
-          return base.dispatchRole!(role, agent, prompt, opts)
-        }
-      }
-    )
-    expect(result.finalDecision.type).toBe('publish')
-  })
-
-  it("the production heartbeat timer is unref()'d so it never keeps the process alive (#949, Traps)", () => {
+    expect(ipOutboxLines(world).filter((l) => l.event === 'driver_heartbeat')).toEqual([])
+    expect(world.runEvents.filter((l) => l.event === 'driver_heartbeat')).toEqual([])
     const source = readFileSync(
       join(
         import.meta.dir,
@@ -809,15 +776,10 @@ describe('devReviewLoop — the driver heartbeat (#949, O1)', () => {
       ),
       'utf8'
     )
-    const idx = source.indexOf('function defaultSetHeartbeat(')
-    expect(idx).toBeGreaterThan(-1)
-    const body = source.slice(idx, idx + 400)
-    expect(body).toMatch(/setInterval\(/)
-    expect(body).toMatch(/\.unref\?\.\(\)/)
-    expect(body).toMatch(/clearInterval\(/)
+    expect(source).not.toMatch(/setInterval\(|HEARTBEAT_INTERVAL/)
   })
 })
-describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', () => {
+describe('devReviewLoop — the run lifecycle written through the run Log handle (#949, O2/O3)', () => {
   // A pre-push hook run for a task whose pull request is open carries `VINAYA_PR`; the "nothing left in the environment" assertion below must start from none.
   let priorPr: string | undefined
   beforeEach(() => {
@@ -830,25 +792,17 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
     else process.env.VINAYA_PR = priorPr
   })
 
-  it('a clean publish emits exactly one driver_exited reason=finished, stops the heartbeat, and writes no routine role-log line', async () => {
+  it('a clean publish writes the run start, one run span and one exit finished, and no earlier-format run event', async () => {
     const world = makeWorld()
     // Whatever the host process already carried (a pre-push hook run for an open pull request sets it).
     const priorPr = process.env.VINAYA_PR
-    let stopped = 0
-    const result = await runLoopInProcess(
-      world,
-      { task: world.task, agent: 'claude' },
-      {
-        setHeartbeat: () => () => {
-          stopped += 1
-        }
-      }
-    )
+    const result = await runLoopInProcess(world)
     expect(result.finalDecision.type).toBe('publish')
-    // The timer the driver started was stopped on the way out.
-    expect(stopped).toBe(1)
 
-    const exits = ipOutboxLines(world).filter((l) => l.event === 'driver_exited')
+    const lines = ipOutboxLines(world) as Array<{ event?: string; subject?: { pr?: number } }>
+    for (const name of EARLIER_RUN_EVENTS) expect(lines.filter((l) => l.event === name)).toEqual([])
+
+    const exits = world.runEvents.filter((l) => l.event === 'driver_exited')
     expect(exits).toHaveLength(1)
     const exit = exits[0] as Record<string, unknown>
     expect(exit.kind).toBe('dev_review_loop')
@@ -859,10 +813,18 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
     expect(exit).not.toHaveProperty('exit_code')
     expect(exit).not.toHaveProperty('error_class')
 
+    const records = runRecords(world)
+    expect(records.names.events.filter((name) => name === 'vinaya.run.started')).toHaveLength(1)
+    const exited = records.events.filter((e) => e.eventName === 'vinaya.run.exited')
+    expect(exited).toHaveLength(1)
+    expect(recordAttribute(exited[0], 'vinaya.exit.kind')).toBe('finished')
+    const runSpans = records.spans.filter((s) => s.name.startsWith('invoke_workflow'))
+    expect(runSpans).toHaveLength(1)
+    expect(recordAttribute(runSpans[0], 'vinaya.run.outcome')).toBe('ready')
+
     // This world's pull request is already open when the driver starts, so
     // every event the driver records carries its number in the header subject.
-    const lines = ipOutboxLines(world) as Array<{ event?: string; subject?: { pr?: number } }>
-    expect(typeof lines.find((l) => l.event === 'driver_exited')?.subject?.pr).toBe('number')
+    expect(typeof lines.find((l) => l.event === 'verdicts_read')?.subject?.pr).toBe('number')
     const verdicts = lines.find((l) => l.event === 'verdicts_read') as Record<string, unknown> | undefined
     expect(verdicts?.reviewers).toEqual([
       { role: 'code-reviewer', outcome: 'approve', blockers: 0 },
@@ -879,24 +841,33 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
     }
   })
 
-  it('a decided pause emits one driver_exited reason=paused naming the pause reason', async () => {
+  it('a decided pause writes one exit paused naming the pause reason, and a pause the run has not yet ended', async () => {
     // Security writes nothing on both attempts → a driver-decided
     // infrastructure pause, returned normally (never a throw).
     const world = makeWorld({ roleOutcomes: { 1: { security: { ...CLEAN_SECURITY, writesNothing: true } } } })
     const result = await runLoopInProcess(world)
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
 
-    const exits = ipOutboxLines(world).filter((l) => l.event === 'driver_exited')
+    const exits = world.runEvents.filter((l) => l.event === 'driver_exited')
     expect(exits).toHaveLength(1)
     const exit = exits[0] as Record<string, unknown>
     expect(exit.reason).toBe('paused')
     expect(exit.last_decision).toBe('pause(infrastructure)')
-    const paused = ipOutboxLines(world).filter((l) => l.event === 'paused')
+    const paused = world.runEvents.filter((l) => l.event === 'paused')
     expect(paused.length).toBeGreaterThan(0)
     expect((paused[0] as Record<string, unknown>).reason_code).toBe('infrastructure')
+
+    const records = runRecords(world)
+    const started = records.events.filter((e) => e.eventName === 'vinaya.pause.started')
+    expect(started).toHaveLength(1)
+    expect(recordAttribute(started[0], 'vinaya.pause.why')).toBe('infrastructure')
+    // The run waits for its resume: its span is not written yet.
+    expect(records.spans.filter((s) => s.name.startsWith('invoke_workflow'))).toEqual([])
+    const exited = records.events.filter((e) => e.eventName === 'vinaya.run.exited')
+    expect(exited.map((e) => recordAttribute(e, 'vinaya.exit.kind'))).toEqual(['paused'])
   })
 
-  it('an uncaught error emits one driver_exited reason=error and still writes the diagnostic role-log line', async () => {
+  it('an uncaught error writes one exit error and still writes the diagnostic role-log line', async () => {
     const world = makeWorld()
     const result = await runLoopInProcess(
       world,
@@ -909,12 +880,15 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
     )
     expect(result.finalDecision).toMatchObject({ type: 'pause', reason: 'infrastructure' })
 
-    const exits = ipOutboxLines(world).filter((l) => l.event === 'driver_exited')
+    const exits = world.runEvents.filter((l) => l.event === 'driver_exited')
     expect(exits).toHaveLength(1)
     expect((exits[0] as Record<string, unknown>).reason).toBe('error')
     // The class is the constructor name; the message never reaches the record.
     expect((exits[0] as Record<string, unknown>).error_class).toBe('Error')
-    expect(JSON.stringify(exits[0])).not.toContain('trust-anchor')
+    const records = runRecords(world)
+    expect(JSON.stringify(records.events)).not.toContain('trust-anchor')
+    const exited = records.events.filter((e) => e.eventName === 'vinaya.run.exited')
+    expect(exited.map((e) => recordAttribute(e, 'error.type'))).toEqual(['Error'])
 
     // An abnormal exit DOES leave the role-log trace — the signal a reader
     // follows when no decision reached the forge.
@@ -922,7 +896,7 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
     expect(readFileSync(roleLogPath, 'utf8')).toMatch(/\bLoop\s+driver_exited: reason=error/)
   })
 
-  it('recordDriverExited stops the heartbeat before it writes anything, on exactly one guarded path (#949, O1/Traps)', () => {
+  it('records the exit once, on exactly one guarded path (#949, O1/Traps)', () => {
     const source = readFileSync(
       join(
         import.meta.dir,
@@ -943,14 +917,7 @@ describe('devReviewLoop — the driver_exited lifecycle event (#949, O2/O3)', ()
     const body = source.slice(idx, source.indexOf('\n}\n', idx))
     // Guarded against a double write for one exit.
     expect(body).toMatch(/if \(written\) return/)
-    const stopAt = body.indexOf('facts.stopHeartbeat()')
-    const roleLineAt = body.indexOf('appendRoleLine(')
-    const logAt = body.indexOf('facts.log(event)')
-    expect(stopAt).toBeGreaterThan(-1)
-    // The timer is cleared before any role-log line or Log event is written,
-    // so a stray tick can never land after the exit is recorded.
-    expect(roleLineAt).toBeGreaterThan(stopAt)
-    expect(logAt).toBeGreaterThan(stopAt)
+    expect(body).not.toMatch(/stopHeartbeat/)
   })
 
   it('the reexec and signal exit paths each record their own driver_exited reason (#949, O2)', () => {
@@ -1188,19 +1155,14 @@ describe('devReviewLoop — deferred findings tracked in one Issue per pull requ
 // "equivalent lineage" a real claim about the controller's own behavior,
 // not an artifact of skipping the second run's own assessment.
 describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalent lineage, idempotent identities, visible gaps', () => {
+  // The run's own lifecycle (its start, stop rule, end and exit) is written through the run's Log handle, so this
+  // shape holds the round's events alone.
   const CANONICAL_ROUND_1_SHAPE = [
-    'loop_started',
     'round_started',
     'gate_result_read',
     'verdicts_read',
     'findings_compared',
-    'stop_condition_met',
-    'round_ended',
-    'journal_finalized',
-    // #949, O2: each whole-task run now ends with its own clean-publish
-    // `driver_exited` — one per process, the same shape under each run's own
-    // distinct lineage.run.
-    'driver_exited'
+    'round_ended'
   ]
 
   // REAL PROCESS: publishRound's real gh/EffectExecutor round-trip (postPrCommentOnce shells out to real gh directly, bypassing every injected dep) cannot be exercised via the in-process fake publis
@@ -1368,7 +1330,9 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     expect(paused.status).not.toBe(0)
 
     const lines = outboxLines(home)
-    const pausedEvents = lines.filter((l) => l.event === 'paused')
+    // The pause is written through the run's Log handle: one pause start on the run's trace, no earlier-format line.
+    expect(lines.filter((l) => l.event === 'paused')).toEqual([])
+    const pausedEvents = homeRecords(home).events.filter((e) => e.eventName === 'vinaya.pause.started')
     expect(pausedEvents).toHaveLength(1)
     // `postPauseComment` (`pause-resume.ts`) runs through the SAME
     // `EffectExecutor` this task instruments — its own `effect` family
@@ -1379,9 +1343,7 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     const effectEvents = lines.filter((l) => l.kind === 'effect')
     expect(effectEvents.length).toBeGreaterThan(0)
     expect(effectEvents.map((e) => e.event)).toContain('verified')
-    const runs = new Set(
-      [...pausedEvents, ...effectEvents].map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run)
-    )
+    const runs = new Set(effectEvents.map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run))
     expect(runs.size).toBe(1)
     expect([...runs][0]).not.toBeNull()
   }, 45000)
@@ -1424,13 +1386,11 @@ describe('devReviewLoop — O1 (`[task-operator-v1]`/Issue #662): the pause comm
       >
       expect(pauseState.reason).toBe('escalation')
 
-      const retryEvent = outboxLines(home).find((l) => l.event === 'infrastructure_retry') as
-        | Record<string, unknown>
-        | undefined
-      expect(retryEvent).toBeDefined()
-      expect(retryEvent?.failure_kind).toBe('pause_comment_post')
-      expect(retryEvent?.attempts).toBe(2)
-      expect(retryEvent?.outcome).toBe('recovered')
+      const retried = homeRecords(home).events.filter((e) => e.eventName === 'vinaya.run.retried')
+      expect(retried).toHaveLength(1)
+      expect(recordAttribute(retried[0], 'vinaya.retry.failed')).toBe('pause_comment_post')
+      expect(recordAttribute(retried[0], 'vinaya.retry.tries')).toBe(2)
+      expect(recordAttribute(retried[0], 'vinaya.retry.recovered')).toBe(true)
     },
     45000
   )
@@ -1473,13 +1433,11 @@ describe('devReviewLoop — O1 (`[task-operator-v1]`/Issue #662): the pause comm
       expect(pauseState.reason).toBe('escalation')
       expect(pauseState.round).toBe(1)
 
-      const retryEvent = outboxLines(home).find((l) => l.event === 'infrastructure_retry') as
-        | Record<string, unknown>
-        | undefined
-      expect(retryEvent).toBeDefined()
-      expect(retryEvent?.failure_kind).toBe('pause_comment_post')
-      expect(retryEvent?.attempts).toBe(3)
-      expect(retryEvent?.outcome).toBe('exhausted')
+      const retried = homeRecords(home).events.filter((e) => e.eventName === 'vinaya.run.retried')
+      expect(retried).toHaveLength(1)
+      expect(recordAttribute(retried[0], 'vinaya.retry.failed')).toBe('pause_comment_post')
+      expect(recordAttribute(retried[0], 'vinaya.retry.tries')).toBe(3)
+      expect(recordAttribute(retried[0], 'vinaya.retry.recovered')).toBe(false)
     },
     45000
   )
@@ -1635,26 +1593,22 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
       const loopEvents = ipOutboxLines(world)
         .filter((l) => l.kind === 'dev_review_loop')
         .map((l) => l.event)
-      expect(loopEvents).toEqual([
+      expect(loopEvents).toEqual(['round_started', 'gate_result_read'])
+      expect(ipOutboxLines(world).some((l) => l.event === 'round_ended')).toBe(false)
+      // The pause and the stop are written through the run's Log handle, with the run left open for its resume.
+      expect(world.runEvents.map((l) => l.event)).toEqual([
         'loop_started',
-        'round_started',
-        'gate_result_read',
         'stop_condition_met',
         'paused',
-        // No `round_ended`: the round held no verdict, so it is never closed
-        // as `changes_requested` — the resumed run reviews it and ends it.
         'journal_finalized',
         // #949, O2: the driver's own exit event, after the round's pause record.
         'driver_exited'
       ])
-      expect(ipOutboxLines(world).some((l) => l.event === 'round_ended')).toBe(false)
-      const stop = ipOutboxLines(world).find((l) => l.event === 'stop_condition_met') as Record<string, unknown>
+      const stop = world.runEvents.find((l) => l.event === 'stop_condition_met') as Record<string, unknown>
       expect(stop.condition).toBe('principal_stop')
-      const journalFinalized = ipOutboxLines(world).find((l) => l.event === 'journal_finalized') as Record<
-        string,
-        unknown
-      >
-      expect(journalFinalized.result).toBe('stopped')
+      const records = runRecords(world)
+      expect(records.names.events.filter((name) => name === 'vinaya.pause.started')).toHaveLength(1)
+      expect(records.spans.filter((s) => s.name.startsWith('invoke_workflow'))).toEqual([])
     }
   )
 })
@@ -2042,17 +1996,17 @@ describe('devReviewLoop — a principal-owed red never redispatches the develope
         .filter((l) => l.kind === 'dev_review_loop')
         .map((l) => l.event)
       expect(loopEvents).toEqual([
-        'loop_started',
         'round_started',
         'gate_result_read',
         'verdicts_read',
         'findings_compared',
-        'stop_condition_met',
-        'round_ended',
-        'journal_finalized',
-        // #949, O2: the clean-publish exit event, last.
-        'driver_exited'
+        'round_ended'
       ])
+      // The run's own lifecycle is written through the run's Log handle: its start, stop rule, end and exit.
+      const runEventNames = homeRecords(home).names.events
+      expect(runEventNames.filter((name) => name === 'vinaya.run.started')).toHaveLength(1)
+      expect(runEventNames.filter((name) => name === 'vinaya.run.stop_rule_met')).toHaveLength(1)
+      expect(runEventNames.filter((name) => name === 'vinaya.run.exited')).toHaveLength(1)
       const gateResult = outboxLines(home).find((l) => l.event === 'gate_result_read') as Record<string, unknown>
       expect(gateResult.green).toBe(true)
     },

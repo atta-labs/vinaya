@@ -19,8 +19,6 @@ import type { RequiredSourceManifest } from '../../../../../../kernel/source-man
 import { createDriverExitRecorder } from './driver-lifecycle.js'
 import { cleanupAllReviewerIsolationArtifacts } from './reviewer-isolation.js'
 import { drainAllLogSinks } from './run-logging.js'
-import { emitDriverHeartbeat } from './driver-lifecycle.js'
-import { DRIVER_HEARTBEAT_INTERVAL_MS } from './driver-lifecycle.js'
 
 export async function initializeRunBody(c: LoopRunContext): Promise<void> {
   const { d, root } = c
@@ -483,17 +481,11 @@ export async function initializeRunBody(c: LoopRunContext): Promise<void> {
   // `exitTraceWritten` guards every call site below (reexec success, an
   // uncaught error, a process signal, and a normal publish/pause return)
   // from ever firing twice for the same exit.
-  // O1 (driver liveness): set once the heartbeat is started below, cleared here first
-  // so the timer is stopped before any `driver_exited` is written (Traps)
-  // and a stray heartbeat can never land after the exit line.
-  c.stopHeartbeat = () => {}
-
   c.recordDriverExited = createDriverExitRecorder({
     loopId: c.config.loopId,
     task: c.task,
     loopLogPath: c.loopLogPath,
     describeDecision: () => (c.decision.type === 'pause' ? `pause(${c.decision.reason})` : c.decision.type),
-    stopHeartbeat: () => c.stopHeartbeat(),
     log: c.log
   })
 
@@ -531,30 +523,6 @@ export async function initializeRunBody(c: LoopRunContext): Promise<void> {
     await drainAllLogSinks(c)
     process.exit(130)
   })
-
-  // O1 (driver liveness): the Log's one positive "this loop is running" signal. A
-  // Developer turn can run for an hour with no other Log event, and a loop
-  // in its first turn or one that died before pushing looks the same as a
-  // finished one from the Log alone — so a heartbeat says "still alive"
-  // and carries where the loop is (round/phase) and its PR once one
-  // exists. Fire-and-forget: `log` never throws and a failed delivery is
-  // dropped like any other event (Traps) — the callback never blocks or
-  // fails the round, and a build/emit fault is swallowed rather than left
-  // to crash the timer. Started here, once the signal handlers and
-  // `decision`/`loopLogPath` exist, so it covers even the first Developer
-  // turn; stopped by `recordDriverExited` before any exit line. The
-  // production timer is `.unref()`'d, so it never keeps the process alive.
-  c.emitHeartbeat = (): void =>
-    emitDriverHeartbeat({
-      loopId: c.config.loopId,
-      task: c.task,
-      round: c.round,
-      phase: c.currentPhase,
-      prNumber: c.prNumber,
-      log: c.log
-    })
-
-  c.stopHeartbeat = d.setHeartbeat(c.emitHeartbeat, DRIVER_HEARTBEAT_INTERVAL_MS)
 
   // Round 2 review, BLOCKER: `firstPass`/`pendingCompletionEvents` are
   // declared here, in this function's own scope — never inside the `try`

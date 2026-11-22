@@ -271,15 +271,6 @@ export type LoopDeps = {
    * reachable.
    */
   isGitHubReachable?: () => Promise<boolean>
-  /**
-   * O1 (driver liveness): starts the driver's liveness heartbeat — a repeating timer
-   * that fires `cb` every `intervalMs` while the process is alive, returning
-   * a function that stops it. The production default is a real `setInterval`
-   * whose handle is `.unref()`'d, so it NEVER keeps the process alive once
-   * the loop's own work is done (Traps). Injected so a test drives the
-   * callback on a fake clock, with no real timer and no five-minute wait.
-   */
-  setHeartbeat: (cb: () => void, intervalMs: number) => () => void
   prPollMaxAttempts: number
   prPollIntervalMs: number
   gatePollMaxAttempts: number

@@ -60,6 +60,7 @@ import {
   type LogSinkDeps
 } from '../../../kernel/log/log-sink'
 import { createVinayaLogSink } from '../integration/log/log-sink-factory'
+import { writeRunLifecycleEvent } from '../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
 import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, tasksExecutionRoot } from '../../../kernel/run-paths'
 import {
   createEffectExecutor,
@@ -1004,7 +1005,6 @@ async function drive(
     const cancelSink = logSink ?? ownLogFolder(runtimeDir)
     await cancelOnTheOperatorsBehalf(operatorsCancelSink(cancelSink))
     await watching
-    for (const line of recordedLogLines(cancelSink)) if (line.event === 'cancelled') append(eventFile, line)
   }
   /**
    * The cancel's own Log line, written through the shared sink to this scenario's folder, as a separate process's:
@@ -1012,6 +1012,12 @@ async function drive(
    */
   const operatorsCancelSink = (cancelSink: Partial<LogSinkDeps>): Partial<LogSinkDeps> => ({
     ...cancelSink,
+    // The cancel is written through the run's Log handle; the scenario keeps the event the loop built for it.
+    routeEvent: (event, where) => {
+      const routed = writeRunLifecycleEvent(event, where)
+      if (routed) append(eventFile, event as never)
+      return routed
+    },
     env: () => {
       const env = { ...process.env }
       delete env.VINAYA_HOST

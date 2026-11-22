@@ -12,15 +12,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import * as lifecycle from '../../../../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
 import {
   createDriverExitRecorder,
-  DRIVER_HEARTBEAT_INTERVAL_MS,
-  defaultSetHeartbeat,
-  emitDriverHeartbeat,
   keepDriverLock,
   seedLoopHistory,
+  taskRunId,
+  writeRunLifecycleEvent,
   type DriverExitReason
 } from '../../../../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
+import type { RunRecorder } from '../../../../../../kernel/log/run-recorder'
+import { attributeOf, createRunLifecycleWorld, eventNameOf, type RunLifecycleWorld } from '../../../run-lifecycle-world'
 
 const scratch: string[] = []
 afterEach(() => {
@@ -33,62 +35,146 @@ const loopLog = (): string => {
   return join(dir, 'driver.log')
 }
 
-describe('the driver heartbeat', () => {
-  it('beats every five minutes', () => {
-    expect(DRIVER_HEARTBEAT_INTERVAL_MS).toBe(300_000)
+describe('the run lifecycle through the run handle', () => {
+  const loop = (fields: Record<string, unknown>): DevReviewLoopEventInput =>
+    ({ kind: 'dev_review_loop', payload: {}, loop_id: 'l1', ...fields }) as unknown as DevReviewLoopEventInput
+  const started = loop({
+    event: 'loop_started',
+    task: 7,
+    title: 'A task',
+    policy: {
+      max_rounds: 5,
+      reviewers: ['code-reviewer', 'security'],
+      models: { developer: 'opus', security: 'sonnet' }
+    }
+  })
+  const write = (world: RunLifecycleWorld, recorder: RunRecorder, event: DevReviewLoopEventInput): void => {
+    expect(
+      writeRunLifecycleEvent(
+        event,
+        { runId: 'run-1', repository: 'atta-labs/vinaya' },
+        { recorder, runtimeDir: () => world.runtimeDir }
+      )
+    ).toBe(true)
+  }
+
+  it('has no driver heartbeat timer or event of its own', () => {
+    const exported = Object.keys(lifecycle)
+    expect(exported.filter((name) => /heartbeat/i.test(name))).toEqual([])
   })
 
-  it('reports where the loop is, with its pull request once there is one', () => {
-    const events: DevReviewLoopEventInput[] = []
-    emitDriverHeartbeat({ loopId: 'l1', task: 7, round: 2, phase: 'gates', prNumber: 31, log: (e) => events.push(e) })
-    emitDriverHeartbeat({ loopId: 'l1', task: 7, round: 1, phase: null, prNumber: 0, log: (e) => events.push(e) })
-    expect(events).toEqual([
-      {
-        kind: 'dev_review_loop',
-        payload: {},
-        loop_id: 'l1',
-        event: 'driver_heartbeat',
-        task: 7,
-        round: 2,
-        phase: 'gates',
-        pr: 31
-      },
-      {
-        kind: 'dev_review_loop',
-        payload: {},
-        loop_id: 'l1',
-        event: 'driver_heartbeat',
-        task: 7,
-        round: 1,
-        phase: 'starting'
-      }
-    ])
-  })
-
-  it('never throws out of the timer when the sink does', () => {
-    expect(() =>
-      emitDriverHeartbeat({
-        loopId: 'l',
-        task: 1,
-        round: 1,
-        phase: null,
-        prNumber: 0,
-        log: () => {
-          throw new Error('sink down')
-        }
+  it('writes a run start with the process, the round limit, the seats and their models, and one run span at the end', async () => {
+    const world = createRunLifecycleWorld()
+    const recorder = world.process()
+    write(world, recorder, started)
+    write(
+      world,
+      recorder,
+      loop({
+        event: 'journal_finalized',
+        rounds: 2,
+        total_wall_ms: 1000,
+        time_to_green_ms: 500,
+        files_changed_total: 4,
+        final_head: 'abc',
+        result: 'merged_ready'
       })
-    ).not.toThrow()
+    )
+    await recorder.drain()
+    const runs = world.spans().filter((s) => s.name.startsWith('invoke_workflow'))
+    expect(runs).toHaveLength(1)
+    expect(runs[0]?.name).toBe('invoke_workflow vinaya-strict')
+    expect(attributeOf(runs[0], 'vinaya.run.round_limit')).toBe(5)
+    expect(attributeOf(runs[0], 'vinaya.run.rounds')).toBe(2)
+    expect(attributeOf(runs[0], 'vinaya.run.outcome')).toBe('ready')
+    expect(world.events().filter((e) => eventNameOf(e) === 'vinaya.run.started')).toHaveLength(1)
+    expect(world.errors).toEqual([])
   })
 
-  it('starts an unref-ed timer that the returned function stops', async () => {
-    let beats = 0
-    const stop = defaultSetHeartbeat(() => (beats += 1), 5)
-    await new Promise((resolve) => setTimeout(resolve, 40))
-    stop()
-    const seen = beats
-    expect(seen).toBeGreaterThan(0)
-    await new Promise((resolve) => setTimeout(resolve, 30))
-    expect(beats).toBe(seen)
+  it('writes the alive event after two minutes of silence, and the exit with its kind and code', async () => {
+    const world = createRunLifecycleWorld()
+    const recorder = world.process()
+    write(world, recorder, started)
+    world.advance(119_000)
+    expect(world.events().filter((e) => eventNameOf(e) === 'vinaya.run.alive')).toHaveLength(0)
+    world.advance(2_000)
+    await recorder.drain()
+    expect(world.events().filter((e) => eventNameOf(e) === 'vinaya.run.alive')).toHaveLength(1)
+    write(
+      world,
+      recorder,
+      loop({ event: 'driver_exited', task: 7, reason: 'reexec', last_decision: 'x', exit_code: 3 })
+    )
+    await recorder.drain()
+    const exited = world.events().filter((e) => eventNameOf(e) === 'vinaya.run.exited')
+    expect(exited).toHaveLength(1)
+    expect(attributeOf(exited[0], 'vinaya.exit.kind')).toBe('restarted')
+    expect(attributeOf(exited[0], 'vinaya.exit.code')).toBe(3)
+  })
+
+  it('carries a run on in a later process: one start, one pause span ended by the resume, one run span', async () => {
+    const world = createRunLifecycleWorld()
+    const first = world.process()
+    write(world, first, started)
+    write(world, first, loop({ event: 'paused', round: 2, reason: 'principal_item', reason_code: 'confidence' }))
+    write(
+      world,
+      first,
+      loop({
+        event: 'journal_finalized',
+        rounds: 2,
+        total_wall_ms: 10,
+        time_to_green_ms: null,
+        files_changed_total: 1,
+        final_head: 'abc',
+        result: 'stopped'
+      })
+    )
+    await first.drain()
+    expect(world.spans().filter((s) => s.name.startsWith('invoke_workflow'))).toHaveLength(0)
+    const second = world.process()
+    write(world, second, loop({ event: 'resumed', round: 2, by: 'principal' }))
+    write(world, second, started)
+    write(world, second, loop({ event: 'stop_condition_met', round: 3, condition: 'max_rounds' }))
+    write(
+      world,
+      second,
+      loop({
+        event: 'journal_finalized',
+        rounds: 3,
+        total_wall_ms: 20,
+        time_to_green_ms: null,
+        files_changed_total: 2,
+        final_head: 'def',
+        result: 'stopped'
+      })
+    )
+    await second.drain()
+    expect(world.events().filter((e) => eventNameOf(e) === 'vinaya.run.started')).toHaveLength(1)
+    expect(world.spans().filter((s) => s.name.startsWith('invoke_workflow'))).toHaveLength(1)
+    const pauses = world.spans().filter((s) => s.name === 'vinaya.pause')
+    expect(pauses).toHaveLength(1)
+    expect(attributeOf(pauses[0], 'vinaya.pause.by')).toBe('person')
+    expect(attributeOf(pauses[0], 'vinaya.pause.why')).toBe('confidence')
+    const rules = world.events().filter((e) => eventNameOf(e) === 'vinaya.run.stop_rule_met')
+    expect(rules.map((e) => attributeOf(e, 'vinaya.rule'))).toEqual(['round_limit'])
+    expect(world.errors).toEqual([])
+  })
+
+  it('leaves an event that is not a run lifecycle event to the earlier-format writer', () => {
+    const world = createRunLifecycleWorld()
+    const recorder = world.process()
+    const other = loop({ event: 'round_started', round: 1, base_head: 'abc' })
+    expect(writeRunLifecycleEvent(other, { runId: 'run-1' }, { recorder, runtimeDir: () => world.runtimeDir })).toBe(
+      false
+    )
+  })
+
+  it('names one run for a task in every process until the run ends', () => {
+    const world = createRunLifecycleWorld()
+    const first = taskRunId(world.runtimeDir, 7, () => 'run-a')
+    expect(taskRunId(world.runtimeDir, 7, () => 'run-b')).toBe(first)
+    expect(taskRunId(world.runtimeDir, 8, () => 'run-c')).toBe('run-c')
   })
 })
 
@@ -102,7 +188,6 @@ describe('the driver exit record', () => {
       task: 7,
       loopLogPath: path,
       describeDecision,
-      stopHeartbeat: () => order.push('heartbeat-stopped'),
       log: (event) => {
         order.push(`logged:${event.event}`)
         events.push(event)
@@ -111,12 +196,12 @@ describe('the driver exit record', () => {
     return { record, events, order, path }
   }
 
-  it('writes the exit once, whichever path reaches it, and stops the heartbeat first', () => {
+  it('writes the exit once, whichever path reaches it', () => {
     const { record, events, order } = recorder()
     record('finished', { exitCode: 0 })
     record('signal', { exitCode: 143 })
     record('error', { error: new Error('late') })
-    expect(order).toEqual(['heartbeat-stopped', 'logged:driver_exited'])
+    expect(order).toEqual(['logged:driver_exited'])
     expect(events).toEqual([
       {
         kind: 'dev_review_loop',
@@ -171,7 +256,6 @@ describe('the driver exit record', () => {
       task: 1,
       loopLogPath: loopLog(),
       describeDecision: () => 'publish',
-      stopHeartbeat: () => {},
       log: () => {
         throw new Error('sink down')
       }

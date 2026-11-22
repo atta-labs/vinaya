@@ -233,12 +233,10 @@ describe('devReviewLoop — a red gate the developer never fixes pauses, bounded
     expect(pauseComment).toMatch(/Vinaya CI \(run 1\)/)
 
     // O2: `stop_condition_met` fires exactly once, never once per stalled turn.
-    const loopEvents = outboxLines(world)
-      .filter((l) => l.kind === 'dev_review_loop')
-      .map((l) => l.event)
+    const loopEvents = world.runEvents.filter((l) => l.kind === 'dev_review_loop').map((l) => l.event)
     expect(loopEvents.filter((e) => e === 'stop_condition_met')).toHaveLength(1)
     expect(loopEvents.filter((e) => e === 'paused')).toHaveLength(1)
-    const stop = outboxLines(world).find((l) => l.event === 'stop_condition_met') as Record<string, unknown>
+    const stop = world.runEvents.find((l) => l.event === 'stop_condition_met') as Record<string, unknown>
     expect(stop.condition).toBe('repeat_failure')
 
     const pauseState = JSON.parse(readFileSync(join(controlDir(world), 'pause-state.json'), 'utf8')) as Record<
@@ -376,7 +374,7 @@ describe("devReviewLoop — O2 (`[task-operator-v1]`/Issue #662): a developer di
     expect(devAttempts).toBe(2)
     expect(world.dispatchCountByRole.developer).toBe(1)
 
-    const retryEvent = outboxLines(world).find((l) => l.event === 'infrastructure_retry') as
+    const retryEvent = world.runEvents.find((l) => l.event === 'infrastructure_retry') as
       | Record<string, unknown>
       | undefined
     expect(retryEvent).toBeDefined()
@@ -413,7 +411,7 @@ describe("devReviewLoop — O2 (`[task-operator-v1]`/Issue #662): a developer di
     // One initial attempt plus every retry the shared bound allows.
     expect(devAttempts).toBe(MAX_INFRASTRUCTURE_RETRIES + 1)
 
-    const retryEvent = outboxLines(world).find((l) => l.event === 'infrastructure_retry') as
+    const retryEvent = world.runEvents.find((l) => l.event === 'infrastructure_retry') as
       | Record<string, unknown>
       | undefined
     expect(retryEvent).toBeDefined()

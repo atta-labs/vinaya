@@ -65,7 +65,8 @@ import { rateLimitPauseDetail } from './round-assess.js'
 import { RateLimitWaitsSpent } from './round-assess.js'
 import type { StopEvent } from './stop-decision.js'
 import { pauseForDriverError } from './stop-decision.js'
-import { keepDriverLock } from './driver-lifecycle.js'
+import { keepDriverLock, writeRunLifecycleEvent } from './driver-lifecycle.js'
+import { loopStartedEvent } from '../../../../tools/dev-review-policy/assess-round'
 import { spendsInfrastructureRetry } from './round-assess.js'
 
 export async function startRun(c: LoopRunContext): Promise<LoopResult> {
@@ -96,6 +97,12 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
     c.policy = d.reviewPolicy()
     config.maxRounds = c.policy.maxRounds
     config.maxTaskMinutes = c.policy.maxTaskMinutes
+    // The run starts on its Log handle before the first Developer turn, so its liveness covers that turn too. A
+    // process that continues the run carries it on: the handle writes no second start.
+    writeRunLifecycleEvent(loopStartedEvent({ ...c.state, config }), {
+      runId: c.runId,
+      ...(c.repo === null ? {} : { repository: `${c.repo.owner}/${c.repo.repo}` })
+    })
     c.repoRoot = d.repoRoot()
     c.baseHeadAtStart = d.gitRevParseOriginMain()
 

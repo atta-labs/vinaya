@@ -37,6 +37,7 @@ import { createVinayaLogSink } from '../../../../integration/log/log-sink-factor
 import { loopLogPathFor } from '../../../../../../kernel/log/client/loop-log.js'
 import { appendRunStartMarker } from '../../../../../../kernel/log/client/loop-log.js'
 import { randomUUID } from 'node:crypto'
+import { taskRunId } from './driver-lifecycle.js'
 import { printDriverLockLine } from './pause-resume.js'
 import { clearDriverLock } from './pause-resume.js'
 import { acquireDriverLockAtomic } from './pause-resume.js'
@@ -386,12 +387,13 @@ export async function initializeRunEntry(c: LoopRunContext): Promise<void> {
   // run-start marker and a line saying the sweep is running land in the
   // loop log AND on stderr first. A driver that still has many folders
   // left to classify must never look silent while it works through them.
-  const sink = createVinayaLogSink(d.logSink)
+  const sink = createVinayaLogSink({ ...d.logSink, runId: taskRunId(root, c.task) })
   c.log = sink.log
   c.runId = sink.runId
   c.drainLoopLogSink = sink.drain
 
-  if (!process.env.VINAYA_RUN_ID) process.env.VINAYA_RUN_ID = c.runId
+  // The run's records, whichever sink writes them, belong to the one run this task names.
+  process.env.VINAYA_RUN_ID = c.runId
 
   // O3: two independent sink instances can both have a `log()` call in
   // flight when this driver is about to exit — this closure's own

@@ -73,6 +73,7 @@ import { DEFAULT_REVIEW_POLICY } from '../../../tools/task-contract/review-polic
 import type { IssueSurface } from '../../../tools/task-contract/issue-validation'
 import { objectivesOf, objectivesVersion, renderObjectives } from '../../../tools/task-contract/objectives'
 import { FIXTURE_REPO, isolatedConfigFixture } from '../../../../../kernel/conformance/unit/process-fixture.js'
+import { writeRunLifecycleEvent } from '../../../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
 
 /** A fake reviewer/security dispatch's outcome, in a compact line grammar `fakeReviewOutput` turns into the structured ReviewResult it returns. */
 export type RoleOutcome = {
@@ -132,6 +133,10 @@ export type LoopWorld = {
   afterPublish: 'merge' | 'watch'
   /** The `conflict_reentry` events the watching driver handed its Log (`runDriverLoopInProcess` only). */
   watchEvents: unknown[]
+  /** The run lifecycle events the loop handed its Log, as the loop built them: each is written through the run's Log handle, never as an earlier-format line. */
+  runEvents: Array<Record<string, unknown>>
+  /** How many earlier-format lines the outbox held when each run event was handed to the Log: where each stands among them. */
+  runEventAfter: number[]
   /** Flips true the first time the Developer role is dispatched — the head then resolves and the PR opens, exactly as the fake `gh` keyed on `.fake-dev-invoked`. */
   developerPushed: boolean
   /**
@@ -396,6 +401,8 @@ export function makeWorld(overrides: Partial<LoopWorld> = {}): LoopWorld {
     prState: 'OPEN',
     afterPublish: 'merge',
     watchEvents: [],
+    runEvents: [],
+    runEventAfter: [],
     developerPushed: false,
     remoteBranchExists: false,
     worktreeHead: sha('a'),
@@ -673,6 +680,17 @@ export function fakeDeveloperTurnOutput(world: LoopWorld, round: number, prompt:
 export function makeInProcessDeps(world: LoopWorld): Partial<LoopDeps> {
   let dispatchSeq = 0
   return {
+    // Every sink the run builds hands a run lifecycle event to the run's Log handle; the world keeps what it was given.
+    logSink: {
+      routeEvent: (event, where) => {
+        const routed = writeRunLifecycleEvent(event, where)
+        if (routed) {
+          world.runEvents.push({ ...(event as unknown as Record<string, unknown>) })
+          world.runEventAfter.push(outboxLines(world).length)
+        }
+        return routed
+      }
+    },
     dispatchRole: async (role, _agent, prompt, opts): Promise<DispatchHandle> => {
       const round = opts.round ?? 1
       world.dispatchCountByRole[role] = (world.dispatchCountByRole[role] ?? 0) + 1
@@ -1416,6 +1434,66 @@ export function outboxLines(world: LoopWorld): Array<Record<string, unknown>> {
     .flatMap((p) => readFileSync(p, 'utf8').trim().split('\n'))
     .filter(Boolean)
     .map((l) => JSON.parse(l))
+}
+
+/**
+ * What the loop logged for its task, in the order it logged it: the earlier-format lines in file order, with each run
+ * lifecycle event the loop handed the run's Log handle at the place it was handed over. The run events are the loop's
+ * own (the records they became are in `runRecords`).
+ */
+export function loopLog(world: LoopWorld): Array<Record<string, unknown>> {
+  const lines = outboxLines(world)
+  const merged: Array<Record<string, unknown>> = []
+  let next = 0
+  for (let at = 0; at <= lines.length; at += 1) {
+    while (next < world.runEvents.length && (world.runEventAfter[next] ?? 0) <= at) {
+      merged.push(world.runEvents[next] as Record<string, unknown>)
+      next += 1
+    }
+    if (at < lines.length) merged.push(lines[at] as Record<string, unknown>)
+  }
+  return merged
+}
+
+/**
+ * The run's local copy as this world's loop wrote it through the run's Log handle: the spans and events stored in
+ * `<runtimeDir>/logs/<repository>/`, newest writer's files included. A test reads the run records here, never the
+ * earlier-format outbox lines.
+ */
+export function runRecords(world: LoopWorld): RunRecords {
+  return readRunRecords(join(world.runtimeDir, 'logs'))
+}
+
+export type RunRecords = { spans: any[]; events: any[]; names: { spans: string[]; events: string[] } }
+
+/** The spans and events stored under a Log folder (every repository segment in it). */
+export function readRunRecords(logsRoot: string): RunRecords {
+  const lines = (suffix: string): any[] => {
+    if (!existsSync(logsRoot)) return []
+    return readdirSync(logsRoot).flatMap((segment) => {
+      const folder = join(logsRoot, segment)
+      let names: string[] = []
+      try {
+        names = readdirSync(folder).filter((name) => name.endsWith(suffix))
+      } catch {
+        return []
+      }
+      return names.flatMap((name) =>
+        readFileSync(join(folder, name), 'utf8')
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+      )
+    })
+  }
+  const spans = lines('.traces.jsonl').flatMap((r) =>
+    r.resourceSpans.flatMap((g: any) => g.scopeSpans.flatMap((s: any) => s.spans))
+  )
+  const events = lines('.logs.jsonl').flatMap((r) =>
+    r.resourceLogs.flatMap((g: any) => g.scopeLogs.flatMap((s: any) => s.logRecords))
+  )
+  return { spans, events, names: { spans: spans.map((s) => s.name), events: events.map((e) => e.eventName) } }
 }
 
 // --- on-disk path helpers, rooted at the world's own runtime dir ----------

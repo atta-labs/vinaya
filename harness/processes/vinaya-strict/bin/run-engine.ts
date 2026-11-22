@@ -6,6 +6,7 @@ import {
   type LoopState
 } from '../tools/dev-review-policy/types'
 import type { PauseReason } from '../tools/dev-review-policy/types'
+import { loopStartedEvent } from '../tools/dev-review-policy/assess-round'
 import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'
 import { vinayaProcessIntegration } from '../integration/process/process-integration'
 import { Database } from 'bun:sqlite'
@@ -193,9 +194,8 @@ import {
 import {
   conflictReentryEvent,
   createDriverExitRecorder,
-  DRIVER_HEARTBEAT_INTERVAL_MS,
-  defaultSetHeartbeat,
-  emitDriverHeartbeat
+  taskRunId,
+  writeRunLifecycleEvent
 } from '../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
 import {
   clearDriverLock,
@@ -1590,8 +1590,6 @@ export async function liveSweepTasks(
 }
 
 export interface EngineLifecycleOptions {
-  /** Starts the driver heartbeat timer; replaced by a test that drives the callback on its own clock. */
-  setHeartbeat?: (cb: () => void, intervalMs: number) => () => void
   pid?: number
   isPidAlive?: (pid: number) => boolean
   now?: () => Date
@@ -1724,6 +1722,18 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         registeredSeatNames()
       )
   })
+  // The run starts on its Log handle as the first leg begins, so its liveness is written through the first Developer
+  // turn too. A process that continues the run carries it on: the handle writes no second start.
+  try {
+    const loopState = options.taskInput?.loopState
+    if (loopState !== undefined && options.sink.runId !== undefined)
+      writeRunLifecycleEvent(loopStartedEvent(loopState), {
+        runId: options.sink.runId,
+        ...(resolvedRepo === null ? {} : { repository: `${resolvedRepo.owner}/${resolvedRepo.repo}` })
+      })
+  } catch {
+    // A run that cannot be started on its handle still runs.
+  }
   const producers = createVinayaLogProducers({
     loopId: options.loopId,
     task: args.task,
@@ -1812,7 +1822,6 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   const handoffLog = (event: DevReviewLoopEventInput): void => {
     deferredHandoffEvents.push(event)
   }
-  let currentNode: string | null = null
   let prNumber = 0
   let signalled: 'SIGINT' | 'SIGTERM' | null = null
   /** Set when the ruling watch found the pause resolved as a cancel: the run ends and leaves no lock. */
@@ -1820,27 +1829,13 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   /** Set when the ruling watch found the pause's pull request merged or closed: the run ends and leaves no lock. */
   let endedByWatch = false
   let described = 'starting'
-  let stopHeartbeat: () => void = () => {}
   const recordExit = createDriverExitRecorder({
     loopId: options.loopId,
     task: args.task,
     loopLogPath: logPath,
     describeDecision: () => described,
-    stopHeartbeat: () => stopHeartbeat(),
     log
   })
-  stopHeartbeat = (lifecycle.setHeartbeat ?? defaultSetHeartbeat)(
-    () =>
-      emitDriverHeartbeat({
-        loopId: options.loopId,
-        task: args.task,
-        round: options.taskInput?.reviewRound?.() ?? 1,
-        phase: currentNode,
-        prNumber,
-        log
-      }),
-    DRIVER_HEARTBEAT_INTERVAL_MS
-  )
   const stopSignals =
     lifecycle.handleSignals === false
       ? () => {}
@@ -2442,7 +2437,6 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           onEvent: (event) => {
             const lifecycleEvent = event as NodeLifecycle
             if (lifecycleEvent.type === 'node:start') {
-              currentNode = lifecycleEvent.nodeId
               const stage = V2_NODE_STAGES[lifecycleEvent.nodeId]
               if (stage !== undefined) narrateStage({ round: stageRound(), stage })
             }
@@ -3597,7 +3591,9 @@ async function runLive(
   recordRunFlow(runtimeDir, args.task, loaded.flowKey)
   configureEngineLogEnvironment()
   setEngineLogIdentity(loaded, args.agent)
-  const sink = createEngineLogSink()
+  const sink = createEngineLogSink({ runId: taskRunId(runtimeDir, args.task) })
+  // The run's records, whichever sink writes them, belong to the one run this task names.
+  process.env.VINAYA_RUN_ID = sink.runId
   const loopId = randomUUID()
   process.env.VINAYA_RUN = loopId
   const repo = liveRepo()
