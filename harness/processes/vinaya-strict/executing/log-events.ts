@@ -75,12 +75,10 @@ function readAssessment(steps: RecordedSteps, step: string = ASSESS_STEP): Asses
   try {
     const parsed = JSON.parse(stdout) as { decision?: { type?: unknown; reason?: unknown }; events?: unknown }
     if (!Array.isArray(parsed.events) || typeof parsed.decision?.type !== 'string') return null
-    // The loop's own events, and the role attempt a reviewer step that gave no usable review leaves.
+    // The loop's own events; an agent turn is written through the run's Log handle, never as an event.
     const events = parsed.events.filter(
       (event): event is DevReviewLoopEventInput =>
-        typeof event === 'object' &&
-        event !== null &&
-        ['dev_review_loop', 'role_attempt'].includes(String((event as { kind?: unknown }).kind))
+        typeof event === 'object' && event !== null && (event as { kind?: unknown }).kind === 'dev_review_loop'
     )
     const decision =
       parsed.decision.type === 'pause' ? `pause(${String(parsed.decision.reason)})` : parsed.decision.type

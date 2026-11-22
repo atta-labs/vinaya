@@ -334,6 +334,57 @@ describe('registry-gates G7 — anything that can block or write to the forge re
     }
   })
 
+  it("counts a file that writes through the run's Log handle as a producer, so a gate reaching only the handle passes", () => {
+    const root = initFixture('registry-gates-g7-run-handle')
+    const checkBin = 'harness/processes/vinaya-strict/checks/bin/check-demo.ts'
+    const forgeWriter = 'harness/processes/vinaya-strict/forge-demo.ts'
+    try {
+      mkdirSync(join(root, 'harness/processes/vinaya-strict/checks/bin'), { recursive: true })
+      mkdirSync(join(root, 'harness/kernel/log'), { recursive: true })
+      // No earlier-format writer is imported anywhere below: only the run's Log handle.
+      writeFileSync(
+        join(root, 'harness/kernel/log/run-recorder.ts'),
+        'export function runRecorder(): { handle: () => undefined } {\n  return { handle: () => undefined }\n}\n'
+      )
+      writeFileSync(
+        join(root, forgeWriter),
+        "import { runRecorder } from '../../kernel/log/run-recorder.js'\nexport const write = (): unknown => runRecorder().handle()\n"
+      )
+      writeFileSync(join(root, checkBin), "import { write } from '../../forge-demo.js'\nwrite()\n")
+      const { producers, imports } = gatherLogProducerGraph(root)
+      expect(producers.has(forgeWriter)).toBe(true)
+      expect(producers.has('harness/kernel/log/run-recorder.ts')).toBe(true)
+      expect(reachesProducer(checkBin, producers, imports)).toBe(true)
+      const result = checkG7({
+        enforcementMapPresent: true,
+        crossingFiles: [],
+        blockingFiles: [checkBin],
+        producers,
+        imports,
+        exemptions: {},
+        existsFn: (p) => existsSync(join(root, p))
+      })
+      expect(result.findings).toEqual([])
+      expect(result.status).toBe('pass')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("a file that only names the run's Log handle without taking it from the recorder is no producer", () => {
+    const root = initFixture('registry-gates-g7-run-handle-absent')
+    const checkBin = 'harness/processes/vinaya-strict/checks/bin/check-demo.ts'
+    try {
+      mkdirSync(join(root, 'harness/processes/vinaya-strict/checks/bin'), { recursive: true })
+      writeFileSync(join(root, checkBin), 'const runRecorder = () => undefined\nrunRecorder()\n')
+      const { producers, imports } = gatherLogProducerGraph(root)
+      expect(producers.has(checkBin)).toBe(false)
+      expect(reachesProducer(checkBin, producers, imports)).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('leaves kernel tests and non-TypeScript files out of the graph', () => {
     const root = initFixture('registry-gates-g7-kernel-tests')
     try {

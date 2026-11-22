@@ -84,6 +84,7 @@ import {
   type NodeLifecycle
 } from '../../../../harness/kernel/log/client/translate'
 import { createVinayaLogProducers, handoffHaltReason, STEP_FAILED } from '../executing/log-events'
+import { registeredSeatNames } from '../executing/seat-names'
 import { createHandoff, liveHandoffDeps, type Handoff, type HandoffDeps } from '../executing/handoff'
 import {
   ciRedReentryBoundDetail,
@@ -143,7 +144,8 @@ import {
 import { briefHash as briefHashOf, policyDigest as policyDigestOf } from '../tools/task-contract/review-input-manifest'
 import { extractSourceRevision } from '../tools/task-contract/brief-render'
 
-import { runRecorder } from '../../../kernel/log/run-recorder'
+import { resolveRepo } from '../../../kernel/adapters/code-host/github/resolve-repo'
+import { type AgentTurn, type RunRecorder, runRecorder } from '../../../kernel/log/run-recorder'
 import { reviewerDevToolContext, type DevToolContext, type DevToolResult } from '../../../kernel/tools/dev-tools-server'
 import { createReadSourceTool } from '../../../kernel/tools/read-source'
 import {
@@ -210,9 +212,14 @@ import {
   appendRoleLine,
   appendRunStartMarker,
   loopLogPathFor,
+  narrateAgentRecord,
   narrateDriverEvent
 } from '../../../kernel/log/client/loop-log'
-import { type AgentStreamRenderer, createAgentStreamRenderer } from '../../../kernel/adapters/agents/agent-stream'
+import {
+  type AgentStep,
+  type AgentStreamRenderer,
+  createAgentStreamRenderer
+} from '../../../kernel/adapters/agents/agent-stream'
 import { CLI_ENTRY_ENV } from '../tools/cli-entry'
 import { cliEntryFor, processFolderFor, programFile, programSourceIn } from '../tools/programs'
 import { pollMergeableState } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
@@ -224,7 +231,7 @@ import {
   recordRunnerDeveloperLaunch,
   renderClaudeEvent,
   renderCodexEvent,
-  classifyRoleAttemptOutcome,
+  recordUsage,
   readDispatchUsage,
   terminateChildWithGrace,
   type DispatchUsageReading,
@@ -1021,19 +1028,28 @@ export function withReviewerWorkingDirectory(
   }
 }
 
-/** Builds the renderer for one agent launch from the vendor and the directory the launch runs in. */
-export type AgentRendererFor = (agent: Agent, worktree: string) => AgentStreamRenderer
+/**
+ * Builds the renderer for one agent launch from the vendor and the directory the launch runs in; `observe` takes the
+ * steps the stream shows, to record them under the launch's agent turn.
+ */
+export type AgentRendererFor = (
+  agent: Agent,
+  worktree: string,
+  observe?: (step: AgentStep) => void
+) => AgentStreamRenderer
 
 /** The standalone dispatch's own renderer: the vendor's translator, falling back to its `renderEvent`. */
-const standaloneRendererFor: AgentRendererFor = (agent, worktree) =>
+const standaloneRendererFor: AgentRendererFor = (agent, worktree, observe) =>
   createAgentStreamRenderer(
     agent,
     { worktree, home: homedir() },
     agent === 'claude' ? renderClaudeEvent : renderCodexEvent,
     Date.now,
-    // A launch of this runner has no dispatch effect, so no agent span to place a step under: nothing is recorded.
-    runRecorder().steps(undefined).observe
+    observe
   )
+
+/** The agent turn each launch's child opened, so the tee that renders its stream records the steps under it. */
+const launchTurns = new WeakMap<object, AgentTurn>()
 
 /**
  * Tees each agent launch's stdout into the task's driver log while the agent runs, as the standalone dispatch does:
@@ -1057,7 +1073,11 @@ export function withAgentNarration(
     try {
       const role = launchRoleOf(roots, args, options?.env)
       if (role === undefined || !child.stdout) return child
-      const renderer = (narration.rendererFor ?? standaloneRendererFor)(narration.agent, options?.cwd ?? process.cwd())
+      const renderer = (narration.rendererFor ?? standaloneRendererFor)(
+        narration.agent,
+        options?.cwd ?? process.cwd(),
+        launchTurns.get(child)?.steps.observe
+      )
       const decoder = new StringDecoder('utf8')
       // Whatever has arrived since the last complete line: a chunk can split one.
       let carry = ''
@@ -1084,13 +1104,6 @@ export function withAgentNarration(
   }
 }
 
-/**
- * Whether a Log event is one an agent launch writes when it ends (its `role_attempt` and `usage`), rather than one the
- * loop writes: a launch's attempt names the agent as its actor, the loop's own attempts name a role.
- */
-export const isAgentLaunchEvent = (event: { kind?: unknown; actor?: unknown }): boolean =>
-  event.kind === 'usage' || (event.kind === 'role_attempt' && (event.actor === 'claude' || event.actor === 'codex'))
-
 /** What one role's agent launch used, as `withDispatchUsage` reports it when the launch ends. */
 export interface LaunchUsage {
   role: HeldVerdictRole | 'developer'
@@ -1098,7 +1111,16 @@ export interface LaunchUsage {
   exitCode: number | null
   durationMs: number
   attribution?: LaunchLogAttribution
+  /** The launch's agent turn, opened when it was spawned; the report ends it. */
+  turn?: AgentTurn
 }
+
+/** Opens one launch's agent turn when it is spawned: the role it runs, the attribution it was claimed under, and when it started. */
+export type StartLaunchTurn = (
+  role: LaunchUsage['role'],
+  attribution: LaunchLogAttribution | undefined,
+  startedAt: number
+) => AgentTurn | undefined
 
 /** The most of a launch's stdout kept at each end: the session id and model are printed first, the usage line last. */
 const USAGE_STDOUT_KEEP = 4 * 1024 * 1024
@@ -1115,7 +1137,8 @@ export function withDispatchUsage(
   agent: Agent,
   onUsage: (launch: LaunchUsage) => void,
   now: () => number = Date.now,
-  attributionOf?: (role: LaunchUsage['role']) => LaunchLogAttribution
+  attributionOf?: (role: LaunchUsage['role']) => LaunchLogAttribution,
+  startTurn?: StartLaunchTurn
 ): SpawnFn {
   const roots = {
     developer: join(generatedRoot, 'developer'),
@@ -1129,6 +1152,9 @@ export function withDispatchUsage(
       if (role === undefined || !child.stdout) return child
       const attribution = attributionOf?.(role)
       const startedAt = now()
+      // The launch's agent turn opens here, where the process is spawned, and ends in this same process when it closes.
+      const turn = startTurn?.(role, attribution, startedAt)
+      if (turn !== undefined) launchTurns.set(child, turn)
       const decoder = new StringDecoder('utf8')
       let head = ''
       let tail = ''
@@ -1140,7 +1166,7 @@ export function withDispatchUsage(
       child.on('close', (code: number | null) => {
         try {
           const reading = readDispatchUsage(agent, { tail, head })
-          onUsage({ role, reading, exitCode: code, durationMs: now() - startedAt, attribution })
+          onUsage({ role, reading, exitCode: code, durationMs: now() - startedAt, attribution, turn })
         } catch {
           // Reading usage never ends the run it observes.
         }
@@ -1196,36 +1222,57 @@ export function claimLaunchAttribution(
 }
 
 /**
- * The `role_attempt` and `usage` events one ended launch writes, as the standalone dispatch writes them for its own:
- * the launch's attempt names the agent that ran it as its actor, where the loop's own attempts name the role.
+ * The seat an Engine launch's agent sits in, as the standalone dispatch names it: the attribution it was claimed
+ * under names it, and a launch with none is named from its role.
  */
-export function launchUsageEvents(launch: LaunchUsage, agent: Agent, effectId: string, requestedModel: string | null) {
-  const model = launch.reading.model ?? (requestedModel === null ? null : `requested:${requestedModel}`)
-  return [
-    {
-      kind: 'role_attempt',
-      event: 'attempted',
-      payload: {},
-      actor: agent,
-      attempt: launch.attribution?.attempt ?? null,
-      effect_id: effectId,
-      model,
-      outcome: classifyRoleAttemptOutcome(false, false, false, launch.exitCode),
-      usage: launch.reading.usage,
-      duration_ms: launch.durationMs
-    },
-    {
-      kind: 'usage',
-      event: 'observed',
-      payload: {},
-      model,
-      source: launch.reading.source,
-      semantics: 'cumulative',
-      units: launch.reading.units.units,
-      unknown_reason: launch.reading.units.unknownReason,
-      duration_ms: launch.durationMs
-    }
-  ] as const
+export function launchSeatOf(role: LaunchUsage['role'], attribution?: LaunchLogAttribution): string {
+  return attribution?.role ?? (role === 'reviewer' ? 'code-reviewer' : role)
+}
+
+/**
+ * Opens the agent turn of one launch: an `invoke_agent` span for its seat, written as the standalone dispatch writes
+ * its own, with the launch's attempt and the model it asked for.
+ */
+export function startLaunchTurn(
+  input: { agent: Agent; model: string | null; loopId: string; recorder?: RunRecorder },
+  role: LaunchUsage['role'],
+  attribution: LaunchLogAttribution | undefined,
+  startedAt: number
+): AgentTurn {
+  const seat = launchSeatOf(role, attribution)
+  return (input.recorder ?? runRecorder()).turn({
+    seat,
+    provider: input.agent,
+    codingAgent: input.agent,
+    ...(input.model === null ? {} : { model: input.model }),
+    ...(attribution?.round === undefined ? {} : { round: attribution.round }),
+    key: `${input.loopId}:${seat}:${attribution?.attempt ?? startedAt}`,
+    startTime: startedAt
+  })
+}
+
+/**
+ * Ends one launch's agent turn when its process closes: the tokens it used, or why they are not known, then what
+ * came out of it, or how it failed. A launch that ran into the vendor's usage limit names the reset time.
+ */
+export function endLaunchTurn(launch: LaunchUsage, limit: UsageLimit | null): void {
+  const turn = launch.turn
+  if (turn === undefined) return
+  recordUsage(turn, launch.reading.cacheUsage, launch.reading.units)
+  const attempt = launch.attribution?.attempt ?? null
+  if (launch.exitCode === 0) {
+    turn.returned({
+      outcome: 'done',
+      attempt,
+      ...(launch.reading.model === null ? {} : { responseModel: launch.reading.model })
+    })
+    return
+  }
+  turn.failed({
+    errorType: limit === null ? 'crash' : 'usage_limit',
+    attempt,
+    ...(limit === null || limit.resetAtMs === null ? {} : { resetAt: new Date(limit.resetAtMs).toISOString() })
+  })
 }
 
 /**
@@ -1452,6 +1499,8 @@ export function tracedActions(
 export interface LogSinkLike {
   log: (event: never, attribution?: LaunchLogAttribution) => void
   drain: () => Promise<void>
+  /** The id every record of the run carries; the run's Log handle is connected with it. */
+  runId?: string
 }
 
 export interface EngineRunOptions {
@@ -1505,7 +1554,11 @@ export interface EngineRunOptions {
   /** Replaces the writers and forge posts a pause hands off to; for a run that must not reach them. */
   handoffDeps?: HandoffDeps
   /** Replaces the driver log's agent-stream renderer or event narration; the standalone loop's own by default. */
-  narration?: { rendererFor?: AgentRendererFor; narrateEvent?: typeof narrateDriverEvent }
+  narration?: {
+    rendererFor?: AgentRendererFor
+    narrateEvent?: typeof narrateDriverEvent
+    narrateAgentRecord?: typeof narrateAgentRecord
+  }
   /** The key the role hosts' sockets are derived from; `engine-<task>` unless a run beside the live one needs its own. */
   hostKey?: string
   /**
@@ -1651,12 +1704,26 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   if (options.process.flowKey === 'v2') await sweepReadyGateRuns()
   const out = options.out ?? ((line: string) => process.stdout.write(`${line}\n`))
   const { args } = options
+  // The repository the run's Log handle files its records under.
+  const resolvedRepo = await resolveRepo().catch(() => null)
   const lifecycle = options.lifecycle ?? {}
   out(`loopId ${options.loopId}`)
   const runDir = runDirectory(options.runtimeDir, args.task)
   mkdirSync(runDir, { recursive: true })
   const tracePath = join(runDir, 'trace.json')
   const trace = createTraceRecorder({ task: args.task, agent: args.agent, loopId: options.loopId })
+  // The run's Log handle: the id every record of the run carries, the repository, and the driver log each agent
+  // record is narrated into as it is written.
+  runRecorder().bind({
+    ...(options.sink.runId === undefined ? {} : { runId: options.sink.runId }),
+    ...(resolvedRepo === null ? {} : { repository: `${resolvedRepo.owner}/${resolvedRepo.repo}` }),
+    narrate: (record) =>
+      (options.narration?.narrateAgentRecord ?? narrateAgentRecord)(
+        loopLogPathFor(null, args.task, options.runtimeDir),
+        record,
+        registeredSeatNames()
+      )
+  })
   const producers = createVinayaLogProducers({
     loopId: options.loopId,
     task: args.task,
@@ -1674,7 +1741,6 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     options.narration?.narrateEvent
   )
   const translator = createLogTranslator(producers, sinkLog as unknown as EmitLogEvent)
-  let launchSeq = 0
   const narrate = (line: string): void => appendLoopLogLine(logPath, `${new Date().toISOString()}  ${line}`)
   // Version 2's stage-change lines, into the driver log only: a node's start, a pause, the focused checks at ready and
   // the published watch each move the run to its stage, and a repeat of the current stage writes nothing.
@@ -2116,17 +2182,17 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     }
     // Each role launch's tokens: recorded for the verdict's Tokens line, and written to the Log as the standalone does.
     const onLaunchUsage = (launch: LaunchUsage): void => {
-      launchSeq += 1
       options.taskInput?.recordUsage?.(launch.role, launch.reading.usage)
-      const requested = args.model ?? null
-      for (const event of launchUsageEvents(
-        launch,
-        args.agent,
-        `${options.loopId}:${launch.role}:${launchSeq}`,
-        requested
-      ))
-        sinkLog(event, launch.attribution)
+      endLaunchTurn(launch, usageLimit)
     }
+    // Each launch's agent turn opens where its process is spawned, on the run's Log handle.
+    const turnStarter: StartLaunchTurn = (role, attribution, startedAt) =>
+      startLaunchTurn(
+        { agent: args.agent, model: args.model ?? null, loopId: options.loopId },
+        role,
+        attribution,
+        startedAt
+      )
     const automaticResumes: AutomaticResumes = { usageLimit: 0 }
     // This runner's automatic conflict re-entries of the published pull request.
     let conflictReentries = 0
@@ -2354,7 +2420,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
                   onLaunchUsage,
                   Date.now,
                   (role) =>
-                    claimLaunchAttribution(runDir, identity.threadId, role, options.taskInput.reviewRound?.() ?? 1)
+                    claimLaunchAttribution(runDir, identity.threadId, role, options.taskInput.reviewRound?.() ?? 1),
+                  turnStarter
                 ),
                 join(runDir, 'generated'),
                 {

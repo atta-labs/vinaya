@@ -66,7 +66,8 @@ import {
   runScriptWithBudget as runFixtureScript,
   spawnBudgeted as spawnFixtureBudgeted,
   writeFakeBinary,
-  outboxLines,
+  agentTurnsOf,
+  localCopyFolderOf,
   PROMPT_FILE_CONTENT,
   readArgv,
   withoutTurnResultFlag
@@ -352,9 +353,11 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     )
     expect(r.status).toBe(0)
 
-    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    const dispatched = lines.find((l) => l.event === 'dispatched')
-    expect((dispatched as { model: string }).model).toBe('requested:claude-opus-5')
+    // The turn's span names the model asked for; no vendor receipt means no response model.
+    const turns = agentTurnsOf(localCopyFolderOf(home))
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.requestModel).toBe('claude-opus-5')
+    expect(turns[0]?.responseModel).toBeUndefined()
   })
 
   it('O2: outcome_received records the VENDOR-REPORTED model, not the requested one, when they differ', () => {
@@ -380,13 +383,11 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     )
     expect(r.status).toBe(0)
 
-    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    const dispatched = lines.find((l) => l.event === 'dispatched')
-    const outcome = lines.find((l) => l.event === 'outcome_received')
-    // Pre-completion, still just the request label — no receipt exists yet.
-    expect((dispatched as { model: string }).model).toBe('requested:claude-opus-5')
-    // Post-completion, the vendor's own bare, unprefixed receipt wins.
-    expect((outcome as { model: string }).model).toBe('claude-opus-6')
+    const turns = agentTurnsOf(localCopyFolderOf(home))
+    expect(turns).toHaveLength(1)
+    // The request model is what was asked; the response model is the vendor's own receipt.
+    expect(turns[0]?.requestModel).toBe('claude-opus-5')
+    expect(turns[0]?.responseModel).toBe('claude-opus-6')
   })
 
   it('O2: outcome_received falls back to the marked request label when the vendor emits no receipt', () => {
@@ -407,11 +408,11 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     )
     expect(r.status).toBe(0)
 
-    const outcome = (outboxLines(home, 'none') as Array<Record<string, unknown>>).find(
-      (l) => l.event === 'outcome_received'
-    )
-    // Marked as a request, not presented as a confirmed observation.
-    expect((outcome as { model: string }).model).toBe('requested:claude-opus-5')
+    // With no vendor receipt, the turn names only the model asked for, never a response model.
+    const turns = agentTurnsOf(localCopyFolderOf(home))
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.requestModel).toBe('claude-opus-5')
+    expect(turns[0]?.responseModel).toBeUndefined()
   })
 
   for (const role of ['code-reviewer', 'security'] as const) {
@@ -446,10 +447,9 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
       expect(r.status).toBe(1)
       expect(existsSync(spawnedMarker)).toBe(false)
       expect(r.stderr).toContain(REVIEWER_RESUME_REFUSED_REASON)
-      const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-      const dispatchLine = lines.find((l) => l.kind === 'dispatch')
-      expect(dispatchLine?.event).toBe('dispatch_failed')
-      expect((dispatchLine as { reason: string }).reason).toBe('refused')
+      const turns = agentTurnsOf(localCopyFolderOf(home))
+      expect(turns).toHaveLength(1)
+      expect(turns[0]?.errorType).toBe('refused')
     })
   }
 
@@ -493,12 +493,10 @@ describe('dispatchRole — model selection (O1/O2/O4, #456)', () => {
     expect(r.stderr).toContain('claude')
     expect(r.stderr).toContain('codex does not accept it')
 
-    const lines = outboxLines(home, 'none') as Array<Record<string, unknown>>
-    expect(lines).toHaveLength(3)
-    const dispatchLine = lines.find((l) => l.kind === 'dispatch')
-    expect(dispatchLine?.event).toBe('dispatch_failed')
-    expect((dispatchLine as { reason: string }).reason).toBe('refused')
-    expect((dispatchLine as { model: string }).model).toBe('requested:claude-opus-5')
+    const turns = agentTurnsOf(localCopyFolderOf(home))
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.errorType).toBe('refused')
+    expect(turns[0]?.requestModel).toBe('claude-opus-5')
   })
 
   it('a same-vendor model, and a vendor with no known naming convention (codex), are never refused for their shape', () => {

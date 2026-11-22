@@ -1,21 +1,31 @@
 import { expect, test } from 'bun:test'
-import { mkdtempSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { agentSpanIdFor } from '../../../packages/log-sdk/src/contract/convert-map.js'
-import { traceIdFor } from '../../../packages/log-sdk/src/contract/ids.js'
+import { traceIdFor } from '../../../packages/log-sdk/src/index.js'
 import { createRunRecorder } from './run-recorder.js'
 
 const RUN = 'run-recorder'
 
-function setup() {
+function setup(options: { off?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-run-recorder-'))
   const folder = join(dir, 'logs')
   const errors: unknown[] = []
+  const sent: unknown[] = []
+  let drained = 0
   const recorder = createRunRecorder({
     runId: () => RUN,
     workRef: () => '404',
-    target: () => ({ folder, repository: 'atta-labs/vinaya' }),
+    repository: () => 'atta-labs/vinaya',
+    place: (repository) => (options.off ? undefined : { folder, repository }),
+    processIdentity: () => ({ name: 'Example', version: '1.2.3' }),
+    sender: () => ({
+      request: (place) => void sent.push(place),
+      remember: () => {},
+      drain: async () => {
+        drained += 1
+      }
+    }),
     home: () => dir,
     cwd: () => mkdtempSync(join(tmpdir(), 'vinaya-run-recorder-root-')),
     onError: (e) => errors.push(e)
@@ -36,7 +46,7 @@ function setup() {
     records('traces').flatMap((r) => r.resourceSpans.flatMap((g: any) => g.scopeSpans.flatMap((s: any) => s.spans)))
   const events = () =>
     records('logs').flatMap((r) => r.resourceLogs.flatMap((g: any) => g.scopeLogs.flatMap((s: any) => s.logRecords)))
-  return { recorder, errors, spans, events }
+  return { recorder, errors, sent, drained: () => drained, folder, spans, events }
 }
 
 const attribute = (record: any, key: string): unknown => {
@@ -46,24 +56,44 @@ const attribute = (record: any, key: string): unknown => {
   return value.stringValue ?? value.boolValue ?? value.doubleValue
 }
 
-test('a step whose dispatch has no effect id records nothing and throws nothing', () => {
-  const { recorder, errors, spans, events } = setup()
-  const steps = recorder.steps(undefined)
-  expect(() => {
-    steps.observe({ type: 'start', id: 'c1', tool: 'Bash', kind: 'running', target: 'ls', at: 1_000 })
-    steps.observe({ type: 'result', id: 'c1', kind: 'running', target: 'ls', ok: true, durationMs: 5, at: 1_005 })
-    steps.close()
-  }).not.toThrow()
-  expect(spans()).toEqual([])
-  expect(events()).toEqual([])
+test('the handle opens from the process settings alone and writes to the local copy folder, with no earlier-format write', () => {
+  const { recorder, errors, folder, spans } = setup()
+  expect(existsSync(folder)).toBe(false)
+  const turn = recorder.turn({ seat: 'developer', key: 'turn-0', provider: 'claude' })
+  turn.returned({ outcome: 'done' })
   expect(errors).toEqual([])
+  expect(spans().map((s) => s.name)).toEqual(['invoke_agent developer'])
+  expect(existsSync(join(folder, 'atta-labs-vinaya'))).toBe(true)
+  expect(recorder.handle()?.runId).toBe(RUN)
 })
 
-test("step updates become step spans under the dispatch's agent span, with no payload", () => {
-  const { recorder, errors, spans } = setup()
-  const steps = recorder.steps('effect-1')
-  steps.observe({ type: 'start', id: 'c1', tool: 'Bash', kind: 'running_tests', target: 'bun test', at: 1_000 })
-  steps.observe({
+test('with recording off a turn records nothing and throws nothing', () => {
+  const { recorder, errors, folder, sent } = setup({ off: true })
+  const turn = recorder.turn({ seat: 'developer', key: 'turn-off' })
+  expect(() => {
+    turn.steps.observe({ type: 'start', id: 'c1', tool: 'Bash', kind: 'running', target: 'ls', at: 1_000 })
+    turn.usage({ inputTokens: 1, outputTokens: 2 })
+    turn.returned({ outcome: 'done' })
+  }).not.toThrow()
+  expect(existsSync(folder)).toBe(false)
+  expect(errors).toEqual([])
+  expect(sent).toEqual([])
+  expect(recorder.handle()).toBeUndefined()
+})
+
+test('a turn is one invoke_agent span with its usage and its steps under it, governed and on the run trace', () => {
+  const { recorder, errors, spans, sent } = setup()
+  const turn = recorder.turn({
+    seat: 'code-reviewer',
+    provider: 'claude',
+    codingAgent: 'claude',
+    model: 'sonnet',
+    round: 2,
+    key: 'turn-1',
+    startTime: 1_000
+  })
+  turn.steps.observe({ type: 'start', id: 'c1', tool: 'Bash', kind: 'running_tests', target: 'bun test', at: 1_000 })
+  turn.steps.observe({
     type: 'result',
     id: 'c1',
     kind: 'running_tests',
@@ -74,14 +104,23 @@ test("step updates become step spans under the dispatch's agent span, with no pa
     error: 'SECRET-TOOL-OUTPUT-LINE',
     failedTests: 3
   })
-  steps.observe({ type: 'start', id: 'c2', tool: 'Read', kind: 'reading', target: 'a.ts', at: 2_000 })
-  steps.observe({ type: 'result', id: 'c2', kind: 'reading', target: 'a.ts', ok: true, durationMs: 10, at: 2_010 })
+  turn.steps.observe({ type: 'start', id: 'c2', tool: 'Read', kind: 'reading', target: 'a.ts', at: 2_000 })
+  turn.steps.observe({ type: 'result', id: 'c2', kind: 'reading', target: 'a.ts', ok: true, durationMs: 10, at: 2_010 })
+  turn.usage({ inputTokens: 120, outputTokens: 45, cacheReadInputTokens: 30 })
+  turn.returned({ outcome: 'done', attempt: 2, responseModel: 'claude-sonnet-5-5' })
   const written = spans()
   expect(errors).toEqual([])
-  expect(written).toHaveLength(2)
+  expect(written).toHaveLength(3)
+  const agent = written.find((s) => s.name === 'invoke_agent code-reviewer')
+  expect(agent.traceId).toBe(traceIdFor(RUN))
+  expect(attribute(agent, 'gen_ai.agent.name')).toBe('code-reviewer')
+  expect(attribute(agent, 'gen_ai.request.model')).toBe('sonnet')
+  expect(attribute(agent, 'gen_ai.response.model')).toBe('claude-sonnet-5-5')
+  expect(attribute(agent, 'gen_ai.usage.input_tokens')).toBe(120)
+  expect(attribute(agent, 'gen_ai.usage.output_tokens')).toBe(45)
+  expect(attribute(agent, 'gen_ai.usage.cache_read.input_tokens')).toBe(30)
   const tests = written.find((s) => s.name === 'execute_tool Bash')
-  expect(tests.traceId).toBe(traceIdFor(RUN))
-  expect(tests.parentSpanId).toBe(agentSpanIdFor(RUN, 'effect-1'))
+  expect(tests.parentSpanId).toBe(agent.spanId)
   expect(attribute(tests, 'gen_ai.tool.name')).toBe('Bash')
   expect(attribute(tests, 'gen_ai.tool.call.id')).toBe('c1')
   expect(attribute(tests, 'vinaya.step.kind')).toBe('running_tests')
@@ -91,14 +130,44 @@ test("step updates become step spans under the dispatch's agent span, with no pa
   expect(JSON.stringify(written)).not.toContain('SECRET-TOOL-OUTPUT-LINE')
   expect(BigInt(tests.endTimeUnixNano) - BigInt(tests.startTimeUnixNano)).toBe(250_000_000n)
   const read = written.find((s) => s.name === 'execute_tool Read')
+  expect(read.parentSpanId).toBe(agent.spanId)
   expect(attribute(read, 'error.type')).toBeUndefined()
   for (const span of written) {
     expect(attribute(span, 'vinaya.provenance')).toBe('governed')
     expect(attribute(span, 'vinaya.work.ref')).toBe('404')
-    expect(
-      span.attributes.map((a: any) => a.key).filter((k: string) => /input|output|content|command/.test(k))
-    ).toEqual([])
+    // A step carries no payload; the agent span carries only the token counts.
+    const keys: string[] = span.attributes
+      .map((a: any) => a.key)
+      .filter((k: string) => /input|output|content|command/.test(k))
+    expect(keys.filter((k) => !k.startsWith('gen_ai.usage.'))).toEqual([])
+    if (span !== agent) expect(keys).toEqual([])
   }
+  expect(sent).toHaveLength(1)
+})
+
+test('a failed turn ends with its error type and a usage that is not known keeps its reason and no figure', () => {
+  const { recorder, errors, spans } = setup()
+  const turn = recorder.turn({ seat: 'developer', key: 'turn-2' })
+  turn.usage({ inputTokens: null, outputTokens: null, unknownReason: 'the stream carried no usage' })
+  turn.failed({ errorType: 'usage_limit', resetAt: '2026-11-22T10:00:00.000Z', attempt: 1 })
+  const [agent] = spans()
+  expect(errors).toEqual([])
+  expect(attribute(agent, 'error.type')).toBe('usage_limit')
+  expect(attribute(agent, 'gen_ai.usage.unknown_reason') ?? attribute(agent, 'vinaya.usage.unknown_reason')).toBe(
+    'the stream carried no usage'
+  )
+  expect(attribute(agent, 'gen_ai.usage.input_tokens')).toBeUndefined()
+  expect(attribute(agent, 'gen_ai.usage.output_tokens')).toBeUndefined()
+})
+
+test('usage with no figure and no reason is recorded as unknown, never as zero', () => {
+  const { recorder, spans } = setup()
+  const turn = recorder.turn({ seat: 'developer', key: 'turn-3' })
+  turn.usage({ inputTokens: null, outputTokens: null })
+  turn.returned({ outcome: 'done' })
+  const [agent] = spans()
+  expect(attribute(agent, 'gen_ai.usage.input_tokens')).toBeUndefined()
+  expect(attribute(agent, 'gen_ai.usage.output_tokens')).toBeUndefined()
 })
 
 test("a stage change becomes a stage-changed event with the stage and round, governed and on the run's trace", () => {
@@ -114,10 +183,18 @@ test("a stage change becomes a stage-changed event with the stage and round, gov
   expect(attribute(stage, 'vinaya.work.ref')).toBe('404')
 })
 
-test('a step left open when the dispatch ends is closed as interrupted', () => {
+test('a step left open when the turn ends is closed as interrupted', () => {
   const { recorder, spans } = setup()
-  const steps = recorder.steps('effect-2')
-  steps.observe({ type: 'start', id: 'c1', tool: 'Bash', kind: 'running', target: 'sleep', at: 1_000 })
-  steps.close()
-  expect(attribute(spans()[0], 'error.type')).toBe('interrupted')
+  const turn = recorder.turn({ seat: 'developer', key: 'turn-4' })
+  turn.steps.observe({ type: 'start', id: 'c1', tool: 'Bash', kind: 'running', target: 'sleep', at: 1_000 })
+  turn.failed({ errorType: 'crash' })
+  const step = spans().find((s) => s.name === 'execute_tool Bash')
+  expect(attribute(step, 'error.type')).toBe('interrupted')
+})
+
+test('the drain sends the local copy through the shared sender', async () => {
+  const { recorder, drained } = setup()
+  recorder.turn({ seat: 'developer', key: 'turn-5' }).returned({ outcome: 'done' })
+  await recorder.drain()
+  expect(drained()).toBe(1)
 })

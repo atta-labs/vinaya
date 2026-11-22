@@ -1,5 +1,6 @@
 import { initialLoopState } from '../../tools/dev-review-policy/types'
 import { afterAll, expect } from 'bun:test'
+import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -324,6 +325,8 @@ export async function leg(runner: RecoveryRunner, world: World, interrupt?: Inte
   }
   const lines: string[] = []
   const events: Array<Record<string, unknown>> = []
+  // The id every record of this leg carries: its agent turns are read back from the run's local copy by it.
+  const runId = `recovery-leg-${randomUUID()}`
   const result = await runEngine({
     args: { task: TASK, agent: world.agent, dryRun: false },
     process: loaded,
@@ -337,7 +340,8 @@ export async function leg(runner: RecoveryRunner, world: World, interrupt?: Inte
       log: (event) => {
         events.push(event as unknown as Record<string, unknown>)
       },
-      drain: async () => {}
+      drain: async () => {},
+      runId
     },
     startHost: async () => ({ close: async () => {} }),
     devToolsContext: {} as never,
@@ -360,7 +364,7 @@ export async function leg(runner: RecoveryRunner, world: World, interrupt?: Inte
       return stubAgent(output)
     }
   })
-  return { result, stopped, round: () => round, lines, events }
+  return { result, stopped, round: () => round, lines, events, runId }
 }
 
 export const threadOf = (generation = 1) => runIdentityOfTask(TASK, generation).threadId

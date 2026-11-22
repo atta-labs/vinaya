@@ -1,7 +1,9 @@
 import { parseIssueDocumentation } from '../../../kernel/issue-documentation'
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { connect } from '../../../../packages/log-sdk/src/index.js'
 import { dirname, join, resolve } from 'node:path'
 import {
   checkIssueObjectives,
@@ -215,10 +217,27 @@ function fakeTaskRun(forge: FakeForge, shape: RunShape, flow: string, seen: Task
       forge.comment(repo, pr, '<!-- vinaya:loop:paused:max_rounds -->')
     }
 
-    const logs = join(request.env.VINAYA_RUNTIME_DIR as string, 'logs', 'sandbox')
-    mkdirSync(logs, { recursive: true })
-    const usage = JSON.stringify({ kind: 'dispatch', event: 'outcome_received', usage: { input: 100, output: 20 } })
-    writeFileSync(join(logs, `${issue}.ndjson`), `${usage}\n${usage}\n`)
+    // The run's agents' tokens are usage records in the run's local copy, written through the Log SDK: two turns
+    // with their figures, and a third whose usage is not known, which counts for nothing.
+    const runtimeDir = request.env.VINAYA_RUNTIME_DIR as string
+    const handle = connect({
+      runId: `eval-run-${issue}`,
+      repository: 'acme/sandbox',
+      repoRoot: mkdtempSync(join(tmpdir(), 'whole-loop-root-')),
+      destination: { folder: `${runtimeDir}/logs` },
+      home: runtimeDir,
+      vinayaHome: join(runtimeDir, '.vinaya'),
+      provenance: 'governed'
+    })
+    for (const key of ['first', 'second']) {
+      const turn = handle.agent.sent({ seat: 'developer', key })
+      handle.usage.recorded({ agent: turn, inputTokens: 100, outputTokens: 20 })
+      handle.agent.returned({ agent: turn, outcome: 'done' })
+    }
+    const unknown = handle.agent.sent({ seat: 'code-reviewer', key: 'third' })
+    handle.usage.recorded({ agent: unknown, unknownReason: 'the stream carried no usage' })
+    handle.agent.returned({ agent: unknown, outcome: 'done' })
+    void handle.shutdown()
 
     let stop: (code: number) => void = () => {}
     const exited =

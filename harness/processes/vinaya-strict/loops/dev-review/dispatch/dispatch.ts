@@ -53,7 +53,7 @@
  */
 
 import { parseIssueDocumentation, type IssueDocumentationSource } from '../../../../../kernel/issue-documentation.js'
-import { randomUUID, createHash } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import {
   accessSync,
   constants as fsConstants,
@@ -95,11 +95,12 @@ import {
 import type { TranscriptSummary } from '../../../../../kernel/adapters/agents/claude-code/transcript-summary'
 import type { Role, RoleAttemptOutcome } from '../../../../../kernel/log/schema'
 import { drainLogSpool } from '../../../../../kernel/log/log-sink.js'
-import { runRecorder } from '../../../../../kernel/log/run-recorder.js'
-import { createVinayaLogSink, resolveVinayaLogAppendPath } from '../../../integration/log/log-sink-factory.js'
+import { type AgentTurn, runRecorder } from '../../../../../kernel/log/run-recorder.js'
+import { createVinayaLogSink } from '../../../integration/log/log-sink-factory.js'
 // The command line installs the process's sink factory through the dispatch module it already loads.
 export { installVinayaLogSinkFactory } from '../../../integration/log/log-sink-factory.js'
-import { appendRoleLine } from '../../../../../kernel/log/client/loop-log.js'
+import { appendRoleLine, narrateAgentRecord } from '../../../../../kernel/log/client/loop-log.js'
+import { registeredSeatNames } from '../../../executing/seat-names.js'
 import { createAgentStreamRenderer } from '../../../../../kernel/adapters/agents/agent-stream.js'
 import {
   formatAgentDetails,
@@ -3792,8 +3793,22 @@ function resolveExecutable(binary: string): string | null {
   }
 }
 
-function promptHashOf(prompt: string): string {
-  return `sha256:${createHash('sha256').update(prompt).digest('hex')}`
+/**
+ * Writes one launch's tokens on its agent turn: the figures the vendor's own stream gave, the cache read as its own
+ * figure, and the reason when nothing was observed — never a zero for an unread unit.
+ */
+export function recordUsage(
+  turn: Pick<AgentTurn, 'usage'>,
+  cacheUsage: { read: number; creation: number } | null | undefined,
+  observation: UsageObservation
+): void {
+  const { units, unknownReason } = observation
+  turn.usage({
+    inputTokens: units.input,
+    outputTokens: units.output,
+    cacheReadInputTokens: cacheUsage?.read ?? units.cache,
+    ...(unknownReason === null ? {} : { unknownReason })
+  })
 }
 
 /** What one agent launch used, read from its own stdout the way every dispatch reads it. */
@@ -3859,84 +3874,6 @@ export function classifyRoleAttemptOutcome(
   if (timedOut) return 'timed_out'
   if (crashed) return 'infrastructure_failed'
   return exitCode === 0 ? 'completed' : 'incomplete'
-}
-
-/**
- * `log()` is fire-and-forget (`log-sink.ts`'s own `.then()` chain, no
- * returned promise — task 1's shipped, frozen interface). Without waiting
- * for a line to actually land, a caller that exits promptly after a failed
- * dispatch (`dispatchCommand`'s own `process.exit(1)`) can abandon the write
- * mid-flight, silently losing the very `dispatch_failed` line O2 requires.
- * This mirrors `apps/cli/src/commands/log.ts`'s `waitForOwnLine` discipline
- * (that helper is private to that file, so this is its own scoped copy),
- * matched on `run_id` + `effect_id` + `kind` + `event` — not `run_id` alone.
- *
- * **`run_id` alone is not unique to one dispatch (a code-review finding).**
- * A dispatched role's own `vinaya dispatch` call (a nested
- * dispatch — no loop feature required, reachable today) inherits its
- * parent's `VINAYA_RUN_ID` via the child's env (by design, so a report can
- * join every line under one run) — `createLogSink`'s own `runId = deps.env().
- * VINAYA_RUN_ID || randomUUID()` picks that inherited value straight back
- * up. Two dispatches sharing one `run_id` racing this same outbox file could
- * match EACH OTHER's `dispatched`/`outcome_received` line on `run_id` +
- * `kind` + `event` alone, resolving early on a line that was never this
- * call's own — reintroducing the exact "a concurrent process's write read as
- * mine" bug class this polling exists to close (`log.ts`'s own
- * `tailHasOwnLine` doc comment). `effect_id` (`randomUUID()`, generated once
- * per `dispatchRole` call, present on every line that call logs) is the
- * value actually unique per invocation; matching on it too closes this.
- */
-function hasOwnDispatchLine(path: string, priorSize: number, runId: string, effectId: string, event: string): boolean {
-  let buf: Buffer
-  try {
-    buf = readFileSync(path)
-  } catch {
-    return false
-  }
-  if (buf.byteLength <= priorSize) return false
-  for (const raw of buf.subarray(priorSize).toString('utf8').split('\n')) {
-    if (!raw) continue
-    try {
-      const obj = JSON.parse(raw) as {
-        meta?: { run_id?: unknown }
-        effect_id?: unknown
-        kind?: unknown
-        event?: unknown
-      }
-      if (obj.meta?.run_id === runId && obj.effect_id === effectId && obj.kind === 'dispatch' && obj.event === event) {
-        return true
-      }
-    } catch {
-      // not a JSON line — never trusted blindly
-    }
-  }
-  return false
-}
-
-async function waitForDispatchLine(
-  path: string,
-  priorSize: number,
-  runId: string,
-  effectId: string,
-  event: string,
-  timeoutMs = 2000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (hasOwnDispatchLine(path, priorSize, runId, effectId, event)) return
-    await new Promise((r) => setTimeout(r, 5))
-  }
-  // Best-effort durability wait, not a correctness gate — `log()` itself
-  // never throws, and a timeout here (an unwritable outbox, an unresolvable
-  // repo) is already `log()`'s own silently-warned failure mode.
-}
-
-function sizeOfSafe(path: string): number {
-  try {
-    return readFileSync(path).byteLength
-  } catch {
-    return 0
-  }
 }
 
 /**
@@ -4326,12 +4263,8 @@ export async function dispatchRole(
   prompt: string,
   opts: DispatchOpts
 ): Promise<DispatchHandle> {
-  // Shared with `resolveVinayaLogAppendPath` below, verbatim — the sink's own
-  // destination resolution reads `VINAYA_ROLE` to decide whether THIS call
-  // counts as unattended (`isUnattendedProcess`), so the two must see the
-  // identical synthetic env or they can resolve two different destinations
-  // whenever a human runs `vinaya dispatch` by hand with a non-default
-  // `logs` setting still only declared locally.
+  // The sink's own destination resolution reads `VINAYA_ROLE` to decide whether THIS call counts as unattended
+  // (`isUnattendedProcess`), so its `operation` events see the synthetic environment of this dispatch.
   // Construction reads the environment before the launch record exists.
   let sinkAttempt: number | undefined
   const sinkEnv = (): NodeJS.ProcessEnv => ({
@@ -4342,7 +4275,7 @@ export async function dispatchRole(
     ...(opts.pr !== undefined ? { VINAYA_PR: String(opts.pr) } : {}),
     VINAYA_ATTEMPT: sinkAttempt === undefined ? undefined : String(sinkAttempt)
   })
-  const { log, runId } = createVinayaLogSink({
+  const { log, drain, runId } = createVinayaLogSink({
     env: sinkEnv,
     provenance: 'parent_attributed',
     inputVersions: () => opts.inputVersions
@@ -4357,16 +4290,9 @@ export async function dispatchRole(
     ? { command: opts.devToolsBridge.command, args: [...opts.devToolsBridge.args] }
     : null
 
-  // Mirrors `log()`'s own repo resolution so this file knows where to poll
-  // for its own lines. Primes `resolveRepo()`'s process-wide cache, so
-  // `log()`'s own internal call below resolves the identical value — the
-  // one case that could still diverge is an `VINAYA_REPO`/remote value that
-  // fails `log-sink.ts`'s private `isSafeRepoSegment` guard (an
-  // intentionally malicious value), where the wait below simply times out
-  // harmlessly rather than mis-locating the file.
+  // The repository the run's Log handle files its records under: the same one `log()`'s own resolution reaches, as
+  // `resolveRepo()` caches it for the process.
   const repo = await resolveRepo().catch(() => null)
-  const issue = opts.task ?? null
-  const outboxPath = await resolveVinayaLogAppendPath(repo, issue, { env: sinkEnv })
 
   const effectId = randomUUID()
   const vendor = VENDOR_TABLE[agent]
@@ -4379,18 +4305,6 @@ export async function dispatchRole(
     for (const detail of formatAgentDetails(details)) process.stderr.write(`${detail}\n`)
     if (opts.roleLogPath) appendRoleLine(opts.roleLogPath, role, plainWords, details, resolvedMark)
   }
-  const roundField = opts.round !== undefined ? { round: opts.round } : {}
-  // O2: never the vendor name (`agent`) — that is the defect this task
-  // closes. This is a REQUEST label, never an observation: `requested:<x>`
-  // when a model was named, `'default'` when none was — both explicitly
-  // marked placeholders for "here is what was asked for, not confirmed as
-  // what ran," distinguishable on read from the bare, unprefixed model name
-  // `outcomeModel` below records once the vendor's own receipt confirms it.
-  // Used for every log line before the child's own report can be read
-  // (`dispatched`, every `dispatch_failed` path) and as the fallback for
-  // `outcome_received` when the vendor gives no receipt at all (Codex,
-  // always; Claude, on an unparseable payload).
-  const resolvedModel = opts.model !== undefined ? `requested:${opts.model}` : 'default'
 
   // O1: persist the launch intent — run, attempt, role — BEFORE anything
   // else can spawn, refuse, or fail. From here on every exit path patches
@@ -4429,26 +4343,43 @@ export async function dispatchRole(
   writeLaunchRecord(launch)
   sinkAttempt = launch.attempt
 
+  // The agent turn is one `invoke_agent` span on the run's Log handle: it opens when the agent is sent, or at the
+  // moment a dispatch is refused, and ends once, with what came out of it or with why it failed.
+  const repository = repo === null ? undefined : `${repo.owner}/${repo.repo}`
+  let turn: AgentTurn | undefined
+  const beginTurn = (): AgentTurn => {
+    turn ??= runRecorder().turn({
+      seat: role,
+      provider: agent,
+      codingAgent: agent,
+      ...(opts.model === undefined ? {} : { model: opts.model }),
+      ...(opts.round === undefined ? {} : { round: opts.round }),
+      key: effectId,
+      runId,
+      ...(repository === undefined ? {} : { repository }),
+      ...(opts.task === undefined ? {} : { workRef: String(opts.task) }),
+      startTime: start,
+      // The driver log shows the line the Log SDK's `narrate` gives for each of the turn's records.
+      ...(opts.roleLogPath === undefined
+        ? {}
+        : { narrate: (record) => narrateAgentRecord(opts.roleLogPath as string, record, registeredSeatNames()) })
+    })
+    return turn
+  }
+  /** A turn that ends before any vendor process started: refused, its usage unknown for that reason. */
+  const refuseTurn = (unknownReason: string): void => {
+    const refused = beginTurn()
+    refused.usage({ unknownReason })
+    refused.failed({ errorType: 'refused', attempt: launch.attempt })
+  }
+
   // A reviewer's result is valid only from a fresh session: refused before
   // any spawn, so a resumed reviewer session can never deliver a review.
   if (isReviewerResume(role, opts.resumeId)) {
     const durationMs = Date.now() - start
-    const priorSize = sizeOfSafe(outboxPath)
-    log({
-      kind: 'dispatch',
-      event: 'dispatch_failed',
-      payload: {},
-      target_role: role,
-      model: resolvedModel,
-      ...roundField,
-      effect_id: effectId,
-      reason: 'refused',
-      usage: null,
-      duration_ms: durationMs
-    })
+    refuseTurn('dispatch refused before any vendor process started (a reviewer cannot resume a session)')
     writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — ${REVIEWER_RESUME_REFUSED_REASON}`)
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
-    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     return {
       exitCode: null,
       durationMs,
@@ -4468,49 +4399,13 @@ export async function dispatchRole(
     const foreignVendor = identifyVendorFromModelShape(opts.model)
     if (foreignVendor !== null && foreignVendor !== agent) {
       const durationMs = Date.now() - start
-      const priorSize = sizeOfSafe(outboxPath)
-      log({
-        kind: 'dispatch',
-        event: 'dispatch_failed',
-        payload: {},
-        target_role: role,
-        model: resolvedModel,
-        ...roundField,
-        effect_id: effectId,
-        reason: 'refused',
-        usage: null,
-        duration_ms: durationMs
-      })
-      log({
-        kind: 'role_attempt',
-        event: 'attempted',
-        payload: {},
-        actor: agent,
-        attempt: launch.attempt,
-        effect_id: effectId,
-        model: resolvedModel,
-        outcome: classifyRoleAttemptOutcome(true, false, false, null),
-        usage: null,
-        duration_ms: durationMs
-      })
-      log({
-        kind: 'usage',
-        event: 'observed',
-        payload: {},
-        model: resolvedModel,
-        source: agent,
-        semantics: 'cumulative',
-        units: NO_USAGE_UNITS,
-        unknown_reason: 'dispatch refused before any vendor process started (model shape mismatch)',
-        duration_ms: durationMs
-      })
+      refuseTurn('dispatch refused before any vendor process started (model shape mismatch)')
       writeLifecycle(
         `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — model '${opts.model}' is a ${foreignVendor} model; ` +
           `${agent} does not accept it. ${agent} accepts its own model names (never a ${foreignVendor} alias or a ` +
           `'${foreignVendor}-' full name).`
       )
       patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
-      await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
       return {
         exitCode: null,
         durationMs,
@@ -4526,44 +4421,8 @@ export async function dispatchRole(
   const binaryPath = resolveExecutable(vendor.binary)
   if (binaryPath === null) {
     const durationMs = Date.now() - start
-    const priorSize = sizeOfSafe(outboxPath)
-    log({
-      kind: 'dispatch',
-      event: 'dispatch_failed',
-      payload: {},
-      target_role: role,
-      model: resolvedModel,
-      ...roundField,
-      effect_id: effectId,
-      reason: 'refused',
-      usage: null,
-      duration_ms: durationMs
-    })
-    log({
-      kind: 'role_attempt',
-      event: 'attempted',
-      payload: {},
-      actor: agent,
-      attempt: launch.attempt,
-      effect_id: effectId,
-      model: resolvedModel,
-      outcome: classifyRoleAttemptOutcome(true, false, false, null),
-      usage: null,
-      duration_ms: durationMs
-    })
-    log({
-      kind: 'usage',
-      event: 'observed',
-      payload: {},
-      model: resolvedModel,
-      source: agent,
-      semantics: 'cumulative',
-      units: NO_USAGE_UNITS,
-      unknown_reason: 'dispatch refused before any vendor process started (binary not resolvable on PATH)',
-      duration_ms: durationMs
-    })
+    refuseTurn('dispatch refused before any vendor process started (binary not resolvable on PATH)')
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'refused' })
-    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     return {
       exitCode: null,
       durationMs,
@@ -4697,6 +4556,8 @@ export async function dispatchRole(
       result: 'unavailable',
       error_class: null
     })
+    // A refusal can end the process right after; the earlier queue has nothing else to wait on, so land this line.
+    await drain()
   }
   // O1/O2/O4: resolved once, here — `null` for every non-Codex agent and
   // every attended dispatch. The actual pre-spawn REFUSAL this carries when
@@ -5034,21 +4895,9 @@ export async function dispatchRole(
   ) {
     const failureReason: DispatchFailureReason = 'hook-setup-failed'
     const durationMs = Date.now() - start
-    const priorSize = sizeOfSafe(outboxPath)
-    log({
-      kind: 'dispatch',
-      event: 'dispatch_failed',
-      payload: {},
-      target_role: role,
-      model: resolvedModel,
-      ...roundField,
-      effect_id: effectId,
-      // The forge envelope has only the generic pre-spawn `refused` event;
-      // the launch record/handle retain the actionable terminal subtype.
-      reason: 'refused',
-      usage: null,
-      duration_ms: durationMs
-    })
+    // The Log has only the generic pre-spawn `refused` error type;
+    // the launch record/handle retain the actionable terminal subtype.
+    refuseTurn('dispatch refused before any vendor process started (the background-deny hook could not be set up)')
     writeLifecycle(
       `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended start requires the PreToolUse ` +
         "background-deny hook's settings file, which could not be written into this task's own hooks directory"
@@ -5058,7 +4907,6 @@ export async function dispatchRole(
     // is never reached from this `return`.
     if (claudeScratchDir !== null) releaseClaudeScratchDir(claudeScratchDir, writeLifecycle)
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
-    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     return {
       exitCode: null,
       durationMs,
@@ -5189,6 +5037,8 @@ export async function dispatchRole(
         result: 'unavailable',
         error_class: null
       })
+      // The refusal that follows can end the process; land this line first.
+      await drain()
     }
   }
   if (
@@ -5205,19 +5055,7 @@ export async function dispatchRole(
         ? 'refused'
         : codexBoundaryFailureReason(agent, codexUnattendedFailureReason!)
     const durationMs = Date.now() - start
-    const priorSize = sizeOfSafe(outboxPath)
-    log({
-      kind: 'dispatch',
-      event: 'dispatch_failed',
-      payload: {},
-      target_role: role,
-      model: resolvedModel,
-      ...roundField,
-      effect_id: effectId,
-      reason: 'refused',
-      usage: null,
-      duration_ms: durationMs
-    })
+    refuseTurn('dispatch refused before any vendor process started (the confinement or a required control was not met)')
     writeLifecycle(
       unconfinedClaude
         ? `[vinaya dispatch ${effectId}] ${role} via ${agent}: refused — unattended Claude requires a confined worker sandbox while driver-run dev-tools are available; ${claudeConfinement?.warning ?? 'confinement unavailable'}${claudeVerdict.reason === null ? '' : ` The container is not the boundary: ${claudeVerdict.reason}.`}`
@@ -5243,7 +5081,6 @@ export async function dispatchRole(
     }
     if (claudeScratchDir !== null) releaseClaudeScratchDir(claudeScratchDir, writeLifecycle)
     patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason })
-    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatch_failed')
     // The probe's refusal travels typed, beside the shared `'refused'`
     // reason, only when it is the cause the refusal line above names.
     const sandboxProbeRefusal =
@@ -5325,20 +5162,8 @@ export async function dispatchRole(
     ? [...turnResultArgs([...baseArgs, ...devToolsClaudeArgs]), '--settings', dispatchSettingsPath]
     : turnResultArgs([...baseArgs, ...devToolsClaudeArgs])
 
-  {
-    const priorSize = sizeOfSafe(outboxPath)
-    log({
-      kind: 'dispatch',
-      event: 'dispatched',
-      payload: {},
-      target_role: role,
-      model: resolvedModel,
-      ...roundField,
-      effect_id: effectId,
-      prompt_hash: promptHashOf(prompt)
-    })
-    await waitForDispatchLine(outboxPath, priorSize, runId, effectId, 'dispatched')
-  }
+  // The agent is sent: its turn is one `invoke_agent` span, written to the run's local copy before this returns.
+  const agentTurn = beginTurn()
 
   const dispatchConfig = loadConfig()?.dispatch
   const timeoutMs = resolveDispatchTimeoutMs(role, dispatchConfig)
@@ -5562,7 +5387,7 @@ export async function dispatchRole(
     // back rather than parsed and discarded.
     let renderCarry = ''
     // Each step the stream shows is also recorded on the OpenTelemetry side, under this dispatch's agent span.
-    const stepRecording = runRecorder().steps(effectId, runId)
+    const stepRecording = agentTurn.steps
     const streamRenderer = createAgentStreamRenderer(
       agent,
       { worktree: opts.cwd ?? process.cwd(), home: homedir() },
@@ -5723,7 +5548,7 @@ export async function dispatchRole(
       }
     }
 
-    async function finish(handle: DispatchHandle, event: string, priorSize: number): Promise<void> {
+    async function finish(handle: DispatchHandle): Promise<void> {
       if (settled) return
       settled = true
       disarmCeiling()
@@ -5763,10 +5588,6 @@ export async function dispatchRole(
           // best-effort, same reasoning as above.
         }
       }
-      // The corresponding `log()` call already ran, with `priorSize` taken
-      // right before it — this just confirms it landed before the caller
-      // can possibly exit the process out from under it.
-      await waitForDispatchLine(outboxPath, priorSize, runId, effectId, event)
       resolve({ ...handle, stderr: stderrBuf })
     }
 
@@ -5779,51 +5600,21 @@ export async function dispatchRole(
       clearTimeout(firstWaitTimer)
       if (heartbeatTimer) clearInterval(heartbeatTimer)
       const durationMs = Date.now() - start
-      const priorSize = sizeOfSafe(outboxPath)
-      log({
-        kind: 'dispatch',
-        event: 'dispatch_failed',
-        payload: {},
-        target_role: role,
-        model: resolvedModel,
-        ...roundField,
-        effect_id: effectId,
-        reason: 'crash',
-        usage: null,
-        duration_ms: durationMs
-      })
-      log({
-        kind: 'role_attempt',
-        event: 'attempted',
-        payload: {},
-        actor: agent,
-        attempt: launch.attempt,
-        effect_id: effectId,
-        model: resolvedModel,
-        outcome: classifyRoleAttemptOutcome(false, false, true, null),
-        usage: null,
-        duration_ms: durationMs
-      })
-      log({
-        kind: 'usage',
-        event: 'observed',
-        payload: {},
-        model: resolvedModel,
-        source: agent,
-        semantics: 'cumulative',
-        units: NO_USAGE_UNITS,
-        unknown_reason: 'the vendor process errored before any output could be read',
-        duration_ms: durationMs
-      })
+      agentTurn.usage({ unknownReason: 'the vendor process errored before any output could be read' })
+      agentTurn.failed({ errorType: 'crash', attempt: launch.attempt })
       // O1: an interrupted attempt keeps its intent record — patched, never
       // deleted; any session id already bound mid-stream is preserved by the
       // merge, so recovery can still resume it.
       patchLaunch({ status: 'interrupted', finishedAt: new Date().toISOString(), failureReason: 'crash' })
-      void finish(
-        { exitCode: null, durationMs, usage: null, resumeId: null, timedOut: false, failureReason: 'crash', effectId },
-        'dispatch_failed',
-        priorSize
-      )
+      void finish({
+        exitCode: null,
+        durationMs,
+        usage: null,
+        resumeId: null,
+        timedOut: false,
+        failureReason: 'crash',
+        effectId
+      })
     })
 
     async function handleChildExit(code: number | null, durationMs: number): Promise<void> {
@@ -5850,8 +5641,7 @@ export async function dispatchRole(
       const {
         usage,
         cacheUsage,
-        units: usageUnits,
-        source: usageSource
+        units: usageUnits
       } = readDispatchUsage(agent, {
         tail: stdoutTail,
         head: stdoutBuf,
@@ -5859,10 +5649,9 @@ export async function dispatchRole(
       })
       // The SAME survives-the-manner-of-death
       // treatment `usage` already gets, extended to the vendor's own model
-      // receipt and the richer `usage`-family units — read once here, from
-      // the same buffer, and reused by whichever branch below actually logs.
+      // receipt and the richer usage units — read once here, from
+      // the same buffer, and reused by whichever branch below actually records.
       const reportedModel = vendor.parseModel(stdoutBuf)
-      const attemptModel = reportedModel ?? resolvedModel
       // O5: this dispatch never produced a working vendor
       // session — checked against the SAME two sources every other resumeId
       // read in this function already uses (the stream-bound `launch.resumeId`,
@@ -5871,42 +5660,8 @@ export async function dispatchRole(
       const neverBoundSession = launch.resumeId === null && vendor.parseResumeId(stdoutBuf) === null
 
       if (timedOut) {
-        const priorSize = sizeOfSafe(outboxPath)
-        log({
-          kind: 'dispatch',
-          event: 'dispatch_failed',
-          payload: {},
-          target_role: role,
-          model: resolvedModel,
-          ...roundField,
-          effect_id: effectId,
-          reason: 'timeout',
-          usage,
-          duration_ms: durationMs
-        })
-        log({
-          kind: 'role_attempt',
-          event: 'attempted',
-          payload: {},
-          actor: agent,
-          attempt: launch.attempt,
-          effect_id: effectId,
-          model: attemptModel,
-          outcome: classifyRoleAttemptOutcome(false, true, false, code),
-          usage,
-          duration_ms: durationMs
-        })
-        log({
-          kind: 'usage',
-          event: 'observed',
-          payload: {},
-          model: attemptModel,
-          source: usageSource,
-          semantics: 'cumulative',
-          units: usageUnits.units,
-          unknown_reason: usageUnits.unknownReason,
-          duration_ms: durationMs
-        })
+        recordUsage(agentTurn, cacheUsage, usageUnits)
+        agentTurn.failed({ errorType: 'timeout', attempt: launch.attempt })
         // O1: keep the intent record, and bind whatever session the child did
         // report before the ceiling killed it (mid-stream, or a final line in
         // `stdoutBuf`) — an interrupted attempt no longer loses its session.
@@ -5940,11 +5695,16 @@ export async function dispatchRole(
           failureReason,
           resumeId: launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
         })
-        void finish(
-          { exitCode: code, durationMs, usage, cacheUsage, resumeId: null, timedOut: true, failureReason, effectId },
-          'dispatch_failed',
-          priorSize
-        )
+        void finish({
+          exitCode: code,
+          durationMs,
+          usage,
+          cacheUsage,
+          resumeId: null,
+          timedOut: true,
+          failureReason,
+          effectId
+        })
         return
       }
 
@@ -5954,49 +5714,13 @@ export async function dispatchRole(
       const usageLimit = detectUsageLimit(agent, stdoutBuf, code, Date.now())
       const devToolsStartFailure = devToolsStart.failure()
       if (code !== 0 || usageLimit !== null || devToolsStartFailure !== null) {
-        const priorSize = sizeOfSafe(outboxPath)
-        log({
-          kind: 'dispatch',
-          event: 'dispatch_failed',
-          payload: {},
-          target_role: role,
-          model: resolvedModel,
-          ...roundField,
-          effect_id: effectId,
-          reason: usageLimit !== null ? 'usage_limit' : 'crash',
-          ...(usageLimit !== null
-            ? {
-                usage_limit: {
-                  agent: usageLimit.agent,
-                  reset_at: usageLimit.resetAtMs === null ? null : new Date(usageLimit.resetAtMs).toISOString()
-                }
-              }
-            : {}),
-          usage,
-          duration_ms: durationMs
-        })
-        log({
-          kind: 'role_attempt',
-          event: 'attempted',
-          payload: {},
-          actor: agent,
+        recordUsage(agentTurn, cacheUsage, usageUnits)
+        agentTurn.failed({
+          errorType: usageLimit !== null ? 'usage_limit' : 'crash',
           attempt: launch.attempt,
-          effect_id: effectId,
-          model: attemptModel,
-          outcome: classifyRoleAttemptOutcome(false, false, true, code),
-          usage,
-          duration_ms: durationMs
-        })
-        log({
-          kind: 'usage',
-          event: 'observed',
-          payload: {},
-          model: attemptModel,
-          source: usageSource,
-          semantics: 'cumulative',
-          units: usageUnits.units,
-          unknown_reason: usageUnits.unknownReason,
-          duration_ms: durationMs
+          ...(usageLimit !== null && usageLimit.resetAtMs !== null
+            ? { resetAt: new Date(usageLimit.resetAtMs).toISOString() }
+            : {})
         })
         // O1: same as the timeout path — interrupted, intent kept, session
         // bound from whatever the child managed to report before it crashed.
@@ -6025,21 +5749,17 @@ export async function dispatchRole(
           failureReason,
           resumeId: launch.resumeId ?? vendor.parseResumeId(stdoutBuf)
         })
-        void finish(
-          {
-            exitCode: code,
-            durationMs,
-            usage,
-            cacheUsage,
-            resumeId: null,
-            timedOut: false,
-            failureReason,
-            ...(usageLimit !== null ? { usageLimit } : {}),
-            effectId
-          },
-          'dispatch_failed',
-          priorSize
-        )
+        void finish({
+          exitCode: code,
+          durationMs,
+          usage,
+          cacheUsage,
+          resumeId: null,
+          timedOut: false,
+          failureReason,
+          ...(usageLimit !== null ? { usageLimit } : {}),
+          effectId
+        })
         return
       }
 
@@ -6065,58 +5785,23 @@ export async function dispatchRole(
       // a real observation once reported). Falls back to the pre-completion
       // request label (`resolvedModel`) only when this vendor emits no
       // receipt (Codex, always) or the payload didn't parse.
-      const priorSize = sizeOfSafe(outboxPath)
-      log({
-        kind: 'dispatch',
-        event: 'outcome_received',
-        payload: {},
-        target_role: role,
-        model: attemptModel,
-        ...roundField,
-        effect_id: effectId,
-        // O1: no invented forge identifier — see module doc.
-        outcome: { type: 'completed' },
-        usage,
-        duration_ms: durationMs
-      })
-      log({
-        kind: 'role_attempt',
-        event: 'attempted',
-        payload: {},
-        actor: agent,
+      recordUsage(agentTurn, cacheUsage, usageUnits)
+      agentTurn.returned({
+        outcome: 'done',
         attempt: launch.attempt,
-        effect_id: effectId,
-        model: attemptModel,
-        outcome: classifyRoleAttemptOutcome(false, false, false, code),
+        ...(reportedModel === null ? {} : { responseModel: reportedModel })
+      })
+      void finish({
+        exitCode: code,
+        durationMs,
         usage,
-        duration_ms: durationMs
+        cacheUsage,
+        resumeId,
+        timedOut: false,
+        effectId,
+        ...developerTurnFacts(),
+        ...reviewerTurnFacts()
       })
-      log({
-        kind: 'usage',
-        event: 'observed',
-        payload: {},
-        model: attemptModel,
-        source: usageSource,
-        semantics: 'cumulative',
-        units: usageUnits.units,
-        unknown_reason: usageUnits.unknownReason,
-        duration_ms: durationMs
-      })
-      void finish(
-        {
-          exitCode: code,
-          durationMs,
-          usage,
-          cacheUsage,
-          resumeId,
-          timedOut: false,
-          effectId,
-          ...developerTurnFacts(),
-          ...reviewerTurnFacts()
-        },
-        'outcome_received',
-        priorSize
-      )
     }
 
     // `exit`, never `close`: `close` waits for every stdio stream to see

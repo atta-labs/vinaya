@@ -74,7 +74,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-loop.ts",
-        "sha256": "66a172a0541770cded587022e09b45d280e149619d95891b1ee15d919c2f0e55"
+        "sha256": "dd1a14328f1d5db1162da3b4097faee9087ee5649563af999d56b720cd5df4a5"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-report.ts",
@@ -349,8 +349,8 @@
           "markersExclude": ["reviewer-verdict", "security-verdict"]
         },
         "events": {
-          "include": ["role_attempt:attempted", "paused"],
-          "exclude": ["verdicts_read"],
+          "include": ["paused"],
+          "exclude": ["verdicts_read", "role_attempt:attempted"],
           "journalResults": ["stopped"]
         }
       }

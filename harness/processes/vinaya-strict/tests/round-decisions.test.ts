@@ -756,7 +756,8 @@ for (const agent of AGENTS) {
       expect(held).toMatchObject({ reason: 'infrastructure', round: 1, infrastructureRetries: 1 })
       expect(held?.detail).toContain('exited with code 3')
       expect(existsSync(heldVerdictPath(observed.world.runtimeDir, TASK, 1, 'reviewer'))).toBe(false)
-      expect(observed.events).toContain('role_attempt/attempted')
+      // A launch that gave no review ended its own turn as the launch ended: no earlier-format attempt is written.
+      expect(observed.events).not.toContain('role_attempt/attempted')
       expect(observed.events).not.toContain('dev_review_loop/verdicts_read')
     })
   })

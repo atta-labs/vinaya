@@ -4,6 +4,7 @@ import { Database } from 'bun:sqlite'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { agentTurnsOf, processLocalCopyFolder } from '../lib/dispatch/dispatch-fixtures'
 import {
   type EffectRecord,
   readExecutionRoundMirror,
@@ -270,7 +271,7 @@ describe('checkpoint flow continuity', () => {
 })
 
 // Every role launch's tokens, read from the agent's own output as the standalone dispatch reads them: recorded on the
-// task input for the verdict's Tokens line, and written to the Log as a `role_attempt` and a `usage` event.
+// task input for the verdict's Tokens line, and written to the run's local copy as an agent span carrying its usage.
 const USAGE_OUTPUT = {
   claude: (input: number, output: number) => [
     JSON.stringify({ type: 'system', subtype: 'init', session_id: `s-${input}`, model: 'claude-opus-test' }),
@@ -309,23 +310,18 @@ describe.each(ENGINE_RUNNERS)('%s records token usage', (runner) => {
       for (const [launchRole, [input, output]] of Object.entries(ROLE_TOKENS)) {
         const role = RECORDED_ROLE[launchRole as keyof typeof RECORDED_ROLE]
         expect(world.recordedUsage).toContainEqual({ role, usage: { input, output } })
-        const attempts = run.events.filter(
-          (event) =>
-            event.kind === 'role_attempt' && event.actor === agent && String(event.effect_id).includes(`:${role}:`)
-        )
-        expect(attempts.length).toBeGreaterThan(0)
-        for (const attempt of attempts) expect(attempt.usage).toEqual({ input, output })
-        expect(run.events).toContainEqual(
-          expect.objectContaining({
-            kind: 'usage',
-            event: 'observed',
-            source: agent,
-            semantics: 'cumulative',
-            units: { input, output, cache: 6 },
-            unknown_reason: null
-          })
-        )
       }
+      // Each launch's turn is one span in the run's local copy, its tokens on it, and no earlier-format event.
+      const turns = agentTurnsOf(processLocalCopyFolder(), run.runId)
+      for (const [launchRole, [input, output]] of Object.entries(ROLE_TOKENS)) {
+        const seat = launchRole === 'security-reviewer' ? 'security' : launchRole
+        const ofSeat = turns.filter((turn) => turn.seat === seat)
+        expect(ofSeat.length).toBeGreaterThan(0)
+        for (const turn of ofSeat) expect(turn.usage).toMatchObject({ input, output, cacheRead: expect.any(Number) })
+      }
+      expect(run.events.filter((event) => ['dispatch', 'role_attempt', 'usage'].includes(String(event.kind)))).toEqual(
+        []
+      )
     })
   }
 })
