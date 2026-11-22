@@ -357,6 +357,7 @@
             "ChangeReverted",
             "ChangeSaved",
             "CheckNotPassed",
+            "CheckableRecord",
             "ChecksCi",
             "ChecksLocal",
             "ChecksRan",
@@ -365,6 +366,7 @@
             "CommandCompleted",
             "ConfidenceStated",
             "ConnectOptions",
+            "ContractFailure",
             "ConvertedEarlierRecord",
             "CustomEvent",
             "CustomEventCheck",
@@ -512,6 +514,7 @@
             "agentSpanIdFor",
             "applyTrust",
             "checkCustomEvent",
+            "checkRecordContract",
             "classifyStoredLine",
             "connect",
             "convertEarlierEvents",
@@ -523,6 +526,7 @@
             "createOtlpSource",
             "createReader",
             "createRunIdGenerator",
+            "describeContractFailure",
             "identityOf",
             "isSpanName",
             "narrate",
@@ -600,6 +604,7 @@
             "agentSpanIdFor",
             "applyTrust",
             "checkCustomEvent",
+            "checkRecordContract",
             "classifyStoredLine",
             "connect",
             "convertEarlierEvents",
@@ -611,6 +616,7 @@
             "createOtlpSource",
             "createReader",
             "createRunIdGenerator",
+            "describeContractFailure",
             "identityOf",
             "isSpanName",
             "narrate",
@@ -675,6 +681,9 @@
             "CheckNotPassed": [
               "type CheckNotPassed = { name: string; version?: string; result: string; reason?: string; };"
             ],
+            "CheckableRecord": [
+              "type CheckableRecord = Pick<OtelRecord, 'kind' | 'name' | 'attributes' | 'resource'>;"
+            ],
             "ChecksCi": [
               "type ChecksCi = Times & { result: 'green' | 'red' | 'pending' | 'skipped'; failing?: readonly string[]; waitMs?: number; };"
             ],
@@ -691,6 +700,7 @@
               "type ConfidenceStated = { /** 0 to 100; absent when the agent gave none. */ confidence?: number; reason?: string; afterExtraTurn?: boolean; agent?: SpanParent; };"
             ],
             "ConnectOptions": ["sha256:1dfbcd10a289ad275fc888f8a895147224abdaf3cab5bd3ee2c079eadbbe66d0"],
+            "ContractFailure": ["type ContractFailure = ReservedName;"],
             "ConvertedEarlierRecord": [
               "type ConvertedEarlierRecord = { resource: Resource; } & ({ type: 'span'; record: Span; } | { type: 'log'; record: LogRecord; });"
             ],
@@ -706,13 +716,13 @@
             "CustomEventRefusalReason": [
               "type CustomEventRefusalReason = 'undeclared' | 'missing_field' | 'extra_field' | 'wrong_type' | 'too_long';"
             ],
-            "CustomEventSchema": ["sha256:26204277be32748cddfc760cb8d10785a4f36790d8aba396d8ea76a9a161dfc6"],
+            "CustomEventSchema": ["sha256:6bada1b546435b9b359e72e7f4cae201d7177f5d9997c26f337292993d5a7d1c"],
             "CustomFieldType": ["type CustomFieldType = 'text' | 'number' | 'boolean' | string[];"],
             "CustomFieldValue": ["type CustomFieldValue = string | number | boolean;"],
             "DevReviewLoopEvent": ["type DevReviewLoopEvent = z.infer<typeof DevReviewLoopEventSchema>;"],
-            "DevReviewLoopEventSchema": ["sha256:b367865df0fdf5f8bf13e344365a8df92c957f23a6b10910e0ab3122476a8a1d"],
+            "DevReviewLoopEventSchema": ["sha256:06a5a060f2e0d5ffb26beb50aa0fa8af8e160884c4be04e47e0fc7d0c1ebc7b7"],
             "DispatchEvent": ["type DispatchEvent = z.infer<typeof DispatchEventSchema>;"],
-            "DispatchEventSchema": ["sha256:23da7d3cd58d95cd435e36f6654f43ef3024990491a01aaa26177ff4cc30a182"],
+            "DispatchEventSchema": ["sha256:5a492cd0496d57a4f5d377336fd6289a7d1faff2ceb84a34c6ffd25b21080069"],
             "DispatchOutcome": ["type DispatchOutcome = z.infer<typeof DispatchOutcomeSchema>;"],
             "EARLIER_EVENT_PREFIX": ["const EARLIER_EVENT_PREFIX = \"vinaya.earlier.\""],
             "EARLIER_WRITER_PREFIX": ["const EARLIER_WRITER_PREFIX = \"earlier:\""],
@@ -722,7 +732,7 @@
               "type EarlierOtlpDocuments = { traces: { resourceSpans: { resource: Resource; scopeSpans: { scope: typeof scope; spans: Span[]; }[]; }[]; }; logs: { resourceLogs: { resource: Resource; scopeLogs: { scope: typeof scope; logRecords: LogRecord[]; }[]; }[]; }; };"
             ],
             "EffectEvent": ["type EffectEvent = z.infer<typeof EffectEventSchema>;"],
-            "EffectEventSchema": ["sha256:d21c694325f28bf41cf612b67599cc18b97b62c169e09a3040817b18d5769839"],
+            "EffectEventSchema": ["sha256:bd4a1534a45022aadb14ed2ecb35b9f612ac6aff21086e4dce1991053153b417"],
             "EndRound": [
               "type EndRound = EndOptions & { filesChanged?: number; linesAdded?: number; linesRemoved?: number; outcome?: string; };"
             ],
@@ -752,21 +762,21 @@
             "ForgeRefusal": ["type ForgeRefusal = ForgeWrite & { why: string; };"],
             "ForgeWrite": ["type ForgeWrite = { action: string; target: string; };"],
             "ForgeWriteEvent": ["type ForgeWriteEvent = z.infer<typeof ForgeWriteEventSchema>;"],
-            "ForgeWriteEventSchema": ["sha256:80d6554e6c2968c255e6fbd806cd728e8acdd929bc35553998f181dfdaadc50b"],
+            "ForgeWriteEventSchema": ["sha256:bff64f3c059676f8e358134269d3a3e5966e9abe184eea06814a801bcdc86b7a"],
             "GENAI_CONVENTIONS_VERSION": [
               "const GENAI_CONVENTIONS_VERSION = \"semantic-conventions-genai@main-2026-11-18\""
             ],
             "GateEvent": ["type GateEvent = z.infer<typeof GateEventSchema>;"],
-            "GateEventSchema": ["sha256:fabcea2a65275e5fc064f5aea84203a2da860e2c67ab9028f95ca0466533c804"],
+            "GateEventSchema": ["sha256:32e92a9712e95959ff6c67af00ec5fb02c86e26521c7ea54479846d5e53dc8c1"],
             "GateOutcome": ["type GateOutcome = z.infer<typeof GateOutcomeSchema>;"],
             "GateOutcomeSchema": [
               "const GateOutcomeSchema: z.ZodEnum<[\"pass\", \"fail\", \"wait\", \"skip\", \"invalid_input\", \"unavailable_dependency\", \"timeout\", \"cancelled\"]>"
             ],
             "HOST_VALUES": ["const HOST_VALUES: readonly [\"hook\", \"ci\", \"cli\", \"loop\"]"],
             "HandoffEvent": ["type HandoffEvent = z.infer<typeof HandoffEventSchema>;"],
-            "HandoffEventSchema": ["sha256:e4039788a19f6d30d22f4b01ce721483ea7a578b1231cbf1e16f0f45bb994ad2"],
+            "HandoffEventSchema": ["sha256:d517698be711e1c5df19444ec6d47f58101795e18863d18b6b8da15a251238b3"],
             "Header": ["type Header = z.infer<typeof HeaderSchema>;"],
-            "HeaderMetaSchema": ["sha256:ca79b784f9412dd91159d5229928c5324f6d06e784c7422de08c195e633c9723"],
+            "HeaderMetaSchema": ["sha256:263ffe72b9da60e2f9018fe9a1fb04510ab5da9c2b12c5d0ba569c503b2a452d"],
             "HeaderMetaV1": ["type HeaderMetaV1 = z.infer<typeof HeaderMetaV1Schema>;"],
             "HeaderMetaV1Schema": [
               "const HeaderMetaV1Schema: z.ZodObject<{ ts: z.ZodString; run_id: z.ZodString; seq: z.ZodNumber; repo: z.ZodNullable<z.ZodString>; vinaya: z.ZodString; doctrine: z.ZodString; host: z.ZodEnum<[\"hook\", \"ci\", \"cli\", \"loop\"]>; machine: z.ZodString; schema: z.ZodLiteral<1>; }, \"strict\", z.ZodTypeAny, { seq: number; vinaya: string; schema: 1; ts: string; run_id: string; repo: string | null; doctrine: string; host: \"ci\" | \"hook\" | \"cli\" | \"loop\"; machine: string; }, { seq: number; vinaya: string; schema: 1; ts: string; run_id: string; repo: string | null; doctrine: string; host: \"ci\" | \"hook\" | \"cli\" | \"loop\"; machine: string; }>"
@@ -774,10 +784,10 @@
             "HeaderMetaV2": ["type HeaderMetaV2 = z.infer<typeof HeaderMetaV2Schema>;"],
             "HeaderMetaV2Schema": ["sha256:fd220954f7a0d59d5d3c732da3b6033042d1f65e8552f27387e563182e6c2113"],
             "HeaderMetaV3": ["type HeaderMetaV3 = z.infer<typeof HeaderMetaV3Schema>;"],
-            "HeaderMetaV3Schema": ["sha256:31a503b027d4bf1acde4b80f3e8b48e123b8683a135c590935d25c8bc7fcffc9"],
+            "HeaderMetaV3Schema": ["sha256:d2a93101a878cc77b475fcb799617c14fe3545d0b8cf0ac67927cea3836ddc8b"],
             "HeaderMetaV4": ["type HeaderMetaV4 = z.infer<typeof HeaderMetaV4Schema>;"],
-            "HeaderMetaV4Schema": ["sha256:4983e3d59a8989db37d613f371224acc1a554c9968b1cb4c3347a6edfa8f75da"],
-            "HeaderSchema": ["sha256:4773ea0d76f0feaeb33717ecb6492a9e207b4152c1c12e847f0789d48b2abc77"],
+            "HeaderMetaV4Schema": ["sha256:f1607c1d0aea1ebed3f07ad85594a3132426e4341dc69a8445669a1d69429699"],
+            "HeaderSchema": ["sha256:6e365a20e03d8b91b8b9b4b7b17c92a1579b9c41bf54378a1773551e843d5012"],
             "Host": ["type Host = z.infer<typeof HostSchema>;"],
             "HostSchema": ["const HostSchema: z.ZodEnum<[\"hook\", \"ci\", \"cli\", \"loop\"]>"],
             "InputVersions": [
@@ -800,7 +810,7 @@
               "type LocalCopyReport = { sent: number; setAside: Array<{ file: string; offset: number; reason: string; }>; failures: Array<{ file?: string; offset?: number; reason: string; }>; };"
             ],
             "LogEvent": ["type LogEvent = z.infer<typeof LogEventSchema>;"],
-            "LogEventSchema": ["sha256:8748ac81c6a816c18b7901035cfc32f5c609fc2a3c7ef92d2a7503b42399071c"],
+            "LogEventSchema": ["sha256:15328999a87f372ee816cf388d55c70f1231f2a9944d56b3bc28d355522d7e08"],
             "LogHandle": ["sha256:478b48f5db6585e4755d6024cd72bf1f01215761f859f1a59471f85f4f605c3d"],
             "LogStore": [
               "interface LogStore { /** Idempotently append records (raw ndjson strings or event objects). Redacts at this write (sink) boundary. */ append(records: readonly (string | object)[]): AppendOutcome; /** Read one page from `cursor` (validation + provenance + unknown-version preservation + transport-boundary redaction). */ readPage(cursor: number | null, limit: number): ReadPage; /** Remove exactly the named identities. Returns how many were present and removed. */ acknowledge(identities: readonly RecordIdentity[]): number; /** How many records are currently held. */ size(): number; }"
@@ -815,7 +825,7 @@
             "NarrationKind": ["type NarrationKind = (typeof NARRATION_KINDS)[number];"],
             "NarrationLine": ["type NarrationLine = { kind: NarrationKind; text: string; };"],
             "OperationEvent": ["type OperationEvent = z.infer<typeof OperationEventSchema>;"],
-            "OperationEventSchema": ["sha256:5d91f631eed03df149c4a9cabaee0845afd6580c61eba3f3e4db18c7cf51322e"],
+            "OperationEventSchema": ["sha256:05f37a4b6f6b1c0b59825199f92d67e4c1d98478561713f011bab25cda99b3d7"],
             "OperationResult": ["type OperationResult = z.infer<typeof OperationResultSchema>;"],
             "OperationResultSchema": [
               "const OperationResultSchema: z.ZodEnum<[\"ok\", \"error\", \"refused\", \"timeout\", \"cancelled\", \"unavailable\"]>"
@@ -853,7 +863,7 @@
               "type ReadDiagnostics = { total: number; ok: number; unknownVersion: number; invalid: number; };"
             ],
             "ReadGap": [
-              "type ReadGap = { kind: 'sequence' | 'file_missing' | 'unreadable_line' | 'unrecognised_document' | 'source_unavailable'; writerId: string | null; place: string; detail: string; };"
+              "type ReadGap = { kind: 'sequence' | 'file_missing' | 'unreadable_line' | 'unrecognised_document' | 'source_unavailable' | 'contract'; writerId: string | null; place: string; detail: string; };"
             ],
             "ReadPage": [
               "type ReadPage = { records: ReadRecord[]; /** The cursor to pass for the next page, or `null` when this page reached the end. */ nextCursor: number | null; diagnostics: ReadDiagnostics; };"
@@ -891,7 +901,7 @@
             "ReviewerVerdict": ["type ReviewerVerdict = z.infer<typeof ReviewerVerdictSchema>;"],
             "Role": ["type Role = z.infer<typeof RoleSchema>;"],
             "RoleAttemptEvent": ["type RoleAttemptEvent = z.infer<typeof RoleAttemptEventSchema>;"],
-            "RoleAttemptEventSchema": ["sha256:6c358235b1a9cfbede4dc94a0fb8fd1a66e6ee0a8d11de2df3aef502ea1e0d57"],
+            "RoleAttemptEventSchema": ["sha256:bbebfc1236bda64dc66ec7f821be94df363c97e84dbf1d53cf1af28df6d6cac0"],
             "RoleAttemptOutcome": ["type RoleAttemptOutcome = z.infer<typeof RoleAttemptOutcomeSchema>;"],
             "RoleAttemptOutcomeSchema": [
               "const RoleAttemptOutcomeSchema: z.ZodEnum<[\"completed\", \"incomplete\", \"infrastructure_failed\", \"cancelled\", \"timed_out\", \"capability_refused\"]>"
@@ -938,7 +948,7 @@
             ],
             "UNRECORDABLE_FIELD_NAME": ["const UNRECORDABLE_FIELD_NAME = \"<unrecordable>\""],
             "UsageEvent": ["type UsageEvent = z.infer<typeof UsageEventSchema>;"],
-            "UsageEventSchema": ["sha256:7d5257824f7b5446ab9485bea0c8f1ad6e6726b5299cf2c26c884818811e0983"],
+            "UsageEventSchema": ["sha256:23aae45514bd25ec7115ac27b8c914309d49d3c9028979e5b73031b67feb0e4c"],
             "UsageRecorded": [
               "type UsageRecorded = { /** The started record's nanosecond timestamp when the span lives in another writer. */ spanStart?: string; inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cost?: { amount: number; kind: 'exact' | 'estimated'; }; /** Why usage is unknown, as a short code; with it no figure is recorded. */ unknownReason?: string; agent?: SpanParent; };"
             ],
@@ -956,6 +966,7 @@
             "checkCustomEvent": [
               "function checkCustomEvent(declarations: CustomEventDeclarations, name: string, fields: Readonly<Record<string, unknown>>): CustomEventCheck;"
             ],
+            "checkRecordContract": ["function checkRecordContract(record: CheckableRecord): ContractFailure | null;"],
             "classifyStoredLine": ["function classifyStoredLine(raw: string, home: string): ReadRecord;"],
             "connect": ["function connect(options: ConnectOptions): LogHandle;"],
             "convertEarlierEvents": [
@@ -970,13 +981,14 @@
               "function createLiveEarlierConverter(runId: string, openStarts?: readonly EarlierOpenStart[], home?: string): { convert(event: LogEvent): ConvertedEarlierRecord; learn: (starts: readonly EarlierOpenStart[]) => void; };"
             ],
             "createOrdering": [
-              "function createOrdering(options?: { patience?: number; fromStart?: boolean; firstSequence?: number; remember?: number; maxHeld?: number; }): { /** Takes the records a source just read; returns those now ready, in order. */ push: (records: OtelRecord[]) => Ordered; /** Ends the run's reading: every held record leaves and every missing number is reported. */ flush: () => Ordered; /** The started events whose span has not arrived. */ openSpans: () => OtelRecord[]; };"
+              "function createOrdering(options?: { patience?: number; fromStart?: boolean; firstSequence?: number; remember?: number; maxHeld?: number; /** * Withholds a record that is ready to leave, reporting the gap it returns. * The record still takes its place in its writer's sequence, so the * records around it are not held behind a number that never comes. */ withhold?: (record: OtelRecord) => ReadGap | null; }): { /** Takes the records a source just read; returns those now ready, in order. */ push: (records: OtelRecord[]) => Ordered; /** Ends the run's reading: every held record leaves and every missing number is reported. */ flush: () => Ordered; /** The started events whose span has not arrived. */ openSpans: () => OtelRecord[]; };"
             ],
             "createOtlpSource": ["function createOtlpSource(options: OtlpSourceOptions): RecordSource;"],
             "createReader": ["function createReader(source: RecordSource, options?: ReaderOptions): Reader;"],
             "createRunIdGenerator": [
               "function createRunIdGenerator(runId: string): { generateTraceId(): string; generateSpanId(): string; useNextSpanId(id: string | undefined): void; };"
             ],
+            "describeContractFailure": ["function describeContractFailure(failure: ContractFailure): string;"],
             "identityOf": ["function identityOf(record: OtelRecord): string;"],
             "isSpanName": ["function isSpanName(name: string): boolean;"],
             "narrate": [
@@ -1043,6 +1055,8 @@
         "dist/bin/vinaya-log.js",
         "dist/contract/catalogue.d.ts",
         "dist/contract/catalogue.js",
+        "dist/contract/check.d.ts",
+        "dist/contract/check.js",
         "dist/contract/convert-live.d.ts",
         "dist/contract/convert-live.js",
         "dist/contract/convert-map.d.ts",
@@ -1121,6 +1135,7 @@
         "src/bin/follow.ts",
         "src/bin/vinaya-log.ts",
         "src/contract/catalogue.ts",
+        "src/contract/check.ts",
         "src/contract/convert-live.ts",
         "src/contract/convert-map.ts",
         "src/contract/convert.ts",
