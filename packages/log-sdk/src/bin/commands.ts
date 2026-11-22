@@ -4,8 +4,8 @@ import { spanIdFor, type SpanParent } from '../contract/ids.js'
 import { createFolderSource } from '../reader/folder-source.js'
 import type { OtelRecord } from '../reader/records.js'
 import { createReader } from '../reader/source.js'
+import { attribute, latestOpenStart, startAttributes, timeInput } from '../reader/span-start.js'
 import type { UsageRecorded } from '../writer/agent.js'
-import type { Attrs } from '../writer/attributes.js'
 import type { LogHandle } from '../writer/connect.js'
 import type { Fields } from './args.js'
 
@@ -42,7 +42,8 @@ export const subjects = {
     recovered: true,
     merged: true,
     reverted: true,
-    incident: true
+    incident: true,
+    closed: true
   },
   person: { asked: true, answered: true },
   forge: { validated: true, refused: true, written: true },
@@ -130,18 +131,6 @@ function matches(record: OtelRecord, fields: Fields, handle: LogHandle): boolean
   return fields.round === undefined || (record.attributes[A.roundNumber] ?? record.attributes[A.round]) === fields.round
 }
 
-function timeInput(nanos: string): TimeInput {
-  const value = BigInt(nanos)
-  return [Number(value / 1_000_000_000n), Number(value % 1_000_000_000n)]
-}
-
-function attribute(value: unknown): Attrs[string] {
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value
-  if (Array.isArray(value) && value.every((item) => typeof item === 'string')) return value as string[]
-  if (Array.isArray(value) && value.every((item) => typeof item === 'boolean')) return value as boolean[]
-  return undefined
-}
-
 async function findStart(
   event: string,
   handle: LogHandle,
@@ -150,25 +139,7 @@ async function findStart(
 ): Promise<{ start: OtelRecord; records: OtelRecord[] }> {
   const reader = createReader(createFolderSource({ folder, runId: handle.runId, canonicalFolder: true }))
   const { records } = await reader.readAll()
-  const finished = new Map<string, bigint>()
-  for (const record of records) {
-    if (record.kind !== 'span' || record.traceId !== handle.traceId) continue
-    const time = BigInt(record.startTime ?? '0')
-    if (time >= (finished.get(record.spanId) ?? 0n)) finished.set(record.spanId, time)
-  }
-  const start = records
-    .filter(
-      (r) =>
-        r.kind === 'started' &&
-        r.name === event &&
-        r.traceId === handle.traceId &&
-        BigInt(r.time) > (finished.get(r.spanId) ?? -1n) &&
-        matches(r, fields, handle)
-    )
-    .reduce<OtelRecord | undefined>(
-      (latest, record) => (latest === undefined || BigInt(record.time) >= BigInt(latest.time) ? record : latest),
-      undefined
-    )
+  const start = latestOpenStart(records, event, handle.traceId, (r) => matches(r, fields, handle))
   if (start === undefined) throw new MissingStart('missing start: ' + event)
   return { start, records }
 }
@@ -200,9 +171,7 @@ export async function invoke(command: string, handle: LogHandle, fields: Fields,
     const [event, base, suffix, endFields] = completions[command as keyof typeof completions]
     const { start, records } = await findStart(event, handle, fields, folder)
 
-    const attrs: Attrs = {}
-    for (const key of Object.values(A)) attrs[key] = attribute(start.attributes[key])
-    delete attrs[A.eventId]
+    const { attrs, parentId } = startAttributes(start)
     for (const [field, key] of Object.entries(endFields)) attrs[key] = attribute(fields[field])
     if (event === E.agentStarted) {
       const usage = [...records]
@@ -219,10 +188,8 @@ export async function invoke(command: string, handle: LogHandle, fields: Fields,
 
     const part = suffix === undefined ? undefined : attrs[suffix]
     const name = spanName(base, typeof part === 'string' || typeof part === 'number' ? part : undefined)
-    const parentId = start.attributes[A.parentSpanId]
-    delete attrs[A.parentSpanId]
     const parent =
-      typeof parentId === 'string'
+      parentId !== undefined
         ? { traceId: start.traceId, spanId: parentId }
         : event === E.runStarted
           ? undefined

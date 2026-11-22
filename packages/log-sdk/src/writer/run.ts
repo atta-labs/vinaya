@@ -10,6 +10,7 @@ import {
   type WriterCore,
   type Work
 } from './attributes.js'
+import { endFromCopy, findOpenStart } from './carried.js'
 import { writeWholeSpan } from './whole-span.js'
 
 export type EndOptions = { errorType?: string; endTime?: TimeInput }
@@ -114,20 +115,32 @@ export function started(core: WriterCore, options: StartRun = {}): SpanParent {
 
 export function ended(core: WriterCore, options: EndRun = {}): void {
   const ref = core.current.run
-  if (ref === undefined) throw new Error('no run is open')
-  endSpan(
-    core,
-    ref,
-    {
-      [A.runRounds]: options.rounds,
-      [A.runTotalMs]: options.totalMs,
-      [A.runTimeToGreenMs]: options.timeToGreenMs,
-      [A.runFilesChanged]: options.filesChanged,
-      [A.runOutcome]: options.outcome
-    },
-    options.endTime,
-    options.errorType
-  )
+  const attrs = {
+    [A.runRounds]: options.rounds,
+    [A.runTotalMs]: options.totalMs,
+    [A.runTimeToGreenMs]: options.timeToGreenMs,
+    [A.runFilesChanged]: options.filesChanged,
+    [A.runOutcome]: options.outcome
+  }
+  if (ref !== undefined && (!core.enabled || core.open.has(ref.spanId))) {
+    endSpan(core, ref, attrs, options.endTime, options.errorType)
+    return
+  }
+  if (!core.enabled) throw new Error('no run is open')
+  // Another process started this run: the span is written whole, from the start in the local copy.
+  const spanId = ref?.spanId ?? spanIdFor(core.runId, 'run')
+  endFromCopy(core, {
+    event: E.runStarted,
+    base: S.run,
+    suffix: A.processName,
+    accept: (r) => r.spanId === spanId,
+    parent: undefined,
+    attrs,
+    endTime: options.endTime,
+    errorType: options.errorType
+  })
+  // The run is written; a second end must not find it open again.
+  delete core.current.run
 }
 
 /** The run is alive: the open round and phase, as an event on the run span. */
@@ -166,12 +179,27 @@ export function paused(core: WriterCore, options: Pause = {}): SpanParent {
 
 /** Ends the pause span, whole: its start was taken by `paused`, or is given by a later process. */
 export function resumed(core: WriterCore, options: Resume): void {
-  const latest = [...core.pauses.values()].at(-1)
-  const ref = options.pause ?? latest?.ref
-  if (ref === undefined) throw new Error('no pause is open')
+  let ref = options.pause ?? [...core.pauses.values()].at(-1)?.ref
+  if (ref === undefined) {
+    // A later process: the latest pause left open in the local copy.
+    const start = findOpenStart(core, E.pauseStarted)
+    if (start === undefined) throw new Error('no pause is open')
+    ref = { traceId: start.traceId, spanId: start.spanId }
+  }
   const known = core.pauses.get(ref.spanId)
   const startTime = options.startTime ?? known?.startTime
-  if (startTime === undefined) throw new Error('the pause start time is not known')
+  if (startTime === undefined) {
+    const spanId = ref.spanId
+    endFromCopy(core, {
+      event: E.pauseStarted,
+      base: S.pause,
+      accept: (r) => r.spanId === spanId,
+      parent: runSpanRef(core),
+      attrs: { [A.roundNumber]: options.round, [A.pauseWhy]: options.why, [A.pauseBy]: options.by },
+      endTime: options.endTime
+    })
+    return
+  }
   core.pauses.delete(ref.spanId)
   writeWholeSpan(core, S.pause, ref, runSpanRef(core), startTime, options.endTime ?? core.now(), {
     [A.roundNumber]: options.round ?? known?.round,

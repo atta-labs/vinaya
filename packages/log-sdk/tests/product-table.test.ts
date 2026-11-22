@@ -396,6 +396,13 @@ const ROWS: Row[] = [
     call: (h) => h.change.incident({ runId: 'run-1', severity: 'high', link: 'https://example.test/i/1' })
   },
   {
+    row: 'log.change.closed',
+    event: 'vinaya.change.closed',
+    fields: ['vinaya.actor'],
+    setup: run,
+    call: (h) => h.change.closed({ runId: 'run-1', when: start, by: 'person' })
+  },
+  {
     row: 'log.person.asked',
     span: 'vinaya.person strategy',
     fields: ['vinaya.person.kind', 'vinaya.person.why', 'vinaya.person.decision'],

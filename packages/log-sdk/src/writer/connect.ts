@@ -20,9 +20,10 @@ import {
 } from '../contract/catalogue.js'
 import type { CustomEventDeclarations } from '../contract/custom.js'
 import { createRunIdGenerator, type SpanParent, traceIdFor } from '../contract/ids.js'
-import { createFileExporters } from '../local-copy/file-exporters.js'
+import { copyFilePrefix, copyFolder, createFileExporters } from '../local-copy/file-exporters.js'
 import * as agent from './agent.js'
 import { type Attrs, guard, type InputVersions, type Work, type WriterCore } from './attributes.js'
+import { carryOn } from './carried.js'
 import * as change from './change.js'
 import * as checks from './checks.js'
 import { custom } from './custom.js'
@@ -127,6 +128,7 @@ export type LogHandle = {
     merged(d?: change.ChangeMerged): void
     reverted(d?: change.ChangeReverted): void
     incident(d?: change.ChangeIncident): void
+    closed(d?: change.ChangeClosed): void
   }
   readonly person: {
     asked(d: person.PersonAsked): SpanParent
@@ -326,6 +328,15 @@ export function connect(options: ConnectOptions): LogHandle {
     current: {},
     pauses: new Map(),
     seq: 0,
+    ...(settings !== undefined && settings.logs !== false
+      ? {
+          copy: {
+            folder: () =>
+              copyFolder({ repository: options.repository, repoRoot: options.repoRoot ?? process.cwd(), settings }),
+            prefix: copyFilePrefix(runId, writerId)
+          }
+        }
+      : {}),
     report
   }
   const heartbeat = run.createHeartbeat(core, timers)
@@ -353,7 +364,8 @@ export function connect(options: ConnectOptions): LogHandle {
     settings,
     run: {
       started: s((o?: run.StartRun) => {
-        const ref = run.started(core, o)
+        // A run another process started is carried on, not started again.
+        const ref = carryOn(core, o ?? {}) ?? run.started(core, o)
         if (core.enabled) heartbeat.start()
         return ref
       }),
@@ -404,7 +416,8 @@ export function connect(options: ConnectOptions): LogHandle {
       recovered: g(() => change.recovered(core)),
       merged: g((d?: change.ChangeMerged) => change.merged(core, d)),
       reverted: g((d?: change.ChangeReverted) => change.reverted(core, d)),
-      incident: g((d?: change.ChangeIncident) => change.incident(core, d))
+      incident: g((d?: change.ChangeIncident) => change.incident(core, d)),
+      closed: g((d?: change.ChangeClosed) => change.closed(core, d))
     },
     person: {
       asked: s((d: person.PersonAsked) => person.asked(core, d)),

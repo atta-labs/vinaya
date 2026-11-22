@@ -11,6 +11,8 @@ export type ChangePushed = { result: 'passed' | 'refused'; picked?: number; fail
 export type ChangeOpened = { change: string; commit?: string }
 export type ChangeConflicted = { reentry?: number }
 export type ChangeMerged = Independent & { by?: string }
+/** The change was closed without merging. */
+export type ChangeClosed = Independent & { by?: string }
 export type ChangeReverted = Independent & { reason?: string }
 export type ChangeIncident = Independent & { severity?: string; link?: string }
 
@@ -18,9 +20,11 @@ function onRun(core: WriterCore, name: string, attrs: Record<string, string | nu
   emitEvent(core, name, { ...attrs, [A.runId]: core.runId }, runSpanRef(core))
 }
 
+/** Linked to the run the caller names, else to this handle's own run. */
 function afterRun(core: WriterCore, name: string, d: Independent, attrs: Record<string, string | undefined>): void {
-  const ref = d.runId === undefined ? undefined : { traceId: traceIdFor(d.runId), spanId: spanIdFor(d.runId, 'run') }
-  emitEvent(core, name, { ...attrs, [A.runId]: d.runId }, ref, d.when)
+  const runId = d.runId ?? core.runId
+  const ref = { traceId: traceIdFor(runId), spanId: spanIdFor(runId, 'run') }
+  emitEvent(core, name, { ...attrs, [A.runId]: runId }, ref, d.when)
 }
 
 export function saved(core: WriterCore, d: ChangeSaved = {}): void {
@@ -57,6 +61,10 @@ export function merged(core: WriterCore, d: ChangeMerged = {}): void {
 
 export function reverted(core: WriterCore, d: ChangeReverted = {}): void {
   afterRun(core, E.changeReverted, d, { [A.reason]: d.reason })
+}
+
+export function closed(core: WriterCore, d: ChangeClosed = {}): void {
+  afterRun(core, E.changeClosed, d, { [A.actor]: d.by })
 }
 
 export function incident(core: WriterCore, d: ChangeIncident = {}): void {

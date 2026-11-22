@@ -63,7 +63,8 @@ export const EVENT_NAMES = {
   changeRecovered: 'vinaya.change.recovered',
   changeMerged: 'vinaya.change.merged',
   changeReverted: 'vinaya.change.reverted',
-  changeIncident: 'vinaya.change.incident'
+  changeIncident: 'vinaya.change.incident',
+  changeClosed: 'vinaya.change.closed'
 } as const
 
 export const ATTRIBUTE_NAMES = {
@@ -196,6 +197,7 @@ export const ATTRIBUTE_NAMES = {
   questionKey: 'vinaya.person.key',
   personWhy: 'vinaya.person.why',
   personDecision: 'vinaya.person.decision',
+  personHowToAnswer: 'vinaya.person.how_to_answer',
   personAnswer: 'vinaya.person.answer',
   answeredBy: 'vinaya.person.answered_by',
   // Outside actions
