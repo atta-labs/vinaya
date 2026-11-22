@@ -315,6 +315,849 @@
         "vinaya-strict/thinking/planner/doctrine.md",
         "vinaya-strict/thinking/planner/reference.md"
       ]
+    },
+    "@attalabs/vinaya-log-sdk": {
+      "dir": "packages/log-sdk",
+      "internalModules": [],
+      "bin": {
+        "vinaya-log": "dist/bin/vinaya-log.js"
+      },
+      "subpaths": {
+        ".": {
+          "symbols": [
+            "ALL_ATTRIBUTE_NAMES",
+            "ALL_EVENT_NAMES",
+            "ALL_SPAN_NAMES",
+            "ATTRIBUTE_NAMES",
+            "ActionVerified",
+            "AgentFailed",
+            "AgentReturned",
+            "AgentSent",
+            "AppendOutcome",
+            "AttributeName",
+            "AttributeValue",
+            "Attributes",
+            "CODE_TOKEN_PATTERN",
+            "CONFIDENCE_REASON_MAX_LENGTH",
+            "CUSTOM_EVENT_MAX_FIELDS",
+            "CUSTOM_EVENT_NAME_MAX_LENGTH",
+            "CUSTOM_EVENT_NAME_PATTERN",
+            "CUSTOM_EVENT_RESERVED_NAMESPACE",
+            "CUSTOM_FIELD_MAX_WORDS",
+            "CUSTOM_FIELD_NAME_MAX_LENGTH",
+            "CUSTOM_FIELD_NAME_PATTERN",
+            "CUSTOM_TEXT_MAX_LENGTH",
+            "CUSTOM_WORD_MAX_LENGTH",
+            "CUSTOM_WORD_PATTERN",
+            "ChangeConflicted",
+            "ChangeIncident",
+            "ChangeMerged",
+            "ChangeOpened",
+            "ChangePushed",
+            "ChangeReverted",
+            "ChangeSaved",
+            "CheckNotPassed",
+            "ChecksCi",
+            "ChecksLocal",
+            "ChecksRan",
+            "ChecksRead",
+            "ChecksRerun",
+            "CommandCompleted",
+            "ConfidenceStated",
+            "ConnectOptions",
+            "ConvertedEarlierRecord",
+            "CustomEvent",
+            "CustomEventCheck",
+            "CustomEventDeclaration",
+            "CustomEventDeclarations",
+            "CustomEventDeclarationsSchema",
+            "CustomEventRefusalReason",
+            "CustomEventSchema",
+            "CustomFieldType",
+            "CustomFieldValue",
+            "DevReviewLoopEvent",
+            "DevReviewLoopEventSchema",
+            "DispatchEvent",
+            "DispatchEventSchema",
+            "DispatchOutcome",
+            "EARLIER_EVENT_PREFIX",
+            "EARLIER_WRITER_PREFIX",
+            "EVENT_NAMES",
+            "EarlierOpenStart",
+            "EarlierOtlpDocuments",
+            "EffectEvent",
+            "EffectEventSchema",
+            "EndRound",
+            "EndRun",
+            "EventName",
+            "ExitKind",
+            "FORBIDDEN_CONTENT_ATTRIBUTES",
+            "FindingsCompared",
+            "FixtureStoreOptions",
+            "Flow",
+            "FlowSchema",
+            "FolderSourceOptions",
+            "ForgeOp",
+            "ForgeOpSchema",
+            "ForgeRefusal",
+            "ForgeWrite",
+            "ForgeWriteEvent",
+            "ForgeWriteEventSchema",
+            "GENAI_CONVENTIONS_VERSION",
+            "GateEvent",
+            "GateEventSchema",
+            "GateOutcome",
+            "GateOutcomeSchema",
+            "HOST_VALUES",
+            "HandoffEvent",
+            "HandoffEventSchema",
+            "Header",
+            "HeaderMetaSchema",
+            "HeaderMetaV1",
+            "HeaderMetaV1Schema",
+            "HeaderMetaV2",
+            "HeaderMetaV2Schema",
+            "HeaderMetaV3",
+            "HeaderMetaV3Schema",
+            "HeaderMetaV4",
+            "HeaderMetaV4Schema",
+            "HeaderSchema",
+            "Host",
+            "HostSchema",
+            "InputVersions",
+            "InputVersionsSchema",
+            "KNOWN_SCHEMA_VERSIONS",
+            "LineProblem",
+            "LineReader",
+            "LineResult",
+            "Lineage",
+            "LineageSchema",
+            "LocalCopyReport",
+            "LogEvent",
+            "LogEventSchema",
+            "LogHandle",
+            "LogStore",
+            "LogsSetting",
+            "NARRATION_KINDS",
+            "NarratableRecord",
+            "NarrationKind",
+            "NarrationLine",
+            "OperationEvent",
+            "OperationEventSchema",
+            "OperationResult",
+            "OperationResultSchema",
+            "Ordered",
+            "OtelRecord",
+            "OtlpPage",
+            "OtlpSourceOptions",
+            "OtlpSupplier",
+            "OverflowDiagnostic",
+            "Pause",
+            "PersonAnswered",
+            "PersonAsked",
+            "PersonKind",
+            "PhaseEnded",
+            "Provenance",
+            "ProvenanceSchema",
+            "REVIEW_FINDING_DESCRIPTION_MAX_LENGTH",
+            "ROLE_NAME_PATTERN",
+            "ReadDiagnostics",
+            "ReadGap",
+            "ReadPage",
+            "ReadRecord",
+            "ReadableLogRecord",
+            "ReadableSpan",
+            "Reader",
+            "ReaderOptions",
+            "ReaderUpdate",
+            "RecordIdentity",
+            "RecordKind",
+            "RecordProvenance",
+            "RecordSource",
+            "RecordTrust",
+            "Resume",
+            "ReviewFinding",
+            "ReviewVerdicts",
+            "ReviewerVerdict",
+            "Role",
+            "RoleAttemptEvent",
+            "RoleAttemptEventSchema",
+            "RoleAttemptOutcome",
+            "RoleAttemptOutcomeSchema",
+            "RoleSchema",
+            "RunIdGenerator",
+            "SDK_VERSION",
+            "SPAN_NAMES",
+            "SeatNames",
+            "SendLocalCopyOptions",
+            "SourceBatch",
+            "SourceProblem",
+            "SpanName",
+            "SpanParent",
+            "Stage",
+            "StartRound",
+            "StartRun",
+            "StepEnded",
+            "StepStarted",
+            "StopRule",
+            "Subject",
+            "Timers",
+            "UNRECORDABLE_FIELD_NAME",
+            "UsageEvent",
+            "UsageEventSchema",
+            "UsageRecorded",
+            "UsageUnits",
+            "Work",
+            "WorkSchema",
+            "agentSpanIdFor",
+            "applyTrust",
+            "checkCustomEvent",
+            "classifyStoredLine",
+            "connect",
+            "convertEarlierEvents",
+            "createFixtureStore",
+            "createFolderSource",
+            "createLineReader",
+            "createLiveEarlierConverter",
+            "createOrdering",
+            "createOtlpSource",
+            "createReader",
+            "createRunIdGenerator",
+            "identityOf",
+            "isSpanName",
+            "narrate",
+            "processAndRunnerOf",
+            "readOtlpDocument",
+            "readPageFrom",
+            "reasonWaitsOn",
+            "recordIdentity",
+            "redact",
+            "sendLocalCopy",
+            "spanIdFor",
+            "spanName",
+            "traceIdFor",
+            "writeWholeSpan"
+          ],
+          "runtimeExports": [
+            "ALL_ATTRIBUTE_NAMES",
+            "ALL_EVENT_NAMES",
+            "ALL_SPAN_NAMES",
+            "ATTRIBUTE_NAMES",
+            "CODE_TOKEN_PATTERN",
+            "CONFIDENCE_REASON_MAX_LENGTH",
+            "CUSTOM_EVENT_MAX_FIELDS",
+            "CUSTOM_EVENT_NAME_MAX_LENGTH",
+            "CUSTOM_EVENT_NAME_PATTERN",
+            "CUSTOM_EVENT_RESERVED_NAMESPACE",
+            "CUSTOM_FIELD_MAX_WORDS",
+            "CUSTOM_FIELD_NAME_MAX_LENGTH",
+            "CUSTOM_FIELD_NAME_PATTERN",
+            "CUSTOM_TEXT_MAX_LENGTH",
+            "CUSTOM_WORD_MAX_LENGTH",
+            "CUSTOM_WORD_PATTERN",
+            "CustomEventDeclarationsSchema",
+            "CustomEventSchema",
+            "DevReviewLoopEventSchema",
+            "DispatchEventSchema",
+            "EARLIER_EVENT_PREFIX",
+            "EARLIER_WRITER_PREFIX",
+            "EVENT_NAMES",
+            "EffectEventSchema",
+            "FORBIDDEN_CONTENT_ATTRIBUTES",
+            "FlowSchema",
+            "ForgeOpSchema",
+            "ForgeWriteEventSchema",
+            "GENAI_CONVENTIONS_VERSION",
+            "GateEventSchema",
+            "GateOutcomeSchema",
+            "HOST_VALUES",
+            "HandoffEventSchema",
+            "HeaderMetaSchema",
+            "HeaderMetaV1Schema",
+            "HeaderMetaV2Schema",
+            "HeaderMetaV3Schema",
+            "HeaderMetaV4Schema",
+            "HeaderSchema",
+            "HostSchema",
+            "InputVersionsSchema",
+            "KNOWN_SCHEMA_VERSIONS",
+            "LineageSchema",
+            "LogEventSchema",
+            "NARRATION_KINDS",
+            "OperationEventSchema",
+            "OperationResultSchema",
+            "ProvenanceSchema",
+            "REVIEW_FINDING_DESCRIPTION_MAX_LENGTH",
+            "ROLE_NAME_PATTERN",
+            "RoleAttemptEventSchema",
+            "RoleAttemptOutcomeSchema",
+            "RoleSchema",
+            "SDK_VERSION",
+            "SPAN_NAMES",
+            "UNRECORDABLE_FIELD_NAME",
+            "UsageEventSchema",
+            "WorkSchema",
+            "agentSpanIdFor",
+            "applyTrust",
+            "checkCustomEvent",
+            "classifyStoredLine",
+            "connect",
+            "convertEarlierEvents",
+            "createFixtureStore",
+            "createFolderSource",
+            "createLineReader",
+            "createLiveEarlierConverter",
+            "createOrdering",
+            "createOtlpSource",
+            "createReader",
+            "createRunIdGenerator",
+            "identityOf",
+            "isSpanName",
+            "narrate",
+            "processAndRunnerOf",
+            "readOtlpDocument",
+            "readPageFrom",
+            "reasonWaitsOn",
+            "recordIdentity",
+            "redact",
+            "sendLocalCopy",
+            "spanIdFor",
+            "spanName",
+            "traceIdFor",
+            "writeWholeSpan"
+          ],
+          "declarations": {
+            "ALL_ATTRIBUTE_NAMES": ["const ALL_ATTRIBUTE_NAMES: readonly string[]"],
+            "ALL_EVENT_NAMES": ["const ALL_EVENT_NAMES: readonly string[]"],
+            "ALL_SPAN_NAMES": ["const ALL_SPAN_NAMES: readonly string[]"],
+            "ATTRIBUTE_NAMES": ["sha256:9d9b59f515c8cdacea0a60c5ffc866b673659802a1d561a1e659732bdf35b553"],
+            "ActionVerified": [
+              "type ActionVerified = { action: string; target: string; result: 'success' | 'failure' | 'uncertain'; errorType?: string; };"
+            ],
+            "AgentFailed": [
+              "type AgentFailed = { /** timeout, crash, refused, wrote outside its place or usage limit */ errorType: string; /** When a usage limit resets, as an ISO time. */ resetAt?: string; attempt?: number; agent?: SpanParent; endTime?: TimeInput; };"
+            ],
+            "AgentReturned": [
+              "type AgentReturned = { /** change opened, round pushed, verdict, escalation, plan or done */ outcome?: string; attempt?: number; responseModel?: string; agent?: SpanParent; endTime?: TimeInput; };"
+            ],
+            "AgentSent": [
+              "type AgentSent = { /** The seat the agent sits in; the span name and `gen_ai.agent.name` carry it. */ seat: string; provider?: string; model?: string; codingAgent?: string; codingAgentVersion?: string; /** The effort the agent was asked to work at, as plain text. */ effort?: string; /** Defaults to the open round. */ round?: number; id?: string; /** The span the agent belongs to, which another process may have started; with none, the open round, else the run. */ parent?: SpanParent; spanId?: string; key?: string; startTime?: TimeInput; };"
+            ],
+            "AppendOutcome": [
+              "type AppendOutcome = { appended: RecordIdentity[]; duplicates: RecordIdentity[]; overflow: OverflowDiagnostic | null; };"
+            ],
+            "AttributeName": ["type AttributeName = (typeof ATTRIBUTE_NAMES)[keyof typeof ATTRIBUTE_NAMES];"],
+            "AttributeValue": [
+              "type AttributeValue = string | number | boolean | null | AttributeValue[] | { [key: string]: AttributeValue; };"
+            ],
+            "Attributes": ["type Attributes = Readonly<Record<string, AttributeValue>>;"],
+            "CODE_TOKEN_PATTERN": ["const CODE_TOKEN_PATTERN: RegExp"],
+            "CONFIDENCE_REASON_MAX_LENGTH": ["const CONFIDENCE_REASON_MAX_LENGTH = 280"],
+            "CUSTOM_EVENT_MAX_FIELDS": ["const CUSTOM_EVENT_MAX_FIELDS = 20"],
+            "CUSTOM_EVENT_NAME_MAX_LENGTH": ["const CUSTOM_EVENT_NAME_MAX_LENGTH = 64"],
+            "CUSTOM_EVENT_NAME_PATTERN": ["const CUSTOM_EVENT_NAME_PATTERN: RegExp"],
+            "CUSTOM_EVENT_RESERVED_NAMESPACE": ["const CUSTOM_EVENT_RESERVED_NAMESPACE = \"vinaya\""],
+            "CUSTOM_FIELD_MAX_WORDS": ["const CUSTOM_FIELD_MAX_WORDS = 50"],
+            "CUSTOM_FIELD_NAME_MAX_LENGTH": ["const CUSTOM_FIELD_NAME_MAX_LENGTH = 64"],
+            "CUSTOM_FIELD_NAME_PATTERN": ["const CUSTOM_FIELD_NAME_PATTERN: RegExp"],
+            "CUSTOM_TEXT_MAX_LENGTH": ["const CUSTOM_TEXT_MAX_LENGTH = 500"],
+            "CUSTOM_WORD_MAX_LENGTH": ["const CUSTOM_WORD_MAX_LENGTH = 64"],
+            "CUSTOM_WORD_PATTERN": ["const CUSTOM_WORD_PATTERN: RegExp"],
+            "ChangeConflicted": ["type ChangeConflicted = { reentry?: number; };"],
+            "ChangeIncident": ["type ChangeIncident = Independent & { severity?: string; link?: string; };"],
+            "ChangeMerged": ["type ChangeMerged = Independent & { by?: string; };"],
+            "ChangeOpened": ["type ChangeOpened = { change: string; commit?: string; };"],
+            "ChangePushed": [
+              "type ChangePushed = { result: 'passed' | 'refused'; picked?: number; failed?: number; ms?: number; };"
+            ],
+            "ChangeReverted": ["type ChangeReverted = Independent & { reason?: string; };"],
+            "ChangeSaved": ["type ChangeSaved = { branch?: string; commit?: string; };"],
+            "CheckNotPassed": [
+              "type CheckNotPassed = { name: string; version?: string; result: string; reason?: string; };"
+            ],
+            "ChecksCi": [
+              "type ChecksCi = Times & { result: 'green' | 'red' | 'pending' | 'skipped'; failing?: readonly string[]; waitMs?: number; };"
+            ],
+            "ChecksLocal": ["type ChecksLocal = Times & { passed: boolean; };"],
+            "ChecksRan": [
+              "type ChecksRan = Times & { where: 'hook' | 'local' | 'push' | 'ci'; ran: number; passed: number; failed: number; skipped: number; failedNames: readonly string[]; };"
+            ],
+            "ChecksRead": ["type ChecksRead = { round?: number; green: boolean; };"],
+            "ChecksRerun": ["type ChecksRerun = Times & { failed: number; affected: number; total: number; };"],
+            "CommandCompleted": [
+              "type CommandCompleted = { action: string; target?: string; result: 'ok' | 'error' | 'refused' | 'timeout' | 'cancelled' | 'unavailable'; errorType?: string; };"
+            ],
+            "ConfidenceStated": [
+              "type ConfidenceStated = { /** 0 to 100; absent when the agent gave none. */ confidence?: number; reason?: string; afterExtraTurn?: boolean; agent?: SpanParent; };"
+            ],
+            "ConnectOptions": ["sha256:1dfbcd10a289ad275fc888f8a895147224abdaf3cab5bd3ee2c079eadbbe66d0"],
+            "ConvertedEarlierRecord": [
+              "type ConvertedEarlierRecord = { resource: Resource; } & ({ type: 'span'; record: Span; } | { type: 'log'; record: LogRecord; });"
+            ],
+            "CustomEvent": ["type CustomEvent = z.infer<typeof CustomEventSchema>;"],
+            "CustomEventCheck": [
+              "type CustomEventCheck = { ok: true; name: string; fields: Record<string, CustomFieldValue>; } | { ok: false; reason: CustomEventRefusalReason; fieldNames: string[]; };"
+            ],
+            "CustomEventDeclaration": ["type CustomEventDeclaration = { fields: Record<string, CustomFieldType>; };"],
+            "CustomEventDeclarations": ["type CustomEventDeclarations = Record<string, CustomEventDeclaration>;"],
+            "CustomEventDeclarationsSchema": [
+              "const CustomEventDeclarationsSchema: z.ZodEffects<z.ZodRecord<z.ZodString, z.ZodObject<{ fields: z.ZodRecord<z.ZodString, z.ZodUnion<[z.ZodEnum<[\"text\", \"number\", \"boolean\"]>, z.ZodArray<z.ZodString, \"many\">]>>; }, \"strict\", z.ZodTypeAny, { fields: Record<string, \"number\" | \"boolean\" | string[] | \"text\">; }, { fields: Record<string, \"number\" | \"boolean\" | string[] | \"text\">; }>>, Record<string, { fields: Record<string, \"number\" | \"boolean\" | string[] | \"text\">; }>, Record<string, { fields: Record<string, \"number\" | \"boolean\" | string[] | \"text\">; }>>"
+            ],
+            "CustomEventRefusalReason": [
+              "type CustomEventRefusalReason = 'undeclared' | 'missing_field' | 'extra_field' | 'wrong_type' | 'too_long';"
+            ],
+            "CustomEventSchema": ["sha256:26204277be32748cddfc760cb8d10785a4f36790d8aba396d8ea76a9a161dfc6"],
+            "CustomFieldType": ["type CustomFieldType = 'text' | 'number' | 'boolean' | string[];"],
+            "CustomFieldValue": ["type CustomFieldValue = string | number | boolean;"],
+            "DevReviewLoopEvent": ["type DevReviewLoopEvent = z.infer<typeof DevReviewLoopEventSchema>;"],
+            "DevReviewLoopEventSchema": ["sha256:b367865df0fdf5f8bf13e344365a8df92c957f23a6b10910e0ab3122476a8a1d"],
+            "DispatchEvent": ["type DispatchEvent = z.infer<typeof DispatchEventSchema>;"],
+            "DispatchEventSchema": ["sha256:23da7d3cd58d95cd435e36f6654f43ef3024990491a01aaa26177ff4cc30a182"],
+            "DispatchOutcome": ["type DispatchOutcome = z.infer<typeof DispatchOutcomeSchema>;"],
+            "EARLIER_EVENT_PREFIX": ["const EARLIER_EVENT_PREFIX = \"vinaya.earlier.\""],
+            "EARLIER_WRITER_PREFIX": ["const EARLIER_WRITER_PREFIX = \"earlier:\""],
+            "EVENT_NAMES": ["sha256:59ed106c963c85b813207f6c662037df4ff31d7a70cc6b3a642d9dc753d031bb"],
+            "EarlierOpenStart": ["type EarlierOpenStart = { spanKey: string; startTimeUnixNano: string; };"],
+            "EarlierOtlpDocuments": [
+              "type EarlierOtlpDocuments = { traces: { resourceSpans: { resource: Resource; scopeSpans: { scope: typeof scope; spans: Span[]; }[]; }[]; }; logs: { resourceLogs: { resource: Resource; scopeLogs: { scope: typeof scope; logRecords: LogRecord[]; }[]; }[]; }; };"
+            ],
+            "EffectEvent": ["type EffectEvent = z.infer<typeof EffectEventSchema>;"],
+            "EffectEventSchema": ["sha256:d21c694325f28bf41cf612b67599cc18b97b62c169e09a3040817b18d5769839"],
+            "EndRound": [
+              "type EndRound = EndOptions & { filesChanged?: number; linesAdded?: number; linesRemoved?: number; outcome?: string; };"
+            ],
+            "EndRun": [
+              "type EndRun = { rounds?: number; totalMs?: number; timeToGreenMs?: number; filesChanged?: number; outcome?: 'ready' | 'stopped'; errorType?: string; endTime?: TimeInput; };"
+            ],
+            "EventName": ["type EventName = (typeof EVENT_NAMES)[keyof typeof EVENT_NAMES];"],
+            "ExitKind": ["type ExitKind = 'finished' | 'paused' | 'restarted' | 'error' | 'signal';"],
+            "FORBIDDEN_CONTENT_ATTRIBUTES": ["const FORBIDDEN_CONTENT_ATTRIBUTES: readonly string[]"],
+            "FindingsCompared": [
+              "type FindingsCompared = { open: readonly string[]; resolved: readonly string[]; new: readonly string[]; recurring: readonly string[]; };"
+            ],
+            "FixtureStoreOptions": [
+              "type FixtureStoreOptions = { /** * Maximum records held before an append overflows the oldest. Omit for an * unbounded store. A capacity of `0` or less is treated as unbounded. */ capacity?: number; /** Home directory passed to `redact()` for absolute-path rewriting; defaults to `''` (no path rewriting, secret patterns still apply). */ home?: string; };"
+            ],
+            "Flow": ["type Flow = z.infer<typeof FlowSchema>;"],
+            "FlowSchema": [
+              "const FlowSchema: z.ZodObject<{ id: z.ZodNullable<z.ZodString>; version: z.ZodNullable<z.ZodString>; }, \"strict\", z.ZodTypeAny, { id: string | null; version: string | null; }, { id: string | null; version: string | null; }>"
+            ],
+            "FolderSourceOptions": [
+              "type FolderSourceOptions = { /** The Log folder holding the local copy's files. */ folder: string; /** The run whose files are read. */ runId: string; name?: string; /** Defaults to `false`: the local copy is the SDK's own. */ foreign?: boolean; home?: string; /** Runs after the folder is listed and before any file is opened; a test's way to let a writer move in between. */ afterListing?: () => void | Promise<void>; /** The caller already resolved the folder and expects it to remain at this path. */ canonicalFolder?: boolean; };"
+            ],
+            "ForgeOp": ["type ForgeOp = z.infer<typeof ForgeOpSchema>;"],
+            "ForgeOpSchema": [
+              "const ForgeOpSchema: z.ZodEnum<[\"pr.create\", \"pr.comment\", \"pr.body.replace\", \"pr.refreeze\", \"issue.create\", \"issue.edit\", \"issue.comment\", \"milestone.create\", \"milestone.edit\", \"milestone.close\", \"label.add\", \"label.remove\"]>"
+            ],
+            "ForgeRefusal": ["type ForgeRefusal = ForgeWrite & { why: string; };"],
+            "ForgeWrite": ["type ForgeWrite = { action: string; target: string; };"],
+            "ForgeWriteEvent": ["type ForgeWriteEvent = z.infer<typeof ForgeWriteEventSchema>;"],
+            "ForgeWriteEventSchema": ["sha256:80d6554e6c2968c255e6fbd806cd728e8acdd929bc35553998f181dfdaadc50b"],
+            "GENAI_CONVENTIONS_VERSION": [
+              "const GENAI_CONVENTIONS_VERSION = \"semantic-conventions-genai@main-2026-11-18\""
+            ],
+            "GateEvent": ["type GateEvent = z.infer<typeof GateEventSchema>;"],
+            "GateEventSchema": ["sha256:fabcea2a65275e5fc064f5aea84203a2da860e2c67ab9028f95ca0466533c804"],
+            "GateOutcome": ["type GateOutcome = z.infer<typeof GateOutcomeSchema>;"],
+            "GateOutcomeSchema": [
+              "const GateOutcomeSchema: z.ZodEnum<[\"pass\", \"fail\", \"wait\", \"skip\", \"invalid_input\", \"unavailable_dependency\", \"timeout\", \"cancelled\"]>"
+            ],
+            "HOST_VALUES": ["const HOST_VALUES: readonly [\"hook\", \"ci\", \"cli\", \"loop\"]"],
+            "HandoffEvent": ["type HandoffEvent = z.infer<typeof HandoffEventSchema>;"],
+            "HandoffEventSchema": ["sha256:e4039788a19f6d30d22f4b01ce721483ea7a578b1231cbf1e16f0f45bb994ad2"],
+            "Header": ["type Header = z.infer<typeof HeaderSchema>;"],
+            "HeaderMetaSchema": ["sha256:ca79b784f9412dd91159d5229928c5324f6d06e784c7422de08c195e633c9723"],
+            "HeaderMetaV1": ["type HeaderMetaV1 = z.infer<typeof HeaderMetaV1Schema>;"],
+            "HeaderMetaV1Schema": [
+              "const HeaderMetaV1Schema: z.ZodObject<{ ts: z.ZodString; run_id: z.ZodString; seq: z.ZodNumber; repo: z.ZodNullable<z.ZodString>; vinaya: z.ZodString; doctrine: z.ZodString; host: z.ZodEnum<[\"hook\", \"ci\", \"cli\", \"loop\"]>; machine: z.ZodString; schema: z.ZodLiteral<1>; }, \"strict\", z.ZodTypeAny, { seq: number; vinaya: string; schema: 1; ts: string; run_id: string; repo: string | null; doctrine: string; host: \"ci\" | \"hook\" | \"cli\" | \"loop\"; machine: string; }, { seq: number; vinaya: string; schema: 1; ts: string; run_id: string; repo: string | null; doctrine: string; host: \"ci\" | \"hook\" | \"cli\" | \"loop\"; machine: string; }>"
+            ],
+            "HeaderMetaV2": ["type HeaderMetaV2 = z.infer<typeof HeaderMetaV2Schema>;"],
+            "HeaderMetaV2Schema": ["sha256:fd220954f7a0d59d5d3c732da3b6033042d1f65e8552f27387e563182e6c2113"],
+            "HeaderMetaV3": ["type HeaderMetaV3 = z.infer<typeof HeaderMetaV3Schema>;"],
+            "HeaderMetaV3Schema": ["sha256:31a503b027d4bf1acde4b80f3e8b48e123b8683a135c590935d25c8bc7fcffc9"],
+            "HeaderMetaV4": ["type HeaderMetaV4 = z.infer<typeof HeaderMetaV4Schema>;"],
+            "HeaderMetaV4Schema": ["sha256:4983e3d59a8989db37d613f371224acc1a554c9968b1cb4c3347a6edfa8f75da"],
+            "HeaderSchema": ["sha256:4773ea0d76f0feaeb33717ecb6492a9e207b4152c1c12e847f0789d48b2abc77"],
+            "Host": ["type Host = z.infer<typeof HostSchema>;"],
+            "HostSchema": ["const HostSchema: z.ZodEnum<[\"hook\", \"ci\", \"cli\", \"loop\"]>"],
+            "InputVersions": [
+              "type InputVersions = { brief?: string | number | undefined; objectives?: string | number | undefined; ruling?: string | number | undefined; policy?: string | number | undefined; };"
+            ],
+            "InputVersionsSchema": ["sha256:f41b9efa228d1359d8815fe67c4c70d480378c732675c14be0a7eb524316530d"],
+            "KNOWN_SCHEMA_VERSIONS": ["const KNOWN_SCHEMA_VERSIONS: readonly [1, 2, 3, 4]"],
+            "LineProblem": [
+              "type LineProblem = { reason: 'not_json' | 'not_a_log_line' | 'unknown_version' | 'invalid_earlier_line' | 'conversion_failed'; detail: string; };"
+            ],
+            "LineReader": [
+              "type LineReader = { /** One stored line: an OTLP traces or logs document, or an earlier-format line. Never throws. */ readLine(line: string): LineResult; /** One OTLP traces or logs document already parsed. `null` when the value is neither. */ readDocument(document: unknown): OtelRecord[] | null; };"
+            ],
+            "LineResult": ["type LineResult = { records: OtelRecord[]; problem: LineProblem | null; };"],
+            "Lineage": ["type Lineage = z.infer<typeof LineageSchema>;"],
+            "LineageSchema": [
+              "const LineageSchema: z.ZodObject<{ run: z.ZodNullable<z.ZodString>; attempt: z.ZodNullable<z.ZodNumber>; parent: z.ZodNullable<z.ZodString>; }, \"strict\", z.ZodTypeAny, { run: string | null; attempt: number | null; parent: string | null; }, { run: string | null; attempt: number | null; parent: string | null; }>"
+            ],
+            "LocalCopyReport": [
+              "type LocalCopyReport = { sent: number; setAside: Array<{ file: string; offset: number; reason: string; }>; failures: Array<{ file?: string; offset?: number; reason: string; }>; };"
+            ],
+            "LogEvent": ["type LogEvent = z.infer<typeof LogEventSchema>;"],
+            "LogEventSchema": ["sha256:8748ac81c6a816c18b7901035cfc32f5c609fc2a3c7ef92d2a7503b42399071c"],
+            "LogHandle": ["sha256:478b48f5db6585e4755d6024cd72bf1f01215761f859f1a59471f85f4f605c3d"],
+            "LogStore": [
+              "interface LogStore { /** Idempotently append records (raw ndjson strings or event objects). Redacts at this write (sink) boundary. */ append(records: readonly (string | object)[]): AppendOutcome; /** Read one page from `cursor` (validation + provenance + unknown-version preservation + transport-boundary redaction). */ readPage(cursor: number | null, limit: number): ReadPage; /** Remove exactly the named identities. Returns how many were present and removed. */ acknowledge(identities: readonly RecordIdentity[]): number; /** How many records are currently held. */ size(): number; }"
+            ],
+            "LogsSetting": ["type LogsSetting = z.infer<typeof logsSchema>;"],
+            "NARRATION_KINDS": [
+              "const NARRATION_KINDS: readonly [\"starting\", \"working\", \"done\", \"failed\", \"waiting\", \"paused\", \"blocked\", \"information\"]"
+            ],
+            "NarratableRecord": [
+              "type NarratableRecord = { kind: string; name: string; startTime: string | null; time: string; attributes: Readonly<Record<string, unknown>>; };"
+            ],
+            "NarrationKind": ["type NarrationKind = (typeof NARRATION_KINDS)[number];"],
+            "NarrationLine": ["type NarrationLine = { kind: NarrationKind; text: string; };"],
+            "OperationEvent": ["type OperationEvent = z.infer<typeof OperationEventSchema>;"],
+            "OperationEventSchema": ["sha256:5d91f631eed03df149c4a9cabaee0845afd6580c61eba3f3e4db18c7cf51322e"],
+            "OperationResult": ["type OperationResult = z.infer<typeof OperationResultSchema>;"],
+            "OperationResultSchema": [
+              "const OperationResultSchema: z.ZodEnum<[\"ok\", \"error\", \"refused\", \"timeout\", \"cancelled\", \"unavailable\"]>"
+            ],
+            "Ordered": ["type Ordered = { ready: OtelRecord[]; gaps: ReadGap[]; duplicates: number; };"],
+            "OtelRecord": [
+              "type OtelRecord = { kind: RecordKind; traceId: string; spanId: string; /** The parent span's id; `null` for a root span and for every event. */ parentSpanId: string | null; name: string; /** A span's start; `null` for an event. */ startTime: string | null; /** A span's end, or an event's time. */ time: string; attributes: Attributes; resource: Attributes; /** The writer's sequence number; `null` when the record carries none. */ seq: number | null; writerId: string | null; /** An event's identity as its writer stamped it; `null` when it states none. */ eventId: string | null; provenance: RecordProvenance; /** The name of the source the record came from. */ source: string; };"
+            ],
+            "OtlpPage": ["type OtlpPage = { documents: readonly unknown[]; cursor?: string | undefined; };"],
+            "OtlpSourceOptions": [
+              "type OtlpSourceOptions = { name: string; supply: OtlpSupplier; /** * Whether another tool wrote what the supplier hands. Defaults to `true`: * a record's own claim of `governed` is trusted only from a source the * caller says is the Log's own. */ foreign?: boolean; home?: string; };"
+            ],
+            "OtlpSupplier": ["type OtlpSupplier = (cursor: string | undefined) => Promise<OtlpPage>;"],
+            "OverflowDiagnostic": [
+              "type OverflowDiagnostic = { reason: 'capacity'; dropped: number; droppedIdentities: RecordIdentity[]; };"
+            ],
+            "Pause": ["type Pause = { key?: string; round?: number; why?: string; startTime?: TimeInput; };"],
+            "PersonAnswered": [
+              "type PersonAnswered = { kind: PersonKind; spanId: string; /** When the question was asked; with none, this handle's own question or the one in the run's local copy. */ startTime?: TimeInput; endTime?: TimeInput; /** The answer, as a short code. */ answer?: string; /** Who gave it. */ by: string; /** What a later process knows of the question it answers. */ why?: string; decision?: string; howToAnswer?: string; };"
+            ],
+            "PersonAsked": [
+              "type PersonAsked = { kind: PersonKind; /** Names the question; every process derives the same span id from it. */ key: string; /** Why the person is asked, as a short code. */ why?: string; /** The decision asked for, as a short code. */ decision?: string; /** How to answer, as short text a loop fills, for example the command to run. */ howToAnswer?: string; spanId?: string; startTime: TimeInput; };"
+            ],
+            "PersonKind": ["type PersonKind = 'authority' | 'strategy' | 'product';"],
+            "PhaseEnded": [
+              "type PhaseEnded = { /** developer, local checks, review, push, CI or other */ phase: string; step?: string; startTime?: TimeInput; endTime?: TimeInput; errorType?: string; };"
+            ],
+            "Provenance": ["type Provenance = z.infer<typeof ProvenanceSchema>;"],
+            "ProvenanceSchema": [
+              "const ProvenanceSchema: z.ZodEnum<[\"parent_attributed\", \"env_correlated\", \"self_reported\", \"unavailable\"]>"
+            ],
+            "REVIEW_FINDING_DESCRIPTION_MAX_LENGTH": ["const REVIEW_FINDING_DESCRIPTION_MAX_LENGTH = 1000"],
+            "ROLE_NAME_PATTERN": ["const ROLE_NAME_PATTERN: RegExp"],
+            "ReadDiagnostics": [
+              "type ReadDiagnostics = { total: number; ok: number; unknownVersion: number; invalid: number; };"
+            ],
+            "ReadGap": [
+              "type ReadGap = { kind: 'sequence' | 'file_missing' | 'unreadable_line' | 'unrecognised_document' | 'source_unavailable'; writerId: string | null; place: string; detail: string; };"
+            ],
+            "ReadPage": [
+              "type ReadPage = { records: ReadRecord[]; /** The cursor to pass for the next page, or `null` when this page reached the end. */ nextCursor: number | null; diagnostics: ReadDiagnostics; };"
+            ],
+            "ReadRecord": [
+              "type ReadRecord = { /** Full `LogEventSchema` validation passed for a known schema version. */ status: 'ok'; identity: RecordIdentity; runId: string; seq: number; schema: number; /** Trust provenance for a `schema: 2` or `3` line; `null` for a `schema: 1` line, which has no such field. */ provenance: Provenance | null; /** The re-validated event. */ event: LogEvent; /** The event re-serialized after re-applying `redact()` — what a transport (the flush) posts, never the raw file bytes. */ postLine: string; } | { /** The line's `meta.schema` is a version this build does not know — kept for diagnosis (O3), never dropped, never posted. */ status: 'unknown_version'; identity: RecordIdentity | null; schema: number | null; raw: string; reason: string; } | { /** Not JSON, or a KNOWN schema version that failed full validation (including an invalid `provenance`) — a corrupt line. */ status: 'invalid'; identity: RecordIdentity | null; raw: string; reason: string; };"
+            ],
+            "ReadableLogRecord": ["from @opentelemetry/sdk-logs"],
+            "ReadableSpan": ["from @opentelemetry/sdk-trace"],
+            "Reader": [
+              "type Reader = { /** One read of the source from the reader's position. */ pull(): Promise<ReaderUpdate>; /** One read, then everything still held is handed and every missing number reported. */ readAll(): Promise<ReaderUpdate>; /** Reads again and again, handing each update that holds a record or a gap, until stopped. */ follow(options?: { intervalMs?: number; signal?: AbortSignal; }): AsyncGenerator<ReaderUpdate, void>; /** The started events whose span has not arrived. */ openSpans(): OtelRecord[]; position(): string | undefined; };"
+            ],
+            "ReaderOptions": [
+              "type ReaderOptions = { /** First expected sequence for each writer when reading from the beginning. */ firstSequence?: number; /** Where to read on from; omitted reads from the start. */ position?: string; /** The caller's home directory, shortened to `~` in strings. */ home?: string; /** Reads that may leave a record held behind a missing number before the number is reported as a gap. */ patience?: number; };"
+            ],
+            "ReaderUpdate": [
+              "type ReaderUpdate = { /** Records ready now: redacted, deduplicated, each writer's in its own order, writers interleaved by time. */ records: OtelRecord[]; gaps: ReadGap[]; /** The position to keep: pass it as `position` to read on after a restart. */ position: string | undefined; };"
+            ],
+            "RecordIdentity": ["type RecordIdentity = string;"],
+            "RecordKind": ["type RecordKind = 'span' | 'started' | 'event';"],
+            "RecordProvenance": ["type RecordProvenance = 'governed' | 'reported';"],
+            "RecordSource": [
+              "interface RecordSource { /** Names the source on every record it hands. */ readonly name: string; /** Whether another tool wrote what it hands: a foreign source's records are all `reported`. */ readonly foreign: boolean; read(position?: string): Promise<SourceBatch>; }"
+            ],
+            "RecordTrust": [
+              "type RecordTrust = 'parent_attributed' | 'env_correlated' | 'self_reported' | 'unavailable';"
+            ],
+            "Resume": [
+              "type Resume = { /** The pause span `paused` returned; with none, the handle's latest open pause. */ pause?: SpanParent; by: 'person' | 'run'; /** What a later process knows of the pause it resumes: when it began, its round and why. */ startTime?: TimeInput; round?: number; why?: string; endTime?: TimeInput; };"
+            ],
+            "ReviewFinding": ["type ReviewFinding = z.infer<typeof ReviewFindingSchema>;"],
+            "ReviewVerdicts": [
+              "type ReviewVerdicts = { seats: readonly { seat: string; verdict: string; }[]; blockingCount: number; findings: readonly { id: string; severity: string; place: string; blocking: boolean; }[]; };"
+            ],
+            "ReviewerVerdict": ["type ReviewerVerdict = z.infer<typeof ReviewerVerdictSchema>;"],
+            "Role": ["type Role = z.infer<typeof RoleSchema>;"],
+            "RoleAttemptEvent": ["type RoleAttemptEvent = z.infer<typeof RoleAttemptEventSchema>;"],
+            "RoleAttemptEventSchema": ["sha256:6c358235b1a9cfbede4dc94a0fb8fd1a66e6ee0a8d11de2df3aef502ea1e0d57"],
+            "RoleAttemptOutcome": ["type RoleAttemptOutcome = z.infer<typeof RoleAttemptOutcomeSchema>;"],
+            "RoleAttemptOutcomeSchema": [
+              "const RoleAttemptOutcomeSchema: z.ZodEnum<[\"completed\", \"incomplete\", \"infrastructure_failed\", \"cancelled\", \"timed_out\", \"capability_refused\"]>"
+            ],
+            "RoleSchema": ["const RoleSchema: z.ZodString"],
+            "RunIdGenerator": ["type RunIdGenerator = ReturnType<typeof createRunIdGenerator>;"],
+            "SDK_VERSION": ["const SDK_VERSION = \"0.0.0\""],
+            "SPAN_NAMES": [
+              "const SPAN_NAMES: { readonly run: \"invoke_workflow\"; readonly round: \"vinaya.round\"; readonly phase: \"vinaya.phase\"; readonly agent: \"invoke_agent\"; readonly step: \"execute_tool\"; readonly checks: \"vinaya.checks\"; readonly person: \"vinaya.person\"; readonly pause: \"vinaya.pause\"; }"
+            ],
+            "SeatNames": [
+              "type SeatNames = Readonly<Record<string, string | { reading: string; reviews?: boolean; }>>;"
+            ],
+            "SendLocalCopyOptions": [
+              "type SendLocalCopyOptions = { folder: string; repository?: string; url: string; headers?: Record<string, string>; fetch?: (url: string, init: RequestInit) => Promise<Response>; /** Absolute deadline in Unix milliseconds. */ deadline?: number; };"
+            ],
+            "SourceBatch": [
+              "type SourceBatch = { records: OtelRecord[]; problems: SourceProblem[]; /** Opaque. The caller keeps it and passes it to the next `read`, also after a restart. */ position: string | undefined; };"
+            ],
+            "SourceProblem": [
+              "type SourceProblem = Omit<ReadGap, 'kind'> & { kind: Exclude<ReadGap['kind'], 'sequence'>; };"
+            ],
+            "SpanName": ["type SpanName = (typeof SPAN_NAMES)[keyof typeof SPAN_NAMES];"],
+            "SpanParent": ["type SpanParent = { traceId: string; spanId: string; };"],
+            "Stage": [
+              "type Stage = (string & {}) | 'develop' | 'local_checks' | 'review' | 'ready_push' | 'focused_checks' | 'change_opened' | 'waiting_on_ci' | 'waiting_for_merge' | 'paused_for_a_person';"
+            ],
+            "StartRound": [
+              "type StartRound = { number: number; startingCommit?: string; spanId?: string; key?: string; startTime?: TimeInput; };"
+            ],
+            "StartRun": [
+              "type StartRun = { /** The process that runs the work; the span name carries it. */ process?: string; processVersion?: string; work?: Work; inputs?: InputVersions; roundLimit?: number; /** Each seat and, when known, the model it runs. */ seats?: readonly { seat: string; model?: string; }[]; /** The run span's id, when the caller already holds one. */ spanId?: string; /** Defaults to `run`, so every process given the run id derives the same run span id. */ key?: string; startTime?: TimeInput; };"
+            ],
+            "StepEnded": ["type StepEnded = { errorType?: string; errorLine?: string; endTime?: TimeInput; };"],
+            "StepStarted": [
+              "type StepStarted = { tool: string; callId?: string; /** reading, searching, editing, creating, removing, running tests, type-checking, git, GitHub, tool request, skill, fetching, delegating, reporting, running, writing, checking or publishing */ kind?: string; /** The file or command the step works on. */ target?: string; spanId?: string; key?: string; startTime?: TimeInput; /** The agent span the step belongs to, which another process may have started; with none, the handle's current agent span. */ parent?: SpanParent; };"
+            ],
+            "StopRule": [
+              "type StopRule = 'approved' | 'round_limit' | 'no_progress' | 'escalated' | 'person_stop' | 'confidence' | 'fixed_finding_returned' | 'same_finding' | 'same_failure' | 'time_budget';"
+            ],
+            "Subject": ["type Subject = z.infer<typeof SubjectSchema>;"],
+            "Timers": [
+              "type Timers = { now(): number; setTimeout(fn: () => void, ms: number): unknown; clearTimeout(timer: unknown): void; };"
+            ],
+            "UNRECORDABLE_FIELD_NAME": ["const UNRECORDABLE_FIELD_NAME = \"<unrecordable>\""],
+            "UsageEvent": ["type UsageEvent = z.infer<typeof UsageEventSchema>;"],
+            "UsageEventSchema": ["sha256:7d5257824f7b5446ab9485bea0c8f1ad6e6726b5299cf2c26c884818811e0983"],
+            "UsageRecorded": [
+              "type UsageRecorded = { /** The started record's nanosecond timestamp when the span lives in another writer. */ spanStart?: string; inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cost?: { amount: number; kind: 'exact' | 'estimated'; }; /** Why usage is unknown, as a short code; with it no figure is recorded. */ unknownReason?: string; agent?: SpanParent; };"
+            ],
+            "UsageUnits": ["type UsageUnits = z.infer<typeof UsageUnitsSchema>;"],
+            "Work": [
+              "type Work = { ref?: string | undefined; title?: string | undefined; change?: string | undefined; commit?: string | undefined; };"
+            ],
+            "WorkSchema": [
+              "const WorkSchema: z.ZodObject<{ ref: z.ZodNullable<z.ZodString>; repo: z.ZodNullable<z.ZodString>; change: z.ZodNullable<z.ZodString>; revision: z.ZodNullable<z.ZodString>; }, \"strict\", z.ZodTypeAny, { change: string | null; repo: string | null; ref: string | null; revision: string | null; }, { change: string | null; repo: string | null; ref: string | null; revision: string | null; }>"
+            ],
+            "agentSpanIdFor": ["function agentSpanIdFor(runId: string, effectId: string): string;"],
+            "applyTrust": [
+              "function applyTrust(record: OtelRecord, options: { foreign: boolean; home?: string; }): OtelRecord;"
+            ],
+            "checkCustomEvent": [
+              "function checkCustomEvent(declarations: CustomEventDeclarations, name: string, fields: Readonly<Record<string, unknown>>): CustomEventCheck;"
+            ],
+            "classifyStoredLine": ["function classifyStoredLine(raw: string, home: string): ReadRecord;"],
+            "connect": ["function connect(options: ConnectOptions): LogHandle;"],
+            "convertEarlierEvents": [
+              "function convertEarlierEvents(events: readonly LogEvent[], home?: string): EarlierOtlpDocuments;"
+            ],
+            "createFixtureStore": ["function createFixtureStore(options?: FixtureStoreOptions): LogStore;"],
+            "createFolderSource": ["function createFolderSource(options: FolderSourceOptions): RecordSource;"],
+            "createLineReader": [
+              "function createLineReader(source: string, options?: { home?: string; }): LineReader;"
+            ],
+            "createLiveEarlierConverter": [
+              "function createLiveEarlierConverter(runId: string, openStarts?: readonly EarlierOpenStart[], home?: string): { convert(event: LogEvent): ConvertedEarlierRecord; learn: (starts: readonly EarlierOpenStart[]) => void; };"
+            ],
+            "createOrdering": [
+              "function createOrdering(options?: { patience?: number; fromStart?: boolean; firstSequence?: number; remember?: number; maxHeld?: number; }): { /** Takes the records a source just read; returns those now ready, in order. */ push: (records: OtelRecord[]) => Ordered; /** Ends the run's reading: every held record leaves and every missing number is reported. */ flush: () => Ordered; /** The started events whose span has not arrived. */ openSpans: () => OtelRecord[]; };"
+            ],
+            "createOtlpSource": ["function createOtlpSource(options: OtlpSourceOptions): RecordSource;"],
+            "createReader": ["function createReader(source: RecordSource, options?: ReaderOptions): Reader;"],
+            "createRunIdGenerator": [
+              "function createRunIdGenerator(runId: string): { generateTraceId(): string; generateSpanId(): string; useNextSpanId(id: string | undefined): void; };"
+            ],
+            "identityOf": ["function identityOf(record: OtelRecord): string;"],
+            "isSpanName": ["function isSpanName(name: string): boolean;"],
+            "narrate": [
+              "function narrate(record: unknown, seatNames?: SeatNames, earlier?: readonly unknown[]): NarrationLine | null;"
+            ],
+            "processAndRunnerOf": [
+              "function processAndRunnerOf(meta: z.infer<typeof HeaderMetaSchema>): Pick<HeaderMetaV4, 'process' | 'runner'>;"
+            ],
+            "readOtlpDocument": ["function readOtlpDocument(document: unknown, source: string): OtelRecord[] | null;"],
+            "readPageFrom": [
+              "function readPageFrom(rawLines: readonly string[], cursor: number | null, limit: number, home: string): ReadPage;"
+            ],
+            "reasonWaitsOn": [
+              "function reasonWaitsOn(reasonCode: string | null, fallbackReason?: string | null): 'person' | 'loop' | null;"
+            ],
+            "recordIdentity": ["function recordIdentity(obj: unknown): RecordIdentity | null;"],
+            "redact": ["function redact<T>(value: T, home: string): T;"],
+            "sendLocalCopy": ["function sendLocalCopy(options: SendLocalCopyOptions): Promise<LocalCopyReport>;"],
+            "spanIdFor": ["function spanIdFor(runId: string, key: string): string;"],
+            "spanName": [
+              "function spanName(base: (typeof SPAN_NAMES)[keyof typeof SPAN_NAMES], part?: string | number): string;"
+            ],
+            "traceIdFor": ["function traceIdFor(runId: string): string;"],
+            "writeWholeSpan": [
+              "function writeWholeSpan(handle: WriterCore, name: string, own: SpanParent, parent: SpanParent | undefined, startTime: TimeInput, endTime: TimeInput, attributes?: Attrs): void;"
+            ]
+          }
+        },
+        "./package.json": {
+          "symbols": [],
+          "runtimeExports": [
+            "author",
+            "bin",
+            "default",
+            "dependencies",
+            "description",
+            "devDependencies",
+            "engines",
+            "exports",
+            "files",
+            "keywords",
+            "license",
+            "name",
+            "publishConfig",
+            "repository",
+            "scripts",
+            "type",
+            "types",
+            "version"
+          ],
+          "declarations": {}
+        }
+      },
+      "files": [
+        "LICENSE",
+        "README.md",
+        "dist/bin/args.d.ts",
+        "dist/bin/args.js",
+        "dist/bin/commands.d.ts",
+        "dist/bin/commands.js",
+        "dist/bin/follow.d.ts",
+        "dist/bin/follow.js",
+        "dist/bin/vinaya-log.d.ts",
+        "dist/bin/vinaya-log.js",
+        "dist/contract/catalogue.d.ts",
+        "dist/contract/catalogue.js",
+        "dist/contract/convert-live.d.ts",
+        "dist/contract/convert-live.js",
+        "dist/contract/convert-map.d.ts",
+        "dist/contract/convert-map.js",
+        "dist/contract/convert.d.ts",
+        "dist/contract/convert.js",
+        "dist/contract/custom.d.ts",
+        "dist/contract/custom.js",
+        "dist/contract/ids.d.ts",
+        "dist/contract/ids.js",
+        "dist/contract/redact.d.ts",
+        "dist/contract/redact.js",
+        "dist/contract/schema.d.ts",
+        "dist/contract/schema.js",
+        "dist/contract/store.d.ts",
+        "dist/contract/store.js",
+        "dist/index.d.ts",
+        "dist/index.js",
+        "dist/local-copy/converted-copy.d.ts",
+        "dist/local-copy/converted-copy.js",
+        "dist/local-copy/file-exporters.d.ts",
+        "dist/local-copy/file-exporters.js",
+        "dist/narration/narrate.d.ts",
+        "dist/narration/narrate.js",
+        "dist/narration/wording.d.ts",
+        "dist/narration/wording.js",
+        "dist/reader/folder-source.d.ts",
+        "dist/reader/folder-source.js",
+        "dist/reader/lines.d.ts",
+        "dist/reader/lines.js",
+        "dist/reader/order.d.ts",
+        "dist/reader/order.js",
+        "dist/reader/otlp-source.d.ts",
+        "dist/reader/otlp-source.js",
+        "dist/reader/records.d.ts",
+        "dist/reader/records.js",
+        "dist/reader/source.d.ts",
+        "dist/reader/source.js",
+        "dist/reader/span-start.d.ts",
+        "dist/reader/span-start.js",
+        "dist/reader/trust.d.ts",
+        "dist/reader/trust.js",
+        "dist/sender/send.d.ts",
+        "dist/sender/send.js",
+        "dist/writer/agent.d.ts",
+        "dist/writer/agent.js",
+        "dist/writer/attributes.d.ts",
+        "dist/writer/attributes.js",
+        "dist/writer/carried.d.ts",
+        "dist/writer/carried.js",
+        "dist/writer/change.d.ts",
+        "dist/writer/change.js",
+        "dist/writer/checks.d.ts",
+        "dist/writer/checks.js",
+        "dist/writer/connect.d.ts",
+        "dist/writer/connect.js",
+        "dist/writer/custom.d.ts",
+        "dist/writer/custom.js",
+        "dist/writer/outside.d.ts",
+        "dist/writer/outside.js",
+        "dist/writer/person.d.ts",
+        "dist/writer/person.js",
+        "dist/writer/review.d.ts",
+        "dist/writer/review.js",
+        "dist/writer/round.d.ts",
+        "dist/writer/round.js",
+        "dist/writer/run.d.ts",
+        "dist/writer/run.js",
+        "dist/writer/settings.d.ts",
+        "dist/writer/settings.js",
+        "dist/writer/whole-span.d.ts",
+        "dist/writer/whole-span.js",
+        "package.json",
+        "src/bin/args.ts",
+        "src/bin/commands.ts",
+        "src/bin/follow.ts",
+        "src/bin/vinaya-log.ts",
+        "src/contract/catalogue.ts",
+        "src/contract/convert-live.ts",
+        "src/contract/convert-map.ts",
+        "src/contract/convert.ts",
+        "src/contract/custom.ts",
+        "src/contract/ids.ts",
+        "src/contract/redact.ts",
+        "src/contract/schema.ts",
+        "src/contract/store.ts",
+        "src/index.ts",
+        "src/local-copy/converted-copy.ts",
+        "src/local-copy/file-exporters.ts",
+        "src/narration/narrate.ts",
+        "src/narration/wording.ts",
+        "src/reader/folder-source.ts",
+        "src/reader/lines.ts",
+        "src/reader/order.ts",
+        "src/reader/otlp-source.ts",
+        "src/reader/records.ts",
+        "src/reader/source.ts",
+        "src/reader/span-start.ts",
+        "src/reader/trust.ts",
+        "src/sender/send.ts",
+        "src/writer/agent.ts",
+        "src/writer/attributes.ts",
+        "src/writer/carried.ts",
+        "src/writer/change.ts",
+        "src/writer/checks.ts",
+        "src/writer/connect.ts",
+        "src/writer/custom.ts",
+        "src/writer/outside.ts",
+        "src/writer/person.ts",
+        "src/writer/review.ts",
+        "src/writer/round.ts",
+        "src/writer/run.ts",
+        "src/writer/settings.ts",
+        "src/writer/whole-span.ts"
+      ]
     }
   }
 }

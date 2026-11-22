@@ -5,8 +5,9 @@
  * (`scripts/package-compat/snapshot.json`).
  *
  * The published packages are the fixed release group of `.changeset/config.json`.
- * Each one is packed: a source package with `npm pack`, and the command-line
- * package from its built bundle and bundled doctrine. The tarballs are installed
+ * Each one is packed: a source package with `npm pack` after its own `build`
+ * script, when it has one, and the command-line package from its built bundle
+ * and bundled doctrine. The tarballs are installed
  * together into a scratch folder with Bun — every `@attalabs/` package from its
  * local tarball, by dependency and by override, never from a registry — and the
  * install's lockfile is read back to prove it. Third-party dependencies resolve
@@ -116,6 +117,7 @@ type Manifest = {
   bin?: Record<string, string>
   exports?: Record<string, ExportTarget>
   dependencies?: Record<string, string>
+  scripts?: Record<string, string>
 }
 
 /** A subpath's target: one file, or conditions naming the declaration file (`types`) and the runtime file (`default`). */
@@ -235,11 +237,25 @@ export function packCommandLine(root: string, dir: string, stage: string, dest: 
   return npmPack(target, dest)
 }
 
+/**
+ * A package's own `build` script, run before it is packed, so a package whose
+ * exports point at `dist/` packs with its build output (git ignores `dist/`, so
+ * a build leaves no tracked file changed). A package with no `build` script is
+ * left as it is.
+ */
+export function buildPackage(root: string, dir: string): void {
+  const folder = join(root, dir)
+  if (!readManifest(join(folder, 'package.json')).scripts?.build) return
+  const run = spawnSync('bun', ['run', 'build'], { cwd: folder, encoding: 'utf8' })
+  if (run.status !== 0) throw new Error(`package-compat: the build of ${dir} failed:\n${run.stderr}${run.stdout}`)
+}
+
 /** One package's tarball, packed the way its kind ships. */
 export function packPackage(root: string, pkg: PublishedPackage, scratch: string): string {
   const dest = join(scratch, 'tarballs')
   if (existsSync(join(root, pkg.dir, 'scripts', 'build.ts')))
     return packCommandLine(root, pkg.dir, mkdtempIn(scratch, 'stage-'), dest)
+  buildPackage(root, pkg.dir)
   return npmPack(join(root, pkg.dir), dest)
 }
 
