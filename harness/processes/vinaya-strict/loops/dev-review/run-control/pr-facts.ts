@@ -205,6 +205,16 @@ export const MAX_FAILURE_EXCERPT_TOTAL_CHARS = 10_000
 /** Lines kept before and after each failure line, so a test title or an assertion keeps its neighbours. */
 const EXCERPT_LINES_BEFORE = 1
 const EXCERPT_LINES_AFTER = 2
+/** The most lines one failed assertion's printed difference contributes, apart from the diff's summary lines. */
+const EXCERPT_DIFF_LINES = 10
+/** Each printed difference line is cut to this many characters, so one long printed value cannot use the excerpt's bound. */
+const EXCERPT_DIFF_LINE_CHARS = 160
+/** The hunk line of a printed diff: `@@ -2,3 +2,3 @@`. */
+const DIFF_HUNK_LINE = /^@@ .* @@/
+/** A diff's summary lines: `- Expected  - 1` and `+ Received  + 1`. */
+const DIFF_SUMMARY_LINE = /^[-+] (?:Expected|Received)\s+[-+] \d+\s*$/
+/** A line that ends the lines a runner printed after an `error:` line: a stack frame, a header or a group line. */
+const DIFF_END_LINE = /^\s*at\s|\.test\.[cm]?[jt]sx?:\s*$|^##\[group\]|^vinaya-test-group-/
 /** When a readable log names no failure line, this many of its last lines stand in for the excerpt. */
 const EXCERPT_FALLBACK_TAIL_LINES = 40
 /** The last line of an excerpt that had to drop failure lines to fit its limit. */
@@ -245,6 +255,30 @@ function namesFailure(line: string): boolean {
 }
 
 /**
+ * The lines the runner printed after an assertion's `error:` line to say what differed: up to a fixed number of
+ * them, none blank, ending at the first stack frame, failure line, header or group line. The diff's summary lines
+ * are collected beyond that number. `rank` is the tier a line takes when the excerpt is over its bound: the hunk
+ * and the differing lines first, the summary and the unchanged lines after.
+ */
+function collectDiff(lines: string[], errorIndex: number, into: Set<number>, rank: Map<number, number>): void {
+  let counted = 0
+  for (let at = errorIndex + 1; at < lines.length; at += 1) {
+    const line = lines[at] ?? ''
+    if (line.trim() === '') continue
+    if (DIFF_END_LINE.test(line) || namesFailure(line)) return
+    if (DIFF_SUMMARY_LINE.test(line)) {
+      into.add(at)
+      rank.set(at, 3)
+      continue
+    }
+    if (counted >= EXCERPT_DIFF_LINES) continue
+    counted += 1
+    into.add(at)
+    rank.set(at, DIFF_HUNK_LINE.test(line) || /^[-+]/.test(line) ? 2 : 3)
+  }
+}
+
+/**
  * The lines of a job log that name a failure — Bun's `(fail)` lines, `error:`
  * lines, `Expected:`/`Received:` values, repository source locations and
  * containment verdicts reporting `"succeeded":true` — each with a small
@@ -260,8 +294,11 @@ export function extractFailureExcerpt(raw: string, max: number = MAX_FAILURE_EXC
     .map((line) => line.replace(LOG_LINE_TIMESTAMP, '').trimEnd())
   const keep = new Set<number>()
   const fileNames = new Set<number>()
+  const diffLines = new Set<number>()
+  const diffRank = new Map<number, number>()
   lines.forEach((line, index) => {
     if (!namesFailure(line)) return
+    if (/(?:^|[\s:])error:/i.test(line) && !isSchedulerFailure(line)) collectDiff(lines, index, diffLines, diffRank)
     // A scheduler failure line names its files and groups itself; its neighbours are progress lines.
     if (isSchedulerFailure(line)) {
       keep.add(index)
@@ -281,6 +318,11 @@ export function extractFailureExcerpt(raw: string, max: number = MAX_FAILURE_EXC
       }
     }
   })
+  for (const index of diffLines) {
+    keep.add(index)
+    const line = lines[index] ?? ''
+    if (line.length > EXCERPT_DIFF_LINE_CHARS) lines[index] = `${line.slice(0, EXCERPT_DIFF_LINE_CHARS)}…`
+  }
   // A dependency's or the runtime's own frame is noise even as a neighbour of a real failure line.
   for (const index of [...keep]) {
     const line = lines[index] ?? ''
@@ -302,12 +344,13 @@ export function extractFailureExcerpt(raw: string, max: number = MAX_FAILURE_EXC
   // Over budget: spend it by priority — failing test identities first, then the other
   // failure-naming lines, then the neighbouring context — so a long run of earlier
   // diagnostics never pushes a failing test's name out of the excerpt.
-  const tiers: number[][] = [[], [], []]
+  const tiers: number[][] = [[], [], [], [], []]
   for (const index of [...keep].sort((a, b) => a - b)) {
     const line = lines[index] ?? ''
     if (line.includes('(fail)') || isSchedulerFailure(line) || fileNames.has(index)) tiers[0]?.push(index)
     else if (namesFailure(line)) tiers[1]?.push(index)
-    else tiers[2]?.push(index)
+    else if (diffRank.has(index)) tiers[diffRank.get(index) ?? 4]?.push(index)
+    else tiers[4]?.push(index)
   }
   const reserve = EXCERPT_TRUNCATION_MARKER.length + 1
   let budget = max - reserve
@@ -318,7 +361,7 @@ export function extractFailureExcerpt(raw: string, max: number = MAX_FAILURE_EXC
       // Each line costs its text, a newline and (worst case) a gap marker line.
       const cost = (lines[index] ?? '').length + 3
       if (cost > budget) {
-        if (tierNumber < 2) truncated = true
+        if (tierNumber < 4) truncated = true
         continue
       }
       budget -= cost
