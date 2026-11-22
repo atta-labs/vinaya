@@ -223,7 +223,9 @@ describe('vinaya dispatch --unattended — Claude confinement', () => {
       expect(confinementLine?.result).toBe('unavailable')
       // Host fact simulated: Linux with neither bwrap nor socat on PATH.
       expect(confinementLine?.target, 'host fact simulated: linux with no bwrap or socat on PATH').toContain('bwrap')
-      expect(lines.find((l) => l.event === 'dispatch_failed')).toBeDefined()
+      const turns = agentTurnsOf(localCopyFolderOf(fixture.home))
+      expect(turns).toHaveLength(1)
+      expect(turns[0]?.errorType).toBe('refused')
     }
   )
 
