@@ -751,6 +751,7 @@ describe('the script decides through the validation the Planner tools call', () 
   let bodyFile = ''
   let savedPath: string | undefined
   let savedRepo: string | undefined
+  let savedCwd = ''
 
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), 'open-issue-gate-'))
@@ -773,12 +774,16 @@ describe('the script decides through the validation the Planner tools call', () 
     chmodSync(join(dir, 'bin', 'gh'), 0o755)
     savedPath = process.env.PATH
     savedRepo = process.env.VINAYA_REPO
+    // The script works from the repository root; the in-process side must resolve tracked files from the same root, whatever directory the test runs from.
+    savedCwd = process.cwd()
+    process.chdir(join(__dirname, '../../../../../..'))
     process.env.PATH = `${join(dir, 'bin')}:${process.env.PATH ?? ''}`
     process.env.VINAYA_REPO = 'test-owner/test-repo'
   })
 
   afterAll(() => {
     process.env.PATH = savedPath
+    process.chdir(savedCwd)
     if (savedRepo === undefined) delete process.env.VINAYA_REPO
     else process.env.VINAYA_REPO = savedRepo
     rmSync(dir, { recursive: true, force: true })
