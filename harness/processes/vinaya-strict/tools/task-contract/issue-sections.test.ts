@@ -40,13 +40,18 @@ describe('checkKnownIssueSections', () => {
     expect(checkKnownIssueSections('## TEST PLAN\n\nx\n\n### Developer notes\n\ny\n').status).toBe('pass')
   })
 
-  it('marks every entry carried or staying on the Issue, and the checks sections as staying', () => {
+  it('marks every entry carried or staying on the Issue, and the checks sections as carried', () => {
     for (const s of ISSUE_SECTIONS) {
       expect(['carried', 'stays-on-issue']).toContain(s.disposition)
       expect(s.disposition === 'carried').toBe(s.briefPart !== undefined)
     }
     const staying = ISSUE_SECTIONS.filter((s) => s.disposition === 'stays-on-issue').map((s) => s.heading)
-    expect(staying).toEqual(['Origin', 'Check decisions', 'Covering checks'])
+    expect(staying).toEqual(['Origin'])
+    for (const heading of ['Check decisions', 'Covering checks']) {
+      const entry = ISSUE_SECTIONS.find((s) => s.heading === heading)
+      expect(entry?.disposition).toBe('carried')
+      expect(entry?.briefPart).toBe('## Check decisions')
+    }
   })
 
   it('lists the eight rationale fields', () => {

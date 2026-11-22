@@ -59,6 +59,7 @@ const FILL: Record<string, string> = {
   COMMAND: 'bun test apps/demo/tests/greeting.test.ts',
   EXPECTED: '0 fail',
   'STOP CONDITION': 'The greeting cannot name the caller without changing its signature.',
+  'CHECK DECISIONS': '`changeset-coverage`: one patch changeset for the demo package.',
   ORIGIN: 'Principal-directed, as the smallest task this template can carry.'
 }
 

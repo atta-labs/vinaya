@@ -3410,14 +3410,65 @@ export type PinnedCheckDecision = { check: string; covers: string; decided: bool
 /** One pinned file and the decision state of each check that covers it. */
 export type PinnedFileCheckDecisions = { file: string; checks: PinnedCheckDecision[]; unresolved: string[] }
 
+/** One check decision found in a body: the check's name, where the match starts, and its text to the end of that line. */
+export type CheckDecision = { check: string; index: number; text: string }
+
 /**
- * Does the body carry a decision for `check`? A decision names the check in
- * backticks and follows it with `:` or a dash and a sentence saying how the
+ * Finds every check decision in `body` for the given check names. A decision
+ * names the check in backticks and follows it with `:` or a dash (a hyphen, an
+ * en dash or an em dash) and a sentence of at least three words saying how the
  * change satisfies it. A bare mention in a list of names is not a decision.
+ * The match may run past the end of a line, because the space before the
+ * separator and the spaces between the words may be line breaks; the returned
+ * `text` stops at the end of the line the name is on. The Issue write gate's
+ * decision rule and the brief's check decisions read this one function, so they
+ * cannot disagree.
  */
+export function findCheckDecisions(body: string, checks: readonly string[]): CheckDecision[] {
+  const found: CheckDecision[] = []
+  for (const check of checks) {
+    const escaped = check.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(`\`${escaped}\`\\s*(?::|—|–|-)\\s*\\S+(?:\\s+\\S+){2}`, 'g')
+    for (const m of body.matchAll(re)) {
+      const index = m.index ?? 0
+      const eol = body.indexOf('\n', index)
+      found.push({ check, index, text: body.slice(index, eol === -1 ? body.length : eol).trimEnd() })
+    }
+  }
+  return found.sort((a, b) => a.index - b.index)
+}
+
 function hasCheckDecision(body: string, check: string): boolean {
-  const escaped = check.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`\`${escaped}\`\\s*(?::|—|–|-)\\s*\\S+(?:\\s+\\S+){2,}`).test(body)
+  return findCheckDecisions(body, [check]).length > 0
+}
+
+/**
+ * The text of the brief's check decisions section for an Issue body: the whole
+ * text of each level-two section headed `Check decisions` or `Covering checks`,
+ * then each decision found anywhere else in the body, once. `null` when the
+ * Issue carries neither.
+ */
+export function checkDecisionsText(body: string, checks: readonly string[]): string | null {
+  const headings = [...maskCode(body).matchAll(/^##[ \t]+(\S.*?)[ \t]*#*[ \t]*$/gm)]
+  const ranges: Array<{ start: number; end: number }> = []
+  const parts: string[] = []
+  headings.forEach((m, i) => {
+    const name = m[1]!
+      .trim()
+      .replace(/[:\s]+$/, '')
+      .toLowerCase()
+    if (name !== 'check decisions' && name !== 'covering checks') return
+    const at = m.index ?? 0
+    const end = i + 1 < headings.length ? (headings[i + 1]!.index ?? body.length) : body.length
+    ranges.push({ start: at, end })
+    const text = body.slice(at + m[0].length, end).trim()
+    if (text !== '') parts.push(text)
+  })
+  for (const d of findCheckDecisions(body, checks)) {
+    if (ranges.some((r) => d.index >= r.start && d.index < r.end)) continue
+    parts.push(d.text)
+  }
+  return parts.length > 0 ? parts.join('\n\n') : null
 }
 
 /** Decides, for every pinned file, whether each check covering it carries a decision in the body. */

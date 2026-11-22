@@ -25,6 +25,7 @@ import {
   isTaskIssueLabelSet,
   parseIssueParts,
   parseIssuePremises,
+  checkDecisionsText,
   parseIssueStopConditions,
   parseIssueSurface,
   parseIssueTestPlan,
@@ -59,7 +60,14 @@ import {
 import { parseRationaleDeps } from './forge/parse-rationale-deps'
 import { createForgeSource } from '../sources/forge-adapter.js'
 import { dependsOnFactFromEdge, type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../edge-resolve.js'
-import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../integration/config/compose.js'
+import {
+  loadConfig,
+  loadConfigChecked,
+  resolveGateCutovers,
+  resolveTrustedPrincipals
+} from '../../integration/config/compose.js'
+import { coreCheckRegistry } from '../../checks/registry'
+import { resolveChecks } from '../../../../kernel/gates/checks/resolver'
 import { briefCliInvocation } from '../own-version.js'
 import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
 import { detectVendoredVinaya } from '../self-host.js'
@@ -138,6 +146,17 @@ export function step0InstallCommand(repoRoot: string): string {
 }
 
 /** This checkout's git toplevel — the anchor every path in `repoBriefCommandFacts` resolves against. Falls back to the process cwd when `git` cannot answer, the same degradation `git()` itself takes. */
+/**
+ * The names of the registered checks: the core checks merged with the checks
+ * the repository's configuration registers — the same resolution the Issue
+ * write gate applies, so a decision the gate accepts is carried into the brief.
+ */
+export function registeredCheckNames(): string[] {
+  const loaded = loadConfigChecked()
+  const configChecks = loaded.ok ? loaded.config?.checks : undefined
+  return resolveChecks(coreCheckRegistry(), configChecks).resolved.map((rc) => rc.spec.name)
+}
+
 function repoRootOrCwd(): string {
   return git(['rev-parse', '--show-toplevel']) || process.cwd()
 }
@@ -1048,6 +1067,7 @@ export async function assembleAndRenderBrief(
     testPlan,
     stopConditions,
     documentation,
+    checkDecisions: checkDecisionsText(issueBody, registeredCheckNames()),
     premises: (() => {
       const parsed = parseIssuePremises(issueBody)
       return parsed.ok ? parsed.value : []
@@ -1360,6 +1380,7 @@ export async function assembleAndRenderBriefForIssue(
     testPlan,
     stopConditions,
     documentation,
+    checkDecisions: checkDecisionsText(issueBody, registeredCheckNames()),
     premises: (() => {
       const parsed = parseIssuePremises(issueBody)
       return parsed.ok ? parsed.value : []
