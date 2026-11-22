@@ -1,13 +1,14 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   type AmendDepsDeps,
   type AmendDepsFlags,
   appliesTaskIssueGate,
-  blastRadiusErrorsForWrite,
   edgesEqual,
+  formatFinding,
   formatLeftoverPrint,
   type LeftoverFacts,
   locateBody,
@@ -22,7 +23,9 @@ import {
   taskIdFromTitle,
   validateAmendFlags
 } from './open-issue'
-import { BRIEF_SECTIONS_SINCE_ISSUE } from '../../../tools/task-contract/issue-validation'
+import { makeCheckError } from '../../../tools/task-contract/forge/forge-write'
+import type { CheckError } from '../../../../../kernel/gates/checks/contract'
+import { createIssue, editIssue } from './planner-operations'
 
 describe('appliesTaskIssueGate (task-run-v1 21, #541, round 2 review SECURITY HIGH)', () => {
   it('applies on a vinaya/tranche:* label alone, even with a body carrying no task-shaped content', () => {
@@ -484,47 +487,88 @@ function makeDeps(overrides: Partial<AmendDepsDeps> = {}): {
     fail: (m) => {
       throw new Error(m)
     },
+    // The validation itself is proved against the real one below; these cases are about the amendment's own steps.
+    validate: async () => ({ errors: [], blocking: false, renderSkipped: null }),
     ...overrides
   }
   return { deps, edited, logs }
 }
 
 describe('runAmendDeps', () => {
-  it('refuses when the target is not a task Issue (no vinaya/tranche:* label)', () => {
+  it('refuses when the target is not a task Issue (no vinaya/tranche:* label)', async () => {
     const { deps, edited } = makeDeps({ fetchLabels: () => ['vinaya/tier:1'] })
-    expect(() => runAmendDeps(parseAmendArgs(['429', '--depends-on', '2', '--note', 'x']), deps)).toThrow(
+    await expect(runAmendDeps(parseAmendArgs(['429', '--depends-on', '2', '--note', 'x']), deps)).rejects.toThrow(
       /targets task Issues only/
     )
     expect(edited).toHaveLength(0)
   })
 
-  it('refuses a missing --note (flag validation) with no forge write', () => {
+  it('refuses a missing --note (flag validation) with no forge write', async () => {
     const { deps, edited } = makeDeps()
-    expect(() => runAmendDeps(parseAmendArgs(['429', '--depends-on', '2']), deps)).toThrow(/non-empty `--note`/)
+    await expect(runAmendDeps(parseAmendArgs(['429', '--depends-on', '2']), deps)).rejects.toThrow(/non-empty `--note`/)
     expect(edited).toHaveLength(0)
   })
 
-  it('refuses on a round-trip mismatch and writes nothing (the gate, on real data)', () => {
+  it('refuses on a round-trip mismatch and writes nothing (the gate, on real data)', async () => {
     // `sample-tranche-v1 #368, 5` — the bare `5` inherits the qualifier
     // on parse (→ `sample-tranche-v1 5`), so the read-back != requested.
     const { deps, edited } = makeDeps()
-    expect(() =>
+    await expect(
       runAmendDeps(parseAmendArgs(['429', '--depends-on', 'sample-tranche-v1 #368, 5', '--note', 'x']), deps)
-    ).toThrow(/round-trip FAILED for Depends-on/)
+    ).rejects.toThrow(/round-trip FAILED for Depends-on/)
     expect(edited).toHaveLength(0)
   })
 
-  it('dry-run prints the body + round-trip PASS and performs NO forge write', () => {
+  it('writes nothing, and prints the finding with its check name, when the validation reports a blocking finding', async () => {
+    const blocking = makeCheckError('issue-pinned-importers', 'an importer of a pinned file is undecided', 'Decide it.')
+    const { deps, edited, logs } = makeDeps({
+      validate: async () => ({ errors: [blocking], blocking: true, renderSkipped: null })
+    })
+    await expect(
+      runAmendDeps(parseAmendArgs(['429', '--depends-on', '2, 3', '--note', 'Task 3 dropped.']), deps)
+    ).rejects.toThrow(/Nothing written/)
+    expect(edited).toHaveLength(0)
+    expect(logs.some((l) => l.includes('[issue-pinned-importers]'))).toBe(true)
+  })
+
+  it('writes nothing on a blocking finding in a dry run either', async () => {
+    const blocking = makeCheckError('issue-pinned-importers', 'an importer of a pinned file is undecided', 'Decide it.')
+    const { deps, logs } = makeDeps({
+      validate: async () => ({ errors: [blocking], blocking: true, renderSkipped: null })
+    })
+    await expect(
+      runAmendDeps(parseAmendArgs(['429', '--depends-on', '2', '--note', 'x', '--dry-run']), deps)
+    ).rejects.toThrow(/Nothing written/)
+    expect(logs).not.toContain('round-trip PASS')
+  })
+
+  it('writes the amended body only when the validation, given that body and the Issue, reports no blocking finding', async () => {
+    const seen: Array<{ body: string | null; labels: string[]; number: number | null }> = []
+    const { deps, edited } = makeDeps({
+      validate: async (body, _title, labels, _retry, number) => {
+        seen.push({ body, labels, number })
+        return { errors: [], blocking: false, renderSkipped: null }
+      }
+    })
+    await runAmendDeps(parseAmendArgs(['429', '--depends-on', '2, 3', '--note', 'Task 3 dropped.']), deps)
+    expect(edited).toHaveLength(1)
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.body).toBe(edited[0]?.body)
+    expect(seen[0]?.number).toBe(429)
+    expect(seen[0]?.labels).toContain('vinaya/tranche:other-tranche-v1')
+  })
+
+  it('dry-run prints the body + round-trip PASS and performs NO forge write', async () => {
     const { deps, edited, logs } = makeDeps()
-    runAmendDeps(parseAmendArgs(['429', '--depends-on', '2, 3', '--note', 'Task 3 dropped.', '--dry-run']), deps)
+    await runAmendDeps(parseAmendArgs(['429', '--depends-on', '2, 3', '--note', 'Task 3 dropped.', '--dry-run']), deps)
     expect(edited).toHaveLength(0)
     expect(logs).toContain('round-trip PASS')
     expect(logs.some((l) => l.includes('`Depends-on: 2, 3`'))).toBe(true)
   })
 
-  it('a real run ships the amended body once and logs the edge change', () => {
+  it('a real run ships the amended body once and logs the edge change', async () => {
     const { deps, edited, logs } = makeDeps()
-    runAmendDeps(parseAmendArgs(['429', '--depends-on', '2, 3', '--note', 'Task 3 dropped.']), deps)
+    await runAmendDeps(parseAmendArgs(['429', '--depends-on', '2, 3', '--note', 'Task 3 dropped.']), deps)
     expect(edited).toHaveLength(1)
     expect(edited[0]?.issue).toBe('429')
     expect(edited[0]?.body).toContain('**Amendment (2026-07-13, Planner)')
@@ -676,26 +720,134 @@ describe('readSharedPackages', () => {
   })
 })
 
-describe('blastRadiusErrorsForWrite', () => {
-  const shared = ['packages/ui']
-  const registry = [{ name: 'vinaya', path: 'apps/vinaya' }]
-  const surfaceBody = '## Surface\n\nin: packages/ui/**\nout: —\n\n**Project:** vinaya\n'
+// The script against the Planner tools, on one body: the real validation, behind a fake GitHub command line
+// first on the path, so nothing reaches the forge and no rule is stubbed.
+describe('the script decides through the validation the Planner tools call', () => {
+  const SCRIPT = join(__dirname, 'open-issue.ts')
+  const LABEL = 'vinaya/tranche:fixture-v1'
+  const TITLE = '[fixture-v1] 1 — Fix(planner): a fixture task'
+  // An importer of a pinned file the Surface neither reaches nor excludes: `open-issue.ts` imports `amend-rationale-deps.ts`.
+  const PINNED = 'harness/processes/vinaya-strict/thinking/planner/tools/amend-rationale-deps.ts'
+  const BODY = [
+    '**Project:** vinaya',
+    '',
+    '## Objectives',
+    '',
+    'O1. The fixture decides through the one validation.',
+    '',
+    '## Surface',
+    '',
+    'in: harness/processes/vinaya-strict/tests',
+    'out: —',
+    '',
+    '## Parts',
+    '',
+    'Part 1 (O1) — the only part.',
+    '',
+    `**Boundary** — Pinned files: \`${PINNED}\`. Out: other work.`
+  ].join('\n')
 
-  it('judges a create (no Issue ref) from `## Surface`', () => {
-    const errors = blastRadiusErrorsForWrite(surfaceBody, [], shared, registry, null)
-    expect(errors).toHaveLength(1)
-    expect(errors[0]).toMatch(/packages\/ui/)
-  })
+  let dir = ''
+  let bodyFile = ''
+  let savedPath: string | undefined
+  let savedRepo: string | undefined
+  let savedCwd = ''
 
-  it('judges an edit above the cutover from `## Surface`, the same as a create', () => {
-    const ref = String(BRIEF_SECTIONS_SINCE_ISSUE + 1)
-    expect(blastRadiusErrorsForWrite(surfaceBody, [], shared, registry, ref)).toEqual(
-      blastRadiusErrorsForWrite(surfaceBody, [], shared, registry, null)
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'open-issue-gate-'))
+    bodyFile = join(dir, 'body.md')
+    writeFileSync(bodyFile, BODY, 'utf8')
+    mkdirSync(join(dir, 'bin'))
+    writeFileSync(
+      join(dir, 'bin', 'gh'),
+      [
+        '#!/bin/sh',
+        `if [ "$1" = "issue" ] && [ "$2" = "view" ]; then echo '{"number":2218,"title":"${TITLE}","body":"","labels":[{"name":"${LABEL}"}]}'; exit 0; fi`,
+        `if [ "$2" = "list" ]; then echo '[]'; exit 0; fi`,
+        // The Principal read of the default branch's configuration, and an Issue with no comments.
+        `if [ "$1" = "api" ] && [ "\${2#*contents/vinaya.config.json}" != "$2" ]; then echo '${Buffer.from(JSON.stringify({ principals: ['fixture-principal'] })).toString('base64')}'; exit 0; fi`,
+        `if [ "$1" = "api" ] && [ "\${2#*/comments}" != "$2" ]; then echo '[]'; exit 0; fi`,
+        'exit 1',
+        ''
+      ].join('\n')
     )
+    chmodSync(join(dir, 'bin', 'gh'), 0o755)
+    savedPath = process.env.PATH
+    savedRepo = process.env.VINAYA_REPO
+    // The script works from the repository root; the in-process side must resolve tracked files from the same root, whatever directory the test runs from.
+    savedCwd = process.cwd()
+    process.chdir(join(__dirname, '../../../../../..'))
+    process.env.PATH = `${join(dir, 'bin')}:${process.env.PATH ?? ''}`
+    process.env.VINAYA_REPO = 'test-owner/test-repo'
   })
 
-  it('keeps an edit of an Issue numbered below the cutover on the prose scan', () => {
-    const ref = `https://github.com/o/r/issues/${BRIEF_SECTIONS_SINCE_ISSUE - 1}`
-    expect(blastRadiusErrorsForWrite(surfaceBody, [], shared, registry, ref)).toEqual([])
+  afterAll(() => {
+    process.env.PATH = savedPath
+    process.chdir(savedCwd)
+    if (savedRepo === undefined) delete process.env.VINAYA_REPO
+    else process.env.VINAYA_REPO = savedRepo
+    rmSync(dir, { recursive: true, force: true })
   })
+
+  /** Runs the script as a program and returns its exit code and the finding lines it printed. */
+  function runScript(args: string[]): { status: number | null; findings: string[]; stderr: string } {
+    const r = spawnSync(process.execPath, [SCRIPT, ...args], {
+      encoding: 'utf8',
+      env: process.env,
+      timeout: 240_000
+    })
+    const findings = r.stderr.split('\n').filter((l) => /^ {2}[✗!] \[/.test(l))
+    return { status: r.status, findings, stderr: r.stderr }
+  }
+
+  const findingsOf = (outcome: Awaited<ReturnType<typeof createIssue>>): CheckError[] => {
+    if (outcome.ok) throw new Error('the Planner tools accepted the body')
+    return outcome.findings
+  }
+
+  const printed = (findings: CheckError[]): string[] => findings.map((e) => formatFinding(e))
+
+  it('refuses an undecided importer on validate-only, naming the check, with the findings the Planner tools return', async () => {
+    const tools = await createIssue({
+      ghArgs: ['--title', TITLE, '--body-file', bodyFile, '--label', LABEL],
+      validateOnly: true
+    })
+    expect(tools.ok).toBe(false)
+    const expected = printed(findingsOf(tools))
+    const importer = expected.find((l) => l.includes('Surface/importers'))
+    expect(importer).toBeDefined()
+
+    const script = runScript(['--validate-only', '--title', TITLE, '--body-file', bodyFile, '--label', LABEL])
+    expect(script.status).toBe(1)
+    expect(script.findings).toEqual(expected)
+    expect(script.stderr).toContain(importer as string)
+    expect(script.stderr).toMatch(/\[[a-z0-9-]+\] issue-validation Surface\/importers/)
+  }, 300_000)
+
+  it('refuses the same body on create with the same findings, and sends nothing to the forge', async () => {
+    const tools = await createIssue({
+      ghArgs: ['--title', TITLE, '--body-file', bodyFile, '--label', LABEL],
+      validateOnly: true
+    })
+    const script = runScript(['--title', TITLE, '--body-file', bodyFile, '--label', LABEL])
+    expect(script.status).toBe(1)
+    expect(script.findings).toEqual(printed(findingsOf(tools)))
+    expect(script.stderr).toContain('Nothing was sent to the forge')
+  }, 300_000)
+
+  it('refuses the same body on edit with the findings the Planner edit returns', async () => {
+    const tools = await editIssue({ args: ['2218', '--body-file', bodyFile], validateOnly: true })
+    expect(tools.ok).toBe(false)
+    const script = runScript(['edit', '2218', '--body-file', bodyFile])
+    expect(script.status).toBe(1)
+    expect(script.findings).toEqual(printed(findingsOf(tools)))
+  }, 300_000)
+
+  it('runs the validation once the Log sink factory is installed: the program stops on no missing-factory error', () => {
+    const script = runScript(['--validate-only', '--title', TITLE, '--body-file', bodyFile, '--label', LABEL])
+    // The program ran the validation to its findings and refused on them, rather than dying on a missing factory.
+    expect(script.status).toBe(1)
+    expect(script.findings.length).toBeGreaterThan(0)
+    expect(script.stderr).not.toMatch(/sink factory/i)
+  }, 300_000)
 })

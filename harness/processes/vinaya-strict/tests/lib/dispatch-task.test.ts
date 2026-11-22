@@ -1165,6 +1165,46 @@ describe('validateIssueWriteGate (O2) — the real Issue write gate, exercised a
       validateIssueWriteGate(bodyWithWholeSuiteTestPlan, [], 427, 'vinaya task brief backlog --issue 427')
     ).rejects.toThrow(/runs a test runner with no test-file argument/)
   })
+
+  // The in-repository source the Issue lists is absent from the fixture checkout; the rule reads the
+  // checkout, so no URL is probed and nothing reaches the network.
+  const MISSING_SOURCE = 'executing/missing/doctrine.md'
+  const bodyWithMissingSource = bodyWithWholeSuiteTestPlan
+    .replace('bun test\n', 'bun test harness/processes/vinaya-strict/tests/lib/dispatch-task.test.ts → 0 fail\n')
+    .replace(
+      '## Test plan',
+      `## Documentation\n\n- ${MISSING_SOURCE} — a spec that was never written (O1)\n\n## Test plan`
+    )
+
+  it('refuses a source the Issue lists in the repository and the checkout lacks, naming the source', async () => {
+    await expect(
+      validateIssueWriteGate(bodyWithMissingSource, [], 427, 'vinaya task brief backlog --issue 427')
+    ).rejects.toThrow(new RegExp(`\`${MISSING_SOURCE.replaceAll('/', '\\/').replaceAll('.', '\\.')}\``))
+  })
+
+  it('starts no task whose listed source is gone: the refusal comes before any brief is posted', async () => {
+    const posted: string[] = []
+    await expect(
+      prepareIssueTask(
+        { issue: 427 },
+        {
+          resolveDispatchAuthorization: () => ({ authorized: true, login: 'principal' }),
+          assembleAndRenderBriefForIssue: async () => ({ ok: true as const, brief: BRIEF_TEXT, issue: 427 }),
+          runIssueWriteGate: () =>
+            validateIssueWriteGate(bodyWithMissingSource, [], 427, 'vinaya task brief backlog --issue 427'),
+          findExistingFrozenBrief: () => null,
+          widenSurface: async () => {
+            throw new Error('must not widen')
+          },
+          postMarkedComment: (_target: 'pr' | 'issue', _ref: string, _marker: string, text: string) => {
+            posted.push(text)
+            return 'https://example.com/brief'
+          }
+        }
+      )
+    ).rejects.toThrow(MISSING_SOURCE)
+    expect(posted).toEqual([])
+  })
 })
 
 describe('dispatch repairs before rendering or freezing', () => {

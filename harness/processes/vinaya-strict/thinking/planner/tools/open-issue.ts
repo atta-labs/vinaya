@@ -5,38 +5,30 @@
  * this repo. No hook intercepts a raw `gh issue create` /
  * `gh issue edit`; ring-1 CI re-validation is the backstop for one.
  *
- * Gate: a task Issue (any `vinaya/tranche:<slug>` label) must carry the full
- * eight-field Planner's rationale in its body (`checkIssueRationale`,
- * planner-brief contract) — refused locally otherwise, before anything
- * reaches the forge. Non-task Issues (no tranche label) pass through
- * unvalidated: the rationale contract does not apply to them.
+ * Gate: a task Issue (any `vinaya/tranche:<slug>` label, or a labelless body
+ * that is task-shaped) is graded by `validateTaskIssueOutcome` — the one
+ * validation the Planner tools call for `task_issue_create` and
+ * `task_issue_edit`, so a rule added there reaches this script with no edit
+ * here, and a draft this script passes is a draft the tools pass. It returns
+ * every finding at once; this script prints each with its check name and
+ * refuses when any is blocking, on `--validate-only`, on `create`, on `edit`
+ * and on `amend-deps`'s amended body. Non-task Issues pass through
+ * unvalidated.
  *
- * Content gate: past presence, several checks grade what those fields
- * SAY (and what the Issue carries) against the surface the task touches, and
- * refuse — `checkBlastRadiusScope`
- * (a shared collision domain — live-derived `packages/*` workspace members,
- * built-in cross-cutting defaults, plus `vinaya.config.json`
- * `blastRadius.extraDomains`, see `readSharedPackages` below — that no
- * declared project owns, without a second project or a `blast-radius-ack:`
- * line),
- * `checkProjectsRegistered` (every declared `**Project:**` name resolves
- * against `.vinaya/projects.md`),
- * `checkNoBriefContent` (brief-shaped sections belong in the brief, not here),
- * `checkRationaleNamesDocs` (name a doc/skill path, or the `no-doc-surface`
- * sentinel — the only read-obligation signal a forge write leaves, since no
- * other check observes what the Planner read before this forge write),
- * `checkIssueType` (exactly one `vinaya/type:*` label — `labels.ts`'s `type`
- * category, the commit-type vocabulary applied to the Issue instead of the
- * commit). **CREATE-only**, unlike its four siblings above: the label is
- * required going forward from this axis's own merge, never retroactively —
- * running it on `edit` too would refuse an unrelated edit to any
- * pre-existing Issue for lacking a label nothing ever asked it to carry, a
- * forced backfill through the only sanctioned edit path. See the `isEdit`
- * branch below.
- * `checkConflictCompleteness` warns on an undeclared collision-domain overlap
- * and never blocks. The five block-on-fail checks apply to task Issues only,
- * same as the rationale gate; `checkIssueType` additionally applies to
- * `create` only.
+ * The task-type label stays CREATE-only, inside that validation: running it on
+ * `edit` would refuse an unrelated edit to any pre-existing Issue for lacking
+ * a label nothing ever asked it to carry.
+ *
+ * Script-only, kept here: the tranche label length check (the forge's own
+ * 50-character cap, caught before `gh` returns an opaque 422), the leftover
+ * print, and the collision-domain warning (`checkConflictCompleteness`),
+ * printed after the gate's findings, which warns on an undeclared overlap and
+ * never blocks.
+ *
+ * The validation runs the registered Issue checks through the check runner,
+ * which records each run, so the entry installs the Log sink factory, the
+ * configuration provider and the check registry before it runs anything, the
+ * way every other entry point does.
  *
  * Label detection is per-path: on `create`, labels come from this command's
  * own argv (`--label` flags are naturally present there). On `edit`, argv is
@@ -56,6 +48,10 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { installProcess } from '../../../../../kernel/dev-process-socket/contract/install-process.js'
+import { CLI_OPERATION_STREAM, recordCliOperationAtExit } from '../../../../../kernel/log/client/cli-operation-log.js'
+import { logSync } from '../../../../../kernel/log/log-sink.js'
+import { vinayaProcessIntegration } from '../../../integration/process/process-integration.js'
 import { amendRationaleDeps } from './amend-rationale-deps'
 import {
   findMilestoneAttachTargetForSlug,
@@ -69,30 +65,15 @@ import {
   deriveWorkspacePackageDomains,
   parsePnpmWorkspaceYaml
 } from '../../../tools/task-contract/blast-radius-domains'
-import { checkForgeTitle } from '../../../tools/task-contract/brief-validation'
+import { validateTaskIssueOutcome } from '../../../tools/task-contract/forge/forge-write'
 import {
-  checkBlastRadiusScope,
   checkConflictCompleteness,
-  checkIssueObjectives,
-  checkIssueRationale,
-  checkIssueType,
-  checkNoBriefContent,
-  checkNoForeignTaskOwnership,
-  checkProseAllowsBeyondSurfaceEdit,
-  checkObjectivesRespectBoundary,
-  checkPartsCiteDefinedObjectives,
-  checkPartsCoverageAndSequence,
-  checkProjectsRegistered,
-  checkRationaleNamesDocs,
-  checkSurfaceGlobsResolve,
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
-  type ProjectPath,
   type TaskIssueFacts
 } from '../../../tools/task-contract/issue-validation'
 import { classifyLeftover } from '../../../tools/task-contract/bin/leftover-detection'
-import { readConfigObjectivesSinceIssue } from '../../../tools/task-contract/objectives-cutover-config'
-import { parseRegistry } from '../../../tools/task-contract/parse-registry'
+import type { CheckError } from '../../../../../kernel/gates/checks/contract'
 
 const REPO_ROOT = join(import.meta.dirname, '../../../../../..')
 
@@ -100,18 +81,6 @@ const REPO_ROOT = join(import.meta.dirname, '../../../../../..')
 function parseIssueNumberFromRef(ref: string): number | null {
   const m = /(\d+)\s*$/.exec(ref.trim())
   return m ? Number.parseInt(m[1] as string, 10) : null
-}
-
-/** `git ls-files -- <glob>` non-empty — mirrors `apps/cli/src/lib/brief-assembly.ts`'s `expandGlob`, used the same way (`checkSurfaceGlobsResolve`'s `resolvesToFile` predicate). */
-function globResolvesToFile(glob: string): boolean {
-  try {
-    return (
-      execFileSync('git', ['ls-files', '--', glob], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
-        .length > 0
-    )
-  } catch {
-    return false
-  }
 }
 
 function fail(msg: string): never {
@@ -487,6 +456,35 @@ export function validateAmendFlags(flags: AmendDepsFlags): string | null {
   return null
 }
 
+export type IssueValidate = typeof validateTaskIssueOutcome
+
+/** One finding as this script prints it: severity mark, check name, message. */
+export function formatFinding(e: CheckError): string {
+  return `  ${e.severity === 'warning' ? '!' : '✗'} [${e.check}] ${e.message}`
+}
+
+/**
+ * The one decision every write path of this script takes: the validation the
+ * Planner tools call, given the same arguments `createIssue`/`editIssue` give
+ * it (`issueRef` is `null` on a create, which has no number until the write
+ * completes). Returns every finding and whether any blocks; prints nothing.
+ */
+export async function runIssueGate(
+  input: { body: string | null; title: string | null; labels: string[]; issueRef: string | null; ghArgs: string[] },
+  validate: IssueValidate = validateTaskIssueOutcome
+): Promise<{ errors: CheckError[]; blocking: boolean; renderSkipped: string | null }> {
+  const { body, title, labels, issueRef, ghArgs } = input
+  const isEdit = issueRef !== null
+  return validate(
+    body,
+    title,
+    labels,
+    isEdit ? 'open-issue edit' : 'open-issue',
+    isEdit ? parseIssueNumberFromRef(issueRef) : null,
+    isEdit ? { kind: 'edit', issueRef, ghArgs } : { kind: 'create', ghArgs }
+  )
+}
+
 /** IO seams for {@link runAmendDeps}, injected so the orchestrator is testable without a real `gh`. */
 export type AmendDepsDeps = {
   fetchLabels: (issue: string) => string[]
@@ -495,6 +493,8 @@ export type AmendDepsDeps = {
   today: () => string
   log: (msg: string) => void
   fail: (msg: string) => never
+  /** The validation the Planner tools call; replaceable only so a test can observe the call. */
+  validate?: IssueValidate
 }
 
 /**
@@ -504,7 +504,7 @@ export type AmendDepsDeps = {
  * "test against real data, not assumptions" trap (Issue #481) enforced on
  * every invocation forever.
  */
-export function runAmendDeps(flags: AmendDepsFlags, deps: AmendDepsDeps): void {
+export async function runAmendDeps(flags: AmendDepsFlags, deps: AmendDepsDeps): Promise<void> {
   const err = validateAmendFlags(flags)
   if (err) deps.fail(err)
   const issue = flags.issue as string
@@ -545,12 +545,15 @@ export function runAmendDeps(flags: AmendDepsFlags, deps: AmendDepsDeps): void {
     )
   }
 
-  // Rationale gate — the amended body must still carry the full rationale.
-  const rationale = checkIssueRationale(newBody)
-  if (rationale.status === 'fail') {
-    deps.fail(
-      `amend-deps: the amended body no longer passes the rationale gate (${rationale.errors.join(' | ')}). Nothing written.`
-    )
+  // The amended body goes through the validation the Planner tools call; a
+  // blocking finding refuses, and nothing is written.
+  const gate = await runIssueGate(
+    { body: newBody, title: null, labels, issueRef: issue, ghArgs: [] },
+    deps.validate ?? validateTaskIssueOutcome
+  )
+  for (const e of gate.errors) deps.log(formatFinding(e))
+  if (gate.blocking) {
+    deps.fail('amend-deps: the amended body fails the Issue checks above. Nothing written.')
   }
 
   if (flags.dryRun) {
@@ -652,15 +655,6 @@ export function readSharedPackages(repoRoot: string = REPO_ROOT): string[] {
   const defaults = deriveBuiltinCrossCuttingDefaults((p) => existsSync(join(repoRoot, p)))
   const configExtra = readConfigExtraDomains(repoRoot)
   return [...new Set([...derived, ...defaults, ...configExtra])]
-}
-
-/** Registry rows (`projects.md`) — the authority for which project owns which path. Absent ⇒ nothing is owned. */
-function readProjectPaths(): ProjectPath[] {
-  try {
-    return parseRegistry(readFileSync(join(REPO_ROOT, '.vinaya/projects.md'), 'utf8'))
-  } catch {
-    return []
-  }
 }
 
 /**
@@ -789,32 +783,13 @@ export function appliesTaskIssueGate(labels: string[], body: string | null): boo
   return isTaskIssueLabelSet(labels) || (body !== null && isTaskIssueBodyShaped(body))
 }
 
-/**
- * The blast-radius rule for one write, given the Issue ref an `edit` names
- * (`null` on `create`). An edit passes the Issue's own number, so an Issue
- * numbered below the brief-sections cutover keeps the prose scan; a create has
- * no number yet and is judged from `## Surface`, exactly as `apps/cli`'s
- * `validateIssueContent` judges it. Pulled out so that number reaching the
- * rule is unit-testable without a real `gh` call.
- */
-export function blastRadiusErrorsForWrite(
-  body: string,
-  labels: string[],
-  sharedPackages: string[],
-  projectPaths: ProjectPath[],
-  issueRef: string | null
-): string[] {
-  const issueNumber = issueRef === null ? null : parseIssueNumberFromRef(issueRef)
-  return checkBlastRadiusScope(body, labels, sharedPackages, projectPaths, issueNumber).errors
-}
-
-export function main(): void {
+export async function main(): Promise<void> {
   const argv = process.argv.slice(2)
   const validateOnly = argv.includes('--validate-only')
   const args = argv.filter((a) => a !== '--validate-only')
 
   if (args[0] === 'amend-deps') {
-    runAmendDeps(parseAmendArgs(args.slice(1)), {
+    await runAmendDeps(parseAmendArgs(args.slice(1)), {
       fetchLabels: fetchForgeLabels,
       fetchBody: fetchForgeBody,
       editBody: ghEditBody,
@@ -878,104 +853,36 @@ export function main(): void {
       }
     }
 
-    const title = extractTitle(bodyArgs)
-    if (title !== null) {
-      const t = checkForgeTitle(title)
-      if (t.status === 'fail') fail(t.errors[0] as string)
-    }
-    if (body === null) {
+    console.log('[open-issue] task Issue — running the validation the Planner tools run…')
+    const gate = await runIssueGate({
+      body,
+      title: extractTitle(bodyArgs),
+      labels,
+      issueRef: isEdit ? (ghArgs[0] as string) : null,
+      ghArgs: bodyArgs
+    })
+    for (const e of gate.errors) console.error(formatFinding(e))
+    if (gate.blocking) {
       fail(
-        'a task Issue (vinaya/tranche:* label) requires a `--body-file <path>` so the rationale gate can validate it.'
+        `the Issue body fails ${gate.errors.filter((e) => e.severity !== 'warning').length} Issue check(s) (named above).`
       )
     }
-    console.log('[open-issue] task Issue (tranche label) — validating the Planner rationale…')
-    const { status, errors } = checkIssueRationale(body)
-    if (status === 'fail') {
-      console.error(`\n[open-issue] FAILED — ${errors.length} rationale field(s) missing:\n`)
-      for (const e of errors) console.error(`  ✗ ${e}`)
-      fail('the Issue body does not carry the full eight-field Planner rationale (planner-brief contract).')
+    if (gate.renderSkipped !== null) {
+      console.warn(`[open-issue] the brief render did not run (${gate.renderSkipped}) — this is not a full pass.`)
     }
-    console.log('[open-issue] rationale gate PASS.')
+    console.log('[open-issue] Issue checks PASS.')
 
-    // ---- content gate: A/B/D block, C warns --------------------------------
-    // The rationale gate above proves the eight fields EXIST. These prove what
-    // they say is consistent with the surface the task touches — the three
-    // failure classes that passed the presence gate on #621/#622/#626.
+    // Warn-only, script-only. Never blocks: an Issue declares no precise file
+    // surface, so an overlapping collision domain is a hint, not a fact.
     const sharedPackages = readSharedPackages()
     if (sharedPackages.length === 0) {
       console.warn(
-        '[open-issue] no collision domains derived, defaulted, or declared (no `packages/*` workspace, no cross-cutting default present, no `vinaya.config.json` blastRadius.extraDomains) — blast-radius check (A) is dormant.'
+        '[open-issue] no collision domains derived, defaulted, or declared (no `packages/*` workspace, no cross-cutting default present, no `vinaya.config.json` blastRadius.extraDomains) — the conflict-completeness warning is dormant.'
       )
     }
-    const projectPaths = readProjectPaths()
-    if (projectPaths.length === 0) {
-      console.warn('[open-issue] no `.vinaya/projects.md` registry — the project-registry check is dormant.')
-    }
-    // checkIssueType is CREATE-ONLY, deliberately. "Forward-only, no
-    // backfill" (task 10's §10 answer) means the label is required on a
-    // task Issue from the moment it is CUT, not re-required every time it
-    // is later edited — `open-issue.ts` is the only sanctioned edit path
-    // for ANY Issue body, so running this check on `edit` too would refuse
-    // an unrelated edit (a typo fix, a dependency update) to any Issue that
-    // predates this axis, which is a de facto forced backfill through the
-    // back door. A task Issue created after this merges gets the label at
-    // creation and keeps it — nothing removes it — so skipping re-checks on
-    // edit costs nothing for the forward case and exempts every pre-merge
-    // Issue exactly as promised.
-    const typeErrors = isEdit ? [] : checkIssueType(body, labels).errors
-    // Three of the five write-only rules named apart:
-    // objectives numbering, Parts coverage, Surface glob resolution.
-    // `issueNumber` mirrors `apps/cli`'s own fail-closed-on-null posture
-    // (`checkIssueObjectives`'s own doc comment): `create` has no number
-    // until the write completes, and every Issue this repo can newly mint is
-    // already far past the Objectives cutover, so this never blocks a
-    // legitimate create. `checkPartsCiteDefinedObjectives`/
-    // `checkSurfaceGlobsResolve` are dormant when the Issue carries no
-    // `## Parts`/`## Surface` section at all. Title grammar is already
-    // enforced above. Milestone attach's validating half is NOT wired here:
-    // this script never re-attaches a Milestone on `edit` (its own
-    // `resolveMilestoneToAttach` design), and its `create` attach happens as
-    // part of this SAME write, so no moment here has an attach to verify.
-    const issueNumber = isEdit ? parseIssueNumberFromRef(ghArgs[0] as string) : null
-    const contentErrors = [
-      ...blastRadiusErrorsForWrite(body, labels, sharedPackages, projectPaths, isEdit ? (ghArgs[0] as string) : null),
-      ...checkProjectsRegistered(
-        body,
-        labels,
-        projectPaths.map((p) => p.name)
-      ).errors,
-      ...checkNoBriefContent(body).errors,
-      ...checkRationaleNamesDocs(body).errors,
-      ...checkIssueObjectives(body, issueNumber, readConfigObjectivesSinceIssue(REPO_ROOT)).errors,
-      ...checkPartsCiteDefinedObjectives(body).errors,
-      ...checkSurfaceGlobsResolve(body, globResolvesToFile).errors,
-      // The three Boundary/ownership/Parts-coverage predicates, wired here
-      // identically to `apps/cli`'s own `validateIssueContent` so this
-      // repo's own dogfooded Issue-write path (this script) and the
-      // packaged CLI's `issue create`/`edit` can never disagree about
-      // whether an Issue's Objectives/Boundary/Parts agree.
-      ...checkObjectivesRespectBoundary(body).errors,
-      ...checkNoForeignTaskOwnership(body).errors,
-      ...checkProseAllowsBeyondSurfaceEdit(body).errors,
-      ...checkPartsCoverageAndSequence(body).errors,
-      ...typeErrors
-    ]
-    if (contentErrors.length > 0) {
-      console.error(`\n[open-issue] FAILED — ${contentErrors.length} content check(s):\n`)
-      for (const e of contentErrors) console.error(`  ✗ ${e}`)
-      fail('the Issue body fails the blast-radius / project-registry / brief-content / docs-read / task-type checks.')
-    }
-    console.log(
-      `[open-issue] content gate PASS (blast radius, project registry, brief content, docs read${isEdit ? '' : ', task type'}).`
-    )
-    if (isEdit) {
-      console.log('[open-issue] edit — task-type check skipped (create-only; forward-only enforcement, no backfill).')
-    }
 
-    // C — warn-only. Never blocks: an Issue declares no precise file surface,
-    // so an overlapping collision domain is a hint, not a fact.
     const slug = trancheSlugFromLabels(labels)
-    if (slug) {
+    if (slug && body !== null) {
       const selfRef = isEdit ? (ghArgs[0] as string) : null
       const conflictWarnings = checkConflictCompleteness(
         {
@@ -1031,5 +938,12 @@ export function main(): void {
 
 if (import.meta.main) {
   process.chdir(REPO_ROOT)
-  main()
+  installProcess(vinayaProcessIntegration, ['log', 'config', 'checks'])
+  recordCliOperationAtExit(['open-issue', ...process.argv.slice(2)], {
+    on: (event, handler) => process.on(event, handler),
+    logSync,
+    now: Date.now,
+    unattributedStream: CLI_OPERATION_STREAM
+  })
+  await main()
 }
