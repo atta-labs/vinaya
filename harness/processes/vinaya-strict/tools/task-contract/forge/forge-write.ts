@@ -87,6 +87,7 @@ import {
   type TaskFileFacts,
   type TaskSurfaceFacts
 } from '../issue-validation'
+import { checkKnownIssueSections } from '../issue-sections'
 import {
   checkAutonomyClause,
   checkClosesNPresence as checkBriefClosesN,
@@ -1741,6 +1742,8 @@ export function readCheckoutFile(path: string, root: string = repoRoot()): strin
 const CHECK_ISSUE_CONTENT = 'issue-content'
 
 const ISSUE_CONTENT_RECOVERY = {
+  knownIssueSections:
+    'Delete the section named above from the Issue body, or rename it to a known section — content the Developer needs belongs in a rationale field, or in an in-repository source listed under `## Documentation`. Then re-run `{cmd}`.',
   generatedArtifacts:
     'Add the named directory glob to `in:` and regenerate the named file with `vinaya upgrade`, then re-run `{cmd}`.',
   blastRadius:
@@ -1917,6 +1920,7 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
       'projectsRegistered'
     ],
     [checkNoBriefContent(input.body).errors, 'noBriefContent'],
+    [checkKnownIssueSections(input.body).errors, 'knownIssueSections'],
     [checkRationaleNamesDocs(input.body).errors, 'rationaleNamesDocs'],
     [checkSurfaceGlobsResolve(input.body, input.resolvesToFile).errors, 'surfaceGlobsResolve'],
     [checkPartsCiteDefinedObjectives(input.body).errors, 'partsCiteObjectives'],

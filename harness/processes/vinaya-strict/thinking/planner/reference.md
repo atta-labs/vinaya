@@ -159,6 +159,8 @@ R1 checks **presence/structure only**; whether the content is correct (sizing ac
 
 The dispatch act's render **starts from** this rationale and adds only the just-in-time perishable detail it derives mechanically from the tree. The rationale is the planner's thinking, carried forward — not re-thought.
 
+**Known Issue sections.** An Issue carries only the level-two sections `harness/processes/vinaya-strict/tools/task-contract/issue-sections.ts` lists, plus the section that holds the rationale fields under whatever heading it carries. `Objectives`, `Documentation`, `Premises`, `Surface`, `Parts`, `Test plan` and `Stop conditions` are carried into the brief; `Origin`, `Check decisions` and `Covering checks` stay on the Issue and the brief never reads them. The Issue write gate refuses any other level-two heading by name, because the brief cannot carry it: content the Developer needs is written in a rationale field, or in an in-repository source listed under `## Documentation`. A heading inside a fenced block is not a section.
+
 ### Agent/model selection: class at plan time, final pick at dispatch time
 
 You suggest the **agent-class** (high/mid/fast) as part of sizing — "is this too big for a fast model?" is a sizing question, so it is yours. You record it in the rationale. You do **not** make the final model pick — the dispatch act confirms the actual model at dispatch, against current reality (the actual models available, the task's true difficulty now). Class is plan-time; pick is dispatch-time.

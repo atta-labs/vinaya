@@ -1131,6 +1131,17 @@ describe('validateIssueContent refuses an unregistered project, an unrunnable Te
     expect(gate(issueBody({ project: 'nonexistent' }), [])).toEqual([])
   })
 
+  it('refuses a body with an unlisted level-two section, naming its heading and where the content goes', () => {
+    const errors = gate(`${issueBody({})}\n\n## Developer notes\n\nWatch the cache.\n`)
+    expect(errors.length).toBe(1)
+    const [e] = errors as [CheckError]
+    expect(e.message).toContain('## Developer notes')
+    expect(e.message).toContain('`## Premises`')
+    expect(e.message).toContain('rationale field')
+    expect(e.message).toContain('## Documentation')
+    expect(recoveryNamesItsFix(e)).toBe(true)
+  })
+
   it('refuses a Test plan line that merges a pull request, naming the line', () => {
     const line = 'gh pr merge 12 --squash'
     const errors = gate(issueBody({ testPlanLine: line }))
