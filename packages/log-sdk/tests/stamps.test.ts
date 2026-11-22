@@ -176,6 +176,15 @@ test('resource attributes are recorded once per handle', () => {
   expect(res?.['vinaya.semconv.version']).toBeDefined()
 })
 
+test('a handle given no service version writes no service.version resource attribute', () => {
+  const h = harness()
+  drive(h)
+  const res = h.spans.getFinishedSpans()[0]?.resource.attributes
+  expect(res).toBeDefined()
+  expect(Object.keys(res ?? {})).not.toContain('service.version')
+  expect(res?.['vinaya.sdk.version']).toBeDefined()
+})
+
 test('a secret-shaped work title is redacted on events and spans', () => {
   const h = harness()
   const secret = ['gh', 'p_', 'abcdefghijklmnopqrstuvwxyz0123456789'].join('')

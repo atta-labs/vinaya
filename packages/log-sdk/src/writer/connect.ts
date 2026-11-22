@@ -299,7 +299,7 @@ export function connect(options: ConnectOptions): LogHandle {
     try {
       const resource = resourceFromAttributes({
         [ATTRIBUTE_NAMES.serviceName]: options.processName ?? basename(process.argv[1] ?? 'vinaya'),
-        [ATTRIBUTE_NAMES.serviceVersion]: options.serviceVersion ?? SDK_VERSION,
+        ...(options.serviceVersion !== undefined ? { [ATTRIBUTE_NAMES.serviceVersion]: options.serviceVersion } : {}),
         ...(options.repository !== undefined ? { [ATTRIBUTE_NAMES.repository]: options.repository } : {}),
         [ATTRIBUTE_NAMES.hostId]: createHash('sha256').update(hostname()).digest('hex').slice(0, 32),
         [ATTRIBUTE_NAMES.sdkVersion]: SDK_VERSION,
