@@ -88,6 +88,7 @@ import {
   type TaskSurfaceFacts
 } from '../issue-validation'
 import { checkKnownIssueSections } from '../issue-sections'
+import { checkTestPlanProof } from '../test-plan-proof'
 import {
   checkAutonomyClause,
   checkClosesNPresence as checkBriefClosesN,
@@ -1794,6 +1795,8 @@ const ISSUE_CONTENT_RECOVERY = {
     "Add the named directory globs to `## Surface`'s `in:` list so the loop invariant map's fixture and spec can map the new file, or pin an existing loop file instead. Then re-run `{cmd}`.",
   testPlanDeveloperRunnable:
     'Rewrite the named `## Test plan` line as a command the Developer runs inside its sandbox — a test file of its own or a `vinaya-check` command that proves the same outcome — or move the step to a `**[principal]**` item when only the Principal can perform it. Then re-run `{cmd}`.',
+  testPlanProof:
+    "Make the `## Test plan` and the `## Objectives` name each other: end each fenced line with its observable and then the ids it proves, `bun test <test file> → 0 fail (O1, O2)`; put each `**[principal]**` or `**[live]**` item's ids in one code span, `(O1)` in backticks; and give every objective at least one line or item. Replace the `unit-tests-only` sentinel with fenced lines naming the test files. Then re-run `{cmd}`.",
   documentationPathsExist:
     'Correct the named `## Documentation` path to a file the repository contains, or drop the source if it does not exist yet. Then re-run `{cmd}`.',
   documentationReadable:
@@ -1954,6 +1957,7 @@ export function validateIssueContent(input: IssueContentInput): CheckError[] {
     [checkNewTestFilesCoverShards(input.body, input.trackedFiles ?? []).errors, 'newTestFilesCoverShards'],
     [checkNewLoopFilesCoverInvariantMap(input.body, input.trackedFiles ?? []).errors, 'newLoopFilesCoverInvariantMap'],
     [checkTestPlanDeveloperRunnable(input.body, input.commandReference).errors, 'testPlanDeveloperRunnable'],
+    [checkTestPlanProof(input.body).errors, 'testPlanProof'],
     [checkDocumentationPathsExist(input.body, input.readFile).errors, 'documentationPathsExist'],
     [checkIssuePremises(input.body, input.readFile).errors, 'issuePremises'],
     [checkPremiseDependencyDeclared(input.body).errors, 'premiseDependencyDeclared'],
