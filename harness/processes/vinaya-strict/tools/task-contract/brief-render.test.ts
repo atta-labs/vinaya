@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { checkBriefSections, checkConsumerTests, checkPremiseCoverage, checkWorktreeStep0 } from './brief-validation'
 import { NEW_FILES_ONLY_PREMISE } from './premise-check'
+import { ISSUE_SECTIONS, RATIONALE_FIELD_SPECS } from './issue-sections'
 import {
   checkIssueRationale,
   parseIssueParts,
@@ -1335,5 +1336,96 @@ describe('the render and both templates carry no retired instruction', () => {
     expect(text).toContain(
       '## 6. Numbered parts — publish once with `publish_changes` when every Part is done, then `open_pull_request`'
     )
+  })
+})
+
+describe('renderBrief — every carried Issue section reaches the brief (the shared section list)', () => {
+  const marker = (name: string): string => `MARK-${name}-MARK`
+  const field = (label: string, name: string): string => `**${label}** — ${marker(name)} prose for the field.`
+  const body = [
+    "## Planner's rationale",
+    '',
+    `${field('Boundary', 'boundary')} Pinned files: \`packages/core/src/fixture.ts\`.`,
+    '',
+    field('Sizing', 'sizing'),
+    '',
+    field('Project(s) + blast radius', 'blast'),
+    '',
+    field('Dependency rationale', 'dependency'),
+    '',
+    field('Traps to avoid', 'traps'),
+    '',
+    field('Suggested agent-class', 'agentclass'),
+    '',
+    field('Stop-and-escalate', 'escalate'),
+    '',
+    field('Docs to keep coherent', 'docs')
+  ].join('\n')
+
+  const renderFilled = (): string => {
+    const result = renderBrief(
+      baseFacts({
+        rationale: parseRationaleFields(body),
+        objectives: [{ id: 'O1', text: `${marker('objective')} outcome.` }],
+        documentation: {
+          kind: 'sources',
+          sources: [{ source: `docs/${marker('doc')}.md`, mechanism: 'the mechanism', objectiveIds: [1] }]
+        },
+        premises: [
+          {
+            path: 'a.ts',
+            text: marker('premise'),
+            afterIssue: null,
+            line: `\`a.ts\` contains \`${marker('premise')}\``
+          }
+        ],
+        surface: { in: ['packages/core/src'], out: [`packages/${marker('surface')}`] },
+        parts: [{ n: 1, objectiveIds: [1], text: `${marker('part')} work.` }],
+        testPlan: { kind: 'commands', lines: [`bun test ${marker('testplan')} → 0 fail`], principal: [], live: [] },
+        stopConditions: [`${marker('stop')} condition.`]
+      }),
+      TEMPLATE
+    )
+    expect(result.ok).toBe(true)
+    return result.ok ? result.brief : ''
+  }
+
+  const CONTENT: Record<string, string> = {
+    Objectives: 'objective',
+    Documentation: 'doc',
+    Premises: 'premise',
+    Surface: 'surface',
+    Parts: 'part',
+    'Test plan': 'testplan',
+    'Stop conditions': 'stop'
+  }
+
+  it('finds each carried section content under its brief part, and nothing of a section that stays on the Issue', () => {
+    const brief = renderFilled()
+    for (const s of ISSUE_SECTIONS) {
+      if (s.disposition === 'carried') {
+        expect(brief).toContain(s.briefPart!)
+        expect(brief).toContain(marker(CONTENT[s.heading]!))
+      } else {
+        expect(brief).not.toContain(`## ${s.heading}`)
+      }
+    }
+  })
+
+  it('finds the content of each rationale field the brief reads, and none of the fields it does not', () => {
+    const brief = renderFilled()
+    const names: Record<string, string> = {
+      boundary: 'boundary',
+      dependencyRationale: 'dependency',
+      trapsToAvoid: 'traps',
+      suggestedAgentClass: 'agentclass',
+      stopAndEscalate: 'escalate',
+      docsToKeepCoherent: 'docs',
+      sizing: 'sizing',
+      blastRadius: 'blast'
+    }
+    for (const f of RATIONALE_FIELD_SPECS) {
+      expect(brief.includes(marker(names[f.key]!))).toBe(f.readByBrief)
+    }
   })
 })
