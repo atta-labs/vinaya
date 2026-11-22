@@ -4275,7 +4275,7 @@ export async function dispatchRole(
     ...(opts.pr !== undefined ? { VINAYA_PR: String(opts.pr) } : {}),
     VINAYA_ATTEMPT: sinkAttempt === undefined ? undefined : String(sinkAttempt)
   })
-  const { log, runId } = createVinayaLogSink({
+  const { log, drain, runId } = createVinayaLogSink({
     env: sinkEnv,
     provenance: 'parent_attributed',
     inputVersions: () => opts.inputVersions
@@ -4556,6 +4556,8 @@ export async function dispatchRole(
       result: 'unavailable',
       error_class: null
     })
+    // A refusal can end the process right after; the earlier queue has nothing else to wait on, so land this line.
+    await drain()
   }
   // O1/O2/O4: resolved once, here — `null` for every non-Codex agent and
   // every attended dispatch. The actual pre-spawn REFUSAL this carries when
@@ -5035,6 +5037,8 @@ export async function dispatchRole(
         result: 'unavailable',
         error_class: null
       })
+      // The refusal that follows can end the process; land this line first.
+      await drain()
     }
   }
   if (
