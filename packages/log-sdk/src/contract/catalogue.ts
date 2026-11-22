@@ -89,6 +89,15 @@ export const ATTRIBUTE_NAMES = {
   repository: 'vinaya.repository',
   sdkVersion: 'vinaya.sdk.version',
   semconvVersion: 'vinaya.semconv.version',
+  osType: 'os.type',
+  ci: 'vinaya.ci',
+  runnerName: 'vinaya.runner.name',
+  runnerVersion: 'vinaya.runner.version',
+  cliVersion: 'vinaya.cli.version',
+  flowId: 'vinaya.flow.id',
+  flowVersion: 'vinaya.flow.version',
+  processDigest: 'vinaya.process.digest',
+  settingsDigest: 'vinaya.settings.digest',
   // Stamps every record carries
   seq: 'vinaya.seq',
   spanKey: 'vinaya.span.key',
@@ -142,6 +151,7 @@ export const ATTRIBUTE_NAMES = {
   // Agent
   codingAgent: 'vinaya.agent.coding_agent',
   codingAgentVersion: 'vinaya.agent.coding_agent_version',
+  agentEffort: 'vinaya.agent.effort',
   agentOutcome: 'vinaya.agent.outcome',
   agentResetAt: 'vinaya.agent.reset_at',
   attempt: 'vinaya.attempt',
