@@ -903,7 +903,7 @@ describe('the runner pool', () => {
       stopAfterFailedGroup: true,
       onGroupEnd: (outcome) => heard.push(outcome.group)
     })
-    expect(fake.started).toEqual(['tests/a.test.ts', 'tests/fail.test.ts'])
+    expect(fake.started).toEqual(['tests/a.test.ts', 'tests/fail.test.ts', 'tests/fail.test.ts'])
     expect(heard).toEqual([plan[1]?.id, plan[0]?.id])
     expect(result.failedRunners).toEqual([plan[1]?.id])
     expect(result.outcomes.map((o) => [o.group, o.confirmed])).toEqual([
@@ -932,6 +932,96 @@ describe('the runner pool', () => {
     expect(result.failedRunners).toEqual([frozen.id])
     expect(result.failedTests).toEqual({ [frozen.id]: 'all' })
     expect(result.problems.map((p) => `${p.code} ${p.path}`)).toEqual([`interrupted ${frozen.id}`])
+  })
+
+  /** A runner start whose n-th call for the file does what `steps[n]` says; the last step repeats. */
+  type Step = 'fail' | 'pass' | 'signal' | 'timeout' | 'no-report' | 'fail-unnamed' | 'gh-fail'
+  const scripted = (steps: Step[]) => {
+    const started: string[] = []
+    const spawn: RunnerStart = async (command, options) => {
+      const file = fileOf(command)
+      const step = steps[Math.min(started.length, steps.length - 1)] as Step
+      started.push(file)
+      const output = options.capture ? `ran ${file}\n` : null
+      if (step === 'signal') return { status: null, signal: 'SIGTERM', timedOut: false, output }
+      if (step === 'timeout') return { status: null, signal: 'SIGKILL', timedOut: true, output }
+      if (step === 'gh-fail') spawnSync('gh', ['pr', 'view', '7'], { env: options.env })
+      const report = (command.find((arg) => arg.startsWith('--reporter-outfile=')) as string).slice(
+        '--reporter-outfile='.length
+      )
+      const failures = step === 'fail' || step === 'gh-fail' ? 1 : 0
+      if (step !== 'no-report')
+        writeFileSync(
+          report,
+          `<testsuites failures="${failures}"><testsuite name="${file}" file="${file}" tests="1" failures="${failures}"></testsuite></testsuites>\n`
+        )
+      return { status: step === 'pass' ? 0 : 1, signal: null, timedOut: false, output }
+    }
+    return { spawn, started }
+  }
+  const failing = plan.find((g) => g.tests[0] === 'pkg/bun/tests/fail.test.ts') as NativeGroup
+
+  test('a runner that fails naming its file and then passes is a pass listed as passed on retry', async () => {
+    const fake = scripted(['fail', 'pass'])
+    const lines: string[] = []
+    const heard: string[] = []
+    const result = await runGroups(root, [failing], {
+      log: (line) => lines.push(line),
+      spawn: fake.spawn,
+      announce: true,
+      onReport: (group) => heard.push(group.id)
+    })
+    expect(fake.started).toHaveLength(2)
+    expect(result.failedRunners).toEqual([])
+    expect(result.failedTests).toEqual({})
+    expect(result.problems).toEqual([])
+    expect(result.passedOnRetry).toEqual([{ group: failing.id, failed: ['pkg/bun/tests/fail.test.ts'] }])
+    expect(lines.filter((line) => line.includes('passed on retry'))).toHaveLength(1)
+    expect(lines.join('\n')).not.toMatch(/\(fail\)|error:/)
+    // The counts a reader keeps: one execution, one start line, one end line, one report heard.
+    expect(result.executions.map((e) => [e.group, e.outcome])).toEqual([[failing.id, 'completed']])
+    expect(lines.filter((line) => line.startsWith('vinaya-test-group-start '))).toHaveLength(1)
+    expect(lines.filter((line) => line.startsWith('vinaya-test-group-end '))).toHaveLength(1)
+    expect(heard).toEqual([failing.id])
+    expect(result.outcomes?.map((o) => [o.group, o.confirmed])).toEqual([[failing.id, ['pkg/bun/tests/fail.test.ts']]])
+  })
+
+  test('a runner that fails on both runs is red, named once', async () => {
+    const fake = scripted(['fail'])
+    const result = await runGroups(root, [failing], { log: () => {}, spawn: fake.spawn })
+    expect(fake.started).toHaveLength(2)
+    expect(result.failedRunners).toEqual([failing.id])
+    expect(result.failedTests).toEqual({ [failing.id]: ['pkg/bun/tests/fail.test.ts'] })
+    expect(result.passedOnRetry).toEqual([])
+    expect(result.executions).toHaveLength(1)
+  })
+
+  test('a file that fails on both runs under the stop option is red and starts no further file', async () => {
+    const fake = scripted(['fail'])
+    const result = await runGroups(root, [failing, ...plan.slice(0, 1)], {
+      log: () => {},
+      spawn: fake.spawn,
+      stopAfterFailedGroup: true
+    })
+    expect(fake.started).toEqual(['tests/fail.test.ts', 'tests/fail.test.ts'])
+    expect(result.failedRunners).toEqual([failing.id])
+    expect(result.outcomes?.map((o) => o.group)).toEqual([failing.id])
+  })
+
+  test('a signal, a stop at the limit, no report, no named file and a real gh call are started once', async () => {
+    for (const step of ['signal', 'timeout', 'no-report', 'fail-unnamed', 'gh-fail'] as const) {
+      const fake = scripted([step])
+      const result = await runGroups(root, [failing], {
+        log: () => {},
+        spawn: fake.spawn,
+        groupTimeLimitMs: 1_000,
+        outsideCall: new Set()
+      })
+      // A stop at the limit keeps its own rerun, and only that one.
+      expect([step, fake.started.length]).toEqual([step, step === 'timeout' ? 2 : 1])
+      expect(result.failedRunners).toEqual([failing.id])
+      expect(result.passedOnRetry).toEqual([])
+    }
   })
 
   test('a concurrency that is not a positive integer is refused', async () => {
