@@ -36,7 +36,7 @@ import { parseResumeArgs, refuseAnotherRunnersPause } from '../../../bin/run-eng
 import { runEngineScenario, type EngineScenarioRun } from '../../../tests/dev-review-engine-loop-adapter.js'
 import {
   makeWorld,
-  outboxLines,
+  runRecords,
   runLoopInProcess,
   withWorldEnv,
   type LoopWorld,
@@ -568,7 +568,7 @@ describe('task_cancel', () => {
       result,
       resolution: readResolution(controlStore, world.task, escalationId),
       effect: readEffect(controlStore, world.task, 'in-flight-comment'),
-      cancelled: outboxLines(world).filter((l) => l.kind === 'dev_review_loop' && l.event === 'cancelled')
+      cancelled: runRecords(world).events.filter((e) => e.eventName === 'vinaya.run.cancelled')
     }
   }
 

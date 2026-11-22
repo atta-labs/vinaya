@@ -164,7 +164,7 @@ export function writeRunLifecycleEvent(
       break
     case 'stop_condition_met': {
       const rule = STOP_RULES[String(e.condition)]
-      if (rule !== undefined) log.run.stopRuleMet({ rule: rule as 'approved' })
+      if (rule !== undefined) log.run.stopRuleMet({ rule: rule as Parameters<typeof log.run.stopRuleMet>[0]['rule'] })
       break
     }
     case 'journal_finalized': {
@@ -192,6 +192,8 @@ export function writeRunLifecycleEvent(
         ...(numberOf(e.exit_code) === undefined ? {} : { code: numberOf(e.exit_code) as number }),
         ...(textOf(e.error_class) === undefined ? {} : { errorType: textOf(e.error_class) as string })
       })
+      // A finished run is over: the next run of the task is a new one, not a carry-on of this id.
+      if (kind === 'finished') forget()
       break
     }
   }
@@ -262,9 +264,8 @@ export function createDriverExitRecorder(
         `driver_exited: reason=${reason} last_decision=${describedDecision}`
       )
     }
-    // The Log event, on EVERY exit path — written as `run.exited` on the run's Log handle, so a reader can tell a loop
-    // that finished or
-    // paused from one that is still running or died. Fire-and-forget: `log`
+    // The Log event, on EVERY exit path, written as `run.exited` on the run's Log handle so a reader can tell a loop
+    // that finished or paused from one that is still running or died. Fire-and-forget: `log`
     // never throws and a failed delivery is dropped like any other event.
     // Guarded so a build/emit fault never undoes an exit already in progress.
     try {

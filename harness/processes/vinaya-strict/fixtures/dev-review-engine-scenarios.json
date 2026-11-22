@@ -30,7 +30,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-lifecycle.ts",
-        "sha256": "1dfb959a1ae69a68d8ed8d3562d9b84395072be02cebf7a750f1bc2032a647d4"
+        "sha256": "958a547f82db1acd194c37e5ef37e886e57d68479c9c772c8ceafe5b0266b955"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/gate-reading.ts",

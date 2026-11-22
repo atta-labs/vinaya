@@ -819,7 +819,7 @@ describe('the Engine path writes the run lifecycle through the run Log handle', 
 
 describe('every produced row has a producer that wrote it', () => {
   test('each event a produced row names was written by a run or a producer above', () => {
-    // The runner writes the heartbeat and the exit record; its own suite runs them.
+    // The run's liveness is the Log handle's own alive; the runner writes only the exit record, which its own suite runs.
     const missing = LOG_INVENTORY.flatMap((row) =>
       row.status === 'produced' && !row.from.startsWith('the runner')
         ? row.events.map((event) => `${row.family}/${event}`)

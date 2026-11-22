@@ -99,7 +99,10 @@ describe('the run lifecycle through the run handle', () => {
     expect(world.events().filter((e) => eventNameOf(e) === 'vinaya.run.alive')).toHaveLength(0)
     world.advance(2_000)
     await recorder.drain()
-    expect(world.events().filter((e) => eventNameOf(e) === 'vinaya.run.alive')).toHaveLength(1)
+    const alive = world.events().filter((e) => eventNameOf(e) === 'vinaya.run.alive')
+    expect(alive).toHaveLength(1)
+    // The standalone runner records no stage change, so its alive carries no phase.
+    expect(attributeOf(alive[0], 'vinaya.phase.name')).toBeUndefined()
     write(
       world,
       recorder,
