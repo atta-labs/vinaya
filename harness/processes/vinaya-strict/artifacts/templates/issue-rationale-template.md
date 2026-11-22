@@ -20,7 +20,7 @@ sidebar_title: "Template: Issue rationale"
 | Stop-and-escalate | required | required |
 | Docs to keep coherent | required | required |
 
-Every other section — the header block, `## Objectives`, `## Documentation`, `## Premises`, `## Surface`, `## Parts`, `## Test plan`, `## Stop conditions` — is the same in both forms, under the same grammar. A single-fix Issue's title takes the commit-type form `Type(scope): Description`, which the brief render reuses as the pull request's title. Facts about the code go in `## Premises`, where the gate checks them, never in prose.
+Every other section — the header block, `## Objectives`, `## Documentation`, `## Premises`, `## Surface`, `## Parts`, `## Test plan`, `## Stop conditions`, `## Check decisions` — is the same in both forms, under the same grammar. A single-fix Issue's title takes the commit-type form `Type(scope): Description`, which the brief render reuses as the pull request's title. Facts about the code go in `## Premises`, where the gate checks them, never in prose.
 
 ---
 
@@ -80,6 +80,10 @@ Part 2 (O2) — [SECOND PART OUTCOME — numbered contiguously from 1, one line 
 ## Stop conditions
 
 - [STOP CONDITION — the condition under which the executing agent stops and escalates rather than improvises]
+
+## Check decisions
+
+[CHECK DECISIONS — one line per registered check that covers a pinned file, written as the check's name in backticks, a colon, and a sentence saying how the change satisfies it. The brief carries this whole section, so the Developer reads each decision there.]
 
 ## Origin
 

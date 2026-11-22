@@ -556,6 +556,8 @@ export type RunResult = {
   failedTests: Record<string, string[] | 'all'>
   /** What each group that ended proved, in run order; a group with none proved nothing. */
   outcomes?: GroupOutcome[]
+  /** Groups whose runner failed naming files and then passed on one more run, with those files; none hidden. */
+  passedOnRetry?: { group: string; failed: string[] }[]
 }
 
 /**
@@ -929,6 +931,8 @@ export async function runGroups(
   const executionAt = new Map<number, ExecutionFacts>()
   const failedAt = new Map<number, string[] | 'all'>()
   const outcomeAt = new Map<number, GroupOutcome>()
+  // Groups that failed on a first run and passed on the retry, by plan index, with the files the first run named.
+  const passedOnRetryAt = new Map<number, string[]>()
   const limit = options.groupTimeLimitMs
   let stopped = false
   let next = 0
@@ -977,15 +981,62 @@ export async function runGroups(
         })
       let run = await launch()
       keep(run)
+      let stoppedAtLimit = false
       // A runner stopped at the limit is started once more: a test whose synchronous child never returns freezes its
       // whole runner, and the freeze is intermittent. A second stop fails the group as interrupted.
       if (run.timedOut) {
+        stoppedAtLimit = true
         emit(
           `vinaya schedule: ${group.id} stopped after ${Math.round((limit ?? 0) / 60_000)} min with no end; running it once more`
         )
         rmSync(report, { force: true })
         run = await launch()
         keep(run)
+      }
+      // A runner that exited non-zero with a readable report naming a failing file is started once more, under the
+      // same environment, folder and limits. Not retried: a stop at the limit (it has its own rerun), a signal, a report
+      // that cannot be read or names no failing file, and a group that reached the real GitHub CLI. The group passes
+      // only when the second run exits zero and its report names exactly the group's files as executed, none failing;
+      // otherwise the second run's report decides it. The first run's output stays in the captured block.
+      if (!stoppedAtLimit && run.status !== 0 && !run.signal && !run.timedOut && ghCallsOf(guardDir).length === 0) {
+        let firstText: string | null = null
+        try {
+          firstText = readFileSync(report, 'utf8')
+        } catch {
+          firstText = null
+        }
+        const first =
+          firstText === null
+            ? null
+            : groupOutcomeOf(group, { status: run.status, signal: null, report: firstText }, repoRoot, roots)
+        if (first !== null && first.failed.length > 0) {
+          emit(`vinaya schedule: ${group.id} failed for ${first.failed.join(', ')}; running it once more, alone`)
+          rmSync(report, { force: true })
+          run = await launch()
+          keep(run)
+          if (run.status === 0 && !run.signal && !run.timedOut && ghCallsOf(guardDir).length === 0) {
+            let secondText: string | null = null
+            try {
+              secondText = readFileSync(report, 'utf8')
+            } catch {
+              secondText = null
+            }
+            const second =
+              secondText === null
+                ? null
+                : groupOutcomeOf(group, { status: 0, signal: null, report: secondText }, repoRoot, roots)
+            if (
+              second !== null &&
+              second.trusted &&
+              second.failed.length === 0 &&
+              second.unreported.length === 0 &&
+              [...second.executed].sort().join('\n') === [...group.tests].sort().join('\n')
+            ) {
+              passedOnRetryAt.set(index, first.failed)
+              emit(`vinaya schedule: ${group.id} passed on retry; it failed first for ${first.failed.join(', ')}`)
+            }
+          }
+        }
       }
       // Calls the stand-in recorded, whatever the group's own outcome: a test that tolerates a failing `gh` still fails.
       const ghCalls = ghCallsOf(guardDir)
@@ -1096,7 +1147,11 @@ export async function runGroups(
   // A stopped run judges only the groups that started: a group that never started is not a missing execution.
   const judged = stopped ? groups.slice(0, next) : groups
   const { problems } = validateExecutedIdentities(judged, executions, { roots })
-  return { failedRunners, problems, executions, failedTests, outcomes }
+  const passedOnRetry = inOrder(passedOnRetryAt).map(([index, failed]) => ({
+    group: (groups[index] as NativeGroup).id,
+    failed
+  }))
+  return { failedRunners, problems, executions, failedTests, outcomes, passedOnRetry }
 }
 
 // ── Command line ───────────────────────────────────────────────────────────
@@ -1219,6 +1274,11 @@ async function main(argv: readonly string[]): Promise<number> {
     process.stderr.write(`vinaya schedule: ${p.code} ${p.path}${p.group ? ` (${p.group})` : ''}: ${p.detail}\n`)
   if (result.failedRunners.length > 0)
     process.stderr.write(`vinaya schedule: the runner failed for ${result.failedRunners.join(', ')}\n`)
+  for (const retried of result.passedOnRetry ?? []) {
+    const line = `Passed on retry: ${retried.group}; it failed first for ${retried.failed.join(', ')}.`
+    process.stderr.write(`vinaya schedule: ${line}\n`)
+    summary([line])
+  }
   if (result.problems.length > 0)
     summary([`The runners did not execute exactly the scheduled files: ${result.problems.length} problem(s).`])
   return result.failedRunners.length > 0 || result.problems.length > 0 ? 1 : 0

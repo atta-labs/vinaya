@@ -298,6 +298,13 @@ export type BriefFacts = {
    */
   premises: IssuePremise[]
   /**
+   * The text of the brief's check decisions section (`issue-validation.ts`'s
+   * `checkDecisionsText`): the Planner's decisions for the repository's
+   * checks. Absent or `null` when the Issue carries none, and the section is
+   * then omitted.
+   */
+  checkDecisions?: string | null
+  /**
    * The resolved gate cutovers (`resolveGateCutovers`, `harness/processes/vinaya-strict/integration/config/compose.ts`).
    * The renderer's missing-fact refusal for a missing `## Objectives`/
    * `## Documentation` section grandfathers exactly the same class the Issue
@@ -1100,6 +1107,9 @@ export function renderBrief(facts: BriefFacts, template: string): RenderResult {
       ? [withCli(renderDocumentation(facts.documentation)), '']
       : []),
     ...(facts.premises.length > 0 ? [renderPremises(facts.premises), ''] : []),
+    ...(facts.checkDecisions != null && facts.checkDecisions !== ''
+      ? [withCli([carriedSectionHeading('Check decisions'), '', facts.checkDecisions].join('\n')), '']
+      : []),
     withCli(renderSection2(facts)),
     '',
     withCli(renderSection3(facts)),

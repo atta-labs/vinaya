@@ -31,8 +31,8 @@ export const ISSUE_SECTIONS: readonly IssueSection[] = [
   { heading: 'Test plan', disposition: 'carried', briefPart: '## 9. Test Plan' },
   { heading: 'Stop conditions', disposition: 'carried', briefPart: '## 10. Stop conditions' },
   { heading: 'Origin', disposition: 'stays-on-issue' },
-  { heading: 'Check decisions', disposition: 'stays-on-issue' },
-  { heading: 'Covering checks', disposition: 'stays-on-issue' }
+  { heading: 'Check decisions', disposition: 'carried', briefPart: '## Check decisions' },
+  { heading: 'Covering checks', disposition: 'carried', briefPart: '## Check decisions' }
 ]
 
 /**

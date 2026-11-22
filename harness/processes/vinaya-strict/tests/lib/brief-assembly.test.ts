@@ -4,6 +4,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFil
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { checkDecisionsText } from '../../tools/task-contract/issue-validation.js'
 import { spawnBudgetedAsync } from '../../../../kernel/conformance/unit/process-fixture.js'
 import {
   assembleAndRenderBriefForIssue,
@@ -15,6 +16,7 @@ import {
   fastForwardToRemoteIfSafe,
   readFileAtRevision,
   readinessForRender,
+  registeredCheckNames,
   repoBriefCommandFacts,
   step0InstallCommand,
   resolveBoundaryPaths,
@@ -1080,6 +1082,21 @@ describe('repoBriefCommandFacts', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('registeredCheckNames', () => {
+  it('holds the core checks and a check only the repository configuration registers', () => {
+    const names = registeredCheckNames()
+    expect(names).toContain('changeset-coverage')
+    expect(names).toContain('atta-labs/process-version-bump')
+  })
+
+  it('lets a decision for a configuration-only check reach the brief section', () => {
+    const body = '`atta-labs/process-version-bump`: no process definition is edited by this change.\n'
+    expect(checkDecisionsText(body, registeredCheckNames())).toBe(
+      '`atta-labs/process-version-bump`: no process definition is edited by this change.'
+    )
   })
 })
 
