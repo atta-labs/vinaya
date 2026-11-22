@@ -320,20 +320,36 @@ export const LOG_CONTEXT_LOOKUP_DEADLINE_MS = 3000
  */
 export const LOG_DESTINATION_ANCHOR_DEADLINE_MS = 8_000
 
-/** `work`'s value, or `fallback` once `ms` has passed or `work` rejects — the timer never holds a process open. */
+/**
+ * How long past its deadline `withDeadline` still waits for work that may
+ * already have finished. When the process was busy past the deadline (a
+ * synchronous child call), Node runs the expired timer before it delivers the
+ * finished work's result, so answering at once would discard a read that
+ * completed in time. The grace gives that result one turn of the event loop.
+ */
+export const WITH_DEADLINE_GRACE_MS = 100
+
+/**
+ * `work`'s value, or `fallback` once `work` rejects or is still pending
+ * `WITH_DEADLINE_GRACE_MS` after `ms` has passed — the deadline counts only
+ * against work that has not finished. Neither timer holds a process open.
+ */
 export function withDeadline<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(fallback), ms)
+    let graceTimer: ReturnType<typeof setTimeout> | undefined
+    const timer = setTimeout(() => {
+      graceTimer = setTimeout(() => resolve(fallback), WITH_DEADLINE_GRACE_MS)
+      graceTimer.unref?.()
+    }, ms)
     timer.unref?.()
+    const settle = (answer: T): void => {
+      clearTimeout(timer)
+      if (graceTimer !== undefined) clearTimeout(graceTimer)
+      resolve(answer)
+    }
     work.then(
-      (value) => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      () => {
-        clearTimeout(timer)
-        resolve(fallback)
-      }
+      (value) => settle(value),
+      () => settle(fallback)
     )
   })
 }
