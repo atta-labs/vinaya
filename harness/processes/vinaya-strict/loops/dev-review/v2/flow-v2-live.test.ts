@@ -34,6 +34,7 @@ import {
   beginStoragePushes,
   endReadyDeferral,
   endStoragePushes,
+  groupDirectoryOf,
   liveV2Functions,
   NO_LOCAL_TESTS_MARKER,
   progressContextOf,
@@ -1737,6 +1738,76 @@ process.exit(cfg.exit ?? 0)
     expect(result.firstFailure?.location).toBe('pkg/a.ts:5')
     expect(result.firstFailure?.excerpt).toContain('+  2,')
     expect(result.firstFailure?.excerpt).not.toContain('b failed')
+  })
+
+  const groupLine = (start: Record<string, unknown>) => `vinaya-test-group-start ${JSON.stringify(start)}`
+
+  test("a Bun group's start line gives the first failing file and a further failing file the directory it ran from", async () => {
+    const { dir, head } = repoWith({
+      selected: ['pkg/a.test.ts', 'pkg/b.test.ts'],
+      exit: 1,
+      output: [
+        startLine(['pkg/a.test.ts', 'pkg/b.test.ts']),
+        './a.test.ts:',
+        ...aBlock,
+        './b.test.ts:',
+        ...bBlock
+      ].join('\n'),
+      result: { outcome: 'failed', failed: ['__DIR__/pkg/a.test.ts', '__DIR__/pkg/b.test.ts'] }
+    })
+    const result = await runRoundTestsLive({ ...common(dir), head })
+    expect(result.firstFailure?.directory).toBe('pkg')
+    expect(result.otherFailures?.[0]?.directory).toBe('pkg')
+  })
+
+  test('a Vitest group, a directory that is not a plain path, a file outside it, no group line and a cut-off start line give no directory', async () => {
+    const cases: Array<{ output: string[]; directory: string | undefined }> = [
+      {
+        output: [
+          groupLine({ group: 'g', runner: 'vitest', cwd: 'pkg', tests: ['pkg/a.test.ts'] }),
+          'pkg/a.test.ts:',
+          ...aBlock
+        ],
+        directory: undefined
+      },
+      ...['/etc', '../pkg', 'pkg/../x', 'pkg; rm -rf x', '-pkg'].map((cwd) => ({
+        output: [groupLine({ group: 'g', runner: 'bun', cwd, tests: ['pkg/a.test.ts'] }), 'pkg/a.test.ts:', ...aBlock],
+        directory: undefined
+      })),
+      {
+        output: [
+          groupLine({ group: 'g', runner: 'bun', cwd: 'other', tests: ['pkg/a.test.ts'] }),
+          'pkg/a.test.ts:',
+          ...aBlock
+        ],
+        directory: undefined
+      },
+      { output: ['pkg/a.test.ts:', ...aBlock], directory: undefined },
+      { output: ['./b.test.ts:', ...bBlock, 'pkg/a.test.ts:', ...aBlock], directory: undefined },
+      { output: [startLine(['pkg/a.test.ts']), './a.test.ts:', ...aBlock], directory: 'pkg' }
+    ]
+    for (const { output, directory } of cases) {
+      const { dir, head } = repoWith({
+        selected: ['pkg/a.test.ts'],
+        exit: 1,
+        output: output.join('\n'),
+        result: { outcome: 'failed', failed: ['__DIR__/pkg/a.test.ts'] }
+      })
+      const result = await runRoundTestsLive({ ...common(dir), head })
+      expect(result.firstFailure?.directory).toBe(directory)
+    }
+  })
+
+  test('groupDirectoryOf reads the directory from the start line of the group naming the file', () => {
+    const named = (start: Record<string, unknown>) => `${groupLine(start)}\npkg/a.test.ts:\nerror: x`
+    const bun = { group: 'g', runner: 'bun', tests: ['pkg/a.test.ts'] }
+    expect(groupDirectoryOf(named({ ...bun, cwd: 'pkg' }), 'pkg/a.test.ts')).toBe('pkg')
+    expect(groupDirectoryOf(named({ ...bun, cwd: '.' }), 'pkg/a.test.ts')).toBe('.')
+    expect(groupDirectoryOf(named({ ...bun, cwd: 'pkg' }), 'pkg/other.test.ts')).toBeUndefined()
+    expect(groupDirectoryOf(named({ ...bun, runner: 'vitest', cwd: 'pkg' }), 'pkg/a.test.ts')).toBeUndefined()
+    for (const cwd of ['/etc', '../pkg', 'pkg/../x', 'pkg; rm -rf x', '-pkg', 'other'])
+      expect(groupDirectoryOf(named({ ...bun, cwd }), 'pkg/a.test.ts')).toBeUndefined()
+    expect(groupDirectoryOf('pkg/a.test.ts:\nerror: x', 'pkg/a.test.ts')).toBeUndefined()
   })
 
   test('a header the capture cannot map to the file leaves the whole output as the first file excerpt', async () => {

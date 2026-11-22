@@ -74,7 +74,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-loop.ts",
-        "sha256": "dd1a14328f1d5db1162da3b4097faee9087ee5649563af999d56b720cd5df4a5"
+        "sha256": "290eb0486a5b0664651893a5f6b05e426606b121dd06df31a26e72571dfa0069"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-report.ts",

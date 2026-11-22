@@ -17,6 +17,7 @@ import {
 } from '../loops/dev-review/standalone/dev-review-loop/turn-result'
 import {
   failedRoundTest,
+  isPlainDirectory,
   isUnnamedTest,
   latestRecord,
   recordedForgeCi,
@@ -66,7 +67,8 @@ export interface DeveloperPromptFacts {
 /**
  * Version 2's publishing note: every commit is pushed as a storage push (cheap checks, no tests, no CI) while no
  * pull request is open, and `open_pull_request` only saves the body; the driver opens the pull request once both
- * reviewers approve and the ready push's tests pass. The Developer runs no tests and no evidence refresh in this flow.
+ * reviewers approve and the ready push's tests pass. The Developer runs no test suite and no evidence refresh in this
+ * flow; the one test run it may make is the reproduction a failing round test's handoff asks for.
  */
 export const FLOW_V2_NOTE =
   'This run uses review locally, push once: publish every commit with `publish_changes` — while no pull request is open each push is a storage push (cheap checks only, no tests, no CI), so publish often. Call `open_pull_request` once with the full PR-report body: in this flow it saves the body, and the driver opens the pull request itself after both reviewers approve and the ready push passes. Do not wait for CI: the reviewers judge your local commit each round. You may run one plain focused test invocation per distinct set of code and test inputs: a single `bun test` (or the repository’s equivalent) naming the explicit test files that cover the behavior you changed — never a whole directory or package suite, and never again on unchanged inputs; after you change code or tests, one more focused run is allowed. The brief’s mandatory commands and live checks still apply. Write no test receipts and do not call `pr report --write` or `refresh_evidence`: the driver owns publication verification — the ready push, the approved Test Plan commands on the published head, and the Evidence block once the pull request opens — and your own focused run counts as neither a receipt nor a required CI result.'
@@ -217,7 +219,44 @@ export function roundTestFailureOf(results: Readonly<Record<string, StepNodeResu
     fence,
     failure.excerpt,
     fence,
-    ...others
+    ...others,
+    reproductionParagraph([failure, ...failure.otherFailures])
+  ].join('\n')
+}
+
+/** The command that runs `test` from the directory its runner group ran from, or null when it cannot be named. */
+function reproductionCommand(failure: { test: string; directory?: string }): string | null {
+  const directory = failure.directory
+  if (directory === undefined || !isPlainDirectory(directory)) return null
+  if (directory === '.') return `from the repository root: \`bun test ./${failure.test}\``
+  if (!failure.test.startsWith(`${directory}/`)) return null
+  return `from \`${directory}\`: \`bun test ./${failure.test.slice(directory.length + 1)}\``
+}
+
+/**
+ * How to reproduce a red round test: the command per failing file whose group directory is recorded, what the round
+ * adds to it, and that one passing run does not clear a test that can fail only some of the time.
+ */
+function reproductionParagraph(failures: ReadonlyArray<{ test: string; directory?: string }>): string {
+  const commands = failures.flatMap((failure) => {
+    const command = reproductionCommand(failure)
+    return command === null ? [] : [`- \`${failure.test}\` ${command}`]
+  })
+  const rest = failures.length - commands.length
+  return [
+    '',
+    'Reproduce each failing round test before you publish. A round test can fail only some of the time, so one passing run does not clear it: run the file twenty times in one invocation, with `--rerun-each=20`, and change the code or the test until every run passes. That one invocation is the focused test run this flow allows per set of inputs.',
+    ...(commands.length > 0
+      ? [
+          'The round ran each file from the directory of its runner group. These commands run the file from that directory; the round also applies its own timeout and isolation settings and its own environment, which these commands do not carry:',
+          ...commands
+        ]
+      : []),
+    ...(rest > 0
+      ? [
+          `${commands.length > 0 ? 'For the other failing file(s)' : 'For each failing file'} the round recorded no directory: run that one invocation from the directory of the file's package, not from the repository root.`
+        ]
+      : [])
   ].join('\n')
 }
 

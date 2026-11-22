@@ -84,6 +84,7 @@ import {
   readForgeCi,
   type RecordedApprovalCarry,
   firstFailureLine,
+  isPlainDirectory,
   isUnnamedTest,
   type RecordedRoundTests,
   recordedDispatch,
@@ -138,6 +139,8 @@ export interface RoundTestFailure {
   test: string
   location: string
   excerpt: string
+  /** The directory the file's Bun runner group ran from, read from the group's start line; absent when unknown. */
+  directory?: string
 }
 
 export interface RoundTestsResult {
@@ -145,7 +148,7 @@ export interface RoundTestsResult {
   /** `failed` only for a verified red run; every infrastructure problem is `none`, `timed_out` or `unavailable`. */
   outcome: 'passed' | 'failed' | 'none' | 'timed_out' | 'unavailable'
   /** The first failing test, set with `failed`: its path, `file:line` (the file alone when no frame is found) and the failure lines. */
-  firstFailure?: { test: string; location: string; excerpt: string }
+  firstFailure?: RoundTestFailure
   /**
    * Every other test file the run reported failing, set with `failed`, each with its own location and excerpt. The
    * Developer is told all of them at once, so one round fixes every red file instead of one per round.
@@ -250,7 +253,8 @@ export interface V2Functions {
   endStoragePushes: () => void
   /**
    * Writes the open pull request's Evidence block for `head`, the head the ready push passed: the loop's job in
-   * this flow, so the Developer runs no tests and no evidence refresh in its turn.
+   * this flow, so the Developer never writes evidence and runs no test suite in its turn; the one test run its prompt
+   * allows is the reproduction of a failing round test.
    */
   writeEvidence?: (input: {
     pr: number
@@ -298,6 +302,13 @@ function ciReadResults(results: Results): Results {
 const v2Of = (task: TaskInput): V2Functions => {
   if (!task.v2) throw new Error('the version 2 flow ran with no version 2 functions wired (task.v2)')
   return task.v2
+}
+
+/** The directory a failure records: sanitized like the rest of the result, and kept only when it is still a plain path. */
+function recordedDirectory(directory: string | undefined): { directory?: string } {
+  if (directory === undefined) return {}
+  const clean = sanitizeForgeText(directory, 200)
+  return clean === directory && isPlainDirectory(clean) ? { directory: clean } : {}
 }
 
 const nowOf = (fns: V2Functions): (() => number) => fns.now ?? (() => Date.now())
@@ -402,7 +413,8 @@ export async function runRoundTestsStep(
             firstFailure: {
               test: sanitizeForgeText(failure.test, 200),
               location: sanitizeForgeText(failure.location, 200),
-              excerpt: sanitizeForgeText(failure.excerpt, MAX_FAILURE_EXCERPT_CHARS)
+              excerpt: sanitizeForgeText(failure.excerpt, MAX_FAILURE_EXCERPT_CHARS),
+              ...recordedDirectory(failure.directory)
             }
           }
         : {}),
@@ -411,7 +423,8 @@ export async function runRoundTestsStep(
             otherFailures: ran.otherFailures.slice(0, MAX_OTHER_FAILURES).map((other) => ({
               test: sanitizeForgeText(other.test, 200),
               location: sanitizeForgeText(other.location, 200),
-              excerpt: sanitizeForgeText(other.excerpt, MAX_FAILURE_EXCERPT_CHARS)
+              excerpt: sanitizeForgeText(other.excerpt, MAX_FAILURE_EXCERPT_CHARS),
+              ...recordedDirectory(other.directory)
             })),
             ...(ran.otherFailures.length > MAX_OTHER_FAILURES || (ran.otherFailuresOmitted ?? 0) > 0
               ? {
