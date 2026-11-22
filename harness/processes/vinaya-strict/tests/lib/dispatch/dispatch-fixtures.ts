@@ -331,6 +331,7 @@ export type RecordedAgentTurn = {
   attempt?: number
   resetAt?: string
   round?: number
+  workRef?: string
   usage: { input?: number; output?: number; cacheRead?: number; unknownReason?: string }
   steps: { tool: string; errorType?: string }[]
 }
@@ -389,6 +390,7 @@ export function agentTurnsOf(logFolder: string, runId?: string): RecordedAgentTu
     set('attempt', asNumber(a[ATTRIBUTE_NAMES.attempt]))
     set('resetAt', asText(a[ATTRIBUTE_NAMES.agentResetAt]))
     set('round', asNumber(a[ATTRIBUTE_NAMES.roundNumber]))
+    set('workRef', asText(a[ATTRIBUTE_NAMES.workRef]))
     const input = asNumber(a[ATTRIBUTE_NAMES.usageInputTokens])
     const output = asNumber(a[ATTRIBUTE_NAMES.usageOutputTokens])
     const cacheRead = asNumber(a[ATTRIBUTE_NAMES.usageCacheReadInputTokens])

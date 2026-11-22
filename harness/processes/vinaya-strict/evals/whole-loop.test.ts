@@ -224,7 +224,7 @@ function fakeTaskRun(forge: FakeForge, shape: RunShape, flow: string, seen: Task
       runId: `eval-run-${issue}`,
       repository: 'acme/sandbox',
       repoRoot: mkdtempSync(join(tmpdir(), 'whole-loop-root-')),
-      destination: { folder: join(runtimeDir, 'logs') },
+      destination: { folder: `${runtimeDir}/logs` },
       home: runtimeDir,
       vinayaHome: join(runtimeDir, '.vinaya'),
       provenance: 'governed'

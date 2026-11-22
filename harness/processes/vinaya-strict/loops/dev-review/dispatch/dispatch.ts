@@ -100,6 +100,7 @@ import { createVinayaLogSink } from '../../../integration/log/log-sink-factory.j
 // The command line installs the process's sink factory through the dispatch module it already loads.
 export { installVinayaLogSinkFactory } from '../../../integration/log/log-sink-factory.js'
 import { appendRoleLine, narrateAgentRecord } from '../../../../../kernel/log/client/loop-log.js'
+import { registeredSeatNames } from '../../../executing/seat-names.js'
 import { createAgentStreamRenderer } from '../../../../../kernel/adapters/agents/agent-stream.js'
 import {
   formatAgentDetails,
@@ -4356,11 +4357,12 @@ export async function dispatchRole(
       key: effectId,
       runId,
       ...(repository === undefined ? {} : { repository }),
+      ...(opts.task === undefined ? {} : { workRef: String(opts.task) }),
       startTime: start,
       // The driver log shows the line the Log SDK's `narrate` gives for each of the turn's records.
       ...(opts.roleLogPath === undefined
         ? {}
-        : { narrate: (record) => narrateAgentRecord(opts.roleLogPath as string, record) })
+        : { narrate: (record) => narrateAgentRecord(opts.roleLogPath as string, record, registeredSeatNames()) })
     })
     return turn
   }

@@ -72,6 +72,8 @@ export type AgentTurnStart = {
   startTime?: number
   runId?: string
   repository?: string
+  /** The work this turn belongs to; the process's own when absent. */
+  workRef?: string
   /** Narrates this turn's records as they are written; the process's own narrator when absent. */
   narrate?: AgentRecordNarrator
 }
@@ -148,15 +150,19 @@ export function createRunRecorder(deps: RunRecorderDeps) {
   const runIdNow = (): string => bound.runId ?? deps.runId()
 
   const handles = new Map<string, { log: LogHandle; place: LocalCopyPlace }>()
-  function open(runId: string, repository?: string): { log: LogHandle; place: LocalCopyPlace } | undefined {
+  function open(
+    runId: string,
+    repository?: string,
+    workRefOverride?: string
+  ): { log: LogHandle; place: LocalCopyPlace } | undefined {
     const repo = repository ?? bound.repository ?? deps.repository()
     const place = deps.place(repo)
     if (place === undefined) return undefined
-    const key = `${runId}\0${place.folder}\0${repo ?? ''}`
+    const key = `${runId}\0${place.folder}\0${repo ?? ''}\0${workRefOverride ?? ''}`
     const known = handles.get(key)
     if (known !== undefined) return known
     const home = deps.home()
-    const workRef = deps.workRef()
+    const workRef = workRefOverride ?? deps.workRef()
     const identity = deps.processIdentity()
     const log = (deps.connect ?? connect)({
       runId,
@@ -279,7 +285,7 @@ export function createRunRecorder(deps: RunRecorderDeps) {
       let opened: { log: LogHandle; place: LocalCopyPlace } | undefined
       let ref: SpanParent | undefined
       try {
-        opened = open(runId, start.repository)
+        opened = open(runId, start.repository, start.workRef)
         starting = { narrate: start.narrate ?? bound.narrate }
         ref =
           opened?.log.agent.sent({

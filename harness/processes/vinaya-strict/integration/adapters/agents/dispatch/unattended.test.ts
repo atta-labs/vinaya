@@ -15,6 +15,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { agentTurnsOf, localCopyFolderOf } from '../../../../tests/lib/dispatch/dispatch-fixtures.js'
 import { spawnSyncBudgeted } from '../../../../../../kernel/conformance/unit/process-fixture.js'
 import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../../../kernel/isolation/dispatch/fake-sandbox-probe.js'
 
@@ -156,6 +157,8 @@ function outboxLines(home: string): unknown[] {
   // `~/.vinaya/outbox/` this fixture resolves to `unresolved` (no git
   // origin in the scratch `cwd`).
   const p = join(home, '.vinaya', 'runtime', 'unresolved', 'logs', 'unresolved', 'none.ndjson')
+  // An agent turn writes no earlier-format line, so a run may leave no file at all.
+  if (!existsSync(p)) return []
   return readFileSync(p, 'utf8')
     .trim()
     .split('\n')
@@ -179,9 +182,9 @@ describe('vinaya dispatch --unattended — Claude confinement', () => {
       expect(result.status, `stderr: ${result.stderr}`).toBe(0)
       expect(existsSync(fixture.markerFile)).toBe(true)
 
-      const lines = outboxLines(fixture.home) as Array<{ event?: string }>
-      expect(lines.find((l) => l.event === 'dispatched')).toBeDefined()
-      expect(lines.find((l) => l.event === 'dispatch_failed')).toBeUndefined()
+      const turns = agentTurnsOf(localCopyFolderOf(fixture.home))
+      expect(turns).toHaveLength(1)
+      expect(turns[0]?.errorType).not.toBe('refused')
     }
   )
 
@@ -288,9 +291,9 @@ describe('vinaya dispatch --unattended — Claude confinement', () => {
     expect(result.status).toBe(0)
     expect(existsSync(fixture.markerFile)).toBe(true)
 
-    const lines = outboxLines(fixture.home) as Array<{ event?: string }>
-    expect(lines.find((l) => l.event === 'dispatched')).toBeDefined()
-    expect(lines.find((l) => l.event === 'outcome_received')).toBeDefined()
+    const turns = agentTurnsOf(localCopyFolderOf(fixture.home))
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.outcome).toBeDefined()
   })
 })
 
@@ -483,9 +486,9 @@ describe('vinaya dispatch --unattended — O4 a Codex start never runs outside t
     // through `resolveCodexConfinement`, replaced the hand-built Seatbelt
     // boundary's own "worker isolation boundary" refusal wording.
     expect(result.stderr).toContain("Codex's own sandbox and network proxy")
-    const lines = outboxLines(fixture.home) as Array<{ event?: string; reason?: string }>
-    expect(lines.find((l) => l.event === 'dispatch_failed')?.reason).toBe('refused')
-    expect(lines.find((l) => l.event === 'dispatched')).toBeUndefined()
+    const turns = agentTurnsOf(localCopyFolderOf(fixture.home))
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.errorType).toBe('refused')
   })
 
   it.skipIf(process.platform === 'darwin')(

@@ -32,6 +32,7 @@ import {
   type SandboxProbeRunner
 } from '../../../../../kernel/isolation/worker-boundary.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from '../sandbox-conformance/driver-socket-reach.js'
+import { agentTurnsOf, localCopyFolderOf } from '../../../tests/lib/dispatch/dispatch-fixtures.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture.js'
 import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../../kernel/isolation/dispatch/fake-sandbox-probe.js'
 
@@ -556,6 +557,7 @@ describe('dispatchRole runs the probe before spawn on Linux', () => {
         exitCode: number | null
         sandboxProbeRefusal?: { agent: string; error: string }
       },
+      turns: agentTurnsOf(localCopyFolderOf(home)),
       calls: existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : [],
       log: (existsSync(logPath) ? readFileSync(logPath, 'utf8').trim().split('\n') : [])
         .filter(Boolean)
@@ -585,8 +587,8 @@ describe('dispatchRole runs the probe before spawn on Linux', () => {
     expect(run.stderr).toContain(SECCOMP_ERROR)
     const probeLine = run.log.find((l) => l.kind === 'operation' && l.operation === 'linux-sandbox-probe')
     expect(probeLine).toMatchObject({ event: 'completed', result: 'unavailable', target: 'claude' })
-    expect(run.log.find((l) => l.event === 'dispatch_failed')).toBeDefined()
-    expect(run.log.find((l) => l.event === 'dispatched')).toBeUndefined()
+    expect(run.turns).toHaveLength(1)
+    expect(run.turns[0]).toMatchObject({ errorType: 'refused' })
   }, 40_000)
 
   it('spawns the agent only after the probe passes, with the filter on when the variable is unset', () => {
@@ -596,7 +598,8 @@ describe('dispatchRole runs the probe before spawn on Linux', () => {
     expect(run.stderr).not.toContain('Unix-socket filter is off')
     expect(run.result.failureReason).toBeUndefined()
     expect(run.result.sandboxProbeRefusal).toBeUndefined()
-    expect(run.log.find((l) => l.event === 'dispatched')).toBeDefined()
+    expect(run.turns).toHaveLength(1)
+    expect(run.turns[0]?.errorType).not.toBe('refused')
     expect(run.log.find((l) => l.operation === 'linux-sandbox-probe')).toBeUndefined()
   }, 40_000)
 

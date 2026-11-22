@@ -1075,13 +1075,8 @@ function subjectWritesOf(rel: string, source: string): SubjectWrite[] {
       if (ts.isPropertyAccessExpression(callee)) {
         const object = callee.expression
         // `runRecorder().turn(...)` opens a turn; `<handle>.agent.sent(...)` does too.
-        if (
-          callee.name.text === 'turn' &&
-          ts.isCallExpression(object) &&
-          ts.isIdentifier(object.expression) &&
-          object.expression.text === 'runRecorder'
-        )
-          found.add('agents')
+        // The recorder may be the process's own or one handed in (`(input.recorder ?? runRecorder()).turn(...)`).
+        if (callee.name.text === 'turn' && /\brunRecorder\(\)/.test(object.getText(sf))) found.add('agents')
         if (callee.name.text === 'sent' && ts.isPropertyAccessExpression(object) && object.name.text === 'agent')
           found.add('agents')
         // `<turn>.usage(...)` and `<handle>.usage.recorded(...)` record tokens.

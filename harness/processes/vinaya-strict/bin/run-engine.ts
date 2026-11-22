@@ -84,6 +84,7 @@ import {
   type NodeLifecycle
 } from '../../../../harness/kernel/log/client/translate'
 import { createVinayaLogProducers, handoffHaltReason, STEP_FAILED } from '../executing/log-events'
+import { registeredSeatNames } from '../executing/seat-names'
 import { createHandoff, liveHandoffDeps, type Handoff, type HandoffDeps } from '../executing/handoff'
 import {
   ciRedReentryBoundDetail,
@@ -1719,7 +1720,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     narrate: (record) =>
       (options.narration?.narrateAgentRecord ?? narrateAgentRecord)(
         loopLogPathFor(null, args.task, options.runtimeDir),
-        record
+        record,
+        registeredSeatNames()
       )
   })
   const producers = createVinayaLogProducers({

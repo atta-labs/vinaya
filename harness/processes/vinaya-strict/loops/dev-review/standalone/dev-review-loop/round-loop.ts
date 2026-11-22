@@ -39,6 +39,7 @@ import {
 import type { EscalationRecord } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
 import { keepDriverLock } from './driver-lifecycle.js'
 import { appendDriverLine, appendRoleLine, narrateAgentRecord } from '../../../../../../kernel/log/client/loop-log.js'
+import { registeredSeatNames } from '../../../../executing/seat-names.js'
 import { runRecorder } from '../../../../../../kernel/log/run-recorder.js'
 import { checkPremiseAtHead, pollMergeableState, renderConflictPrompt } from './gate-reading.js'
 import { noPushPauseDetail, unpushedWorkResumeDetail } from './unpushed-work.js'
@@ -906,7 +907,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
               runId: c.runId,
               ...(c.repo === null ? {} : { repository: `${c.repo.owner}/${c.repo.repo}` }),
               startTime: d.now() - duration,
-              narrate: (record) => narrateAgentRecord(c.loopLogPath, record)
+              narrate: (record) => narrateAgentRecord(c.loopLogPath, record, registeredSeatNames())
             })
             .failed({ errorType: err instanceof ReviewerConfinementViolation ? 'wrote_outside_its_place' : 'rejected' })
         }
