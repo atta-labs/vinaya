@@ -58,6 +58,7 @@ const FILL: Record<string, string> = {
   'TEST PLAN NOTE': '',
   COMMAND: 'bun test apps/demo/tests/greeting.test.ts',
   EXPECTED: '0 fail',
+  'TEST OBJECTIVES': 'O1, O2',
   'STOP CONDITION': 'The greeting cannot name the caller without changing its signature.',
   'CHECK DECISIONS': '`changeset-coverage`: one patch changeset for the demo package.',
   ORIGIN: 'Principal-directed, as the smallest task this template can carry.'
@@ -165,6 +166,16 @@ describe('the Issue-rationale template, filled as written, passes the Issue gate
       'issue-validation Project(s) + blast radius',
       'issue-validation Sizing'
     ])
+  })
+
+  it('the template no longer offers the sentinel, and the gate refuses a filled body that uses it or leaves an objective unproven', () => {
+    expect(block).not.toContain('Test plan: unit-tests-only')
+    const sentinel = filled.replace(/```\n[^\n]*\n```/, 'Test plan: unit-tests-only')
+    expect(
+      gate(sentinel).some((e) => e.message.includes('Test plan/proof') && e.message.includes('unit-tests-only'))
+    ).toBe(true)
+    const unproven = filled.replace('(O1, O2)', '(O1)')
+    expect(gate(unproven).some((e) => e.message.includes('O2 is proven by no'))).toBe(true)
   })
 
   it('the gate refuses the same body with its Documentation section removed, so the pass above is not vacuous', () => {

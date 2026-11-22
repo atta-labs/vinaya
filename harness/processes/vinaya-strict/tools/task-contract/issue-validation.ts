@@ -49,6 +49,7 @@ import { normalizeTouchedPath } from '@attalabs/harness/tools/host/touched-path'
 import { isProtectedAdminPath } from './protected-paths'
 import { isValidCitedFilePath } from '../quoted-command'
 import { locateTestPlanSection } from './test-plan-section'
+import { stripObjectiveIdSpans } from './test-plan-proof'
 
 export type IssueSectionResult = { status: 'pass' | 'fail'; errors: string[] }
 
@@ -717,9 +718,9 @@ function isWholeSuiteTestPlanLine(line: string): boolean {
   return false
 }
 
-/** A `[live]` item's command: the item's text, one enclosing code span removed. */
+/** A `[live]` item's command: the item's text without its objective-id code span, one enclosing code span removed. */
 function liveCommand(text: string): string {
-  const trimmed = text.trim()
+  const trimmed = stripObjectiveIdSpans(text)
   const span = /^(`+)(.+)\1$/.exec(trimmed)
   return span ? (span[2] as string).trim() : trimmed
 }

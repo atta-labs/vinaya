@@ -7,6 +7,7 @@ import { COMMENT_MARKER_PREFIX, REGION_PREFIX } from '../legacy-markers'
 import { escapeForPattern } from '../legacy-paths'
 import { describe, expect, it } from 'vitest'
 import { fenceShapes } from '../../tests/fixtures/fence-shapes'
+import { parseLiveTestPlanItems } from './issue-validation'
 import {
   boundaryPinnedFiles,
   BRIEF_SECTIONS_SINCE_ISSUE,
@@ -4265,5 +4266,16 @@ describe('checkDecisionsText', () => {
         '`b-check`: decided outside the section here.'
       ].join('\n')
     )
+  })
+})
+
+describe('parseLiveTestPlanItems — objective ids', () => {
+  const plan = (item: string): string => ['## Test plan', '', item, ''].join('\n')
+
+  it('gives the live check the bare command for an item that names objective ids', () => {
+    const bare = parseLiveTestPlanItems(plan('- **[live]** `bun apps/cli/src/index.ts doctor`'))
+    expect(bare).toEqual(['bun apps/cli/src/index.ts doctor'])
+    expect(parseLiveTestPlanItems(plan('- **[live]** `bun apps/cli/src/index.ts doctor` `(O1, O2)`'))).toEqual(bare)
+    expect(parseLiveTestPlanItems(plan('- **[live]** bun apps/cli/src/index.ts doctor `(O2)`'))).toEqual(bare)
   })
 })
