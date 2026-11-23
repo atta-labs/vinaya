@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { spawnSync } from 'node:child_process'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -436,7 +436,15 @@ describe('task_resume handler', () => {
 import { writePersonAsked } from ${JSON.stringify(outside)}
 writePersonAsked({ kind: 'authority', key: personQuestionKey(${JSON.stringify(`${ISSUE}-1-headsha1`)}), why: 'escalation', decision: 'ruling', howToAnswer: 'a first next action', startTime: new Date() }, { task: ${ISSUE}, runId: 'run-1' })
 process.exit(0)`
-      const asked = spawnSync(process.execPath, ['-e', script], { env: process.env, encoding: 'utf8' })
+      const asked = spawnSyncBudgeted(process.execPath, ['-e', script], {
+        env: {
+          ...stripVinayaEnv(),
+          HOME: process.env.HOME,
+          VINAYA_RUNTIME_DIR: process.env.VINAYA_RUNTIME_DIR,
+          VINAYA_REPO: process.env.VINAYA_REPO
+        },
+        encoding: 'utf8'
+      })
       expect(asked.status).toBe(0)
       const { handler } = harness({ issueRulings: ['Ruling: proceed as briefed.'], newestIssueRulingOrdinal: 1 })
       const result = await handler({ task: { issue: ISSUE } }, CALLER)

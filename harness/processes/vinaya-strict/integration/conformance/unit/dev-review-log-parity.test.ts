@@ -180,10 +180,9 @@ describe('standalone and Engine Log replay', () => {
         all.push(`${scenario.id} ${scenario.expectedDefect}: standalone no longer shows the defect; remove its mapping`)
       for (const agent of ['claude', 'codex'] as const) {
         const engine = (await storedEngineScenario(scenario.id, agent, { sink: STORED_RECORDING_SINK })).logLines ?? []
-        if (STRUCTURAL_EXCLUSIONS[scenario.id] !== undefined) {
-          if (engine.length === 0 || standalone.length === 0) all.push(`${scenario.id} (${agent}) recorded no Log`)
-          continue
-        }
+        // A structurally different scenario is not compared line by line. Its pause is a person asked on the run's Log
+        // handle, which leaves no earlier-format line, so a scenario of this kind may record none.
+        if (STRUCTURAL_EXCLUSIONS[scenario.id] !== undefined) continue
         for (const d of differences(engine, standalone)) all.push(`${scenario.id} (${agent}) ${d}`)
       }
     }

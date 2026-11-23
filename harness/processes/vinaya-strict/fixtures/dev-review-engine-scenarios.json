@@ -46,7 +46,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts",
-        "sha256": "98713cf608787182c93fe140aa7288f07745f60cc8657b85a5bd755f2e3468c7"
+        "sha256": "f250f96cdcc4c1f94096884379a081a2e535682a4ec3d1741bf93d7890c55ba3"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/publication.ts",
@@ -308,7 +308,7 @@
           "markersInclude": ["<!-- vinaya:loop:paused:repeat_failure -->"]
         },
         "events": {
-          "include": ["stop_condition_met", "paused", "handoff:raised"],
+          "include": ["stop_condition_met", "paused"],
           "journalResults": ["stopped"]
         }
       }
@@ -536,7 +536,7 @@
           "markersInclude": ["<!-- vinaya:loop:paused:escalation -->"]
         },
         "events": {
-          "include": ["handoff:raised"],
+          "include": [],
           "journalResults": ["stopped"]
         }
       }
@@ -578,7 +578,7 @@
           "publishedRounds": [1]
         },
         "events": {
-          "include": ["handoff:resolved", "resumed"],
+          "include": ["resumed"],
           "journalResults": ["stopped", "merged_ready"]
         }
       }

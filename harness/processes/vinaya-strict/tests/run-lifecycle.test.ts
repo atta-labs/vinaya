@@ -1389,3 +1389,13 @@ describe('a watched pull request that ends is recorded on the run', () => {
     expect(world.events().some((e) => eventNameOf(e) === 'vinaya.change.merged')).toBe(false)
   })
 })
+
+// --- the person's answer ------------------------------------------------------------------
+
+describe('the Engine ruling watch ends the person span through the one escalation resolver', () => {
+  test('its resolver is the standalone loop resolver, which writes the answer under the escalation run (cross-process proof: pause-resume.test.ts)', async () => {
+    const { liveResumeDeps } = await import('../bin/run-lifecycle')
+    const { resolveEscalation } = await import('../loops/dev-review/standalone/dev-review-loop/pause-resume')
+    expect(liveResumeDeps.resolveEscalation).toBe(resolveEscalation)
+  })
+})

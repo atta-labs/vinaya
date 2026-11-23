@@ -175,6 +175,9 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       expect(blockingFiles).toHaveLength(16)
       expect(reached).toHaveLength(3)
       expect(reached).toContain('harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts')
+      // `task-run.ts` is a blocking gate that reaches a producer by importing the escalation resolver, which writes the
+      // person's answer through the run's Log handle.
+      expect(reached).toContain('harness/processes/vinaya-strict/loops/dev-review/run-control/task-run.ts')
       const exemptions = readG7Exemptions(repoRoot)
       expect(Object.keys(exemptions)).toHaveLength(13)
       const result = checkG7({

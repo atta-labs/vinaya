@@ -1058,3 +1058,14 @@ describe('widenSurfaceRequestOf / widenSurfaceCommandFor', () => {
     )
   })
 })
+
+describe('vinaya task run ends the person span through the one escalation resolver', () => {
+  it('consumes a widen-surface escalation with the standalone loop resolver, which writes the answer under the escalation run (cross-process proof: pause-resume.test.ts)', async () => {
+    const { readFileSync } = await import('node:fs')
+    const source = readFileSync(
+      new URL('../../loops/dev-review/run-control/task-run.ts', import.meta.url).pathname,
+      'utf8'
+    )
+    expect(source).toMatch(/import \{[^}]*resolveEscalation[^}]*\} from '[^']*pause-resume/s)
+  })
+})

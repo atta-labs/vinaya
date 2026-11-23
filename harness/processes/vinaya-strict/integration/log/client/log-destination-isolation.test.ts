@@ -1491,7 +1491,7 @@ describe("no test reads this repository's own log destination", () => {
       )
     ).withStrings
     const boundaries = [...callers.matchAll(/name:\s*['"`]([^'"`]+)['"`]/g)].map((m) => m[1] as string)
-    expect(boundaries.length).toBeGreaterThanOrEqual(7)
+    expect(boundaries.length).toBeGreaterThanOrEqual(6)
     const uncovered = boundaries.filter((boundary) => {
       const token = /^[A-Za-z_$][\w$-]*/.exec(boundary)?.[0] ?? ''
       if (LOG_PRODUCERS.includes(token) || SELF_TEST_BOUNDARY_TOKENS.has(token)) return false

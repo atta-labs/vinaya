@@ -817,3 +817,10 @@ describe('the watch for a ruling spaces its forge reads', () => {
     expect(forge.claims[0]!.by).toBe(`author-at-read-${reads}`)
   })
 })
+
+describe('a run-engine --resume start ends the person span through the one escalation resolver', () => {
+  test('claims the resolution with the standalone loop resolver, which writes the answer under the escalation run (cross-process proof: pause-resume.test.ts)', async () => {
+    const { resolveEscalation } = await import('../loops/dev-review/standalone/dev-review-loop/pause-resume')
+    expect(liveResumeDeps.resolveEscalation).toBe(resolveEscalation)
+  })
+})

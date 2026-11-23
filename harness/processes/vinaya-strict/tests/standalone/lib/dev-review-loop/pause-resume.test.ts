@@ -54,6 +54,7 @@ import {
 } from '../dev-review-loop-harness'
 import { buildReexecArgs } from '../../../../loops/dev-review/standalone/dev-review-loop/driver-helpers'
 import { spawnSync } from 'node:child_process'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture'
 import {
   consumeHostRepairPauseOnStart,
   effortForRun,
@@ -963,7 +964,17 @@ describe('writeEscalationRecord / resolveEscalation — the person the harness a
     const script = `import { resolveEscalation } from ${JSON.stringify(module)}
 resolveEscalation(${task}, ${JSON.stringify(escalationId)}, ${JSON.stringify(pr)}, ${JSON.stringify(decision)}, ${JSON.stringify(by)}, 'from-another-process')
 process.exit(0)`
-    const run = spawnSync(process.execPath, ['-e', script], { env: process.env, cwd: process.cwd(), encoding: 'utf8' })
+    const run = spawnSyncBudgeted(process.execPath, ['-e', script], {
+      env: {
+        ...stripVinayaEnv(),
+        HOME: process.env.HOME,
+        VINAYA_RUNTIME_DIR: process.env.VINAYA_RUNTIME_DIR,
+        VINAYA_TASK: process.env.VINAYA_TASK,
+        VINAYA_REPO: process.env.VINAYA_REPO
+      },
+      cwd: process.cwd(),
+      encoding: 'utf8'
+    })
     if (run.status !== 0) throw new Error(`the second process failed: ${run.stderr}`)
   }
 
