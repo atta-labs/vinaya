@@ -1244,42 +1244,31 @@ describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalen
       // that same fact.
       expect(postedCommentFiles(home)).toHaveLength(4)
 
-      const effectLines = outboxLines(home).filter((l) => l.kind === 'effect') as Array<{
-        effect_id: string
-        event: string
-        outcome?: string
-      }>
-      expect(effectLines.length).toBeGreaterThan(0)
-
-      const byId = new Map<string, typeof effectLines>()
-      for (const l of effectLines) {
-        const arr = byId.get(l.effect_id) ?? []
-        arr.push(l)
-        byId.set(l.effect_id, arr)
+      // Each outside action is one `log.action.verified` record in the local copy, with no earlier-format effect
+      // line. The same identity (operation and target) is written once per run, so a restart that replays an
+      // already-verified write shows as exactly two records, and a new write would show as a third.
+      expect(outboxLines(home).filter((l) => l.kind === 'effect')).toEqual([])
+      const actions = homeRecords(home).events.filter((e) => e.eventName === 'vinaya.action.verified')
+      expect(actions.length).toBeGreaterThan(0)
+      const byIdentity = new Map<string, string[]>()
+      for (const e of actions) {
+        const attr = (name: string) => e.attributes.find((a: any) => a.key === name)?.value.stringValue ?? ''
+        const key = `${attr('vinaya.outside.action')}\u0000${attr('vinaya.outside.target')}`
+        byIdentity.set(key, [...(byIdentity.get(key) ?? []), attr('vinaya.result')])
       }
-      // The reviewer- and security-verdict posts (`publishRound`'s own
-      // `postPrCommentOnce`, the shared `EffectExecutor`) are keyed by round,
-      // not by process — `1-reviewer-verdict`/`1-security-verdict` are the
-      // SAME identity string a fresh process re-derives independently, which
-      // is exactly what makes a genuine cross-process replay observable here.
-      for (const key of ['1-reviewer-verdict', '1-security-verdict']) {
-        const forId = byId.get(key)
-        expect(forId, `no effect events for ${key}`).toBeDefined()
-        const events = (forId ?? []).map((l) => l.event)
-        // First run: a fresh write — one verified(success). Second run: the
-        // SAME identity is already 'verified' on disk, so
-        // `EffectExecutor.reconcileExisting` emits its own one 'verified' line
-        // under the same effect_id — never a second write, never an
-        // 'attempted' or 'observed'.
-        expect(events).toEqual(['verified', 'verified'])
+      // Every record is a success, and a replayed identity shows exactly twice — never a third, which a repost would be.
+      for (const [identity, results] of byIdentity) {
+        expect(new Set(results), identity).toEqual(new Set(['success']))
+        expect(results.length, identity).toBeLessThanOrEqual(2)
       }
+      expect([...byIdentity.values()].some((results) => results.length === 2)).toBe(true)
     },
     45000
   )
 
-  // REAL PROCESS: publishRound real forge round-trip — real cross-process restart + real outbox file on disk
+  // REAL PROCESS: publishRound real forge round-trip — real cross-process restart + real local copy on disk
   it.skipIf(process.platform === 'darwin')(
-    'the controller never reads the Vinaya Log to decide — deleting the local outbox between the two runs changes nothing about the rerun’s own decision (O2/O3)',
+    'the controller never reads the Vinaya Log to decide — deleting the local copy between the two runs changes nothing about the rerun’s own decision (O2/O3)',
     () => {
       const { home, cwd, path } = setUp()
 
@@ -1292,9 +1281,9 @@ describe('devReviewLoop — restart fixtures (task-log-v1 task 6, O3): equivalen
       // untouched between runs — gone, not merely unread, so a controller
       // that secretly depended on replaying it would fail loudly here rather
       // than passing by accident.
-      const outboxPath = join(home, '.vinaya', 'runtime', 'unresolved', 'logs', 'unresolved', `${TASK}.ndjson`)
-      expect(existsSync(outboxPath)).toBe(true)
-      rmSync(outboxPath)
+      const logsRoot = join(home, '.vinaya', 'runtime', 'unresolved', 'logs')
+      expect(existsSync(logsRoot)).toBe(true)
+      rmSync(logsRoot, { recursive: true, force: true })
 
       const r2 = runLoop(home, cwd, path)
       expect(r2.status).toBe(0)
