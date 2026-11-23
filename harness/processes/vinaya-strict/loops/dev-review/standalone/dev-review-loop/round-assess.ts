@@ -653,9 +653,39 @@ const RUN_LIFECYCLE_EVENTS: ReadonlySet<string> = new Set([
   'driver_exited'
 ])
 
+/**
+ * The loop events that stand for a round, its review, its gate read or the change. The process writes each through
+ * the run's Log handle (`log.round.*`, `log.phase.ended`, `log.review.*`, `log.checks.read`,
+ * `log.agent.confidenceStated`, `log.change.*`) and writes no earlier-format line for it; the loop still builds and
+ * reads the events as data.
+ */
+const ROUND_AND_CHANGE_EVENTS: ReadonlySet<string> = new Set([
+  'round_started',
+  'round_ended',
+  'phase_time',
+  'verdicts_read',
+  'findings_compared',
+  'gate_result_read',
+  'storage_push',
+  'ready_push',
+  'pr_opened',
+  'conflict_reentry',
+  'unpushed_work_resume'
+])
+
 /** Whether `event` is a run lifecycle event: one the process writes through the run's Log handle. */
 export function isRunLifecycleEvent(event: { kind?: unknown; event?: unknown }): boolean {
   return event.kind === 'dev_review_loop' && typeof event.event === 'string' && RUN_LIFECYCLE_EVENTS.has(event.event)
+}
+
+/** Whether `event` is a round, review, gate-read or change event: one the process writes through the run's Log handle. */
+export function isRoundOrChangeEvent(event: { kind?: unknown; event?: unknown }): boolean {
+  return event.kind === 'dev_review_loop' && typeof event.event === 'string' && ROUND_AND_CHANGE_EVENTS.has(event.event)
+}
+
+/** Whether `event` is one the process writes through the run's Log handle, so no earlier-format line lands for it. */
+export function isHandleEvent(event: { kind?: unknown; event?: unknown }): boolean {
+  return isRunLifecycleEvent(event) || isRoundOrChangeEvent(event)
 }
 
 /**
@@ -683,8 +713,8 @@ export async function waitForOwnLoopLine(
   sleep: (ms: number) => Promise<void>,
   timeoutMs = 5000
 ): Promise<void> {
-  // A run lifecycle event is written through the run's Log handle: no line lands, so none is waited for.
-  if (isRunLifecycleEvent(event)) return
+  // A run, round, review or change event is written through the run's Log handle: no line lands, so none is waited for.
+  if (isHandleEvent(event)) return
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (hasOwnLoopLine(path, priorSize, runId, event)) return

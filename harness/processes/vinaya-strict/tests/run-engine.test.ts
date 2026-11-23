@@ -107,6 +107,7 @@ import {
 } from '../loops/dev-review/standalone/dev-review-loop/stop-decision'
 import { VINAYA_LAUNCHED_ROLES } from '../integration/policies/launched-roles'
 import { createDispatchCapabilityTable } from '../../../kernel/tools/host/dev-tools-host'
+import { attributeOf, createRunLifecycleWorld, eventNameOf } from './run-lifecycle-world'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })
 const repoRoot = resolve(import.meta.dir, '../../../..')
@@ -720,7 +721,9 @@ describe('a published pull request that falls into conflict with the default bra
     } as unknown as TaskInput
     let read = -1
     const current = () => reads[Math.min(read, reads.length - 1)]!
+    const ends: Array<{ state: 'merged' | 'closed'; task: number; pr: number }> = []
     run.options.lifecycle = {
+      recordChangeEnded: (ended) => void ends.push(ended),
       handleSignals: false,
       publishedWatch: {
         fetchPrState: () => {
@@ -744,7 +747,7 @@ describe('a published pull request that falls into conflict with the default bra
         saver.close()
       }
     }
-    return { ...run, generation }
+    return { ...run, generation, ends }
   }
   const spawned = (calls: string[], step: string) => calls.filter((call) => call === `spawn:${step}`).length
   const reentries = (emitted: unknown[]) =>
@@ -772,6 +775,8 @@ describe('a published pull request that falls into conflict with the default bra
     const driverLog = readFileSync(loopLogPathFor(null, 7, run.runtimeDir), 'utf8')
     expect(driverLog).toContain(`starting a fresh run (${runIdentityOfTask(7, 2).runId})`)
     expect(driverLog).toContain('PR #70 was merged; ending')
+    // The run's own watch recorded the merge, once, for the pull request it watched.
+    expect(run.ends).toEqual([{ state: 'merged', task: 7, pr: 70 }])
   })
 
   test('a published pull request that is closed ends the runner with no re-entry', async () => {
@@ -780,7 +785,36 @@ describe('a published pull request that falls into conflict with the default bra
     expect(result.exitCode).toBe(0)
     expect(spawned(run.calls, 'develop')).toBe(1)
     expect(reentries(run.emitted)).toEqual([])
+    // Closed without merging: the run's own watch records a close, never a merge.
+    expect(run.ends).toEqual([{ state: 'closed', task: 7, pr: 70 }])
   })
+
+  for (const [state, name, other] of [
+    ['MERGED', 'merged', 'closed'],
+    ['CLOSED', 'closed', 'merged']
+  ] as const) {
+    test(`the default record of a watched pull request that is ${name} is read from the run's local copy, linked to the run`, async () => {
+      const world = createRunLifecycleWorld()
+      const recorder = world.process()
+      const run = publishedRun([{ state, mergeable: 'MERGEABLE' }])
+      run.options.sink.runId = 'run-1'
+      run.options.lifecycle = {
+        ...run.options.lifecycle,
+        recordChangeEnded: undefined,
+        changeRecorder: recorder,
+        readChangeEnd: () => (name === 'merged' ? { when: Date.parse('2026-11-22T03:00:00Z'), by: 'octocat' } : {})
+      }
+      const result = await runEngine(run.options)
+      expect(result.exitCode).toBe(0)
+      await recorder.drain()
+      const ended = world.events().filter((e) => eventNameOf(e) === `vinaya.change.${name}`)
+      expect(ended).toHaveLength(1)
+      expect(attributeOf(ended[0], 'vinaya.run.id')).toBe('run-1')
+      expect(attributeOf(ended[0], 'vinaya.actor')).toBe(name === 'merged' ? 'octocat' : undefined)
+      expect(world.events().some((e) => eventNameOf(e) === `vinaya.change.${other}`)).toBe(false)
+      expect(world.errors).toEqual([])
+    })
+  }
 
   test('past the re-entry bound the runner pauses for a person through the ordinary pause, and ends', async () => {
     const run = publishedRun([{ state: 'OPEN', mergeable: 'CONFLICTING' }])
@@ -818,6 +852,8 @@ describe('a published pull request that falls into conflict with the default bra
     )
     expect(driverLog).toContain(`(re-entry 1 of ${MAX_AUTOMATIC_CONFLICT_REENTRIES})`)
     expect(driverLog).toContain('PR #70 was merged; ending')
+    // The run's own watch recorded the merge, once, for the pull request it watched.
+    expect(run.ends).toEqual([{ state: 'merged', task: 7, pr: 70 }])
   })
 
   test('red and conflict re-entries share one bound: past it the runner pauses for a person', async () => {

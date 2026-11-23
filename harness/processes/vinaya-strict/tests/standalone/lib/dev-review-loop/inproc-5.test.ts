@@ -19,7 +19,6 @@ import {
   developerPublishesTwiceViaToolsDeps,
   makeInProcessDeps,
   makeWorld,
-  outboxLines,
   roundDir,
   runLoopInProcess,
   taskRunDir,
@@ -407,7 +406,7 @@ describe('devReviewLoop — O2 (#543): unpushed real work is resumed once, then 
 
     // The resume must ALSO land in the real `dev_review_loop` journal, not
     // only the marked PR comment above.
-    const resumeEvent = outboxLines(world).find((l) => l.event === 'unpushed_work_resume') as
+    const resumeEvent = world.runEvents.find((l) => l.event === 'unpushed_work_resume') as
       | Record<string, unknown>
       | undefined
     expect(resumeEvent).toBeDefined()
@@ -1376,7 +1375,7 @@ describe('devReviewLoop — a conflicting head is sent back to the developer, ne
     // CI is never waited on for a head that starts this round already
     // CONFLICTING — mergeability is checked before `waitForGreenGate` ever
     // reads the gate.
-    expect(outboxLines(world).some((l) => l.event === 'gate_result_read')).toBe(false)
+    expect(world.runEvents.some((l) => l.event === 'gate_result_read')).toBe(false)
 
     // The fresh brief, then two conflict-retry dispatches (the bound) —
     // never a reviewer prompt anywhere.

@@ -389,7 +389,7 @@ for (const agent of AGENTS) {
           if (poll === 2) forge.prState = state
         })
         const result = await watchForRuling(runtimeDir, TASK, watch, new AbortController().signal)
-        expect(result).toEqual({ kind: 'ended', state: ended })
+        expect(result).toEqual({ kind: 'ended', state: ended, pr: PR })
         expect(watch.polls()).toBe(2)
         expect(forge.prStateReads.every((pr) => pr === PR)).toBe(true)
         expect(forge.claims).toEqual([])
@@ -405,7 +405,7 @@ for (const agent of AGENTS) {
         if (poll === 2) forge.prState = 'MERGED'
       })
       const result = await watchForRuling(runtimeDir, TASK, watch, new AbortController().signal)
-      expect(result).toEqual({ kind: 'ended', state: 'merged' })
+      expect(result).toEqual({ kind: 'ended', state: 'merged', pr: PR })
       // No pull request was read before the pause named one; the forge is read once, after the spaced wait.
       expect(forge.prStateReads).toEqual([PR])
       expect(forge.claims).toEqual([])
@@ -427,11 +427,15 @@ for (const agent of AGENTS) {
           }
         }
       })
+      const ends: Array<{ state: 'merged' | 'closed'; task: number; pr: number }> = []
+      first.options.lifecycle = { ...first.options.lifecycle, recordChangeEnded: (ended) => void ends.push(ended) }
       await runEngine(first.options)
       expect(forge.claims).toEqual([])
       expect(forge.prStateReads).toContain(PR)
       expect(first.spawns).toEqual(['develop'])
       expect(first.driverLog()).toContain('the pull request was merged while the run was halted; ending')
+      // The paused run's own watch recorded the merge, once, for the pull request the pause belongs to.
+      expect(ends).toEqual([{ state: 'merged', task: TASK, pr: PR }])
       expect(readDriverLock(first.runtimeDir, TASK)).toBeNull()
     })
 
