@@ -66,7 +66,19 @@ export async function dispatchDeveloperOnce(
   roundNum: number,
   opts: { skipResumeContext?: boolean; developerFiles?: readonly string[] }
 ): Promise<DispatchHandle> {
-  const { d, root, branch, loopLogPath, dispatchModel, dispatchAgent, task, publicationState, repo, config } = c
+  const {
+    d,
+    root,
+    branch,
+    loopLogPath,
+    dispatchModel,
+    dispatchEffort,
+    dispatchAgent,
+    task,
+    publicationState,
+    repo,
+    config
+  } = c
 
   const isResume = c.devResumeId !== null
   // A branch that holds task commits on the remote while this machine has no
@@ -307,6 +319,7 @@ export async function dispatchDeveloperOnce(
         // already reports `requested:<model>` vs `'default'`, so no
         // separate log line is needed on this side.
         ...(dispatchModel ? { model: dispatchModel } : {}),
+        effort: dispatchEffort,
         agentConfigOpened,
         // O2: the per-dispatch dev-tools registration — Claude via
         // `--strict-mcp-config --mcp-config`, Codex via its staged

@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import { assembleAndRenderBrief } from '../../../tools/task-contract/brief-assembly.js'
 import type { TaskRunner } from '../../../integration/config/compose.js'
-import type { AgentVendor } from '../dispatch/dispatch.js'
+import { type AgentVendor, type DispatchEffort, isDispatchEffort } from '../dispatch/dispatch.js'
 import {
   developerBranchAndTitleFor,
   developerBranchFor,
@@ -86,7 +86,14 @@ export type SwitchTaskDeps = {
   /** Waits `ms` between two reads of the driver's liveness. */
   sleep: (ms: number) => Promise<void>
   /** Starts the task's run in the background on the agent and model; returns the acknowledgement to print. */
-  startBackground: (address: TaskAddress, agent: AgentVendor, model: string | undefined) => Promise<string>
+  startBackground: (
+    address: TaskAddress,
+    agent: AgentVendor,
+    model: string | undefined,
+    effort?: DispatchEffort
+  ) => Promise<string>
+  /** The effort a held pause records, kept across a switch because effort levels are the same for both agents; absent when none is held. */
+  heldEffort?: (task: number) => DispatchEffort | undefined
 }
 
 /** How long a stopped driver has to exit, and how often that is checked. */
@@ -119,7 +126,9 @@ function freshFolder(runDir: string, at: Date): string {
 export async function switchTask(input: SwitchTaskInput, deps: SwitchTaskDeps): Promise<SwitchTaskResult> {
   const { task, agent } = input
   const address: TaskAddress = input.address ?? { issue: task }
-  const run = `vinaya task run ${addressWords(address)} --agent ${agent}${input.model ? ` --model ${input.model}` : ''}`
+  // Read before the pause is rewritten: the held effort stays, where the held model does not.
+  const heldEffort = deps.heldEffort?.(task)
+  const run = `vinaya task run ${addressWords(address)} --agent ${agent}${input.model ? ` --model ${input.model}` : ''}${heldEffort ? ` --effort ${heldEffort}` : ''}`
   if (!addressIsRunnable(address)) {
     return {
       kind: 'refused',
@@ -183,7 +192,7 @@ export async function switchTask(input: SwitchTaskInput, deps: SwitchTaskDeps): 
     : 'It has no published work; the next run starts fresh.'
   let acknowledgement: string
   try {
-    acknowledgement = await deps.startBackground(address, agent, input.model)
+    acknowledgement = await deps.startBackground(address, agent, input.model, heldEffort)
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     return {
@@ -251,7 +260,8 @@ export function liveSwitchDeps(runtimeDir: string, published: SwitchTaskDeps['ha
     rewritePauseAgent: (task, agent, model) => {
       const held = readPauseState(runtimeDir, task)
       if (held === null) return false
-      // The recorded model belongs to the old vendor and is never carried over.
+      // The recorded model belongs to the old vendor and is never carried over; the recorded effort is, because
+      // its levels are the same for both agents.
       const { model: _heldModel, ...withoutModel } = held
       writePauseState(runtimeDir, { ...withoutModel, agent, ...(model ? { model } : {}) })
       return true
@@ -267,8 +277,17 @@ export function liveSwitchDeps(runtimeDir: string, published: SwitchTaskDeps['ha
       }
     },
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    startBackground: async (address, agent, model) => {
-      const handle = await startBackgroundRun({ ...address, agent, ...(model ? { model } : {}) })
+    heldEffort: (task) => {
+      const effort = readPauseState(runtimeDir, task)?.effort
+      return isDispatchEffort(effort) ? effort : undefined
+    },
+    startBackground: async (address, agent, model, effort) => {
+      const handle = await startBackgroundRun({
+        ...address,
+        agent,
+        ...(model ? { model } : {}),
+        ...(effort ? { effort } : {})
+      })
       return [
         `vinaya task run: task ${handle.task} — background controller acknowledged (pid ${handle.pid}, run ${handle.runId})`,
         `Follow with: vinaya task status --issue ${handle.task} --follow`,

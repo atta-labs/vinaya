@@ -60,3 +60,12 @@ describe('registry <-> switch agreement', () => {
     }
   })
 })
+
+describe('the task run entry', () => {
+  it('lists --model <model> and --effort <level>', () => {
+    const entry = COMMANDS.find((c) => c.name === 'task run')
+    const flags = entry?.flags?.map((f) => f.flag) ?? []
+    expect(flags).toContain('--model <model>')
+    expect(flags).toContain('--effort <level>')
+  })
+})

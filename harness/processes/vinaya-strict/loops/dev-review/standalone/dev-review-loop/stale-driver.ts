@@ -30,7 +30,7 @@ import { driverDecidedPauseEvents } from './round-assess.js'
  * `try { }` block is scoped to that block, invisible outside it.
  */
 export async function checkStaleDriver(c: LoopRunContext): Promise<boolean> {
-  const { d, root, input, task, dispatchAgent, dispatchModel, recordDriverExited, branch, config } = c
+  const { d, root, input, task, dispatchAgent, dispatchModel, dispatchEffort, recordDriverExited, branch, config } = c
 
   const currentBaseHead = d.gitRevParseOriginMain()
   if (currentBaseHead === c.baseHeadAtStart) return false
@@ -62,7 +62,7 @@ export async function checkStaleDriver(c: LoopRunContext): Promise<boolean> {
     // any fresh driver invocation.
     clearDriverLock(root, task)
     const reexecArgs = buildReexecArgs(
-      { ...input, agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) },
+      { ...input, agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}), effort: dispatchEffort },
       task
     )
     const exitCode = d.reexecSelf(reexecArgs)

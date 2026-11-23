@@ -1,6 +1,6 @@
 import type { VerdictObservation } from '../../../../tools/dev-review-policy/types'
 import type { DeferredFindingEntry } from '../../../../tools/task-contract/forge/forge-write.js'
-import type { AgentVendor } from '../../dispatch/dispatch.js'
+import type { AgentVendor, DispatchEffort } from '../../dispatch/dispatch.js'
 import type { Decision } from '../../../../tools/dev-review-policy/types'
 import { loopLogPathFor } from '../../../../../../kernel/log/client/loop-log.js'
 import { sweepModernTasksAsync } from '../../run-control/task-sweep.js'
@@ -88,6 +88,12 @@ export function deferredEntriesForRound(round: number, verdicts: VerdictObservat
 export type LoopInput = {
   json?: boolean
   model?: string
+  /**
+   * The reasoning effort every agent turn of the run (the developer and both
+   * reviewers) is launched with. A fresh start takes `medium` when none is
+   * given; a resume takes the held effort when none is given.
+   */
+  effort?: DispatchEffort
   retainDriverLock?: string
   pauseOnConflict?: string
 } & ({ task: number; agent: AgentVendor } | { resumePr: number; agent?: AgentVendor })
@@ -135,6 +141,7 @@ export function buildReexecArgs(input: LoopInput, task: number): string[] {
     '--agent',
     input.agent,
     ...(input.model ? ['--model', input.model] : []),
+    ...(input.effort ? ['--effort', input.effort] : []),
     ...(input.json ? ['--json'] : [])
   ]
 }

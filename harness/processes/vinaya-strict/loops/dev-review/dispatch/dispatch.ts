@@ -269,6 +269,13 @@ export type DispatchOpts = {
    */
   model?: string
   /**
+   * The reasoning effort to run at, passed through each vendor's own per-run
+   * argument: Claude Code's `--effort <level>`, Codex's
+   * `-c model_reasoning_effort="<level>"`. Omitted entirely when none is
+   * given: the vendor then runs at its own configured default.
+   */
+  effort?: DispatchEffort
+  /**
    * The prompt's source file path — required by the brief's stated shape.
    * Unused by any of the three vendors' own invocation today (all three
    * accept the prompt on stdin, confirmed above); kept for a future vendor
@@ -3527,8 +3534,9 @@ export function recoverUsageFromDispatchTee(deps: DispatchTeeRecoveryDeps): Disp
 type VendorSpec = {
   binary: string
   /** `model` appended via this vendor's own `--model` flag when given, omitted entirely otherwise — never a separate switch elsewhere. */
-  args: (model?: string) => string[]
-  resumeArgs: (id: string, model?: string) => string[]
+  args: (model?: string, effort?: DispatchEffort) => string[]
+  /** `effort` is this vendor's own per-run reasoning-effort argument, omitted entirely when none is given. */
+  resumeArgs: (id: string, model?: string, effort?: DispatchEffort) => string[]
   parseUsage: UsageParser
   /** The `usage` family's own richer read of the SAME stdout `parseUsage` scans — input/output/cache, honest `unknownReason` when nothing was observed. */
   parseUsageUnits: UsageUnitsParser
@@ -3629,15 +3637,24 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
     // established flags, never before them — no vendor here parses these
     // options positionally, confirmed by the existing resume-argv tests
     // this task leaves passing unchanged when no model is given.
-    args: (model) => ['-p', '--verbose', '--output-format', 'stream-json', ...(model ? ['--model', model] : [])],
-    resumeArgs: (id, model) => [
+    // `--effort <level>` follows the model flag, on a first launch and a resume alike.
+    args: (model, effort) => [
+      '-p',
+      '--verbose',
+      '--output-format',
+      'stream-json',
+      ...(model ? ['--model', model] : []),
+      ...(effort ? ['--effort', effort] : [])
+    ],
+    resumeArgs: (id, model, effort) => [
       '-p',
       '-r',
       id,
       '--verbose',
       '--output-format',
       'stream-json',
-      ...(model ? ['--model', model] : [])
+      ...(model ? ['--model', model] : []),
+      ...(effort ? ['--effort', effort] : [])
     ],
     parseUsage: parseClaudeUsage,
     parseUsageUnits: parseClaudeUsageUnits,
@@ -3661,7 +3678,10 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
     // the JSONL/stdin protocol below. Reviewer scratch directories are not Git
     // repositories, so unattended roles also skip Codex's interactive repo
     // trust check; the Vinaya worker boundary still supplies confinement.
-    args: (model) => [
+    // The effort goes on the command line as `-c model_reasoning_effort="<level>"`,
+    // never in Codex's config file, so `--strict-config` still sees a known key.
+    // The `--json -` stdin marker stays last.
+    args: (model, effort) => [
       'exec',
       '--sandbox',
       'workspace-write',
@@ -3669,6 +3689,7 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
       '--dangerously-bypass-hook-trust',
       '--skip-git-repo-check',
       ...(model ? ['--model', model] : []),
+      ...(effort ? ['-c', `model_reasoning_effort="${effort}"`] : []),
       '--json',
       '-'
     ],
@@ -3676,7 +3697,7 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
     // it resumes the session's established tool policy. Keep the resume argv
     // to Codex's documented subcommand shape rather than passing an invalid
     // flag after a successful first turn.
-    resumeArgs: (id, model) => [
+    resumeArgs: (id, model, effort) => [
       'exec',
       'resume',
       id,
@@ -3684,6 +3705,7 @@ const VENDOR_TABLE: Record<AgentVendor, VendorSpec> = {
       '--dangerously-bypass-hook-trust',
       '--skip-git-repo-check',
       ...(model ? ['--model', model] : []),
+      ...(effort ? ['-c', `model_reasoning_effort="${effort}"`] : []),
       '--json',
       '-'
     ],
@@ -3767,14 +3789,41 @@ export function resolveClassModel(agent: AgentVendor, agentClass: AgentClass): s
   return VENDOR_TABLE[agent].classModels[agentClass] ?? null
 }
 
+/** The effort levels both agents accept for one run. Claude Code also offers `max` and Codex also knows `minimal`; neither is allowed here. */
+export const DISPATCH_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const
+
+/** One effort level a run may take. */
+export type DispatchEffort = (typeof DISPATCH_EFFORT_LEVELS)[number]
+
+/** The effort a run takes when none is named. */
+export const DEFAULT_DISPATCH_EFFORT: DispatchEffort = 'medium'
+
+/** The refusal text for a `--effort` value outside the allowed levels. */
+export const DISPATCH_EFFORT_REFUSAL = `--effort takes one of ${DISPATCH_EFFORT_LEVELS.join(', ')}.`
+
+/** True when `value` is one of the allowed effort levels. */
+export function isDispatchEffort(value: unknown): value is DispatchEffort {
+  return typeof value === 'string' && (DISPATCH_EFFORT_LEVELS as readonly string[]).includes(value)
+}
+
+/** The effort a `--effort` value names, or `null` when it is missing or outside the allowed levels. */
+export function parseDispatchEffort(value: string | undefined): DispatchEffort | null {
+  return isDispatchEffort(value) ? value : null
+}
+
 /** A fresh session's argv exactly as a dispatch builds it — for a live proof that must not hand-build different flags. */
-export function vendorSessionArgs(agent: AgentVendor, model?: string): string[] {
-  return VENDOR_TABLE[agent].args(model)
+export function vendorSessionArgs(agent: AgentVendor, model?: string, effort?: DispatchEffort): string[] {
+  return VENDOR_TABLE[agent].args(model, effort)
 }
 
 /** A resumed session's argv exactly as a dispatch builds it, for the same reason as `vendorSessionArgs`. */
-export function vendorResumeArgs(agent: AgentVendor, resumeId: string, model?: string): string[] {
-  return VENDOR_TABLE[agent].resumeArgs(resumeId, model)
+export function vendorResumeArgs(
+  agent: AgentVendor,
+  resumeId: string,
+  model?: string,
+  effort?: DispatchEffort
+): string[] {
+  return VENDOR_TABLE[agent].resumeArgs(resumeId, model, effort)
 }
 
 /**
@@ -4480,7 +4529,9 @@ export async function dispatchRole(
     role === 'developer' && opts.cwd !== undefined
       ? resolveOpenedAgentConfigPaths(opts.cwd, opts.agentConfigOpened ?? [])
       : []
-  const vendorArgs = opts.resumeId ? vendor.resumeArgs(opts.resumeId, opts.model) : vendor.args(opts.model)
+  const vendorArgs = opts.resumeId
+    ? vendor.resumeArgs(opts.resumeId, opts.model, opts.effort)
+    : vendor.args(opts.model, opts.effort)
   const baseArgs =
     agent === 'codex'
       ? addCodexWritableDirs(
