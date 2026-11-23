@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
-import type { LogEventInput } from '../../../log/log-sink'
+import type { CheckLog } from '../runner'
 import type { CheckSpec } from '../contract'
 import { runChecks } from '../runner'
+
+type NotPassed = Parameters<CheckLog['checks']['notPassed']>[0]
+type Ran = Parameters<CheckLog['checks']['ran']>[0]
 
 const FIXTURES = join(import.meta.dir, '../fixtures')
 const PASSING = join(FIXTURES, 'passing-check.ts')
@@ -14,22 +17,22 @@ function fullScope(overrides: Partial<CheckSpec> & Pick<CheckSpec, 'name' | 'run
 
 /** `events` holds the per-check `checked` observations (a check that did not pass); `summaries` the runs' `summary` events, in order. */
 function capture(): {
-  events: LogEventInput[]
-  summaries: LogEventInput[]
-  log: (e: LogEventInput) => void
+  events: NotPassed[]
+  summaries: Ran[]
+  log: CheckLog
 } {
-  const events: LogEventInput[] = []
-  const summaries: LogEventInput[] = []
+  const events: NotPassed[] = []
+  const summaries: Ran[] = []
   return {
     events,
     summaries,
-    log: (e) => (e.kind === 'gate' && e.event === 'summary' ? summaries : events).push(e)
+    log: { checks: { notPassed: (e) => void events.push(e), ran: (e) => void summaries.push(e) } }
   }
 }
 
 const BASE_OPTS = { parallel: 1, diffOnly: false, changedFiles: null, defaultTimeoutMs: 5000 }
 
-type GateEvent = Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
+type GateEvent = NotPassed
 
 describe('runChecks — reject-then-correct trace', () => {
   it('a rejected round then a corrected round produce two distinct summaries, never one overwritten record', async () => {
@@ -50,12 +53,12 @@ describe('runChecks — reject-then-correct trace', () => {
     // run's summary — a reader still sees the rejection AND the correction.
     expect(events).toHaveLength(1)
     const [rejected] = events as [GateEvent]
-    expect(rejected.check).toBe('my-check')
-    expect(rejected.outcome).toBe('fail')
+    expect(rejected.name).toBe('my-check')
+    expect(rejected.result).toBe('fail')
     expect(summaries).toHaveLength(2)
-    const [first, second] = summaries as [GateEvent, GateEvent]
-    expect(first).toMatchObject({ ran: 1, passed: 0, failed: 1, failed_checks: ['my-check'] })
-    expect(second).toMatchObject({ ran: 1, passed: 1, failed: 0, failed_checks: [] })
+    const [first, second] = summaries as [Ran, Ran]
+    expect(first).toMatchObject({ ran: 1, passed: 0, failed: 1, failedNames: ['my-check'] })
+    expect(second).toMatchObject({ ran: 1, passed: 1, failed: 0, failedNames: [] })
   })
 })
 
@@ -77,7 +80,7 @@ describe('runChecks — an explicitly missing observation is a real absence, nev
     // attempted" apart from a pass because the summary's count does not
     // include it and it never defaults to a misleadingly clean outcome.
     expect(summaries).toHaveLength(1)
-    expect(summaries[0]).toMatchObject({ ran: 1, passed: 1, failed_checks: [] })
+    expect(summaries[0]).toMatchObject({ ran: 1, passed: 1, failedNames: [] })
     expect(events).toHaveLength(0)
     const fabricated = [...events, ...summaries].some((e) => JSON.stringify(e).includes('never-dispatched'))
     expect(fabricated).toBe(false)

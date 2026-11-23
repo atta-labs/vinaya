@@ -181,7 +181,7 @@ async function runCiChecks(env: NodeJS.ProcessEnv): Promise<void> {
     changedFiles: null,
     defaultTimeoutMs: 60_000,
     callerEnv: env,
-    log: () => {}
+    log: { checks: { ran: () => {}, notPassed: () => {} } }
   })
 }
 

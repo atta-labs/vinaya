@@ -153,7 +153,9 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     family: 'dev_review_loop',
     events: ['local_checks_run'],
     status: 'produced',
-    from: 'the runner, version 2 only, at its run-mechanical-gates step: one per round, whether the local checks passed and how long they took'
+    from:
+      'the runner, version 2 only, at its run-mechanical-gates step: one per round, whether the local checks passed and how long they took; ' +
+      AS_RUN('checks.local')
   },
   {
     family: 'dev_review_loop',
@@ -161,7 +163,9 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     status: 'produced',
     from:
       'the runner, version 2 only, at its ready-push step: one ready_push per approval it pushes, and failed_tests_rerun when that push re-ran only what a refused one failed plus what the fix affects; the ready_push is ' +
-      AS_RUN('change.pushed')
+      AS_RUN('change.pushed') +
+      ' and the rerun is ' +
+      AS_RUN('checks.rerun')
   },
   {
     family: 'dev_review_loop',
@@ -175,7 +179,7 @@ export const LOG_INVENTORY: readonly InventoryRow[] = [
     family: 'dev_review_loop',
     events: ['ci_result_read'],
     status: 'produced',
-    from: 'the runner, version 2 only, at its read-ci-once step: one CI read per approved head'
+    from: 'the runner, version 2 only, at its read-ci-once step: one CI read per approved head; ' + AS_RUN('checks.ci')
   },
   {
     family: 'dev_review_loop',
