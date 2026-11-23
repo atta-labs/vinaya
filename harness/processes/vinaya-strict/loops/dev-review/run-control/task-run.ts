@@ -63,6 +63,7 @@ import {
   runDriverLoop as realRunDriverLoop
 } from '../standalone/dev-review-loop.js'
 import {
+  effortForRun,
   escalationIdFor,
   isDriverPidAlive,
   noPushResumeArgv,
@@ -190,7 +191,7 @@ export type WidenSurfaceRequest = { globs: string[]; reason: string }
  * copy that hardcoded one form (round 2 review). Reusing the already-resolved
  * value adds no forge read.
  */
-export type RunTaskResult = DriverResult & { prUrl: string | null; branch: string }
+export type RunTaskResult = DriverResult & { prUrl: string | null; branch: string; effort?: DispatchEffort }
 
 /**
  * Injection seam for `harness/processes/vinaya-strict/tests/lib/task-run.test.ts` — same convention
@@ -609,7 +610,12 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
       `vinaya task run: ${taskLabel} — the Engine run was ${rehearsal.action} and restarted on the standalone runner; its rehearsal record is kept in the task's runtime directory, ${ROLLBACK_REHEARSALS_FILE}`
     )
     const loopResult = restarted.result
-    return { ...loopResult, prUrl: await resolvePrUrl(deps.resolveRepo, loopResult.prNumber), branch }
+    return {
+      ...loopResult,
+      prUrl: await resolvePrUrl(deps.resolveRepo, loopResult.prNumber),
+      branch,
+      effort: runEffort(effort, loopResult.task)
+    }
   }
 
   // Round 2 security review, LOW: this check-then-act read has a real, accepted
@@ -704,7 +710,12 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
       : { task: issue, agent, ...(resolvedModel ? { model: resolvedModel } : {}), ...(effort ? { effort } : {}) }
   )
   const prUrl = await resolvePrUrl(deps.resolveRepo, loopResult.prNumber)
-  return { ...loopResult, prUrl, branch }
+  return { ...loopResult, prUrl, branch, effort: runEffort(effort, loopResult.task) }
+}
+
+/** The effort a standalone run went on at: the one named, else the one its pause holds, else the default. */
+function runEffort(named: DispatchEffort | undefined, task: number): DispatchEffort {
+  return effortForRun(named, readPauseState(runtimeDir(), task)?.effort)
 }
 
 // --- widen-surface continuation ---------------------------------------------

@@ -55,10 +55,8 @@
 
 import {
   colourLoopLine,
-  DEFAULT_DISPATCH_EFFORT,
   DISPATCH_EFFORT_REFUSAL,
   type DispatchEffort,
-  isDispatchEffort,
   parseDispatchEffort
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import {
@@ -79,11 +77,7 @@ import {
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run.js'
 import { startBackgroundRun } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-background.js'
 import { resumeCommandFor } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-status.js'
-import {
-  noPushResumeCommandFor,
-  readPauseState
-} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import { runtimeDir } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
+import { noPushResumeCommandFor } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 
 /** Any failure other than a usage/argv error or a policy `pause` — see the module doc comment's exit-code table. */
 const TASK_RUN_FAILURE_EXIT_CODE = 3
@@ -515,18 +509,8 @@ async function runAndReport(input: Parameters<typeof runTask>[0]): Promise<void>
   reportRunTaskResult(result, {
     agent: input.agent,
     ...(input.model ? { model: input.model } : {}),
-    effort: effortOfRun(input, result)
+    ...(result.effort ? { effort: result.effort } : {})
   })
-}
-
-/**
- * The effort the run went on at, for the resume command a pause prints: the one this invocation named, else the one
- * the pause holds (a continued run keeps it), else the default a fresh run takes.
- */
-function effortOfRun(input: Parameters<typeof runTask>[0], result: RunTaskResult): string {
-  if (input.effort) return input.effort
-  const held = readPauseState(runtimeDir(), result.task)?.effort
-  return isDispatchEffort(held) ? held : DEFAULT_DISPATCH_EFFORT
 }
 
 /**
@@ -660,5 +644,5 @@ export async function taskRunCommand(args: string[]): Promise<void> {
 import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
-  'task run': { date: '2026-09-30', callsToday: 8, retiresVia: 'sharedCommandShell' }
+  'task run': { date: '2026-09-30', callsToday: 9, retiresVia: 'sharedCommandShell' }
 }

@@ -10,7 +10,7 @@
     "loopSurface": [
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/bin/dev-review-loop.ts",
-        "sha256": "010715fac147b75c1b603b50c0f50334d6982fd00942a293afdc9bb161b44fa7"
+        "sha256": "fe7bb8d4ee8c6e819865c2261192e82212d81fa89e219d49a4b3384878589432"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
@@ -46,7 +46,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts",
-        "sha256": "bdbf158a7c8ed562a8556e6746e6f7d6b10e9936833bd724cb830084fa3e343f"
+        "sha256": "98713cf608787182c93fe140aa7288f07745f60cc8657b85a5bd755f2e3468c7"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/publication.ts",
@@ -66,7 +66,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-turn.ts",
-        "sha256": "9b8e9ce18bdb65a2c609cb425a115d0cfce0239c6f73ec0de11ff4aece47166e"
+        "sha256": "74a70883770ae1b655d18b70733907776b7c0a72718a97fe89f5f55f0278fe3e"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.ts",
@@ -74,7 +74,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-loop.ts",
-        "sha256": "290eb0486a5b0664651893a5f6b05e426606b121dd06df31a26e72571dfa0069"
+        "sha256": "a96a25cbb500ea01c606be73038afec906408a5c6ade2e5800c9111f325b1c5f"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-report.ts",
@@ -82,7 +82,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-context.ts",
-        "sha256": "c69c76de257b85b394de1119ce4323db360d1c7c7d45b915a6eb25cdae32abcf"
+        "sha256": "be5687c37dc240a1b9bcaf7653d757e41686f541eefa25398716a692c1cca92f"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/security-scan-command.ts",
@@ -122,7 +122,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-turn.ts",
-        "sha256": "b8b41ad4fb66ec7de31dcc380abe4ab389e75906ac30243d5fb6c381475a455d"
+        "sha256": "b60cb1b150ff196f157a65fe4b2282a73f643a506d02fdf015bf8fb13e3a70e5"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-deps.ts",
@@ -130,11 +130,11 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-helpers.ts",
-        "sha256": "e209505f315a193530388d4dbd2d0b8834bb9e988711b03ec29ee1d8d5862f65"
+        "sha256": "967b6b766ff97ca94c1fec45d5154cc0dbdada67be63e137948b2326f0ff5b8a"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-watch.ts",
-        "sha256": "03e29600745a7861e7b617bba351f8a48de682727efddf8cf8977e161240e5c2"
+        "sha256": "6a33b73b35a88422138f68b21c80905225415c5ffef5da59cd71608cc3754179"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/git-defaults.ts",
@@ -142,7 +142,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-entry.ts",
-        "sha256": "ef109b311788e1afd12fbf97fbb3b7b599e323f3bb49c5bdb670b8e8d33f01b4"
+        "sha256": "164820633e572bc7a3ecbcf1c5a59dc749311aea77c1637dcd09bb05bbca64ad"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-logging.ts",
@@ -154,7 +154,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-start.ts",
-        "sha256": "14a5dc00eb7ae4666303a6552a5a146d39862004f3326f558358e40260be5782"
+        "sha256": "68e94a61a8373c7a0d9c4de8a505bab2cc994ab0a6461f85671802722856100c"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-state.ts",
@@ -166,7 +166,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/stale-driver.ts",
-        "sha256": "25646a09201dd5db9a0b35fb65372f8bbcc808cea33e328a62c9aa6c275ba329"
+        "sha256": "3c0575bbc496e2a5e259ce7856dc98a4da5869190bf164b02837d21b9590b954"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-confinement.ts",
