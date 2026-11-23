@@ -19,6 +19,8 @@ import {
   installVinayaLogSinkFactory,
   installVinayaCheckRegistry,
   isAgentVendor,
+  DISPATCH_EFFORT_REFUSAL,
+  parseDispatchEffort,
   type AgentVendor
 } from '../dispatch.js'
 import { loadConfig } from '../../../../integration/config/compose.js'
@@ -31,6 +33,8 @@ type ParsedArgs = {
   role: string | undefined
   agent: string | undefined
   model: string | undefined
+  effort: string | undefined
+  effortFlagPresent: boolean
   promptFile: string | undefined
   task: number | undefined
   pr: number | undefined
@@ -53,6 +57,7 @@ type ParsedArgs = {
 const KNOWN_FLAGS = [
   '--agent',
   '--model',
+  '--effort',
   '--prompt-file',
   '--task',
   '--pr',
@@ -67,6 +72,8 @@ function parseArgs(args: string[]): ParsedArgs {
   const role = args[0]
   let agent: string | undefined
   let model: string | undefined
+  let effort: string | undefined
+  let effortFlagPresent = false
   let promptFile: string | undefined
   let task: number | undefined
   let pr: number | undefined
@@ -80,7 +87,10 @@ function parseArgs(args: string[]): ParsedArgs {
     const a = args[i]
     if (a === '--agent') agent = args[++i]
     else if (a === '--model') model = args[++i]
-    else if (a === '--prompt-file') promptFile = args[++i]
+    else if (a === '--effort') {
+      effortFlagPresent = true
+      effort = args[++i]
+    } else if (a === '--prompt-file') promptFile = args[++i]
     else if (a === '--task') task = Number(args[++i])
     else if (a === '--pr') pr = Number(args[++i])
     else if (a === '--round') round = Number(args[++i])
@@ -90,7 +100,22 @@ function parseArgs(args: string[]): ParsedArgs {
     else if (a === '--unattended') unattended = true
     else if (a !== undefined) unknown.push(a)
   }
-  return { role, agent, model, promptFile, task, pr, round, resume, roleLogPath, json, unattended, unknown }
+  return {
+    role,
+    agent,
+    model,
+    effort,
+    effortFlagPresent,
+    promptFile,
+    task,
+    pr,
+    round,
+    resume,
+    roleLogPath,
+    json,
+    unattended,
+    unknown
+  }
 }
 
 export async function dispatchCommand(args: string[]): Promise<void> {
@@ -100,6 +125,13 @@ export async function dispatchCommand(args: string[]): Promise<void> {
     process.stderr.write(
       `vinaya dispatch: unrecognized flag${parsed.unknown.length > 1 ? 's' : ''} ${parsed.unknown.map((f) => `'${f}'`).join(', ')} — expected one of ${KNOWN_FLAGS.join(', ')}\n`
     )
+    process.exit(1)
+  }
+
+  // Only a named effort reaches the vendor: omitted, its own configured default decides, as for `--model`.
+  const effort = parsed.effortFlagPresent ? parseDispatchEffort(parsed.effort) : undefined
+  if (effort === null) {
+    process.stderr.write(`vinaya dispatch: ${DISPATCH_EFFORT_REFUSAL}\n`)
     process.exit(1)
   }
 
@@ -149,6 +181,7 @@ export async function dispatchCommand(args: string[]): Promise<void> {
     round: parsed.round,
     resumeId: parsed.resume,
     model: parsed.model,
+    ...(effort ? { effort } : {}),
     promptFile,
     roleLogPath: parsed.roleLogPath,
     unattended: parsed.unattended

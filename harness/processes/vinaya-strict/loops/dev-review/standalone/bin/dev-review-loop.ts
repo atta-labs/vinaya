@@ -28,7 +28,14 @@
  */
 
 import { isEntryPoint } from '../../../../../../kernel/gates/checks/entry-point.js'
-import { colourLoopLine, isAgentVendor, type AgentVendor } from '../../dispatch/dispatch.js'
+import {
+  colourLoopLine,
+  DISPATCH_EFFORT_REFUSAL,
+  isAgentVendor,
+  parseDispatchEffort,
+  type AgentVendor,
+  type DispatchEffort
+} from '../../dispatch/dispatch.js'
 import { loadConfig } from '../../../../integration/config/compose.js'
 import { printJson } from '../../../../../../kernel/effects/envelope.js'
 import { cancelDevReviewLoop, devReviewLoop, type LoopInput, runDriverLoop } from '../dev-review-loop.js'
@@ -39,6 +46,8 @@ type ParsedArgs = {
   cancelPr: number | undefined
   agent: string | undefined
   model: string | undefined
+  effort: string | undefined
+  effortFlagPresent: boolean
   json: boolean
   watch: boolean
   conflictReentries: number | undefined
@@ -51,6 +60,8 @@ function parseArgs(args: string[]): ParsedArgs {
   let cancelPr: number | undefined
   let agent: string | undefined
   let model: string | undefined
+  let effort: string | undefined
+  let effortFlagPresent = false
   let json = false
   let watch = false
   let conflictReentries: number | undefined
@@ -69,16 +80,42 @@ function parseArgs(args: string[]): ParsedArgs {
     else if (a === '--cancel') cancelPr = Number(args[++i])
     else if (a === '--agent') agent = args[++i]
     else if (a === '--model') model = args[++i]
-    else if (a === '--json') json = true
+    else if (a === '--effort') {
+      effortFlagPresent = true
+      effort = args[++i]
+    } else if (a === '--json') json = true
     else if (a === '--watch') watch = true
     else if (a === '--conflict-reentries') conflictReentries = Number(args[++i])
     else if (a === '--pause-on-conflict') pauseOnConflict = args[++i]
   }
-  return { task, resumePr, cancelPr, agent, model, json, watch, conflictReentries, pauseOnConflict }
+  return {
+    task,
+    resumePr,
+    cancelPr,
+    agent,
+    model,
+    effort,
+    effortFlagPresent,
+    json,
+    watch,
+    conflictReentries,
+    pauseOnConflict
+  }
 }
 
 export async function devReviewLoopCommand(args: string[]): Promise<void> {
   const parsed = parseArgs(args)
+
+  // Only a named effort is carried: a resume with none keeps the held one, and a fresh start takes the default.
+  let effort: DispatchEffort | undefined
+  if (parsed.effortFlagPresent) {
+    const named = parseDispatchEffort(parsed.effort)
+    if (named === null) {
+      process.stderr.write(`vinaya dev-review-loop: ${DISPATCH_EFFORT_REFUSAL}\n`)
+      process.exit(1)
+    }
+    effort = named
+  }
 
   // A bare resume recovers the vendor/model from its durable pause state.
   // Fresh starts and cancellation still use the explicit/configured vendor.
@@ -126,6 +163,7 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
       resumePr: parsed.resumePr,
       ...(agent ? { agent } : {}),
       ...(parsed.model ? { model: parsed.model } : {}),
+      ...(effort ? { effort } : {}),
       json: parsed.json
     }
   } else {
@@ -136,7 +174,13 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
       process.exit(1)
     }
     if (agent === undefined) throw new Error('dev-review-loop start requires an agent')
-    input = { task: parsed.task, agent, ...(parsed.model ? { model: parsed.model } : {}), json: parsed.json }
+    input = {
+      task: parsed.task,
+      agent,
+      ...(parsed.model ? { model: parsed.model } : {}),
+      ...(effort ? { effort } : {}),
+      json: parsed.json
+    }
   }
 
   if (parsed.watch && 'resumePr' in input) {

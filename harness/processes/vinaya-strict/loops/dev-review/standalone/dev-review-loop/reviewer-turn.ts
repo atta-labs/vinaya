@@ -77,6 +77,7 @@ export async function dispatchReviewer(
     d,
 
     dispatchAgent,
+    dispatchEffort,
     loopLogPath,
 
     root,
@@ -128,6 +129,8 @@ export async function dispatchReviewer(
           task: task,
           round: roundNum,
           promptFile,
+          // Both reviewers run at the run's effort; the model each gets is unchanged.
+          effort: dispatchEffort,
           roleLogPath: loopLogPath,
           inputVersions: {
             manifestVersion: facts.manifest.manifestVersion ?? 2,

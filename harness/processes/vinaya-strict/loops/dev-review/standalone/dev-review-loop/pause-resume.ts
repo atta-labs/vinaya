@@ -8,6 +8,7 @@
 
 import type { PauseReason } from '../../../../tools/dev-review-policy/types'
 import { COMMENT_MARKER_PREFIX_CURRENT } from '../../../../tools/legacy-markers'
+import { DEFAULT_DISPATCH_EFFORT, type DispatchEffort, isDispatchEffort } from '../../dispatch/dispatch.js'
 import { unlinkSync, writeFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { dirname } from 'node:path'
@@ -216,7 +217,14 @@ export function pauseMarker(reason: PauseReason): string {
  * loop. An Atta Engine run resumes through `vinaya task run … --runner atta-engine`, never `dev-review-loop
  * --resume`, so its pause names that command (`resumeCommand`) and its no-pull-request form carries the runner.
  */
-export type PauseInvocation = { agent: string; model?: string; runner?: 'atta-engine'; resumeCommand?: string }
+export type PauseInvocation = {
+  agent: string
+  model?: string
+  /** The reasoning effort the run was launched with, carried onto every printed resume command. */
+  effort?: string
+  runner?: 'atta-engine'
+  resumeCommand?: string
+}
 
 export function renderPauseComment(
   prNumber: number,
@@ -226,7 +234,7 @@ export function renderPauseComment(
 ): string {
   const resume =
     invocation?.resumeCommand ??
-    `vinaya-dev-review-loop --resume ${prNumber}${invocation ? ` --agent ${invocation.agent}` : ''}${invocation?.model ? ` --model ${invocation.model}` : ''}`
+    `vinaya-dev-review-loop --resume ${prNumber}${invocation ? ` --agent ${invocation.agent}` : ''}${invocation?.model ? ` --model ${invocation.model}` : ''}${invocation?.effort ? ` --effort ${invocation.effort}` : ''}`
   return [
     `The dev-review-loop paused: ${reason}${detail ? ` — ${detail}` : ''}.`,
     '',
@@ -240,6 +248,16 @@ export function renderPauseComment(
     resume,
     '```'
   ].join('\n')
+}
+
+/**
+ * The effort a run takes: the `--effort` it is given, else the one the held pause records, else `medium` — the same
+ * precedence the model follows. A held value that is not one of the allowed levels (a record written by hand or by a
+ * newer build) is ignored rather than passed to an agent.
+ */
+export function effortForRun(given: DispatchEffort | undefined, held: string | undefined): DispatchEffort {
+  if (given !== undefined) return given
+  return isDispatchEffort(held) ? held : DEFAULT_DISPATCH_EFFORT
 }
 
 /**
@@ -271,7 +289,8 @@ export function noPushResumeArgv(
   branch: string,
   agent?: string,
   model?: string,
-  runner?: 'standalone' | 'atta-engine'
+  runner?: 'standalone' | 'atta-engine',
+  effort?: string
 ): string[] {
   const identity = parseTaskBranchIdentity(branch)
   const address =
@@ -282,6 +301,7 @@ export function noPushResumeArgv(
     ...address,
     ...(agent ? ['--agent', agent] : []),
     ...(model ? ['--model', model] : []),
+    ...(effort ? ['--effort', effort] : []),
     '--runner',
     runner ?? 'standalone'
   ]
@@ -316,9 +336,10 @@ export function noPushResumeCommandFor(
   branch: string,
   agent?: string,
   model?: string,
-  runner?: 'standalone' | 'atta-engine'
+  runner?: 'standalone' | 'atta-engine',
+  effort?: string
 ): string {
-  return `vinaya ${noPushResumeArgv(task, branch, agent, model, runner).map(shellQuote).join(' ')}`
+  return `vinaya ${noPushResumeArgv(task, branch, agent, model, runner, effort).map(shellQuote).join(' ')}`
 }
 
 /**
@@ -364,7 +385,14 @@ export function renderNoPushStopComment(
       `No Principal ruling is needed, and the loop does not retry this by itself: ${SANDBOX_REFUSED_COMMENT_REMEDY} Once the host is repaired, continue with:`,
       '',
       '```',
-      noPushResumeCommandFor(task, branch, invocation?.agent, invocation?.model, invocation?.runner),
+      noPushResumeCommandFor(
+        task,
+        branch,
+        invocation?.agent,
+        invocation?.model,
+        invocation?.runner,
+        invocation?.effort
+      ),
       '```'
     ].join('\n')
   }
@@ -377,7 +405,14 @@ export function renderNoPushStopComment(
       'No Principal ruling is needed. Once the limit has reset, continue with:',
       '',
       '```',
-      noPushResumeCommandFor(task, branch, invocation?.agent, invocation?.model, invocation?.runner),
+      noPushResumeCommandFor(
+        task,
+        branch,
+        invocation?.agent,
+        invocation?.model,
+        invocation?.runner,
+        invocation?.effort
+      ),
       '```'
     ].join('\n')
   }
@@ -395,7 +430,7 @@ export function renderNoPushStopComment(
     'Then continue with:',
     '',
     '```',
-    noPushResumeCommandFor(task, branch, invocation?.agent, invocation?.model, invocation?.runner),
+    noPushResumeCommandFor(task, branch, invocation?.agent, invocation?.model, invocation?.runner, invocation?.effort),
     '```',
     '',
     "The Operator's own `task_resume` clears this pause too, reading that same ruling from this Issue; `task_cancel` ends it instead."
@@ -643,6 +678,8 @@ export type PauseState = {
   /** Vendor/model identity required to resume the same execution path. */
   agent?: string
   model?: string
+  /** The reasoning effort the run was launched with; absent on a record written before effort was held. */
+  effort?: string
   /**
    * The escalation record's OWN `escalationId` — not necessarily
    * `escalationIdFor(task, round, head)` any more (code review, round 2,
@@ -747,10 +784,10 @@ export function pauseGrantsBareResume(held: PauseState): boolean {
  */
 export function missingEscalationNextStep(held: PauseState, bareResumable = pauseGrantsBareResume(held)): string {
   if (bareResumable && isHostRepairPause(held.reason)) {
-    return `This pause (${held.reason}) needs the host repaired, not a ruling. Once it is, continue it with \`${noPushResumeCommandFor(held.task, held.branch, held.agent, held.model)}\`.`
+    return `This pause (${held.reason}) needs the host repaired, not a ruling. Once it is, continue it with \`${noPushResumeCommandFor(held.task, held.branch, held.agent, held.model, undefined, held.effort)}\`.`
   }
   return bareResumable
-    ? `This is an automatic-recovery pause (${held.reason}) — no ruling is needed. Continue it with \`${noPushResumeCommandFor(held.task, held.branch, held.agent, held.model)}\`.`
+    ? `This is an automatic-recovery pause (${held.reason}) — no ruling is needed. Continue it with \`${noPushResumeCommandFor(held.task, held.branch, held.agent, held.model, undefined, held.effort)}\`.`
     : `No ruling can be bound to a ${held.reason} pause with no escalation record, so whether task ${held.task} continues or stops is a Principal decision.`
 }
 

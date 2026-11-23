@@ -365,6 +365,7 @@ type PauseState = {
   pausedAt: string
   agent?: string
   model?: string
+  effort?: string
 }
 
 /** This file's own narrow copy of the pause read (its header's split between forge-touching entry points and pure outbox reads), including the shared reader's non-positive-sentinel normalization — a record already on disk can carry `-1` for "no pull request", and a second reader that disagreed about that value is how the sentinel survived being fixed in one place. */
@@ -753,8 +754,8 @@ function claimPostdatesLock(claimStartedAt: string, lockStartedAt: string): bool
 }
 
 /** `vinaya dev-review-loop --resume <pr>` — the exact string `renderPauseComment`/`task run` already print, rendered fresh from the pr number rather than duplicated as a literal in each caller. */
-export function resumeCommandFor(prNumber: number, agent?: string, model?: string): string {
-  return `vinaya-dev-review-loop --resume ${prNumber}${agent ? ` --agent ${agent}` : ''}${model ? ` --model ${model}` : ''}`
+export function resumeCommandFor(prNumber: number, agent?: string, model?: string, effort?: string): string {
+  return `vinaya-dev-review-loop --resume ${prNumber}${agent ? ` --agent ${agent}` : ''}${model ? ` --model ${model}` : ''}${effort ? ` --effort ${effort}` : ''}`
 }
 
 // --- O2: last round's verdict lines ---------------------------------------
@@ -1884,6 +1885,8 @@ export function gatherSingleTaskStatus(tranche: string, id: string): SingleTaskS
   const verdictLines = lastRoundVerdictLines(root, ref.issue)
   const pause = readPauseState(root, ref.issue)
   const resumeCommand =
-    row.state.kind === 'paused' && row.pr ? resumeCommandFor(row.pr.number, pause?.agent, pause?.model) : null
+    row.state.kind === 'paused' && row.pr
+      ? resumeCommandFor(row.pr.number, pause?.agent, pause?.model, pause?.effort)
+      : null
   return { kind: 'ok', row, table: renderTaskStatusTable([row]), verdictLines, resumeCommand }
 }

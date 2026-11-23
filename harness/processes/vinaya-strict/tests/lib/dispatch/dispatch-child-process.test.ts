@@ -41,7 +41,9 @@ import {
   colourLoopLine,
   getProcessSnapshot,
   captureSettledChildSnapshot,
-  type ProcessSnapshot
+  type ProcessSnapshot,
+  vendorResumeArgs,
+  vendorSessionArgs
 } from '../../../loops/dev-review/dispatch/dispatch.js'
 import { claimLaunchAttribution, endLaunchTurn, startLaunchTurn, withDispatchUsage } from '../../../bin/run-engine'
 import {
@@ -2597,4 +2599,87 @@ describe('dispatch usage envelopes match between runners', () => {
           expect(engine.map((turn) => turn.attempt)).toEqual(Array.from({ length: round }, (_, index) => index + 1))
         }
       })
+})
+
+describe('dispatchRole — effort', () => {
+  const SYNTH_ID = '44444444-4444-4444-4444-444444444444'
+
+  /** Runs one dispatch against a fake vendor binary and returns the argv the vendor was started with. */
+  function dispatchArgv(agent: 'claude' | 'codex', role: string, extra: string[]): string[] {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    const argvOut = join(cwd, 'argv.out')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    writeFakeBinary(
+      binDir,
+      agent,
+      `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done > "${argvOut}"\ncat > /dev/null\necho '{}'\nexit 0\n`
+    )
+    const r = runDispatch(
+      [role, '--agent', agent, '--prompt-file', promptFile, ...extra],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+    return readArgv(argvOut)
+  }
+
+  const adjacent = (argv: string[], flag: string, value: string): boolean =>
+    argv.some((token, index) => token === flag && argv[index + 1] === value)
+
+  for (const role of ['developer', 'code-reviewer', 'security']) {
+    // Reviewers never resume (`dispatchRole` refuses it), so a reviewer's resume is covered by the argv builder test.
+    for (const resume of role === 'developer' ? [false, true] : [false]) {
+      const launch = resume ? 'a resume' : 'a first launch'
+      it(`claude ${role}: --effort medium reaches the child as Claude Code's --effort on ${launch}`, () => {
+        const argv = dispatchArgv('claude', role, ['--effort', 'medium', ...(resume ? ['--resume', SYNTH_ID] : [])])
+        expect(adjacent(argv, '--effort', 'medium')).toBe(true)
+      })
+
+      it(`codex ${role}: --effort medium reaches the child as -c model_reasoning_effort on ${launch}, stdin marker last`, () => {
+        const argv = dispatchArgv('codex', role, ['--effort', 'medium', ...(resume ? ['--resume', SYNTH_ID] : [])])
+        expect(adjacent(argv, '-c', 'model_reasoning_effort="medium"')).toBe(true)
+        expect(argv.at(-1)).toBe('-')
+      })
+    }
+  }
+
+  it('each level reaches both vendors through the one argv builder, on a first launch and a resume', () => {
+    for (const level of ['low', 'medium', 'high', 'xhigh'] as const) {
+      expect(adjacent(vendorSessionArgs('claude', undefined, level), '--effort', level)).toBe(true)
+      expect(adjacent(vendorResumeArgs('claude', SYNTH_ID, undefined, level), '--effort', level)).toBe(true)
+      for (const argv of [
+        vendorSessionArgs('codex', undefined, level),
+        vendorResumeArgs('codex', SYNTH_ID, undefined, level)
+      ]) {
+        expect(adjacent(argv, '-c', `model_reasoning_effort="${level}"`)).toBe(true)
+        expect(argv.slice(-2)).toEqual(['--json', '-'])
+      }
+    }
+  })
+
+  it('the argv builders add nothing when no effort is given', () => {
+    expect(vendorSessionArgs('claude')).not.toContain('--effort')
+    expect(vendorResumeArgs('claude', SYNTH_ID)).not.toContain('--effort')
+    expect(vendorSessionArgs('codex')).not.toContain('-c')
+    expect(vendorResumeArgs('codex', SYNTH_ID)).not.toContain('-c')
+  })
+
+  it('vinaya-dispatch given --effort max is refused with the one message, before any vendor starts', () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--effort', 'max'],
+      cwd,
+      home,
+      pathWithoutRealVendors()
+    )
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('--effort takes one of low, medium, high, xhigh.')
+  })
 })

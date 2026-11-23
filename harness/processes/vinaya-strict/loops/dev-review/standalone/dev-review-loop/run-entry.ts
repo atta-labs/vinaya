@@ -7,7 +7,8 @@ import { crossRunnerRefusal } from '../../run-control/task-run-engine.js'
 import { noPushResumeCommandFor } from './pause-resume.js'
 import { bindPauseToPullRequest } from './pause-resume.js'
 import { escalationPrOf } from './pause-resume.js'
-import { isAgentVendor } from '../../dispatch/dispatch.js'
+import { DEFAULT_DISPATCH_EFFORT, isAgentVendor } from '../../dispatch/dispatch.js'
+import { effortForRun } from './pause-resume.js'
 import type { AgentVendor } from '../../dispatch/dispatch.js'
 import { readDeveloperModelRuns } from './developer-dispatch.js'
 import { writeDeveloperModelRuns } from './developer-dispatch.js'
@@ -59,6 +60,9 @@ export async function initializeRunEntry(c: LoopRunContext): Promise<void> {
 
   c.dispatchModel = input.model
 
+  // The effort given, else `medium`; a resume below reads the held one before falling back.
+  c.dispatchEffort = input.effort ?? DEFAULT_DISPATCH_EFFORT
+
   /** True when `--resume` named a different agent than the one the task ran on: the first Developer turn then opens a fresh session, so it is handed the brief and the task's state. */
   c.agentSwitched = false
 
@@ -98,7 +102,7 @@ export async function initializeRunEntry(c: LoopRunContext): Promise<void> {
       const openPr = d.findOpenPrForBranch(held.branch)
       if (openPr?.number !== resumePr) {
         throw new Error(
-          `devReviewLoop --resume: task ${closesTask}'s held pause state records no pull request — it paused before one existed — and PR #${resumePr} is not the open pull request on its branch \`${held.branch}\`. Continue it with \`${openPr ? `vinaya-dev-review-loop --resume ${openPr.number}` : noPushResumeCommandFor(closesTask, held.branch, held.agent, held.model)}\`.`
+          `devReviewLoop --resume: task ${closesTask}'s held pause state records no pull request — it paused before one existed — and PR #${resumePr} is not the open pull request on its branch \`${held.branch}\`. Continue it with \`${openPr ? `vinaya-dev-review-loop --resume ${openPr.number}` : noPushResumeCommandFor(closesTask, held.branch, held.agent, held.model, undefined, held.effort)}\`.`
         )
       }
       held = bindPauseToPullRequest(root, held, resumePr)
@@ -132,6 +136,9 @@ export async function initializeRunEntry(c: LoopRunContext): Promise<void> {
     c.dispatchAgent = input.agent ?? (held.agent as AgentVendor)
     process.env.VINAYA_RUNTIME = c.dispatchAgent
     c.dispatchModel = c.agentSwitched ? input.model : (input.model ?? held.model)
+    // Effort levels are the same for both agents, so a switch keeps the held effort. A record written before effort
+    // was held names none, and takes the default.
+    c.dispatchEffort = effortForRun(input.effort, held.effort)
     if (readDeveloperModelRuns(root, closesTask).length === 0 && held.agent !== undefined) {
       writeDeveloperModelRuns(root, closesTask, [
         { model: held.model ?? held.agent, firstRound: 1, lastRound: held.round }
@@ -329,11 +336,12 @@ export async function initializeRunEntry(c: LoopRunContext): Promise<void> {
     if (c.agentSwitched) {
       // The resume is accepted: the held record names the agent that runs
       // from here on, so the Operator's read and the next printed resume
-      // command follow it.
+      // command follow it. The effort stays: its levels are the same for both agents.
       const { model: _heldModel, ...heldWithoutModel } = held
       writePauseState(root, {
         ...heldWithoutModel,
         agent: c.dispatchAgent,
+        effort: c.dispatchEffort,
         ...(c.dispatchModel ? { model: c.dispatchModel } : {})
       })
     }

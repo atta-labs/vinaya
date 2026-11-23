@@ -70,7 +70,19 @@ import { loopStartedEvent } from '../../../../tools/dev-review-policy/assess-rou
 import { spendsInfrastructureRetry } from './round-assess.js'
 
 export async function startRun(c: LoopRunContext): Promise<LoopResult> {
-  const { d, root, task, branch, dispatchAgent, dispatchModel, config, runId, recordDriverExited, pauseBoundRuling } = c
+  const {
+    d,
+    root,
+    task,
+    branch,
+    dispatchAgent,
+    dispatchModel,
+    dispatchEffort,
+    config,
+    runId,
+    recordDriverExited,
+    pauseBoundRuling
+  } = c
   try {
     // A corrupt control-store loop-state record is refused HERE, first
     // thing inside the `try` (round 2 review, BLOCKER) — never at the
@@ -185,7 +197,8 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
             c.resumeFrom.detail,
             {
               agent: dispatchAgent,
-              ...(dispatchModel ? { model: dispatchModel } : {})
+              ...(dispatchModel ? { model: dispatchModel } : {}),
+              effort: dispatchEffort
             }
           )
         )
@@ -343,6 +356,7 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
                 pausedAt: new Date().toISOString(),
                 agent: dispatchAgent,
                 ...(dispatchModel ? { model: dispatchModel } : {}),
+                effort: dispatchEffort,
                 infrastructureRetries: c.infrastructureRetries
               })
               await logPauseCommentRetryIfNotable(
@@ -350,7 +364,8 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
                 c.round,
                 d.postIssuePauseComment(task, branch, c.round, 'escalation', detail, {
                   agent: dispatchAgent,
-                  ...(dispatchModel ? { model: dispatchModel } : {})
+                  ...(dispatchModel ? { model: dispatchModel } : {}),
+                  effort: dispatchEffort
                 })
               )
               c.decision = { type: 'pause', reason: 'escalation', detail }
@@ -462,6 +477,7 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
               pausedAt: new Date().toISOString(),
               agent: dispatchAgent,
               ...(dispatchModel ? { model: dispatchModel } : {}),
+              effort: dispatchEffort,
               escalationId: escalationRecord?.escalationId,
               infrastructureRetries: c.infrastructureRetries
             })
@@ -474,7 +490,11 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
                 c.round,
                 'escalation',
                 detail,
-                { agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) },
+                {
+                  agent: dispatchAgent,
+                  ...(dispatchModel ? { model: dispatchModel } : {}),
+                  effort: dispatchEffort
+                },
                 escalationRecord?.rulingOrdinal
               )
             )
@@ -902,6 +922,7 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
         pausedAt: new Date().toISOString(),
         agent: dispatchAgent,
         ...(dispatchModel ? { model: dispatchModel } : {}),
+        effort: dispatchEffort,
         escalationId: escalationRecord?.escalationId,
         infrastructureRetries: c.infrastructureRetries
       })
@@ -911,7 +932,11 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
       // nothing was ever opened against. Recorded on the task Issue
       // instead, the one forge location that is always addressable for a
       // task with no open PR yet.
-      const invocation = { agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) }
+      const invocation = {
+        agent: dispatchAgent,
+        ...(dispatchModel ? { model: dispatchModel } : {}),
+        effort: dispatchEffort
+      }
       const postResult =
         c.prNumber <= 0
           ? d.postIssuePauseComment(
