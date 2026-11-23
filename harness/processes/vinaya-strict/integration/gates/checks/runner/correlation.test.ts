@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, readdirSync, readFileSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRunRecorder } from '../../../../../../kernel/log/run-recorder'
 import type { CheckSpec } from '../../../../../../kernel/gates/checks/contract'
 import { runChecks } from '../../../../../../kernel/gates/checks/runner'
+import { storedSpans } from '../../../../../../kernel/gates/checks/runner/local-copy-probe'
 
 const FIXTURES = join(import.meta.dir, '../../../../../../kernel/gates/checks/fixtures')
 const PASSING = join(FIXTURES, 'passing-check.ts')
@@ -36,20 +37,7 @@ function processWith(dir: string, runId: string) {
 
 /** Every `vinaya.checks` span in the local copy, with its run's trace and its attributes by name. */
 function checkSpans(dir: string): Array<{ name: string; traceId: string; attributes: Record<string, unknown> }> {
-  const folder = join(dir, 'logs', 'atta-labs-vinaya')
-  return readdirSync(folder)
-    .filter((name) => name.endsWith('.traces.jsonl'))
-    .flatMap((name) => readFileSync(join(folder, name), 'utf8').trim().split('\n'))
-    .map((line) => JSON.parse(line))
-    .flatMap((doc) => doc.resourceSpans.flatMap((g: any) => g.scopeSpans.flatMap((s: any) => s.spans)))
-    .filter((span: any) => span.name.startsWith('vinaya.checks'))
-    .map((span: any) => ({
-      name: span.name,
-      traceId: span.traceId,
-      attributes: Object.fromEntries(
-        span.attributes.map((a: any) => [a.key, a.value.stringValue ?? Number(a.value.intValue)])
-      )
-    }))
+  return storedSpans(join(dir, 'logs', 'atta-labs-vinaya')).filter((span) => span.name.startsWith('vinaya.checks'))
 }
 
 /**

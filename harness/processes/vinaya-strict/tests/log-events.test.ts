@@ -913,6 +913,16 @@ describe("the Engine path writes the loop's own checks through the run Log handl
       loopEvent({ event: 'loop_started', task: config.task, policy: { max_rounds: 3, reviewers: [], models: {} } }),
       loopEvent({ event: 'local_checks_run', round: 1, head: 'abc', passed: false, wall_ms: 1500 }),
       loopEvent({
+        event: 'ready_push',
+        round: 1,
+        head: 'abc',
+        outcome: 'passed',
+        selected: 3,
+        failed: 0,
+        rerun: true,
+        wall_ms: 4000
+      }),
+      loopEvent({
         event: 'failed_tests_rerun',
         round: 1,
         head: 'abc',
@@ -932,7 +942,7 @@ describe("the Engine path writes the loop's own checks through the run Log handl
       })
     ].map((event) => writeRunLifecycleEvent(event, where, options))
     // Every one of them was written through the handle: no earlier-format line is left to write.
-    expect(written).toEqual([true, true, true, true])
+    expect(written).toEqual([true, true, true, true, true])
     await recorder.drain()
     expect(world.errors).toEqual([])
 
@@ -949,6 +959,7 @@ describe("the Engine path writes the loop's own checks through the run Log handl
     expect(attributeOf(rerun, 'vinaya.checks.rerun_failed')).toBe(1)
     expect(attributeOf(rerun, 'vinaya.checks.rerun_affected')).toBe(2)
     expect(attributeOf(rerun, 'vinaya.checks.rerun_total')).toBe(9)
+    expect(nanos(rerun, 'endTimeUnixNano') - nanos(rerun, 'startTimeUnixNano')).toBe(4_000_000_000n)
   })
 
   test('a CI read with a conclusion the Log does not know writes nothing', () => {

@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'bun:test'
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { storedEvents } from '../../../../../../kernel/gates/checks/runner/local-copy-probe'
 import { isolatedConfigFixture } from '../../../../../../kernel/conformance/unit/process-fixture'
 
 const FIXTURES = join(import.meta.dir, '..', 'fixtures')
 const RUN_AND_HANG = join(FIXTURES, 'run-and-hang.ts')
+
+/** The not-passed events in the child's local copy: `<runtimeDir>/logs/<repo>/<run>~<writer>~<n>.logs.jsonl`. */
+function notPassedEvents(logsDir: string): Array<{ name?: unknown; result?: unknown; reason?: unknown }> {
+  return storedEvents(logsDir)
+    .filter((event) => event.name === 'vinaya.checks.not_passed')
+    .map((event) => ({
+      name: event.attributes['vinaya.checks.name'],
+      result: event.attributes['vinaya.result'],
+      reason: event.attributes['vinaya.reason']
+    }))
+}
 
 /**
  * A check killed by SIGINT/SIGTERM never reaches one of
@@ -58,17 +69,11 @@ describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelle
     // `runtimeDir` — `<runtimeDir>/logs/<repo>/<task>.ndjson`. Both the
     // `runtimeDir` and the inner `logs/` folder are named by the same repo
     // segment, the one the fixture's own `VINAYA_REPO` declares.
-    const lines = readFileSync(join(fixture.logsDir, '905.ndjson'), 'utf8')
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((l) => JSON.parse(l))
-    // The run's own `summary` may follow (the handler's kill lets `runChecks` finish before the process exits); this test is about the per-check `checked` line.
-    const gateLines = lines.filter((l) => l.kind === 'gate' && l.event === 'checked')
+    const gateLines = notPassedEvents(fixture.logsDir)
     expect(gateLines).toHaveLength(1)
-    expect(gateLines[0].check).toBe('hang')
-    expect(gateLines[0].outcome).toBe('cancelled')
-    expect(gateLines[0].reason).toBe('signal:SIGINT')
+    expect(gateLines[0]?.name).toBe('hang')
+    expect(gateLines[0]?.result).toBe('cancelled')
+    expect(gateLines[0]?.reason).toBe('signal:SIGINT')
   }, 10_000)
 
   it('a second SIGINT before the kill-grace exit does not double-emit the cancelled observation', async () => {
@@ -93,15 +98,9 @@ describe('runChecks — SIGINT/SIGTERM records every in-flight check as cancelle
     // `runtimeDir` — `<runtimeDir>/logs/<repo>/<task>.ndjson`. Both the
     // `runtimeDir` and the inner `logs/` folder are named by the same repo
     // segment, the one the fixture's own `VINAYA_REPO` declares.
-    const lines = readFileSync(join(fixture.logsDir, '905.ndjson'), 'utf8')
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((l) => JSON.parse(l))
-    // The run's own `summary` may follow (the handler's kill lets `runChecks` finish before the process exits); this test is about the per-check `checked` line.
-    const gateLines = lines.filter((l) => l.kind === 'gate' && l.event === 'checked')
+    const gateLines = notPassedEvents(fixture.logsDir)
     expect(gateLines).toHaveLength(1)
-    expect(gateLines[0].check).toBe('hang')
-    expect(gateLines[0].outcome).toBe('cancelled')
+    expect(gateLines[0]?.name).toBe('hang')
+    expect(gateLines[0]?.result).toBe('cancelled')
   }, 10_000)
 })

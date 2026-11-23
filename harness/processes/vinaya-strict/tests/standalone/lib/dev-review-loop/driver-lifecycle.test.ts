@@ -174,7 +174,7 @@ describe('the run lifecycle through the run handle', () => {
   it('leaves an event that is not a run lifecycle event to the earlier-format writer', () => {
     const world = createRunLifecycleWorld()
     const recorder = world.process()
-    const other = loop({ event: 'local_checks_run', round: 1, head: 'abc', passed: true, wall_ms: 5 })
+    const other = { kind: 'gate', payload: {}, event: 'summary' } as never
     expect(writeRunLifecycleEvent(other, { runId: 'run-1' }, { recorder, runtimeDir: () => world.runtimeDir })).toBe(
       false
     )

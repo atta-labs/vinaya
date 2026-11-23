@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRunRecorder } from '../../../log/run-recorder'
 import type { CheckLog } from '../runner'
 import type { CheckSpec } from '../contract'
 import { runChecks } from '../runner'
+import { storedEvents, storedSpans } from './local-copy-probe'
 
 type NotPassed = Parameters<CheckLog['checks']['notPassed']>[0]
 type Ran = Parameters<CheckLog['checks']['ran']>[0]
@@ -195,50 +196,31 @@ describe('runChecks — what the local copy holds after a run', () => {
         throw e
       }
     })
-    const read = (signal: 'traces' | 'logs'): unknown[] => {
-      const repoFolder = join(folder, 'atta-labs-vinaya')
-      return readdirSync(repoFolder)
-        .filter((name) => name.endsWith(`.${signal}.jsonl`))
-        .flatMap((name) =>
-          readFileSync(join(repoFolder, name), 'utf8')
-            .trim()
-            .split('\n')
-            .map((line) => JSON.parse(line))
-        )
-    }
     const handle = recorder.handle()
     if (handle === undefined) throw new Error('the run handle did not open')
-    return { dir, handle, read }
-  }
-  const spansOf = (docs: unknown[]): any[] =>
-    docs.flatMap((r: any) => r.resourceSpans.flatMap((g: any) => g.scopeSpans.flatMap((s: any) => s.spans)))
-  const eventsOf = (docs: unknown[]): any[] =>
-    docs.flatMap((r: any) => r.resourceLogs.flatMap((g: any) => g.scopeLogs.flatMap((s: any) => s.logRecords)))
-  const text = (record: any, key: string): unknown => {
-    const value = record.attributes.find((a: any) => a.key === key)?.value
-    return value?.stringValue ?? (value?.intValue === undefined ? undefined : Number(value.intValue))
+    return { dir, handle, folder: join(folder, 'atta-labs-vinaya') }
   }
 
   it('one checks span and one not-passed event, under the run id, and no earlier-format gate event', async () => {
-    const { dir, handle, read } = setup()
+    const { dir, handle, folder } = setup()
     try {
       await runChecks([fullScope({ name: 'passing', run: PASSING }), fullScope({ name: 'failing', run: FAILING })], {
         ...BASE_OPTS,
         log: { checks: handle.checks, flush: () => handle.flush() },
         where: 'local'
       })
-      const spans = spansOf(read('traces')).filter((s) => s.name.startsWith('vinaya.checks'))
+      const spans = storedSpans(folder).filter((s) => s.name.startsWith('vinaya.checks'))
       expect(spans.map((s) => s.name)).toEqual(['vinaya.checks local'])
-      expect(text(spans[0], 'vinaya.checks.ran')).toBe(2)
-      expect(text(spans[0], 'vinaya.checks.passed')).toBe(1)
-      expect(text(spans[0], 'vinaya.checks.failed')).toBe(1)
-      const notPassed = eventsOf(read('logs')).filter((e) => e.eventName === 'vinaya.checks.not_passed')
+      expect(spans[0]?.attributes['vinaya.checks.ran']).toBe(2)
+      expect(spans[0]?.attributes['vinaya.checks.passed']).toBe(1)
+      expect(spans[0]?.attributes['vinaya.checks.failed']).toBe(1)
+      const notPassed = storedEvents(folder).filter((e) => e.name === 'vinaya.checks.not_passed')
       expect(notPassed).toHaveLength(1)
-      expect(text(notPassed[0], 'vinaya.checks.name')).toBe('failing')
-      expect(text(notPassed[0], 'vinaya.result')).toBe('fail')
+      expect(notPassed[0]?.attributes['vinaya.checks.name']).toBe('failing')
+      expect(notPassed[0]?.attributes['vinaya.result']).toBe('fail')
       // The run's own id: the process's, as nothing here is inside a task run.
       expect(handle.runId).toBe(RUN)
-      expect(JSON.stringify([read('traces'), read('logs')])).not.toContain('"gate"')
+      expect(JSON.stringify([storedSpans(folder), storedEvents(folder)])).not.toContain('"gate"')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
