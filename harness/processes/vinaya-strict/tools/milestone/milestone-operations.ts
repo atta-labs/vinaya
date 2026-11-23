@@ -23,6 +23,7 @@ import {
 import {
   captureRefusal,
   makeCheckError,
+  recordForgeWritten,
   refuse,
   resolveSections,
   validateForgeWrite
@@ -263,6 +264,7 @@ export async function createMilestone(
     }
 
     const created = JSON.parse(out) as { number: number; html_url: string }
+    recordForgeWritten({ action: 'milestone create', target: created.html_url })
     return { ok: true as const, written: true as const, number: created.number, url: created.html_url }
   })
 }
@@ -297,6 +299,7 @@ export async function editMilestone(
     }
 
     const edited = JSON.parse(out) as { number: number; html_url: string }
+    recordForgeWritten({ action: 'milestone edit', target: edited.html_url })
     return { ok: true as const, written: true as const, number: edited.number, url: edited.html_url }
   })
 }

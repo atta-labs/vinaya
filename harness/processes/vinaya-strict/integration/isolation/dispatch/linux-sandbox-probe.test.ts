@@ -32,7 +32,12 @@ import {
   type SandboxProbeRunner
 } from '../../../../../kernel/isolation/worker-boundary.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from '../sandbox-conformance/driver-socket-reach.js'
-import { agentTurnsOf, localCopyFolderOf } from '../../../tests/lib/dispatch/dispatch-fixtures.js'
+import {
+  agentTurnsOf,
+  commandRecordsOf,
+  earlierOperationLinesOf,
+  localCopyFolderOf
+} from '../../../tests/lib/dispatch/dispatch-fixtures.js'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture.js'
 import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../../kernel/isolation/dispatch/fake-sandbox-probe.js'
 
@@ -549,7 +554,7 @@ describe('dispatchRole runs the probe before spawn on Linux', () => {
     )
     // Simulated host fact: Linux with stand-in bwrap/socat/claude only in binDir, and no other vendor tool on PATH.
     expect(child.status, `host fact simulated: linux with stand-in bwrap/socat/claude only; ${child.stderr}`).toBe(0)
-    const logPath = join(home, '.vinaya', 'runtime', 'unresolved', 'logs', 'unresolved', 'none.ndjson')
+
     return {
       stderr: child.stderr,
       result: JSON.parse(readFileSync(resultFile, 'utf8')) as {
@@ -559,12 +564,8 @@ describe('dispatchRole runs the probe before spawn on Linux', () => {
       },
       turns: agentTurnsOf(localCopyFolderOf(home)),
       calls: existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : [],
-      log: (existsSync(logPath) ? readFileSync(logPath, 'utf8').trim().split('\n') : [])
-        .filter(Boolean)
-        .map(
-          (l) =>
-            JSON.parse(l) as { kind?: string; event?: string; operation?: string; result?: string; target?: string }
-        )
+      commands: commandRecordsOf(localCopyFolderOf(home)),
+      earlierOperations: earlierOperationLinesOf(join(home, '.vinaya'))
     }
   }
 
@@ -585,8 +586,11 @@ describe('dispatchRole runs the probe before spawn on Linux', () => {
     expect(run.result.sandboxProbeRefusal?.error).toContain(SECCOMP_ERROR)
     expect(run.stderr).toContain("refused — claude's sandbox could not run a probe command on this host")
     expect(run.stderr).toContain(SECCOMP_ERROR)
-    const probeLine = run.log.find((l) => l.kind === 'operation' && l.operation === 'linux-sandbox-probe')
-    expect(probeLine).toMatchObject({ event: 'completed', result: 'unavailable', target: 'claude' })
+    // One command record in the local copy, and no earlier-format operation line beside it.
+    expect(run.commands.filter((c) => c.action === 'linux-sandbox-probe')).toEqual([
+      { action: 'linux-sandbox-probe', result: 'unavailable', target: 'claude' }
+    ])
+    expect(run.earlierOperations).toEqual([])
     expect(run.turns).toHaveLength(1)
     expect(run.turns[0]).toMatchObject({ errorType: 'refused' })
   }, 40_000)
@@ -600,7 +604,7 @@ describe('dispatchRole runs the probe before spawn on Linux', () => {
     expect(run.result.sandboxProbeRefusal).toBeUndefined()
     expect(run.turns).toHaveLength(1)
     expect(run.turns[0]?.errorType).not.toBe('refused')
-    expect(run.log.find((l) => l.operation === 'linux-sandbox-probe')).toBeUndefined()
+    expect(run.commands.find((c) => c.action === 'linux-sandbox-probe')).toBeUndefined()
   }, 40_000)
 
   it('with the host variable set, says the filter is off, probes with allowAllUnixSockets, then spawns', () => {

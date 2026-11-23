@@ -31,7 +31,6 @@ import {
   taskToolError,
   type TaskToolRef
 } from '../../../../../kernel/tools/catalog/task-tools'
-import type { OperationResult } from '../../../../../kernel/log/schema'
 import { type AgentVendor, isAgentVendor } from '../dispatch/dispatch.js'
 import { cancelDevReviewLoop, type CancelInput, type CancelResult, runtimeDir } from '../standalone/dev-review-loop.js'
 import { tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
@@ -54,7 +53,7 @@ import {
   StaleEscalationError,
   WrongTargetResolutionError
 } from '../standalone/dev-review-loop/pause-resume.js'
-import { log } from '../../../../../kernel/log/log-sink.js'
+import { type CommandRecord, type RecordScope, writeCommand } from '../../../../../kernel/log/outside-log.js'
 import { readTaskRunner } from './task-run-engine.js'
 import { resolveIssueForRef, type TaskToolCallResult } from './handlers.js'
 import { readEscalationPacket } from './read.js'
@@ -78,8 +77,8 @@ export type TaskCancelDeps = {
   fetchNewestIssueRulingOrdinal: (issue: number) => number
   cancelDevReviewLoop: (input: CancelInput) => Promise<CancelResult>
   hostname: () => string
-  /** The Vinaya Log chokepoint (`log-sink.ts`) — injectable so a fixture can capture the typed `operation` event this handler emits without touching the real, machine-global outbox. */
-  log: typeof log
+  /** Writes this handler's command record through the run's Log handle — injectable so a fixture can capture it without writing the machine's own local copy. */
+  record: (record: CommandRecord, scope: RecordScope) => void
   /** The runner the task's run recorded (`readTaskRunner`); absent, the standalone runner. */
   runner?: (task: number, root: string) => 'standalone' | 'atta-engine'
   isPidAlive?: (pid: number) => boolean
@@ -101,7 +100,7 @@ export const defaultTaskCancelDeps: TaskCancelDeps = {
   fetchNewestIssueRulingOrdinal,
   cancelDevReviewLoop: (input) => cancelDevReviewLoop(input),
   hostname: osHostname,
-  log,
+  record: writeCommand,
   runner: readTaskRunner,
   isPidAlive: isDriverPidAlive,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -129,39 +128,31 @@ async function awaitEngineStop(
 }
 
 /**
- * `log()` fills `subject.issue` from `process.env.VINAYA_TASK`, never from an
- * argument (`log-sink.ts`), so this event lands under the outbox for `task`
- * — the one this handler is actually acting on — only if `VINAYA_TASK` is
- * set for the duration of the call, exactly the save/restore-around-one-call
- * discipline `log-flush.ts`'s `logForFlush` and this same handler's own
- * `cancelDevReviewLoop` call already use. Without this, every `task_cancel`
- * event emitted by the shared, multi-tenant `vinaya task-tools serve` MCP
- * server (`server.ts`) — not just a concurrent one — misfiles into whatever
- * task (or none) the process's ambient env happened to carry (round 2
- * review, HIGH).
+ * One `log.command.completed` record for `task_cancel`. The record names the
+ * task this handler is acting on — not whatever task the shared,
+ * multi-tenant `vinaya task-tools serve` MCP server's ambient environment
+ * happened to carry — by handing that task to the writer as its scope, so the
+ * record is filed under it and the server's own environment is never touched.
  */
 function emitOperationEvent(
-  emit: typeof log,
+  record: (record: CommandRecord, scope: RecordScope) => void,
   task: number,
   target: string,
-  result: OperationResult,
+  result: CommandRecord['result'],
   errorClass: string | null
 ): void {
-  const prevTask = process.env.VINAYA_TASK
-  process.env.VINAYA_TASK = String(task)
   try {
-    emit({
-      kind: 'operation',
-      event: 'completed',
-      operation: 'task_cancel',
-      target,
-      result,
-      error_class: errorClass,
-      payload: {}
-    })
-  } finally {
-    if (prevTask === undefined) delete process.env.VINAYA_TASK
-    else process.env.VINAYA_TASK = prevTask
+    record(
+      {
+        action: 'task_cancel',
+        target,
+        result,
+        ...(errorClass === null ? {} : { errorType: errorClass })
+      },
+      { task }
+    )
+  } catch {
+    // A record that cannot be written never changes what the handler answers.
   }
 }
 
@@ -196,7 +187,7 @@ export function createTaskCancelHandler(
     const controlStoreDeps: ControlStoreDeps = defaultControlStoreDeps(() => tasksExecutionRoot(root))
     const packet = readEscalationPacket(root, issue)
     if (packet === null || packet.inputs === null) {
-      emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
+      emitOperationEvent(deps.record, issue, target, 'refused', 'precondition')
       return fail(taskToolError('precondition', `task ${issue} has no paused run recorded — nothing to cancel`))
     }
     // `null` is a cancellable pause, not a missing one: the run paused before
@@ -230,7 +221,7 @@ export function createTaskCancelHandler(
     const newestRulingOrdinal =
       escalationPr === null ? deps.fetchNewestIssueRulingOrdinal(issue) : deps.fetchNewestRulingOrdinal(escalationPr)
     if (rulings.length === 0 || (peekedEscalation !== null && newestRulingOrdinal <= peekedEscalation.rulingOrdinal)) {
-      emitOperationEvent(deps.log, issue, target, 'refused', 'authority')
+      emitOperationEvent(deps.record, issue, target, 'refused', 'authority')
       return fail(
         taskToolError(
           'authority',
@@ -264,7 +255,7 @@ export function createTaskCancelHandler(
           : !engineStopped || (peekedEscalation && peekedEscalation.host !== deps.hostname())
             ? 'pending'
             : 'confirmed'
-      emitOperationEvent(deps.log, issue, target, 'ok', null)
+      emitOperationEvent(deps.record, issue, target, 'ok', null)
       return ok({
         task: issue,
         pr,
@@ -279,7 +270,7 @@ export function createTaskCancelHandler(
     } catch (err) {
       if (err instanceof ReplayedResolutionError) {
         if (err.existing?.decision === 'cancel') {
-          emitOperationEvent(deps.log, issue, target, 'ok', null)
+          emitOperationEvent(deps.record, issue, target, 'ok', null)
           return ok({
             task: issue,
             pr,
@@ -290,7 +281,7 @@ export function createTaskCancelHandler(
             fencedEffectKeys: []
           })
         }
-        emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
+        emitOperationEvent(deps.record, issue, target, 'refused', 'precondition')
         return fail(
           taskToolError(
             'precondition',
@@ -299,14 +290,14 @@ export function createTaskCancelHandler(
         )
       }
       if (err instanceof StaleEscalationError || err instanceof WrongTargetResolutionError) {
-        emitOperationEvent(deps.log, issue, target, 'refused', 'precondition')
+        emitOperationEvent(deps.record, issue, target, 'refused', 'precondition')
         const nextStep =
           err instanceof StaleEscalationError && !/no ruling is needed|is a Principal decision/.test(err.message)
             ? ` ${missingEscalationNextStep(held!)}`
             : ''
         return fail(taskToolError('precondition', `${err.message}${nextStep}`))
       }
-      emitOperationEvent(deps.log, issue, target, 'error', 'infrastructure')
+      emitOperationEvent(deps.record, issue, target, 'error', 'infrastructure')
       return fail(taskToolError('infrastructure', err instanceof Error ? err.message : String(err)))
     }
   }

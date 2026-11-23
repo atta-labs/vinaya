@@ -1,27 +1,26 @@
 /**
- * The one `operation` event every CLI invocation records as the process ends
+ * The one `log.command.completed` record every CLI invocation writes as it ends
  * (`harness/kernel/log/log.md` § Every CLI invocation records one operation). The
  * pieces are pure — argv to target, exit code to result — so `index.ts`'s exit
- * handler holds no logic of its own and a test can drive each without a
- * process.
+ * handler holds no logic of its own and a test can drive each on its own.
  *
  * A target never carries an argument: it comes from the fixed tables below, and
  * anything not in them is `unknown`. An argument can carry a secret.
  */
 
-import type { LogEventInput, LogSyncOptions } from '../log-sink.js'
+import { type CommandRecord, writeCommand } from '../outside-log.js'
 
 /** The operation name every CLI invocation records. */
 export const CLI_OPERATION = 'cli_command'
 
 /**
- * The folder file a taskless invocation's event is appended to —
- * `<folder>/<owner>-<repo>/none-cli-operations.ndjson`, never the shared
- * `none.ndjson` other unattributed events land in. The CLI's registration
- * passes it as `logSync`'s `unattributedStream`, so this one record has a file
- * of its own: a concurrent test run's real-runtime guard
- * (`harness/kernel/conformance/unit/real-runtime-guard-core.ts`) exempts that
- * file, and only it, and `vinaya log send` still delivers it as unattributed.
+ * The folder file earlier versions appended a taskless invocation's event to —
+ * `<folder>/<owner>-<repo>/none-cli-operations.ndjson`. An invocation no longer
+ * writes it, but a machine that ran earlier versions still holds one, so a
+ * concurrent test run's real-runtime guard
+ * (`harness/kernel/conformance/unit/real-runtime-guard-core.ts`) keeps
+ * exempting that file, and only it, and `vinaya log send` still delivers it as
+ * unattributed.
  */
 export const CLI_OPERATION_STREAM = 'none-cli-operations'
 
@@ -93,56 +92,40 @@ export function cliOperationResult(exitCode: number): 'ok' | 'refused' | 'error'
 }
 
 /**
- * The event for one finished invocation, or `null` for the drain's own
- * (`vinaya log send`), which never records. The exit code is the error class,
- * for every result; the duration is the process's, from its start to `now`.
+ * The command record for one finished invocation, or `null` for the drain's
+ * own (`vinaya log send`), which never records. The exit code is the error
+ * kind of any result that is not `ok`.
  */
-export function cliOperationEvent(args: readonly string[], exitCode: number, durationMs: number): LogEventInput | null {
+export function cliOperationRecord(args: readonly string[], exitCode: number): CommandRecord | null {
   const target = cliOperationTarget(args)
   if (target === DRAIN_TARGET) return null
-  return {
-    kind: 'operation',
-    event: 'completed',
-    payload: {},
-    operation: CLI_OPERATION,
-    target,
-    result: cliOperationResult(exitCode),
-    error_class: String(exitCode),
-    duration_ms: Math.max(0, Math.round(durationMs))
-  }
+  const result = cliOperationResult(exitCode)
+  return { action: CLI_OPERATION, target, result, ...(result === 'ok' ? {} : { errorType: String(exitCode) }) }
 }
 
 /**
- * Registers the exit handler that records the invocation's one event, so
- * every way the process ends is covered by this one place — a normal return,
- * and `process.exit(n)` from anywhere inside a command. The handler is
- * synchronous (`logSync`), prints nothing, never throws and never changes the
- * exit code. A process ended by a signal never runs it: the one gap.
- *
- * `unattributedStream`, when the registration gives one, is passed to
- * `logSync` unchanged: the caller, not this module, chooses where a taskless
- * event's line lands (the CLI passes `CLI_OPERATION_STREAM`).
+ * Registers the exit handler that records the invocation's one command
+ * record (`log.command.completed`), so every way the invocation ends is
+ * covered by this one place — a normal return, and `process.exit(n)` from
+ * anywhere inside a command. The handler is synchronous (the Log handle
+ * writes as it is called), prints nothing, never throws and never changes the
+ * exit code. An invocation ended by a signal never runs it: the one gap. The
+ * record is written through the run's own handle, so it carries the run id
+ * this invocation has, as it did before; `record` defaults to that write.
  */
 export function recordCliOperationAtExit(
   args: readonly string[],
   deps: {
     on: (event: 'exit', handler: (code: number) => void) => unknown
-    logSync: (e: LogEventInput, opts?: LogSyncOptions) => void
-    now: () => number
-    unattributedStream?: string
+    record?: (record: CommandRecord) => void
   }
 ): void {
-  const startedAt = deps.now()
-  const options: LogSyncOptions =
-    deps.unattributedStream === undefined
-      ? { quiet: true }
-      : { quiet: true, unattributedStream: deps.unattributedStream }
   deps.on('exit', (code) => {
     try {
-      const event = cliOperationEvent(args, code, deps.now() - startedAt)
-      if (event !== null) deps.logSync(event, options)
+      const record = cliOperationRecord(args, code)
+      if (record !== null) (deps.record ?? writeCommand)(record)
     } catch {
-      // Runs as the process ends: nothing may throw or print here.
+      // Runs as the invocation ends: nothing may throw or print here.
     }
   })
 }

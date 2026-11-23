@@ -2,7 +2,7 @@ import { processHasLogDestination } from '../../../../apps/cli/src/lib/log-desti
 
 type InstallProcessModule = typeof import('../../../kernel/dev-process-socket/contract/install-process.js')
 type IntegrationModule = typeof import('./process/process-integration.js')
-type LogSinkModule = typeof import('../../../kernel/log/log-sink.js')
+type OutsideLogModule = typeof import('../../../kernel/log/outside-log.js')
 type OperationLogModule = typeof import('../../../kernel/log/client/cli-operation-log.js')
 
 let servicesInstalled = false
@@ -31,11 +31,9 @@ export function registerOperationRecord(argv: readonly string[]): void {
   const operationLog = require('../../../kernel/log/client/cli-operation-log.js') as OperationLogModule
   operationLog.recordCliOperationAtExit(argv, {
     on: (event, handler) => process.on(event, handler),
-    logSync: (event, options) => {
+    record: (record) => {
       installServices()
-      ;(require('../../../kernel/log/log-sink.js') as LogSinkModule).logSync(event, options)
-    },
-    now: Date.now,
-    unattributedStream: operationLog.CLI_OPERATION_STREAM
+      ;(require('../../../kernel/log/outside-log.js') as OutsideLogModule).writeCommand(record)
+    }
   })
 }

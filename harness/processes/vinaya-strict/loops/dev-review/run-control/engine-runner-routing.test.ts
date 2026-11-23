@@ -412,7 +412,7 @@ describe('task_resume', () => {
         return { status: 'confirmed', pid: null }
       },
       now: () => new Date().toISOString(),
-      log: () => {}
+      record: () => {}
     })
     const result = await handler({ task: { issue: task } }, { caller: { id: 'operator-1' } })
     return { result, launched }
@@ -547,7 +547,7 @@ describe('task_cancel', () => {
           })
         ),
       hostname,
-      log: () => {},
+      record: () => {},
       runner: readTaskRunner,
       ...(options.stopTimeoutMs === undefined ? {} : { engineStopTimeoutMs: options.stopTimeoutMs })
     })

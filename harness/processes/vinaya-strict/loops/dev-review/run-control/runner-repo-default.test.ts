@@ -197,7 +197,7 @@ describe('a run with no recorded runner', () => {
           })
         ),
       hostname,
-      log: () => {},
+      record: () => {},
       runner: readTaskRunner,
       isPidAlive: (pid) => {
         livenessReads.push(pid)

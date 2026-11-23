@@ -792,7 +792,7 @@ function scopeNames(scope: FrozenScope, path: string): boolean {
   return scope.in.some((entry) => globCoversPath(entry, path))
 }
 
-const noLog = () => {}
+const noLog = { command: () => {}, action: () => {} }
 
 /**
  * The paths the broker refuses as a protected administrative path the frozen

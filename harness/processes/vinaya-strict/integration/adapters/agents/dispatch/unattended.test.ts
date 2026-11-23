@@ -15,7 +15,12 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { agentTurnsOf, localCopyFolderOf } from '../../../../tests/lib/dispatch/dispatch-fixtures.js'
+import {
+  agentTurnsOf,
+  commandRecordsOf,
+  earlierOperationLinesOf,
+  localCopyFolderOf
+} from '../../../../tests/lib/dispatch/dispatch-fixtures.js'
 import { spawnSyncBudgeted } from '../../../../../../kernel/conformance/unit/process-fixture.js'
 import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../../../kernel/isolation/dispatch/fake-sandbox-probe.js'
 
@@ -210,19 +215,16 @@ describe('vinaya dispatch --unattended — Claude confinement', () => {
       expect(result.status, 'host fact simulated: linux with no bwrap or socat on PATH').not.toBe(0)
       expect(existsSync(fixture.markerFile)).toBe(false)
 
-      const lines = outboxLines(fixture.home) as Array<{
-        kind?: string
-        event?: string
-        operation?: string
-        result?: string
-        target?: string | null
-      }>
-      const confinementLine = lines.find((l) => l.kind === 'operation' && l.operation === 'claude-sandbox-confinement')
-      expect(confinementLine).toBeDefined()
-      expect(confinementLine?.event).toBe('completed')
-      expect(confinementLine?.result).toBe('unavailable')
+      const confinementRecords = commandRecordsOf(localCopyFolderOf(fixture.home)).filter(
+        (c) => c.action === 'claude-sandbox-confinement'
+      )
+      expect(confinementRecords).toHaveLength(1)
+      const confinement = confinementRecords[0]
+      expect(confinement?.result).toBe('unavailable')
       // Host fact simulated: Linux with neither bwrap nor socat on PATH.
-      expect(confinementLine?.target, 'host fact simulated: linux with no bwrap or socat on PATH').toContain('bwrap')
+      expect(confinement?.target, 'host fact simulated: linux with no bwrap or socat on PATH').toContain('bwrap')
+      // No earlier-format operation line is written beside the record.
+      expect(earlierOperationLinesOf(join(fixture.home, '.vinaya'))).toEqual([])
       const turns = agentTurnsOf(localCopyFolderOf(fixture.home))
       expect(turns).toHaveLength(1)
       expect(turns[0]?.errorType).toBe('refused')

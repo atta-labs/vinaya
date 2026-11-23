@@ -28,7 +28,7 @@ import { type DevToolContext, dispatchDevTool } from '../../../../../kernel/tool
 import { grantedTools, isToolGranted, servedTools } from '../../../../../kernel/tools/role-grants'
 import { createTaskToolRouter } from '../../../../../kernel/tools/host/router'
 
-const noLog = (): void => {}
+const noLog = { command: (): void => {}, action: (): void => {} }
 
 const GRANTS_BEFORE: Record<string, string[]> = {
   developer: [

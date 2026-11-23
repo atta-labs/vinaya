@@ -1,6 +1,5 @@
 import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
-import { CLI_OPERATION_STREAM, recordCliOperationAtExit } from '../../../../kernel/log/client/cli-operation-log.js'
-import { logSync } from '../../../../kernel/log/log-sink.js'
+import { recordCliOperationAtExit } from '../../../../kernel/log/client/cli-operation-log.js'
 import { installProcess } from '../../../../kernel/dev-process-socket/contract/install-process.js'
 import { vinayaProcessIntegration } from '../../integration/process/process-integration.js'
 // `vinaya audit` — the two ring-2 detection/notification checks, callable
@@ -461,10 +460,7 @@ export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
 if (isEntryPoint(import.meta.url, 'audit')) {
   installProcess(vinayaProcessIntegration, ['log', 'config', 'checks'])
   recordCliOperationAtExit(['audit', ...process.argv.slice(2)], {
-    on: (event, handler) => process.on(event, handler),
-    logSync,
-    now: Date.now,
-    unattributedStream: CLI_OPERATION_STREAM
+    on: (event, handler) => process.on(event, handler)
   })
   await auditCommand(process.argv.slice(2))
 }

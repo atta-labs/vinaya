@@ -26,7 +26,8 @@ import {
   UngrantedOperationError
 } from '../../../../../../kernel/tools/host/broker'
 import { authenticateWorkerInvocation, requestEffect } from './vinaya-broker'
-import type { LogEventInput } from '../../../../../../kernel/log/log-sink'
+import type { ActionRecord, CommandRecord } from '../../../../../../kernel/log/outside-log'
+import { isolatedLocalCopy } from '../../../log/client/local-copy-fixture'
 
 let dir: string
 let deps: ControlStoreDeps
@@ -366,15 +367,41 @@ describe('requestEffect', () => {
 })
 
 /**
- * task-log-v1 task 6 (O1): `requestEffect`'s own `operation` log line for
- * the authorization checks it runs — `ok` when every check passes, `refused`
- * naming the throwing check's own class when one doesn't — followed by the
- * effect executor's `attempted`/`observed`/`verified` sequence
- * (`effects.ts`) for a request that clears authorization.
+ * `requestEffect`'s own `log.command.completed` record for the authorization
+ * checks it runs — `ok` when every check passes, `refused` naming the
+ * throwing check's own class when one doesn't — followed by the effect
+ * executor's one `log.action.verified` record (`effects.ts`) for a request
+ * that clears authorization.
  */
-describe('requestEffect — operation log events (task-log-v1 task 6, O1)', () => {
-  it("emits operation(ok) then the effect executor's one final verified event for an authorized request", () => {
-    const events: LogEventInput[] = []
+describe('requestEffect — command and action records', () => {
+  it("writes one command.completed to the run's local copy, then the executor's one action.verified, and no earlier-format event (O2, O4)", () => {
+    const copy = isolatedLocalCopy()
+    try {
+      requestEffect(deps, worker, {
+        operation: 'branch-push',
+        target: scopeTarget(2, 'task/worker-isolation-v1/2'),
+        inputVersion: 1,
+        key: 'push-copy',
+        payload: 'commit-sha-abc',
+        poster: () => 'https://github.com/example/repo/tree/task/worker-isolation-v1/2',
+        reconcile: neverReconcile
+      })
+      const written = copy.events().filter((e) => /^vinaya\.(command|action)\./.test(e.name))
+      expect(written.map((e) => e.name)).toEqual(['vinaya.command.completed', 'vinaya.action.verified'])
+      expect(written[0]?.attributes).toMatchObject({ 'vinaya.outside.action': 'branch-push', 'vinaya.result': 'ok' })
+      expect(written[1]?.attributes).toMatchObject({
+        'vinaya.outside.action': 'branch-push',
+        'vinaya.result': 'success'
+      })
+      expect(copy.earlierFormatFiles()).toEqual([])
+    } finally {
+      copy.restore()
+    }
+  })
+
+  it("records command ok then the effect executor's one final action record for an authorized request", () => {
+    const commands: CommandRecord[] = []
+    const actions: ActionRecord[] = []
     requestEffect(
       deps,
       worker,
@@ -387,13 +414,19 @@ describe('requestEffect — operation log events (task-log-v1 task 6, O1)', () =
         poster: () => 'https://github.com/example/repo/tree/task/worker-isolation-v1/2',
         reconcile: neverReconcile
       },
-      (e) => events.push(e)
+      { command: (r) => void commands.push(r), action: (r) => void actions.push(r) }
     )
-    expect(events.map((e) => `${e.kind}:${e.event}`)).toEqual(['operation:completed', 'effect:verified'])
+    expect(commands).toEqual([
+      { action: 'branch-push', target: scopeTarget(2, 'task/worker-isolation-v1/2'), result: 'ok' }
+    ])
+    expect(actions).toEqual([
+      { action: 'branch-push', target: scopeTarget(2, 'task/worker-isolation-v1/2'), result: 'success' }
+    ])
   })
 
-  it('emits only operation(refused) — never reaching the effect executor — for an ungranted operation', () => {
-    const events: LogEventInput[] = []
+  it('records only command refused — never reaching the effect executor — for an ungranted operation', () => {
+    const commands: CommandRecord[] = []
+    const actions: ActionRecord[] = []
     expect(() =>
       requestEffect(
         deps,
@@ -407,15 +440,15 @@ describe('requestEffect — operation log events (task-log-v1 task 6, O1)', () =
           poster: () => 'https://example.com',
           reconcile: neverReconcile
         },
-        (e) => events.push(e)
+        { command: (r) => void commands.push(r), action: (r) => void actions.push(r) }
       )
     ).toThrow(UngrantedOperationError)
-    expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({
-      kind: 'operation',
-      event: 'completed',
+    expect(actions).toEqual([])
+    expect(commands).toHaveLength(1)
+    expect(commands[0]).toMatchObject({
+      action: 'ruling-post',
       result: 'refused',
-      error_class: 'UngrantedOperationError'
+      errorType: 'UngrantedOperationError'
     })
   })
 })

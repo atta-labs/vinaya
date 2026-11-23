@@ -1,23 +1,21 @@
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { dirname, join, sep } from 'node:path'
+import { existsSync, readdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { COMMANDS } from '../../commands.js'
 import {
   CLI_OPERATION,
-  CLI_OPERATION_STREAM,
-  cliOperationEvent,
+  cliOperationRecord,
   cliOperationResult,
   cliOperationTarget,
   DRAIN_TARGET,
   recordCliOperationAtExit,
   UNKNOWN_CLI_TARGET
 } from '../../../../../kernel/log/client/cli-operation-log.js'
+import { storedEvents } from '../../../../../kernel/gates/checks/runner/local-copy-probe.js'
 import { isolatedConfigFixture, spawnSyncBudgeted } from '../../../../../kernel/conformance/unit/process-fixture.js'
 
-type LogEventInput = NonNullable<ReturnType<typeof cliOperationEvent>>
-/** The sink options the registration hands `logSync`, taken from its own signature so this file imports nothing from the sink. */
-type LogSyncOptions = Parameters<Parameters<typeof recordCliOperationAtExit>[1]['logSync']>[1]
+type CommandRecord = NonNullable<ReturnType<typeof cliOperationRecord>>
 
 const ENTRY = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -78,7 +76,7 @@ describe('cliOperationTarget (O4)', () => {
   })
 })
 
-describe('cliOperationResult and cliOperationEvent (O1)', () => {
+describe('cliOperationResult and cliOperationRecord (O1)', () => {
   it('maps exit code 0 to ok, 2 to refused, and any other to error', () => {
     expect(cliOperationResult(0)).toBe('ok')
     expect(cliOperationResult(2)).toBe('refused')
@@ -86,82 +84,55 @@ describe('cliOperationResult and cliOperationEvent (O1)', () => {
     expect(cliOperationResult(130)).toBe('error')
   })
 
-  it('carries the duration and the exit code as the error class, and never an argument', () => {
-    const event = cliOperationEvent(['check', '--token', 'ghp_secretvalue'], 1, 41.6)
-    expect(event).toEqual({
-      kind: 'operation',
-      event: 'completed',
-      payload: {},
-      operation: CLI_OPERATION,
-      target: 'check',
-      result: 'error',
-      error_class: '1',
-      duration_ms: 42
-    })
-    expect(JSON.stringify(event)).not.toContain('ghp_secretvalue')
+  it('carries the exit code as the error kind of a result that is not ok, and never an argument', () => {
+    const record = cliOperationRecord(['check', '--token', 'ghp_secretvalue'], 1)
+    expect(record).toEqual({ action: CLI_OPERATION, target: 'check', result: 'error', errorType: '1' })
+    expect(JSON.stringify(record)).not.toContain('ghp_secretvalue')
+    expect(cliOperationRecord(['version'], 0)).toEqual({ action: CLI_OPERATION, target: 'version', result: 'ok' })
   })
 
   it('records nothing for the drain (O3)', () => {
-    expect(cliOperationEvent(['log', 'send'], 0, 5)).toBeNull()
+    expect(cliOperationRecord(['log', 'send'], 0)).toBeNull()
     expect(DRAIN_TARGET).toBe('log send')
   })
 })
 
 describe('recordCliOperationAtExit (O2)', () => {
-  function harness(now: () => number = () => 1000) {
+  function harness() {
     const handlers: Array<(code: number) => void> = []
-    const logged: LogEventInput[] = []
+    const records: CommandRecord[] = []
     return {
       handlers,
-      logged,
+      records,
       deps: {
         on: (_event: 'exit', handler: (code: number) => void) => handlers.push(handler),
-        logSync: (e: LogEventInput) => {
-          logged.push(e)
-        },
-        now
+        record: (r: CommandRecord) => {
+          records.push(r)
+        }
       }
     }
   }
 
-  it('registers once and records one event at exit with the process duration', () => {
-    const times = [1000, 1250]
-    const h = harness(() => times.shift() ?? 0)
+  it('registers once and records one command record at exit', () => {
+    const h = harness()
     recordCliOperationAtExit(['version'], h.deps)
     expect(h.handlers).toHaveLength(1)
     h.handlers[0]?.(0)
-    expect(h.logged).toHaveLength(1)
-    expect(h.logged[0]).toMatchObject({ target: 'version', result: 'ok', error_class: '0', duration_ms: 250 })
+    expect(h.records).toEqual([{ action: CLI_OPERATION, target: 'version', result: 'ok' }])
   })
 
   it('records nothing for the drain', () => {
     const h = harness()
     recordCliOperationAtExit(['log', 'send'], h.deps)
     h.handlers[0]?.(0)
-    expect(h.logged).toHaveLength(0)
+    expect(h.records).toHaveLength(0)
   })
 
-  it('passes the registration’s own unattributed stream to the sink, quietly, and no stream when none is given', () => {
-    const seen: Array<LogSyncOptions | undefined> = []
-    const handlers: Array<(code: number) => void> = []
-    const deps = {
-      on: (_event: 'exit', handler: (code: number) => void) => handlers.push(handler),
-      logSync: (_e: LogEventInput, opts?: LogSyncOptions) => {
-        seen.push(opts)
-      },
-      now: () => 0
-    }
-    recordCliOperationAtExit(['version'], { ...deps, unattributedStream: CLI_OPERATION_STREAM })
-    recordCliOperationAtExit(['version'], deps)
-    for (const handler of handlers) handler(0)
-    expect(seen).toEqual([{ quiet: true, unattributedStream: CLI_OPERATION_STREAM }, { quiet: true }])
-  })
-
-  it('never throws when the sink does', () => {
+  it('never throws when the writer does', () => {
     const h = harness()
     recordCliOperationAtExit(['check'], {
       ...h.deps,
-      logSync: () => {
+      record: () => {
         throw new Error('disk full')
       }
     })
@@ -177,52 +148,37 @@ describe('the real entry point', () => {
       env: { ...fixture.env, VINAYA_RUNTIME_DIR: fixture.runtimeDir },
       encoding: 'utf-8'
     })
-    const events: Array<Record<string, unknown>> = []
-    const files: string[] = []
     const logsRoot = join(fixture.runtimeDir, 'logs')
-    if (existsSync(logsRoot)) {
-      for (const f of readdirSync(logsRoot, { recursive: true, encoding: 'utf-8' })) {
-        if (!f.endsWith('.ndjson')) continue
-        for (const line of readFileSync(join(logsRoot, f), 'utf-8').split('\n')) {
-          if (line.trim() === '') continue
-          const event = JSON.parse(line)
-          if (event.kind === 'operation' && event.operation === CLI_OPERATION) files.push(f)
-          events.push(event)
-        }
-      }
-    }
-    return { ...r, files, events: events.filter((e) => e.kind === 'operation' && e.operation === CLI_OPERATION) }
+    const earlierFormat = existsSync(logsRoot)
+      ? readdirSync(logsRoot, { recursive: true, encoding: 'utf-8' }).filter((f) => f.endsWith('.ndjson'))
+      : []
+    const commands = storedEvents(fixture.logsDir).filter((e) => e.name === 'vinaya.command.completed')
+    return { ...r, earlierFormat, commands }
   }
 
-  it('appends a taskless invocation’s event to its own stream, never the shared none.ndjson, with the usual header', () => {
+  it('writes a taskless invocation’s one command record to the local copy, under its own run id, and no earlier-format event', () => {
     const r = run(['version'])
     expect(r.status).toBe(0)
-    expect(r.files).toHaveLength(1)
-    const [folder, file, ...rest] = (r.files[0] as string).split(sep)
-    expect(rest).toEqual([])
-    expect(folder).not.toBe('')
-    expect(file).toBe(`${CLI_OPERATION_STREAM}.ndjson`)
-    const event = r.events[0] as { meta: Record<string, unknown>; subject: Record<string, unknown> }
-    expect(event.subject.issue).toBeNull()
-    expect(event.meta).toMatchObject({ host: 'cli' })
-    expect(typeof event.meta.event_id).toBe('string')
-    expect(typeof event.meta.run_id).toBe('string')
+    expect(r.commands).toHaveLength(1)
+    expect(r.commands[0]?.attributes).toMatchObject({
+      'vinaya.outside.action': CLI_OPERATION,
+      'vinaya.outside.target': 'version',
+      'vinaya.result': 'ok'
+    })
+    expect(r.earlierFormat).toEqual([])
   })
 
-  it('records one event for a process.exit(2) from inside the command, and prints nothing extra', () => {
+  it('records one command record for a process.exit(2) from inside the command, and prints nothing extra', () => {
     const r = run(['not-a-real-command', '--token', 'ghp_secretvalue'])
     expect(r.status).toBe(2)
     expect(r.stderr).not.toContain('logSync')
     expect(r.stderr).not.toContain('log destination')
-    expect(r.events).toHaveLength(1)
-    expect(r.events[0]).toMatchObject({ target: UNKNOWN_CLI_TARGET, result: 'refused', error_class: '2' })
-    expect(JSON.stringify(r.events)).not.toContain('ghp_secretvalue')
-  })
-
-  it('records one ok event for a command that returns normally', () => {
-    const r = run(['version'])
-    expect(r.status).toBe(0)
-    expect(r.events).toHaveLength(1)
-    expect(r.events[0]).toMatchObject({ target: 'version', result: 'ok', error_class: '0' })
+    expect(r.commands).toHaveLength(1)
+    expect(r.commands[0]?.attributes).toMatchObject({
+      'vinaya.outside.target': UNKNOWN_CLI_TARGET,
+      'vinaya.result': 'refused',
+      'error.type': '2'
+    })
+    expect(JSON.stringify(r.commands)).not.toContain('ghp_secretvalue')
   })
 })

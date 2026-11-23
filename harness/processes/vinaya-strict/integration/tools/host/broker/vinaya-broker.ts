@@ -3,7 +3,7 @@ import type { DispatchTeeRecoveryDeps } from '../../../../loops/dev-review/dispa
 import { vinayaBrokerPolicies } from '../../../policies/vinaya-policies'
 import {
   type BrokerEffectRequest,
-  type BrokerLogEvent,
+  type BrokerRecords,
   createBroker,
   type InvocationContext
 } from '../../../../../../kernel/tools/host/broker'
@@ -17,16 +17,16 @@ import {
 export function authenticateWorkerInvocation(
   env: Readonly<Record<string, string | undefined>>,
   launchRecordDeps?: DispatchTeeRecoveryDeps,
-  logEvent?: BrokerLogEvent
+  records?: BrokerRecords
 ): InvocationContext {
-  return createBroker(vinayaBrokerPolicies({ launchRecordDeps })).authenticateWorkerInvocation(env, logEvent)
+  return createBroker(vinayaBrokerPolicies({ launchRecordDeps })).authenticateWorkerInvocation(env, records)
 }
 
 export function requestEffect(
   deps: ControlStoreDeps,
   context: InvocationContext,
   request: BrokerEffectRequest,
-  logEvent?: BrokerLogEvent
+  records?: BrokerRecords
 ): string {
-  return createBroker(vinayaBrokerPolicies()).requestEffect(deps, context, request, logEvent)
+  return createBroker(vinayaBrokerPolicies()).requestEffect(deps, context, request, records)
 }

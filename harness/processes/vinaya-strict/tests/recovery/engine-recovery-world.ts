@@ -183,7 +183,7 @@ const LAUNCH_DEPS: DispatchTeeRecoveryDeps = {
 const broker = createBroker(vinayaBrokerPolicies({ launchRecordDeps: LAUNCH_DEPS }))
 const developer = broker.authenticateWorkerInvocation(
   { VINAYA_ROLE: 'developer', VINAYA_TASK: String(TASK), VINAYA_RUN_ID: RUN_ID },
-  () => {}
+  { command: () => {}, action: () => {} }
 )
 
 /** The forge journal: one review-dispatch marker per round the reviewers were dispatched in. */
@@ -316,7 +316,7 @@ export async function leg(runner: RecoveryRunner, world: World, interrupt?: Inte
           },
           reconcile: () => (world.remote.has(sha) ? { outcome: 'confirmed', url: sha } : { outcome: 'absent' })
         },
-        () => {}
+        { command: () => {}, action: () => {} }
       )
     } catch (error) {
       if (!died) world.refusals.push(error instanceof Error ? error.message : String(error))

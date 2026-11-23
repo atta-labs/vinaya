@@ -178,6 +178,7 @@ import {
   resolveTrustedPrincipals
 } from '../../../integration/config/compose'
 import { printJson } from '../../../../../kernel/effects/envelope'
+import { writeForgeRefused, writeForgeValidated, writeForgeWritten } from '../../../../../kernel/log/outside-log.js'
 import type { EffectIdentity, EffectReconcileResult } from '../../../../../kernel/effects/effects.js'
 import { sha256Hex } from '../../../../../kernel/effects/effects.js'
 
@@ -334,8 +335,56 @@ export function captureRefusalSync<T>(fn: () => T): { ok: true; value: T } | { o
   }
 }
 
-/** Emits every finding as a JSON line on stderr, then exits 1. Nothing reached the forge. Inside a `captureRefusal` scope it throws the findings instead. */
+/**
+ * The write the gate is working on, as the Log names it: the action and its target, set when a write is checked and
+ * read by the refusal or the write that follows. Only the action, its target and the refusal reason are ever
+ * recorded — never the body of a write.
+ */
+type WriteInView = { action: string; target: string }
+let writeInView: WriteInView | null = null
+const UNKNOWN_WRITE_TARGET = 'unknown'
+
+/** Runs one Log write for the gate; a Log that cannot be written never changes what the gate decides. */
+function recordForge(write: () => void): void {
+  try {
+    write()
+  } catch {
+    // Observation only: the Log never controls a forge write.
+  }
+}
+
+/** Records a refusal as `log.forge.refused`: the write in view (or the gate's own action) and why, as the names of the checks that refused. */
+function recordForgeRefusal(errors: CheckError[]): void {
+  const view = writeInView
+  writeInView = null
+  const why = [...new Set(errors.map((e) => e.check))].join(',') || 'refused'
+  recordForge(() =>
+    writeForgeRefused({
+      action: view?.action ?? 'forge-write',
+      target: view?.target ?? UNKNOWN_WRITE_TARGET,
+      why
+    })
+  )
+}
+
+/**
+ * Records a forge write that was made, as `log.forge.written`. The action and target the gate named when it checked
+ * the write win; a write that was never checked here (a caller that went straight to the forge) names its own.
+ */
+export function recordForgeWritten(own: { action: string; target: string }): void {
+  const view = writeInView
+  writeInView = null
+  recordForge(() =>
+    writeForgeWritten({
+      action: view?.action ?? own.action,
+      target: view !== null && view.target !== UNKNOWN_WRITE_TARGET ? view.target : own.target
+    })
+  )
+}
+
+/** Emits every finding as a JSON line on stderr, then exits 1. Nothing reached the forge. Inside a `captureRefusal` scope it throws the findings instead. Either way the refusal is recorded as `log.forge.refused`. */
 export function refuse(errors: CheckError[]): never {
+  recordForgeRefusal(errors)
   if (refusalScope.getStore()) throw new RefusalCaptured(errors)
   for (const e of errors) emitCheckError(e)
   process.exit(1)
@@ -687,6 +736,18 @@ function customRecovery(section: CustomSection, retryCommand: string): string {
  * `CheckError`; an empty array means the write may proceed.
  */
 export function validateForgeWrite(input: ForgeValidationInput): CheckError[] {
+  const errors = checkForgeWrite(input)
+  // The write now in view: its command and its branch (a pull request) or title (an Issue or a milestone). The body
+  // is never named. A write that passes is recorded as validated; one that does not is recorded when it is refused.
+  writeInView = { action: input.retryCommand, target: input.branch || input.title || UNKNOWN_WRITE_TARGET }
+  if (errors.length === 0) {
+    const view = writeInView
+    recordForge(() => writeForgeValidated(view))
+  }
+  return errors
+}
+
+function checkForgeWrite(input: ForgeValidationInput): CheckError[] {
   const errors: CheckError[] = []
   // Resolved once per write from the working-tree config (an absent
   // `gateCutovers` key → no cutover → the `objectives`/`briefSections`
@@ -2054,7 +2115,9 @@ export function runGhWriteOutcome(
   const { finalArgs, cleanup } = resolveShippableArgs(ghArgs, bodyResult)
   try {
     const out = execFileSync('gh', [...ghCmd, ...finalArgs], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] })
-    return { ok: true, url: out.trim() }
+    const url = out.trim()
+    recordForgeWritten({ action: ghCmd.slice(0, 2).join(' '), target: url || ghCmd[2] || UNKNOWN_WRITE_TARGET })
+    return { ok: true, url }
   } catch (cause) {
     return {
       ok: false,
