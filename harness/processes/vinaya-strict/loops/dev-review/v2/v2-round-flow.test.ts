@@ -80,8 +80,26 @@ describe('the version 2 run writes its phases, ready push and opened change thro
     expect(observed.outcome).toBe('completed')
     await recorder.drain()
     // Every one of these events was written through the handle: none is left for the earlier-format writer.
-    for (const name of ['ready_push', 'pr_opened', 'phase_time', 'round_started', 'round_ended'])
+    for (const name of [
+      'ready_push',
+      'pr_opened',
+      'phase_time',
+      'round_started',
+      'round_ended',
+      'local_checks_run',
+      'ci_result_read'
+    ])
       expect(routed).toContain(name)
+    // The loop's own local checks and its one CI read are checks spans, with their time.
+    const checks = world.spans().filter((s) => s.name.startsWith('vinaya.checks'))
+    expect(checks.filter((s) => s.name === 'vinaya.checks local').length).toBeGreaterThan(0)
+    expect(checks.filter((s) => s.name === 'vinaya.checks ci')).toHaveLength(1)
+    expect(
+      attributeOf(
+        checks.find((s) => s.name === 'vinaya.checks ci'),
+        'vinaya.result'
+      )
+    ).toBe('green')
     const names = world.events().map(eventNameOf)
     expect(names.filter((n) => n === 'vinaya.change.pushed')).toHaveLength(1)
     const opened = world.events().filter((e) => eventNameOf(e) === 'vinaya.change.opened')
@@ -90,6 +108,31 @@ describe('the version 2 run writes its phases, ready push and opened change thro
     expect(world.spans().filter((s) => s.name.startsWith('vinaya.phase')).length).toBeGreaterThan(0)
     expect(world.spans().filter((s) => s.name === 'vinaya.round 1')).toHaveLength(1)
     expect(world.errors).toEqual([])
+  })
+})
+
+describe('the version 2 run writes a failed-test rerun through the run Log handle', () => {
+  test("a ready push that re-ran only a refused push's failures is one rerun span, and no earlier-format line", async () => {
+    const world = createRunLifecycleWorld()
+    const recorder = world.process()
+    const routed: string[] = []
+    const observed = await runV2('claude', {
+      failingTests: (attempt) => (attempt === 1 ? ['/repo/b.test.ts'] : []),
+      onEvent: (event) => {
+        if (
+          writeRunLifecycleEvent(event as never, { runId: 'run-1' }, { recorder, runtimeDir: () => world.runtimeDir })
+        )
+          routed.push(String(event.event))
+      }
+    })
+    expect(observed.outcome).toBe('completed')
+    await recorder.drain()
+    expect(routed.filter((n) => n === 'failed_tests_rerun')).toHaveLength(1)
+    const reruns = world.spans().filter((s) => s.name === 'vinaya.checks rerun')
+    expect(reruns).toHaveLength(1)
+    expect(attributeOf(reruns[0], 'vinaya.checks.rerun_failed')).toBe(1)
+    // The rerun's own record raised no error; the second round's end is the rounds subject's to judge.
+    expect(world.errors.filter((e) => String(e).includes('checks'))).toEqual([])
   })
 })
 

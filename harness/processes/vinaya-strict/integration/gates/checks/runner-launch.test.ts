@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import { coreCheckRegistry } from '../../../checks/registry'
 import type { CheckSpec } from '../../../../../kernel/gates/checks/contract'
 import { buildCheckEnv, runChecks } from '../../../../../kernel/gates/checks/runner'
-import { createLogSink } from '../../../../../kernel/log/log-sink'
 import {
   identityOf,
   isSameProcessAlive,
@@ -555,76 +554,82 @@ describe('runChecks — env allowlist flip (task 3, #776)', () => {
   })
 })
 
-describe('runChecks — the commit a gate event records', () => {
-  it("carries the checkout's HEAD on the gate event a run logs, through the real sink", async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'vinaya-runner-sha-'))
-    const git = (...args: string[]): string => {
-      const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
-      if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`)
-      return r.stdout.trim()
-    }
-    git('init', '--initial-branch=main')
-    git('config', 'user.email', 'test@example.com')
-    git('config', 'user.name', 'Test')
-    writeFileSync(join(dir, 'a.txt'), 'a')
-    git('add', 'a.txt')
-    git('commit', '-m', 'init')
-    const sink = createLogSink({
-      resolveLogDestination: () => ({ kind: 'folder', folder: join(dir, 'outbox') }),
-      outboxRoot: () => join(dir, 'outbox'),
-      home: () => dir,
-      cwd: () => dir,
-      env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '404' }),
-      resolveRepo: () => Promise.resolve({ owner: 'atta-labs', repo: 'vinaya' }),
-      resolveBranchIssue: () => Promise.resolve(null),
-      stderr: () => {}
-    })
-    await runChecks([fullScope({ name: 'passing', run: PASSING })], { ...BASE_OPTS, log: sink.log })
-    await sink.drain()
-    const lines = readFileSync(join(dir, 'outbox', 'atta-labs-vinaya', '404.ndjson'), 'utf8')
-      .trim()
-      .split('\n')
-    const gate = lines.map((l) => JSON.parse(l)).find((e) => e.kind === 'gate')
-    expect(gate.subject.sha).toBe(git('rev-parse', 'HEAD'))
-  })
-})
-
 describe('runChecks — what a run records in the Log', () => {
-  it('a run of thirty checks with two failures records one summary and two checked events', async () => {
-    const events: Array<Record<string, unknown>> = []
+  /** What a run writes through the handle's checks functions, kept in order. */
+  const capture = () => {
+    const ran: Array<Record<string, unknown>> = []
+    const notPassed: Array<Record<string, unknown>> = []
+    return {
+      ran,
+      notPassed,
+      log: {
+        checks: {
+          ran: (d: object) => void ran.push(d as Record<string, unknown>),
+          notPassed: (d: object) => void notPassed.push(d as Record<string, unknown>)
+        }
+      }
+    }
+  }
+
+  it('a run of thirty checks with two failures records one span and two not-passed events', async () => {
+    const { ran, notPassed, log } = capture()
     const specs = Array.from({ length: 30 }, (_, i) =>
       fullScope({ name: `check-${i}`, run: i === 3 || i === 17 ? FAILING : PASSING })
     )
-    await runChecks(specs, {
-      ...BASE_OPTS,
-      parallel: 8,
-      log: (e) => events.push(e as unknown as Record<string, unknown>)
-    })
-    const summaries = events.filter((e) => e.event === 'summary')
-    const checked = events.filter((e) => e.event === 'checked')
-    expect(events).toHaveLength(3)
-    expect(summaries).toHaveLength(1)
-    expect(summaries[0]).toMatchObject({
-      kind: 'gate',
+    await runChecks(specs, { ...BASE_OPTS, parallel: 8, log })
+    expect(ran).toHaveLength(1)
+    expect(ran[0]).toMatchObject({
+      where: 'local',
       ran: 30,
       passed: 28,
       failed: 2,
       skipped: 0,
-      failed_checks: ['check-3', 'check-17']
+      failedNames: ['check-3', 'check-17']
     })
-    expect(typeof summaries[0]?.duration_ms).toBe('number')
-    expect(checked.map((e) => e.check).sort()).toEqual(['check-17', 'check-3'])
-    expect(checked.every((e) => e.outcome === 'fail' && e.reason === 'errors:1')).toBe(true)
+    expect(typeof ran[0]?.startTime).toBe('number')
+    expect(typeof ran[0]?.endTime).toBe('number')
+    expect(notPassed.map((e) => e.name).sort()).toEqual(['check-17', 'check-3'])
+    expect(notPassed.every((e) => e.result === 'fail' && e.reason === 'errors:1' && e.version === '1')).toBe(true)
   })
 
-  it('counts a skipped check in the summary and records no event for it', async () => {
-    const events: Array<Record<string, unknown>> = []
+  it('counts a skipped check in the span and records no not-passed event for it', async () => {
+    const { ran, notPassed, log } = capture()
     await runChecks([fullScope({ name: 'ran', run: PASSING }), fullScope({ name: 'full-one', run: PASSING })], {
       ...BASE_OPTS,
       skipFull: true,
-      log: (e) => events.push(e as unknown as Record<string, unknown>)
+      log
     })
-    expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({ event: 'summary', ran: 0, passed: 0, failed: 0, skipped: 2 })
+    expect(notPassed).toHaveLength(0)
+    expect(ran).toHaveLength(1)
+    expect(ran[0]).toMatchObject({ where: 'hook', ran: 0, passed: 0, failed: 0, skipped: 2 })
+  })
+
+  it('names where the run happened: the push hook, CI, or an explicit place', async () => {
+    const places: unknown[] = []
+    const log = { checks: { ran: (d: { where: string }) => void places.push(d.where), notPassed: () => {} } }
+    const spec = [fullScope({ name: 'one', run: PASSING })]
+    await runChecks(spec, { ...BASE_OPTS, localOnly: true, log })
+    await runChecks(spec, { ...BASE_OPTS, callerEnv: { PATH: process.env.PATH as string, CI: 'true' }, log })
+    await runChecks(spec, { ...BASE_OPTS, callerEnv: { PATH: process.env.PATH as string, CI: 'false' }, log })
+    await runChecks(spec, { ...BASE_OPTS, where: 'ci', log })
+    expect(places).toEqual(['push', 'ci', 'local', 'ci'])
+  })
+
+  it('a Log that cannot be written never changes a check result', async () => {
+    const log = {
+      checks: {
+        ran: () => {
+          throw new Error('the Log is down')
+        },
+        notPassed: () => {
+          throw new Error('the Log is down')
+        }
+      }
+    }
+    const [failing, passing] = await runChecks(
+      [fullScope({ name: 'failing', run: FAILING }), fullScope({ name: 'passing', run: PASSING })],
+      { ...BASE_OPTS, log }
+    )
+    expect([failing?.status, passing?.status]).toEqual(['fail', 'pass'])
   })
 })

@@ -656,7 +656,7 @@ const RUN_LIFECYCLE_EVENTS: ReadonlySet<string> = new Set([
 /**
  * The loop events that stand for a round, its review, its gate read or the change. The process writes each through
  * the run's Log handle (`log.round.*`, `log.phase.ended`, `log.review.*`, `log.checks.read`,
- * `log.agent.confidenceStated`, `log.change.*`) and writes no earlier-format line for it; the loop still builds and
+ * `log.checks.local`, `log.checks.rerun`, `log.checks.ci`, `log.agent.confidenceStated`, `log.change.*`) and writes no earlier-format line for it; the loop still builds and
  * reads the events as data.
  */
 const ROUND_AND_CHANGE_EVENTS: ReadonlySet<string> = new Set([
@@ -668,6 +668,9 @@ const ROUND_AND_CHANGE_EVENTS: ReadonlySet<string> = new Set([
   'gate_result_read',
   'storage_push',
   'ready_push',
+  'local_checks_run',
+  'failed_tests_rerun',
+  'ci_result_read',
   'pr_opened',
   'conflict_reentry',
   'unpushed_work_resume'

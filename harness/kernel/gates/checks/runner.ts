@@ -1,21 +1,29 @@
-import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { cpus } from 'node:os'
 import { globToRegex } from '../glob-to-regex'
 import type { GateOutcome } from '../../log/schema'
-import { logWithOptions, warmupLogSink, LOG_FOLDER_ONLY_ENV, type LogEventInput } from '../../log/log-sink.js'
+import type { LogHandle } from '../../../../packages/log-sdk/src/index.js'
+import { LOG_FOLDER_ONLY_ENV } from '../../log/log-sink.js'
+import { runRecorder } from '../../log/run-recorder.js'
 import { CHECK_SCHEMA_VERSION, type CheckError, type CheckOutcome, type CheckSpec, type CheckStatus } from './contract'
 
 /**
- * The folder file a check run's `gate` events land in when they name no Issue:
- * `<folder>/<repository>/none-gates.ndjson`, passed to the Log sink as its
- * `unattributedStream`. Any check run on the host — a hook, another session's
- * checks — appends it, so a concurrent test run's real-runtime guard
- * (`harness/kernel/conformance/unit/real-runtime-guard-core.ts`) exempts this
- * one file, and `vinaya log send` still delivers it as unattributed. An event
- * that names an Issue keeps that Issue's own file.
+ * The folder file earlier check runs wrote their `gate` events to when they named no Issue:
+ * `<folder>/<repository>/none-gates.ndjson`. A check run no longer writes it — its records go through the run's Log
+ * handle — but a machine that ran earlier versions still holds one, so the real-runtime guard
+ * (`harness/kernel/conformance/unit/real-runtime-guard-core.ts`) keeps exempting this one file and
+ * `vinaya log send` still delivers it as unattributed.
  */
 export const GATE_STREAM = 'none-gates'
+
+/** Where a run of checks happens, as the Log records it. */
+export type ChecksWhere = 'hook' | 'local' | 'push' | 'ci'
+
+/** What a check run writes through: the checks functions of the run's Log handle, and the flush that lands them. */
+export type CheckLog = {
+  checks: Pick<LogHandle['checks'], 'ran' | 'notPassed'>
+  flush?: () => Promise<void>
+}
 
 export type RunOptions = {
   /** Concurrency cap; excess checks queue. */
@@ -69,13 +77,17 @@ export type RunOptions = {
    */
   excludeChecks?: string[]
   /**
-   * Injectable for tests — defaults to the process-wide Vinaya Log sink
-   * (`../../../../harness/kernel/log/log-sink.js`'s `log`), the same singleton every check attempt
-   * in a real `vinaya check`/hook/CI invocation shares one `run_id` through
-   * (one process, one correlated run). A test passes its
-   * own capturing function instead of exercising the real outbox on disk.
+   * Injectable for tests — defaults to the process's run handle (`runRecorder().handle()`), the one every check
+   * attempt in a real `vinaya check`/hook/CI invocation shares: one process, one run id, or the task run's id inside
+   * a task run. A test passes its own capturing functions instead of writing a local copy. A Log that cannot be
+   * written gives a warning at most, never a different check result.
    */
-  log?: (e: LogEventInput) => void
+  log?: CheckLog
+  /**
+   * Where this run happens, for its span: `hook` for the commit hook, `push` for the push hook, `ci` under CI,
+   * `local` otherwise. Absent, it is derived from the other options and the caller's environment.
+   */
+  where?: ChecksWhere
   /**
    * Told as each check finishes, for every outcome (pass, skip, fail, error, timeout) — a push's live progress.
    * Best-effort and strictly additional: it runs inside a try/catch after the outcome is already recorded, so it
@@ -125,106 +137,93 @@ function isCheckError(value: unknown): value is CheckError {
   )
 }
 
-/**
- * `Vinaya Log`'s `gate` family chokepoint (`harness/kernel/log/log.md` "Six more
- * families") — the ONE place this runner records an attempted check's
- * observable outcome, for every terminal state `runOne`/`runChecks` can
- * reach (pass, fail-as-rejected, fail-as-waiting, skip, timeout, and the two
- * flavors of `error` this file distinguishes below), plus `cancelled` from
- * the SIGINT/SIGTERM path. Called exactly once per (spec, attempt) — there is
- * no retry inside this file, so there is nothing here that could double-emit
- * for one check.
- *
- * Only a check that did NOT pass records an event: a `pass` or a `skip`
- * returns here without logging, because a run of thirty checks that all pass
- * would otherwise write thirty rows the Log's free daily limit cannot afford
- * and no reader needs — `logGateSummary` counts them in the run's one
- * `summary` event instead.
- *
- * `check_version` is this contract's own schema version (`CHECK_SCHEMA_VERSION`
- * — every `CheckError` a check emits is validated against it); `policy_version`
- * is honestly `null` — no per-check policy-version concept exists in the
- * registry today (`CheckSpec` carries no version field, and a resolved
- * check's `core`/`overridden`/`additive` state never reaches this file) —
- * left for a later task to set for real, the same "declared, not yet real"
- * pattern `harness/kernel/log/log.md` already documents for `input_versions`/
- * `lineage`. `input_fingerprint` hashes the check's own real, constructed
- * input (its allowlisted env plus, for a diff-scoped check, its sorted
- * changed-file list) rather than transmitting it — a fingerprint identifies
- * the input without leaking a forwarded secret value. `reason` is always a
- * short structured code, never a check's own free-text message — the
- * message may itself echo PR/Issue body content the check was validating,
- * and a structured code is enough to distinguish one rejection shape from
- * another without repeating that content into the log.
- */
-function logGateChecked(params: {
-  spec: CheckSpec
-  outcome: GateOutcome
-  reason?: string
-  durationMs: number
-  fingerprint: string
-  logFn: (e: LogEventInput) => void
-}): void {
-  if (params.outcome === 'pass' || params.outcome === 'skip') return
-  params.logFn({
-    kind: 'gate',
-    event: 'checked',
-    check: params.spec.name,
-    check_version: String(CHECK_SCHEMA_VERSION),
-    policy_version: null,
-    input_fingerprint: params.fingerprint,
-    outcome: params.outcome,
-    ...(params.reason !== undefined ? { reason: params.reason } : {}),
-    duration_ms: params.durationMs,
-    payload: {}
-  })
+/** The sink a check run writes to: its injected one, else the process's run handle; `undefined` while recording is off. */
+type CheckSink = { log: CheckLog | undefined }
+
+/** Runs a write to the Log; a failure to write is a warning on stderr at most and never reaches the check's result. */
+function writeToLog(sink: CheckSink, write: (log: CheckLog) => void): void {
+  try {
+    if (sink.log !== undefined) write(sink.log)
+  } catch (error) {
+    try {
+      process.stderr.write(`vinaya: a check run could not be written to the Log — ${String(error)}\n`)
+    } catch {
+      // A warning that cannot be written is not a failure of the run it reports.
+    }
+  }
+}
+
+/** The run's own handle's checks; `undefined` when recording is off or the handle cannot be opened. */
+function defaultCheckLog(): CheckLog | undefined {
+  try {
+    const handle = runRecorder().handle()
+    return handle === undefined ? undefined : { checks: handle.checks, flush: () => handle.flush() }
+  } catch {
+    return undefined
+  }
 }
 
 /**
- * The ONE `gate` `summary` event a check run records: how many checks
- * executed, passed, failed and were skipped, the names of those that did not
- * pass, and the run's total time. A check that did not pass is also its own
- * `checked` event (`logGateChecked`), so a reader that wants a failure's
- * reason and commit finds it there and a reader that wants the run's shape
- * finds it here. Derived from the returned outcomes, so it can never
- * disagree with what `runChecks` returned.
+ * Where a run of checks happens: the commit hook (`skipFull`), the push hook (`localOnly`), CI (the `CI` variable),
+ * or anywhere else on the machine (`local`). An explicit `where` wins.
  */
-function logGateSummary(params: {
+function whereOf(opts: RunOptions, callerEnv: NodeJS.ProcessEnv): ChecksWhere {
+  if (opts.where !== undefined) return opts.where
+  if (opts.skipFull) return 'hook'
+  if (opts.localOnly) return 'push'
+  const ci = callerEnv.CI
+  return ci !== undefined && ci !== '' && ci !== 'false' ? 'ci' : 'local'
+}
+
+/**
+ * Records one check that did NOT pass, as one `log.checks.notPassed` event: the check, its version, its result and
+ * the reason. Called at the point each terminal state `runOne`/`runChecks` can reach is decided (fail as rejected,
+ * fail as waiting, timeout, the two flavors of `error`, `cancelled` from the SIGINT/SIGTERM path), exactly once per
+ * (spec, attempt) — there is no retry inside this file.
+ *
+ * A pass or a skip returns without writing: a run of thirty checks that all pass would otherwise write thirty
+ * records no reader needs, and the run's one span counts them instead. `version` is this contract's own schema
+ * version (`CHECK_SCHEMA_VERSION`). `reason` is always a short structured code, never a check's own free-text
+ * message — the message may itself echo PR/Issue body content the check was validating.
+ */
+function logCheckNotPassed(params: { spec: CheckSpec; outcome: GateOutcome; reason?: string; sink: CheckSink }): void {
+  if (params.outcome === 'pass' || params.outcome === 'skip') return
+  writeToLog(params.sink, (log) =>
+    log.checks.notPassed({
+      name: params.spec.name,
+      version: String(CHECK_SCHEMA_VERSION),
+      result: params.outcome,
+      ...(params.reason !== undefined ? { reason: params.reason } : {})
+    })
+  )
+}
+
+/**
+ * The ONE `vinaya.checks {where}` span a check run records: where it ran, how many checks executed, passed, failed
+ * and were skipped, and the names of those that did not pass, from the run's start to its end. Derived from the
+ * returned outcomes, so it can never disagree with what `runChecks` returned.
+ */
+function logChecksRan(params: {
   results: CheckOutcome[]
-  durationMs: number
-  logFn: (e: LogEventInput) => void
+  where: ChecksWhere
+  startTime: number
+  sink: CheckSink
 }): void {
   const skipped = params.results.filter((r) => r.status === 'skipped').length
   const passed = params.results.filter((r) => r.status === 'pass').length
-  const failedChecks = params.results.filter((r) => r.status !== 'pass' && r.status !== 'skipped').map((r) => r.name)
-  params.logFn({
-    kind: 'gate',
-    event: 'summary',
-    ran: passed + failedChecks.length,
-    passed,
-    failed: failedChecks.length,
-    skipped,
-    failed_checks: failedChecks,
-    duration_ms: params.durationMs,
-    payload: {}
-  })
-}
-
-/**
- * Hashes exactly what `buildCheckEnv` actually constructs for this check's
- * child process, plus (for a `scope: 'diff'` check genuinely narrowed by
- * `--diff-only`) its sorted changed-file list — the two things that vary the
- * check's real input from one attempt to the next. A `sha256` digest, never
- * the values themselves: `env` may carry a forwarded token
- * (`{ anyOf: [...] }`/`true` declarations pull real caller secrets), and O2
- * forbids leaking one into the log.
- */
-function inputFingerprintFor(spec: CheckSpec, opts: RunOptions, callerEnv: NodeJS.ProcessEnv): string {
-  const env = buildCheckEnv(spec.env, callerEnv)
-  const diffScope =
-    spec.scope === 'diff' && opts.diffOnly && opts.changedFiles !== null ? [...opts.changedFiles].sort() : null
-  const canonical = JSON.stringify({ env, diffScope })
-  return createHash('sha256').update(canonical).digest('hex')
+  const failedNames = params.results.filter((r) => r.status !== 'pass' && r.status !== 'skipped').map((r) => r.name)
+  writeToLog(params.sink, (log) =>
+    log.checks.ran({
+      where: params.where,
+      ran: passed + failedNames.length,
+      passed,
+      failed: failedNames.length,
+      skipped,
+      failedNames,
+      startTime: params.startTime,
+      endTime: Date.now()
+    })
+  )
 }
 
 /**
@@ -265,15 +264,14 @@ const KILL_GRACE_MS = 2000
  * One entry per check currently spawned (registered right after `spawn`,
  * removed right before `runOne` returns) — the SIGINT/SIGTERM handler below
  * reads this to both kill every in-flight check's whole process tree AND
- * also emit its `gate` observation as `cancelled` before this
+ * also record it as `cancelled` before this
  * process exits, since a check killed this way never reaches one of
  * `runOne`'s own `return` statements to log itself.
  */
 type ActiveCheck = {
   spec: CheckSpec
   start: number
-  fingerprint: string
-  logFn: (e: LogEventInput) => void
+  sink: CheckSink
   kill: (signal: NodeJS.Signals) => void
   /** Set by the signal handler right before it logs `cancelled` for this
    * entry — `runOne` reads it back to suppress its OWN normal-completion
@@ -306,20 +304,15 @@ function installSignalForwarding(): void {
       // Marked BEFORE the kill below: `killTree('SIGTERM')` can make the
       // child's own `proc.on('close', …)` in `runOne` resolve before this
       // process actually exits, and `runOne` would otherwise carry on to
-      // its own normal-completion `logGateChecked` call for the SAME
+      // its own normal-completion `logCheckNotPassed` call for the SAME
       // attempt — a real double-emission this flag exists to prevent.
       // `runOne` checks it right before every one of its own remaining log
       // calls and skips when it's already set.
       entry.cancelled = true
-      logGateChecked({
-        spec: entry.spec,
-        outcome: 'cancelled',
-        reason: `signal:${signal}`,
-        durationMs: performance.now() - entry.start,
-        fingerprint: entry.fingerprint,
-        logFn: entry.logFn
-      })
+      logCheckNotPassed({ spec: entry.spec, outcome: 'cancelled', reason: `signal:${signal}`, sink: entry.sink })
     }
+    // The process exits after the grace period below: land what was just written first.
+    for (const entry of activeChecks.values()) void entry.sink.log?.flush?.().catch(() => undefined)
     for (const entry of activeChecks.values()) entry.kill('SIGTERM')
     setTimeout(() => {
       for (const entry of activeChecks.values()) entry.kill('SIGKILL')
@@ -437,21 +430,18 @@ async function runOne(
   spec: CheckSpec,
   timeoutMs: number,
   callerEnv: NodeJS.ProcessEnv,
-  fingerprint: string,
-  logFn: (e: LogEventInput) => void
+  sink: CheckSink
 ): Promise<CheckOutcome> {
   const start = performance.now()
 
   const { errors: envErrors, keys: missingKeys } = missingEnvErrors(spec, callerEnv)
   if (envErrors.length > 0) {
     const durationMs = performance.now() - start
-    logGateChecked({
+    logCheckNotPassed({
       spec,
       outcome: 'unavailable_dependency',
       reason: `missing_env:${missingKeys.join(',')}`,
-      durationMs,
-      fingerprint,
-      logFn
+      sink
     })
     return {
       name: spec.name,
@@ -500,7 +490,7 @@ async function runOne(
 
   installSignalForwarding()
   const activeKey = activeCheckSeq++
-  activeChecks.set(activeKey, { spec, start, fingerprint, logFn, kill: killTree, cancelled: false })
+  activeChecks.set(activeKey, { spec, start, sink, kill: killTree, cancelled: false })
 
   /**
    * True once the child's own PID is confirmed gone — but a process GROUP
@@ -651,7 +641,7 @@ async function runOne(
   const durationMs = performance.now() - start
   const maybeLog = (params: { outcome: GateOutcome; reason?: string }): void => {
     if (wasCancelled) return
-    logGateChecked({ spec, durationMs, fingerprint, logFn, ...params })
+    logCheckNotPassed({ spec, sink, ...params })
   }
 
   if (timedOut) {
@@ -761,7 +751,7 @@ async function runOne(
  * check from the terminal's foreground process group, so Ctrl+C no longer
  * reaches them — is closed by `installSignalForwarding`: every in-flight
  * check is registered in `activeChecks`, and a SIGINT/SIGTERM to the CLI
- * itself logs each as a `gate` `cancelled` observation and forwards the
+ * itself logs each as `cancelled` and forwards the
  * signal to all of them before the CLI exits.
  *
  * Env allowlist, live since the flip: a spawned check's
@@ -777,15 +767,16 @@ async function runOne(
  *
  * Every outcome this function or `runOne` reaches that is NOT a pass or a
  * skip — fail (rejected or waiting), timeout, and the two `error` flavors
- * (`unavailable_dependency`/`invalid_input`) — is recorded as one `gate`
- * `checked` observation (`logGateChecked`) at the exact point the outcome
- * is decided, so the recorded reason always matches real local context
- * rather than being re-derived from the returned `CheckOutcome` after the
- * fact. The whole run is then recorded as one `gate` `summary`
- * (`logGateSummary`), derived from the returned outcomes. This never changes what `runChecks` returns or what `isRunFailed`
- * reads from it, and never modifies a gate decision while adding an
- * observation — the log call is strictly additional to every existing
- * return statement.
+ * (`unavailable_dependency`/`invalid_input`) — is recorded as one
+ * `log.checks.notPassed` event (`logCheckNotPassed`) at the exact point the
+ * outcome is decided, so the recorded reason always matches real local
+ * context rather than being re-derived from the returned `CheckOutcome` after
+ * the fact. The whole run is then recorded as one `vinaya.checks {where}`
+ * span (`logChecksRan`), derived from the returned outcomes. This never
+ * changes what `runChecks` returns or what `isRunFailed` reads from it, and
+ * never modifies a gate decision while adding an observation — the log call
+ * is strictly additional to every existing return statement, and a Log that
+ * cannot be written gives a warning, never a different result.
  */
 export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<CheckOutcome[]> {
   const callerEnv = opts.callerEnv ?? process.env
@@ -796,26 +787,18 @@ export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<C
   const checkCallerEnv = { ...callerEnv }
   if (opts.skipFull) checkCallerEnv.VINAYA_COMMIT_HOOK = '1'
   else delete checkCallerEnv.VINAYA_COMMIT_HOOK
-  // A check run's own `gate` events that name no Issue land in their own
-  // folder file (`GATE_STREAM`), never the shared `none.ndjson`.
-  const logFn = opts.log ?? ((e: LogEventInput) => logWithOptions(e, { unattributedStream: GATE_STREAM }))
-  const runStart = performance.now()
-  // Only for the real default sink — an injected test logger has no
-  // doctrine/repo resolution to warm, and calling this before a burst of
-  // concurrent check completions is precisely what closes the race
-  // `warmupLogSink`'s own doc comment describes.
-  if (opts.log === undefined) warmupLogSink()
+  // The run's records go through the process's run handle: the task run's id inside a task run, the process's own
+  // run id outside one.
+  const sink: CheckSink = { log: opts.log ?? defaultCheckLog() }
+  const where = whereOf(opts, callerEnv)
+  const runStart = Date.now()
   const results: CheckOutcome[] = new Array(specs.length)
-  const fingerprints: string[] = new Array(specs.length)
   const toRun: number[] = []
 
   for (let i = 0; i < specs.length; i++) {
     const spec = specs[i] as CheckSpec
-    const fingerprint = inputFingerprintFor(spec, opts, checkCallerEnv)
-    fingerprints[i] = fingerprint
     const skip = shouldSkip(spec, opts)
     if (skip.skip) {
-      logGateChecked({ spec, outcome: 'skip', reason: skip.reason, durationMs: 0, fingerprint, logFn })
       results[i] = {
         name: spec.name,
         status: 'skipped',
@@ -836,13 +819,7 @@ export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<C
       const idx = toRun[cursor] as number
       cursor += 1
       const spec = specs[idx] as CheckSpec
-      results[idx] = await runOne(
-        spec,
-        spec.timeoutMs ?? opts.defaultTimeoutMs,
-        checkCallerEnv,
-        fingerprints[idx] as string,
-        logFn
-      )
+      results[idx] = await runOne(spec, spec.timeoutMs ?? opts.defaultTimeoutMs, checkCallerEnv, sink)
       notifyComplete(opts.onCheckComplete, results[idx] as CheckOutcome)
     }
   }
@@ -850,6 +827,8 @@ export async function runChecks(specs: CheckSpec[], opts: RunOptions): Promise<C
   const workerCount = Math.max(1, Math.min(opts.parallel, toRun.length))
   await Promise.all(Array.from({ length: workerCount }, worker))
 
-  logGateSummary({ results, durationMs: performance.now() - runStart, logFn })
+  logChecksRan({ results, where, startTime: runStart, sink })
+  // A process that exits right after the run still finds the records in its local copy.
+  await sink.log?.flush?.().catch(() => undefined)
   return results
 }

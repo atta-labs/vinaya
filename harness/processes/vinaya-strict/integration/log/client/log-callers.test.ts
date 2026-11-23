@@ -667,14 +667,6 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
     ]
   },
   {
-    name: 'runChecks — one gate `summary` per run, a `checked` observation per check that did not pass',
-    files: [RUNNER_PATH],
-    requires: [
-      { kind: 'gate', event: 'summary' },
-      { kind: 'gate', event: 'checked' }
-    ]
-  },
-  {
     name: 'EffectExecutor — one final `verified` observation per idempotent external write',
     files: [EFFECTS_PATH],
     requires: [{ kind: 'effect', event: 'verified' }]
@@ -729,6 +721,11 @@ const LOG_COVERAGE_EXEMPTIONS: RequiredEvent[] = [
   { kind: 'dispatch', event: 'dispatch_failed' },
   { kind: 'role_attempt', event: 'attempted' },
   { kind: 'usage', event: 'observed' },
+  // A run of checks is written through the run's Log handle, a `vinaya.checks {where}` span and one not-passed
+  // event per check that did not pass (`SUBJECT_OWNERS.checks`); the earlier `gate` events stay in the schema so a
+  // line stored before that still reads, and nothing emits them.
+  { kind: 'gate', event: 'checked' },
+  { kind: 'gate', event: 'summary' },
   // The Log handle sends a run's alive itself, so the driver's own heartbeat is never written; the event stays in the
   // schema so a line stored before that still reads.
   { kind: 'dev_review_loop', event: 'driver_heartbeat' },
@@ -881,7 +878,9 @@ const FAMILY_OWNERS: Record<string, readonly string[]> = {
     DEV_REVIEW_LOOP_ROUND_LOOP_PATH,
     DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH
   ],
-  gate: [RUNNER_PATH],
+  // The check runner writes a run of checks through the run's Log handle (`SUBJECT_OWNERS.checks`); the schema keeps
+  // the family so an old line still parses.
+  gate: [],
   effect: [EFFECTS_PATH],
   handoff: [DEV_REVIEW_LOOP_PAUSE_RESUME_PATH],
   custom: [LOG_CUSTOM_PATH],
@@ -1069,7 +1068,12 @@ const SUBJECT_OWNERS: Record<string, readonly string[]> = {
   // The change: saved, pushed, opened, conflicted, recovered, and the merge or close from the run's own watch of its
   // pull request; the earlier `storage_push`, `ready_push`, `pr_opened`, `conflict_reentry` and
   // `unpushed_work_resume` lines are never written for them.
-  change: [DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH]
+  change: [DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH],
+  // Checks: a run of the registered checks (its span and each check that did not pass) from the check runner, and the
+  // loop's own local checks, CI read and failed-test rerun from the driver lifecycle module; the earlier `gate`
+  // `checked` and `summary` lines and the `local_checks_run`, `ci_result_read` and `failed_tests_rerun` lines are never
+  // written for them.
+  checks: [RUNNER_PATH, DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH]
 }
 
 /** The functions of the round and phase subject on the run's Log handle, by the object that holds them. */
@@ -1084,6 +1088,9 @@ const REVIEW_FUNCTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
   checks: new Set(['read']),
   agent: new Set(['confidenceStated'])
 }
+
+/** The functions of the checks subject on the run's Log handle: a run of checks, one not passed, and the loop's own. */
+const CHECKS_FUNCTIONS: ReadonlySet<string> = new Set(['ran', 'notPassed', 'local', 'ci', 'rerun'])
 
 /** The functions of the change subject on the run's Log handle. */
 const CHANGE_FUNCTIONS: ReadonlySet<string> = new Set([
@@ -1144,6 +1151,13 @@ function subjectWritesOf(rel: string, source: string): SubjectWrite[] {
         // `<handle>.review.verdicts(...)`, `<handle>.checks.read(...)` and `<handle>.agent.confidenceStated(...)`.
         if (ts.isPropertyAccessExpression(object) && REVIEW_FUNCTIONS[object.name.text]?.has(callee.name.text))
           found.add('review')
+        // `<handle>.checks.ran(...)`, `.notPassed(...)`, `.local(...)`, `.ci(...)` and `.rerun(...)`.
+        if (
+          CHECKS_FUNCTIONS.has(callee.name.text) &&
+          ts.isPropertyAccessExpression(object) &&
+          object.name.text === 'checks'
+        )
+          found.add('checks')
         // `<handle>.change.opened(...)` and the change's other functions.
         if (
           CHANGE_FUNCTIONS.has(callee.name.text) &&
@@ -1249,6 +1263,23 @@ describe('log-callers — agents and usage are written through the run handle, o
     expect(subjectWritesOf('harness/kernel/x.ts', source).map((w) => w.subject)).toEqual(['change', 'review', 'round'])
   })
 
+  it('finds a run of checks, a check not passed and the loop checks by their functions on the handle', () => {
+    const source = [
+      'export function a(log: any) {',
+      '  log.checks.ran({})',
+      '  log.checks.notPassed({})',
+      '  log.checks.local({})',
+      '  log.checks.ci({})',
+      '  log.checks.rerun({})',
+      '}'
+    ].join('\n')
+    expect(subjectWritesOf('harness/kernel/x.ts', source).map((w) => w.subject)).toEqual(['checks'])
+  })
+
+  it('names the owners of the checks subject: the check runner and the driver lifecycle module', () => {
+    expect(SUBJECT_OWNERS.checks).toEqual([RUNNER_PATH, DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH])
+  })
+
   it('names the owner of the round, review and change subjects', () => {
     for (const subject of ['round', 'review', 'change'])
       expect(SUBJECT_OWNERS[subject]).toEqual([DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH])
@@ -1278,14 +1309,14 @@ describe('log-callers — each family is emitted only from its owning files', ()
   })
 
   it('a row naming a file that no longer emits its family fails', () => {
-    const owners = { ...FAMILY_OWNERS, gate: [RUNNER_PATH, EFFECTS_PATH] }
+    const owners = { ...FAMILY_OWNERS, gate: [EFFECTS_PATH] }
     expect(ownershipViolations(owners, emissions, existing)).toEqual([
       `gate names ${EFFECTS_PATH}, which no longer emits it`
     ])
   })
 
   it('a row naming a file that does not exist fails', () => {
-    const owners = { ...FAMILY_OWNERS, gate: [RUNNER_PATH, 'apps/cli/src/lib/not-a-file.ts'] }
+    const owners = { ...FAMILY_OWNERS, gate: ['apps/cli/src/lib/not-a-file.ts'] }
     expect(ownershipViolations(owners, emissions, existing)).toEqual([
       'gate names apps/cli/src/lib/not-a-file.ts, which does not exist'
     ])

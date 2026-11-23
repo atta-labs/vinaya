@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { LogSink, LogSinkDeps } from '../../../../../../kernel/log/log-sink'
-import { createVinayaLogSink } from '../../../log/log-sink-factory'
+import { createRunRecorder } from '../../../../../../kernel/log/run-recorder'
 import type { CheckSpec } from '../../../../../../kernel/gates/checks/contract'
 import { runChecks } from '../../../../../../kernel/gates/checks/runner'
 
@@ -15,105 +14,98 @@ function fullScope(overrides: Partial<CheckSpec> & Pick<CheckSpec, 'name' | 'run
 }
 
 const BASE_OPTS = { parallel: 1, diffOnly: false, changedFiles: null, defaultTimeoutMs: 5000 }
+const PATH_ONLY = { PATH: process.env.PATH as string }
 
-// Same delay `log-sink.test.ts` uses — the sink's own write is a fire-and-
-// forget `.then()` chain (a `resolveRepo()` read races the JSON write).
-const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 150))
-
-function sinkFor(dir: string, env: NodeJS.ProcessEnv): LogSink {
-  const deps: Partial<LogSinkDeps> = {
-    outboxRoot: () => join(dir, 'outbox'),
-    // [task-files-v1] 5: `log()` now resolves its destination through
-    // `resolveLogDestination` rather than always writing under
-    // `outboxRoot()` — pinned to a folder matching `readGateLines`'s own
-    // expected layout below.
-    resolveLogDestination: () => ({ kind: 'folder', folder: join(dir, 'outbox') }),
+/** One process's own run handle over the shared local copy, as a real hook, CLI or CI process each opens its own. */
+function processWith(dir: string, runId: string) {
+  const recorder = createRunRecorder({
+    runId: () => runId,
+    workRef: () => '900',
+    repository: () => 'atta-labs/vinaya',
+    place: (repository) => ({ folder: join(dir, 'logs'), repository }),
+    processIdentity: () => undefined,
+    sender: () => ({ request: () => {}, remember: () => {}, drain: async () => {} }),
     home: () => dir,
-    hostname: () => 'test-host',
-    cwd: () => dir,
-    now: () => new Date('2026-09-15T00:00:00.000Z'),
-    env: () => env,
-    resolveRepo: () => Promise.resolve({ owner: 'atta-labs', repo: 'vinaya' }),
-    vinayaVersion: () => '0.0.0-test',
-    stderr: () => {}
-  }
-  return createVinayaLogSink(deps)
+    cwd: () => mkdtempSync(join(tmpdir(), 'vinaya-checks-root-')),
+    onError: () => {}
+  })
+  const handle = recorder.handle()
+  if (handle === undefined) throw new Error('the run handle did not open')
+  return { checks: handle.checks, flush: () => handle.flush() }
 }
 
-function readGateLines(dir: string, issue: string): Array<Record<string, unknown>> {
-  const path = join(dir, 'outbox', 'atta-labs-vinaya', `${issue}.ndjson`)
-  return readFileSync(path, 'utf8')
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map((l) => JSON.parse(l))
-    .filter((e) => e.kind === 'gate')
+/** Every `vinaya.checks` span in the local copy, with its run's trace and its attributes by name. */
+function checkSpans(dir: string): Array<{ name: string; traceId: string; attributes: Record<string, unknown> }> {
+  const folder = join(dir, 'logs', 'atta-labs-vinaya')
+  return readdirSync(folder)
+    .filter((name) => name.endsWith('.traces.jsonl'))
+    .flatMap((name) => readFileSync(join(folder, name), 'utf8').trim().split('\n'))
+    .map((line) => JSON.parse(line))
+    .flatMap((doc) => doc.resourceSpans.flatMap((g: any) => g.scopeSpans.flatMap((s: any) => s.spans)))
+    .filter((span: any) => span.name.startsWith('vinaya.checks'))
+    .map((span: any) => ({
+      name: span.name,
+      traceId: span.traceId,
+      attributes: Object.fromEntries(
+        span.attributes.map((a: any) => [a.key, a.value.stringValue ?? Number(a.value.intValue)])
+      )
+    }))
 }
 
 /**
- * Hook, CLI and CI are distinguished ONLY by
- * `meta.host` (derived from the real environment `hostFromEnv` reads,
- * `harness/kernel/log/log-sink.ts`), never by anything `runner.ts` invents
- * itself. Each caller here is its own `createLogSink` instance — the same
- * shape a real hook process, a real interactive CLI process and a real CI
- * process each are (three separate `vinaya` invocations, never one process
- * wearing three hats) — writing into the SAME outbox file, the way three
- * real separate check-runner invocations against the same task actually do.
+ * A hook, a command line and CI run are told apart by `where` on the one span a run writes, never by anything the
+ * runner invents on its own. Each caller here opens its own handle under its own run id — the shape three separate
+ * `vinaya` invocations have — over the same local copy.
  */
-describe('runChecks — gate correlation across hook/CLI/CI callers', () => {
-  it('one gate line per run when every check passes — a summary, never one line per check', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'vinaya-gate-correlation-'))
-    const sink = sinkFor(dir, { VINAYA_TASK: '900' })
+describe('runChecks — a run of checks across hook/CLI/CI callers', () => {
+  it('one span per run when every check passes — a count, never one record per check', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-checks-correlation-'))
     const specs = [fullScope({ name: 'a', run: PASSING }), fullScope({ name: 'b', run: PASSING })]
-    await runChecks(specs, { ...BASE_OPTS, log: sink.log })
-    await flush()
-    const lines = readGateLines(dir, '900')
-    expect(lines).toHaveLength(1)
-    expect(lines[0]).toMatchObject({ event: 'summary', ran: 2, passed: 2, failed: 0, skipped: 0, failed_checks: [] })
+    await runChecks(specs, { ...BASE_OPTS, callerEnv: PATH_ONLY, log: processWith(dir, 'run-plain') })
+    const spans = checkSpans(dir)
+    expect(spans).toHaveLength(1)
+    expect(spans[0]).toMatchObject({
+      name: 'vinaya.checks local',
+      attributes: {
+        'vinaya.checks.where': 'local',
+        'vinaya.checks.ran': 2,
+        'vinaya.checks.passed': 2,
+        'vinaya.checks.failed': 0,
+        'vinaya.checks.skipped': 0
+      }
+    })
   })
 
-  it('a hook-invoked run reads meta.host: "hook" — never collapsed into plain "cli"', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'vinaya-gate-correlation-'))
-    const sink = sinkFor(dir, { VINAYA_TASK: '901', VINAYA_HOST: 'hook' })
-    await runChecks([fullScope({ name: 'a', run: PASSING })], { ...BASE_OPTS, log: sink.log })
-    await flush()
-    const [line] = readGateLines(dir, '901')
-    expect((line?.meta as Record<string, unknown>)?.host).toBe('hook')
+  it('the commit hook reads where "hook", the push hook "push", CI "ci" — never collapsed into plain "local"', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-checks-correlation-'))
+    const spec = [fullScope({ name: 'a', run: PASSING })]
+    await runChecks(spec, { ...BASE_OPTS, skipFull: true, callerEnv: PATH_ONLY, log: processWith(dir, 'run-hook') })
+    await runChecks(spec, { ...BASE_OPTS, localOnly: true, callerEnv: PATH_ONLY, log: processWith(dir, 'run-push') })
+    await runChecks(spec, {
+      ...BASE_OPTS,
+      callerEnv: { ...PATH_ONLY, CI: 'true' },
+      log: processWith(dir, 'run-ci')
+    })
+    await runChecks(spec, { ...BASE_OPTS, callerEnv: PATH_ONLY, log: processWith(dir, 'run-local') })
+    expect(
+      checkSpans(dir)
+        .map((s) => s.attributes['vinaya.checks.where'])
+        .sort()
+    ).toEqual(['ci', 'hook', 'local', 'push'])
   })
 
-  it('a CI-invoked run (GITHUB_ACTIONS set) reads meta.host: "ci"', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'vinaya-gate-correlation-'))
-    const sink = sinkFor(dir, { VINAYA_TASK: '902', GITHUB_ACTIONS: 'true' })
-    await runChecks([fullScope({ name: 'a', run: PASSING })], { ...BASE_OPTS, log: sink.log })
-    await flush()
-    const [line] = readGateLines(dir, '902')
-    expect((line?.meta as Record<string, unknown>)?.host).toBe('ci')
-  })
-
-  it('a plain interactive run reads meta.host: "cli"', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'vinaya-gate-correlation-'))
-    const sink = sinkFor(dir, { VINAYA_TASK: '903' })
-    await runChecks([fullScope({ name: 'a', run: PASSING })], { ...BASE_OPTS, log: sink.log })
-    await flush()
-    const [line] = readGateLines(dir, '903')
-    expect((line?.meta as Record<string, unknown>)?.host).toBe('cli')
-  })
-
-  it('hook then CI on the SAME check name produce two independently-attributed lines, never one merged/deduped line', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'vinaya-gate-correlation-'))
-    const hookSink = sinkFor(dir, { VINAYA_TASK: '904', VINAYA_HOST: 'hook' })
-    const ciSink = sinkFor(dir, { VINAYA_TASK: '904', GITHUB_ACTIONS: 'true' })
-    const spec = fullScope({ name: 'shared-check', run: PASSING })
-    await runChecks([spec], { ...BASE_OPTS, log: hookSink.log })
-    await runChecks([spec], { ...BASE_OPTS, log: ciSink.log })
-    await flush()
-    const lines = readGateLines(dir, '904')
-    // one summary per run, one run per caller
-    expect(lines).toHaveLength(2)
-    const hosts = lines.map((l) => (l.meta as Record<string, unknown>).host).sort()
-    expect(hosts).toEqual(['ci', 'hook'])
-    // Each caller's own run_id stays its own — never coalesced into one.
-    const runIds = new Set(lines.map((l) => (l.meta as Record<string, unknown>).run_id))
-    expect(runIds.size).toBe(2)
+  it('hook then CI on the SAME check name produce two independently-attributed spans, never one merged span', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-checks-correlation-'))
+    const spec = [fullScope({ name: 'shared-check', run: PASSING })]
+    await runChecks(spec, { ...BASE_OPTS, skipFull: true, callerEnv: PATH_ONLY, log: processWith(dir, 'run-hook') })
+    await runChecks(spec, {
+      ...BASE_OPTS,
+      callerEnv: { ...PATH_ONLY, CI: 'true' },
+      log: processWith(dir, 'run-ci')
+    })
+    const spans = checkSpans(dir)
+    expect(spans).toHaveLength(2)
+    // Each caller's own run stays its own — never coalesced into one trace.
+    expect(new Set(spans.map((s) => s.traceId)).size).toBe(2)
   })
 })

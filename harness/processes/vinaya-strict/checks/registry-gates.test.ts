@@ -201,7 +201,7 @@ describe('registry-gates G7 — anything that can block or write to the forge re
 
   it("loads exactly today's thirteen path-to-reason pairs from the committed data file", () => {
     const checkBin =
-      'a check bin: it runs only as a child of `vinaya check`, whose runner records one gate event per attempt, so no import of the sink is needed'
+      'a check bin: it runs only as a child of `vinaya check`, whose runner writes each check run through the run Log handle, so no import of the Log is needed'
     const script =
       'a standalone script outside the CLI package: the import resolution cannot follow it and no CLI source imports it; invoked directly, it records nothing of its own'
     expect(readG7Exemptions(repoRoot)).toEqual({
@@ -211,7 +211,7 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       'harness/processes/vinaya-strict/checks/bin/check-main-branch-refusal.ts': checkBin,
       'harness/processes/vinaya-strict/checks/bin/check-token-collection-wired.ts': checkBin,
       'harness/kernel/gates/checks/resolver.ts':
-        'the pure step that decides which checks `vinaya check` runs; the runner it feeds records each run and the invocation records its own operation at exit',
+        'the pure step that decides which checks `vinaya check` runs; the runner it feeds writes each run through the run Log handle and the invocation records its own operation at exit',
       'harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/verify-task.ts': script,
@@ -334,7 +334,7 @@ describe('registry-gates G7 — anything that can block or write to the forge re
     }
   })
 
-  it("counts a file that writes through the run's Log handle as a producer, so a gate reaching only the handle passes", () => {
+  it('counts a file that writes through the run Log handle as a producer, so a gate reaching only the handle passes', () => {
     const root = initFixture('registry-gates-g7-run-handle')
     const checkBin = 'harness/processes/vinaya-strict/checks/bin/check-demo.ts'
     const forgeWriter = 'harness/processes/vinaya-strict/forge-demo.ts'

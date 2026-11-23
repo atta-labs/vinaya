@@ -138,7 +138,7 @@ const listOf = (value: unknown): string[] => (Array.isArray(value) ? value.map(S
  * Writes a run, round, review, gate-read or change event through the run's Log handle, with the function that stands
  * for it: `run.started`, `run.ended`, `run.paused`, `run.resumed`, `run.cancelled`, `run.retried`, `run.stopRuleMet`
  * and `run.exited`; `round.started`, `round.ended` and `phase.ended`; `review.verdicts`, `review.findingsCompared`,
- * `checks.read` and `agent.confidenceStated`; `change.saved`, `change.pushed`, `change.opened`,
+ * `checks.read`, `checks.local`, `checks.rerun`, `checks.ci` and `agent.confidenceStated`; `change.saved`, `change.pushed`, `change.opened`,
  * `change.conflicted` and `change.recovered`. Returns `true` when the event is one of these, and no earlier-format
  * line is then written for it.
  * The handle writes the start once per run, whatever process asks, and a process that did not start a span ends it
@@ -277,6 +277,40 @@ export function writeRunLifecycleEvent(
           ...(confidence.reason === undefined ? {} : { reason: confidence.reason }),
           afterExtraTurn: e.extra_turn_spent === true
         })
+      break
+    }
+    case 'local_checks_run': {
+      const endTime = Date.now()
+      log.checks.local({
+        passed: e.passed === true,
+        startTime: endTime - Math.max(0, numberOf(e.wall_ms) ?? 0),
+        endTime
+      })
+      break
+    }
+    case 'failed_tests_rerun': {
+      const endTime = Date.now()
+      log.checks.rerun({
+        failed: numberOf(e.failed_files) ?? 0,
+        affected: numberOf(e.affected_files) ?? 0,
+        total: numberOf(e.full_count) ?? 0,
+        startTime: endTime,
+        endTime
+      })
+      break
+    }
+    case 'ci_result_read': {
+      const conclusion = textOf(e.conclusion)
+      if (conclusion !== 'green' && conclusion !== 'red' && conclusion !== 'pending' && conclusion !== 'skipped') break
+      const endTime = Date.now()
+      const waitMs = Math.max(0, numberOf(e.wait_ms) ?? 0)
+      log.checks.ci({
+        result: conclusion,
+        failing: listOf(e.failing_checks),
+        waitMs,
+        startTime: endTime - waitMs,
+        endTime
+      })
       break
     }
     case 'verdicts_read': {
