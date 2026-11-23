@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -13,9 +15,37 @@ import {
 import type { AgentStep } from '../adapters/agents/agent-stream.js'
 import type { LocalCopyPlace, LocalCopySender } from './local-copy-writer.js'
 import { currentRunId, processLocalCopyPlace, processLocalCopySender, registerLogDrain } from './log-sink.js'
+import { registeredCliVersion } from './run-identity.js'
 
 /** Where a run's local copy is kept. */
 export type LocalCopyTarget = LocalCopyPlace
+
+/** What ran the run, as the process knows it; a part it does not know is absent, and is never written. */
+export type RunIdentityParts = {
+  runnerName?: string
+  runnerVersion?: string
+  cliVersion?: string
+  flowId?: string
+  flowVersion?: string
+  processDigest?: string
+}
+
+/** The effort an agent turn records when its run named none. */
+export const DEFAULT_TURN_EFFORT = 'medium'
+
+/** The repository's settings file, read from the run's working directory. */
+const SETTINGS_FILE = 'vinaya.config.json'
+
+/** The SHA-256, in hex, of the settings file's bytes as the run reads them; `undefined` when there is no such file. */
+function settingsDigestOf(root: string): string | undefined {
+  try {
+    return createHash('sha256')
+      .update(readFileSync(join(root, SETTINGS_FILE)))
+      .digest('hex')
+  } catch {
+    return undefined
+  }
+}
 
 export type RunRecorderDeps = {
   /** The id every record of this process's run carries: the one the sink stamps as `meta.run_id`. */
@@ -28,6 +58,8 @@ export type RunRecorderDeps = {
   place: (repository: string | undefined) => LocalCopyPlace | undefined
   /** The name and version of the process the run is governed by, carried on every record. */
   processIdentity: () => { name: string; version: string } | undefined
+  /** What ran the run, written on the resource of every record; absent parts are not written. */
+  runIdentity?: () => RunIdentityParts
   /** Sends the local copy to the OpenTelemetry address; the recorder asks after each turn ends and at the drain. */
   sender: () => Pick<LocalCopySender, 'request' | 'remember' | 'drain'>
   home: () => string
@@ -74,6 +106,8 @@ export type AgentTurnStart = {
   repository?: string
   /** The work this turn belongs to; the process's own when absent. */
   workRef?: string
+  /** The effort the agent was launched with; the run's own when absent, `medium` when the run named none. */
+  effort?: string
   /** Narrates this turn's records as they are written; the process's own narrator when absent. */
   narrate?: AgentRecordNarrator
 }
@@ -128,7 +162,7 @@ export function createRunRecorder(deps: RunRecorderDeps) {
   }
 
   /** The run and repository the process named for its own records, and who narrates its agent records. */
-  const bound: { runId?: string; repository?: string; narrate?: AgentRecordNarrator } = {}
+  const bound: { runId?: string; repository?: string; narrate?: AgentRecordNarrator; effort?: string } = {}
   /** Who narrates a turn's records: the narrator its start named, else the process's own. */
   const narrators = new Map<string, AgentRecordNarrator | undefined>()
   /** Set while a turn's start is written, which emits the started event before the span's id is known. */
@@ -164,6 +198,17 @@ export function createRunRecorder(deps: RunRecorderDeps) {
     const home = deps.home()
     const workRef = workRefOverride ?? deps.workRef()
     const identity = deps.processIdentity()
+    const parts = deps.runIdentity?.() ?? {}
+    const settingsDigest = settingsDigestOf(deps.cwd())
+    const runIdentity = {
+      ...(parts.runnerName ? { runnerName: parts.runnerName } : {}),
+      ...(parts.runnerVersion ? { runnerVersion: parts.runnerVersion } : {}),
+      ...(parts.cliVersion ? { cliVersion: parts.cliVersion } : {}),
+      ...(parts.flowId ? { flowId: parts.flowId } : {}),
+      ...(parts.flowVersion ? { flowVersion: parts.flowVersion } : {}),
+      ...(parts.processDigest ? { processDigest: parts.processDigest } : {}),
+      ...(settingsDigest === undefined ? {} : { settingsDigest })
+    }
     const log = (deps.connect ?? connect)({
       runId,
       ...(repo === undefined ? {} : { repository: repo }),
@@ -173,6 +218,7 @@ export function createRunRecorder(deps: RunRecorderDeps) {
       home,
       provenance: 'governed',
       trust: 'parent_attributed',
+      identity: runIdentity,
       ...(identity === undefined ? {} : { processName: identity.name, serviceVersion: identity.version }),
       ...(workRef === undefined ? {} : { workRef }),
       // The agent's records are narrated as the handle writes them: the started event, and the span's end.
@@ -265,10 +311,11 @@ export function createRunRecorder(deps: RunRecorderDeps) {
 
   return {
     /** Names the run and repository this process's records belong to, for every call that names neither. */
-    bind(run: { runId?: string; repository?: string; narrate?: AgentRecordNarrator }): void {
+    bind(run: { runId?: string; repository?: string; narrate?: AgentRecordNarrator; effort?: string }): void {
       bound.runId = run.runId
       bound.repository = run.repository
       bound.narrate = run.narrate
+      bound.effort = run.effort
     },
     /** The run's handle, for every subject the harness writes through it; `undefined` while recording is off. */
     handle(runId: string = runIdNow(), repository?: string): LogHandle | undefined {
@@ -295,6 +342,7 @@ export function createRunRecorder(deps: RunRecorderDeps) {
             ...(start.codingAgent === undefined ? {} : { codingAgent: start.codingAgent }),
             ...(start.codingAgentVersion === undefined ? {} : { codingAgentVersion: start.codingAgentVersion }),
             ...(start.round === undefined || start.round === null ? {} : { round: start.round }),
+            effort: start.effort ?? bound.effort ?? DEFAULT_TURN_EFFORT,
             ...(start.key === undefined ? {} : { key: `agent:${start.key}` }),
             ...(start.startTime === undefined ? {} : { startTime: start.startTime })
           }) ?? undefined
@@ -402,6 +450,21 @@ function identityFromEnvironment(): { name: string; version: string } | undefine
   return name && version ? { name, version } : undefined
 }
 
+/** What ran the run, as the runner handed it down in its environment, and the program's own version. */
+function runIdentityFromEnvironment(): RunIdentityParts {
+  const { VINAYA_RUNNER_ID, VINAYA_RUNNER_VERSION, VINAYA_FLOW, VINAYA_FLOW_VERSION, VINAYA_PROCESS_DIGEST } =
+    process.env
+  const cliVersion = registeredCliVersion()
+  return {
+    ...(VINAYA_RUNNER_ID ? { runnerName: VINAYA_RUNNER_ID } : {}),
+    ...(VINAYA_RUNNER_VERSION ? { runnerVersion: VINAYA_RUNNER_VERSION } : {}),
+    ...(cliVersion === undefined ? {} : { cliVersion }),
+    ...(VINAYA_FLOW ? { flowId: VINAYA_FLOW } : {}),
+    ...(VINAYA_FLOW_VERSION ? { flowVersion: VINAYA_FLOW_VERSION } : {}),
+    ...(VINAYA_PROCESS_DIGEST ? { processDigest: VINAYA_PROCESS_DIGEST } : {})
+  }
+}
+
 /** This process's one recorder, for the run the default sink records. */
 export function runRecorder(): RunRecorder {
   shared ??= createRunRecorder({
@@ -410,6 +473,7 @@ export function runRecorder(): RunRecorder {
     repository: () => process.env.VINAYA_REPO || undefined,
     place: processLocalCopyPlace,
     processIdentity: identityFromEnvironment,
+    runIdentity: runIdentityFromEnvironment,
     sender: processLocalCopySender,
     home: () => homedir(),
     cwd: () => process.cwd(),

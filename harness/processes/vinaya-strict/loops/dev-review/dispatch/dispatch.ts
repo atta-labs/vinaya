@@ -4404,6 +4404,7 @@ export async function dispatchRole(
       codingAgent: agent,
       ...(opts.model === undefined ? {} : { model: opts.model }),
       ...(opts.round === undefined ? {} : { round: opts.round }),
+      effort: opts.effort ?? DEFAULT_DISPATCH_EFFORT,
       key: effectId,
       runId,
       ...(repository === undefined ? {} : { repository }),

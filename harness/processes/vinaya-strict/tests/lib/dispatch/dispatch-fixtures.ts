@@ -332,6 +332,10 @@ export type RecordedAgentTurn = {
   resetAt?: string
   round?: number
   workRef?: string
+  /** The effort the agent was launched with, as the span records it. */
+  effort?: string
+  /** The resource the span's record carries: what ran the run. */
+  resource: Record<string, unknown>
   usage: { input?: number; output?: number; cacheRead?: number; unknownReason?: string }
   steps: { tool: string; errorType?: string }[]
 }
@@ -370,6 +374,7 @@ export function agentTurnsOf(logFolder: string, runId?: string): RecordedAgentTu
     const a = agent.attributes
     const turn: RecordedAgentTurn = {
       seat: asText(a[ATTRIBUTE_NAMES.agentName]) ?? '',
+      resource: agent.resource as Record<string, unknown>,
       usage: {},
       steps: spans
         .filter((span) => span.parentSpanId === agent.spanId && span.name.startsWith(`${SPAN_NAMES.step} `))
@@ -391,6 +396,7 @@ export function agentTurnsOf(logFolder: string, runId?: string): RecordedAgentTu
     set('resetAt', asText(a[ATTRIBUTE_NAMES.agentResetAt]))
     set('round', asNumber(a[ATTRIBUTE_NAMES.roundNumber]))
     set('workRef', asText(a[ATTRIBUTE_NAMES.workRef]))
+    set('effort', asText(a[ATTRIBUTE_NAMES.agentEffort]))
     const input = asNumber(a[ATTRIBUTE_NAMES.usageInputTokens])
     const output = asNumber(a[ATTRIBUTE_NAMES.usageOutputTokens])
     const cacheRead = asNumber(a[ATTRIBUTE_NAMES.usageCacheReadInputTokens])

@@ -16,6 +16,7 @@
  */
 
 import type { ProcessIntegration } from '../../../../kernel/dev-process-socket/contract/process-integration.js'
+import { registerCliVersionSource } from '../../../../kernel/log/run-identity.js'
 import { coreCheckRegistry } from '../../checks/registry.js'
 import { vinayaConfigProvider } from '../config/compose.js'
 
@@ -24,6 +25,9 @@ type PoliciesModule = typeof import('../policies/vinaya-policies.js')
 type ConfigSectionModule = typeof import('../config/vinaya-config-section.js')
 
 const logSinkFactory = (): LogSinkFactoryModule => require('../log/log-sink-factory.js') as LogSinkFactoryModule
+// The run recorder, in the kernel, reads the program's own version through this reader; it loads the module only
+// when a run's handle opens.
+registerCliVersionSource(() => logSinkFactory().readVinayaVersion())
 // The policies and the configuration section load when called: a composition root that fills only the Log,
 // configuration and check slots (the command line at start) loads neither.
 const policies = (): PoliciesModule => require('../policies/vinaya-policies.js') as PoliciesModule
