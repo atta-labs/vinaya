@@ -576,7 +576,7 @@ describe('runChecks — what a run records in the Log', () => {
     const specs = Array.from({ length: 30 }, (_, i) =>
       fullScope({ name: `check-${i}`, run: i === 3 || i === 17 ? FAILING : PASSING })
     )
-    await runChecks(specs, { ...BASE_OPTS, parallel: 8, log })
+    await runChecks(specs, { ...BASE_OPTS, parallel: 8, where: 'local', log })
     expect(ran).toHaveLength(1)
     expect(ran[0]).toMatchObject({
       where: 'local',
