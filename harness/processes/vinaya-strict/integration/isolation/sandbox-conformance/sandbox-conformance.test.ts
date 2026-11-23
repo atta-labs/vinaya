@@ -142,6 +142,48 @@ describe('sandbox mount setup retry', () => {
     expect(calls).toBe(2)
   })
 
+  it('retries a read-only remount whose destination vanished once, whatever the reason says', async () => {
+    const outputs = [
+      "bwrap: Can't mount tmpfs on /newroot/cache/.aws: No such file or directory\n",
+      'bwrap: Can\'t remount readonly on /newroot/tmp/.agents: Unable to find "/newroot/tmp/.agents" in mount table\n',
+      'bwrap: Can\'t remount readonly on /newroot/tmp/.aws: Unable to remount destination "/newroot/tmp/.aws" with correct flags: No such file or directory\n'
+    ]
+    for (const output of outputs) {
+      let calls = 0
+      const success = { exitCode: 0, output: 'command ran' }
+      expect(await retrySandboxMountSetup(async () => (++calls === 1 ? { exitCode: 1, output } : success))).toEqual(
+        success
+      )
+      expect(calls).toBe(2)
+    }
+  })
+
+  it('does not retry a mount line followed by a second line of output', async () => {
+    const result = {
+      exitCode: 1,
+      output:
+        'bwrap: Can\'t remount readonly on /newroot/tmp/.aws: Unable to remount destination "/newroot/tmp/.aws" with correct flags: No such file or directory\nsecond line\n'
+    }
+    let calls = 0
+    expect(
+      await retrySandboxMountSetup(async () => {
+        calls++
+        return result
+      })
+    ).toEqual(result)
+    expect(calls).toBe(1)
+  })
+
+  it('does not retry a mount line about a path outside the sandbox root', async () => {
+    const result = { exitCode: 1, output: "bwrap: Can't mount tmpfs on /tmp/x: No such file or directory\n" }
+    let calls = 0
+    await retrySandboxMountSetup(async () => {
+      calls++
+      return result
+    })
+    expect(calls).toBe(1)
+  })
+
   it('still fails when mount setup fails twice', async () => {
     let calls = 0
     expect(
