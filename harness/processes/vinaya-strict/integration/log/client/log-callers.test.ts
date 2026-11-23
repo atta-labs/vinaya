@@ -1059,8 +1059,44 @@ const SUBJECT_OWNERS: Record<string, readonly string[]> = {
   // from the one driver lifecycle module; the earlier `loop_started`, `journal_finalized`, `paused`, `resumed`,
   // `cancelled`, `infrastructure_retry`, `stop_condition_met`, `driver_heartbeat` and `driver_exited` lines are
   // never written for them (`FAMILY_OWNERS` still names who builds those events, as data).
-  run: [DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH]
+  run: [DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH],
+  // A run's rounds and phases: each round one `vinaya.round {n}` span, each phase's time; the earlier `round_started`,
+  // `round_ended` and `phase_time` lines are never written for them.
+  round: [DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH],
+  // A round's review, its gate read and its stated confidence; the earlier `verdicts_read`, `findings_compared` and
+  // `gate_result_read` lines are never written for them.
+  review: [DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH],
+  // The change: saved, pushed, opened, conflicted, recovered, and the merge or close from the run's own watch of its
+  // pull request; the earlier `storage_push`, `ready_push`, `pr_opened`, `conflict_reentry` and
+  // `unpushed_work_resume` lines are never written for them.
+  change: [DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH]
 }
+
+/** The functions of the round and phase subject on the run's Log handle, by the object that holds them. */
+const ROUND_FUNCTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
+  round: new Set(['started', 'ended']),
+  phase: new Set(['ended'])
+}
+
+/** The functions of the review subject (the review, the checks read, the stated confidence), by their object. */
+const REVIEW_FUNCTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
+  review: new Set(['verdicts', 'findingsCompared']),
+  checks: new Set(['read']),
+  agent: new Set(['confidenceStated'])
+}
+
+/** The functions of the change subject on the run's Log handle. */
+const CHANGE_FUNCTIONS: ReadonlySet<string> = new Set([
+  'saved',
+  'pushed',
+  'opened',
+  'conflicted',
+  'recovered',
+  'merged',
+  'closed',
+  'reverted',
+  'incident'
+])
 
 /** The functions of the run subject on the run's Log handle. */
 const RUN_FUNCTIONS: ReadonlySet<string> = new Set([
@@ -1102,6 +1138,19 @@ function subjectWritesOf(rel: string, source: string): SubjectWrite[] {
         // `<handle>.run.started(...)` and the run's other functions record its lifecycle.
         if (RUN_FUNCTIONS.has(callee.name.text) && ts.isPropertyAccessExpression(object) && object.name.text === 'run')
           found.add('run')
+        // `<handle>.round.started(...)`, `<handle>.round.ended(...)` and `<handle>.phase.ended(...)`.
+        if (ts.isPropertyAccessExpression(object) && ROUND_FUNCTIONS[object.name.text]?.has(callee.name.text))
+          found.add('round')
+        // `<handle>.review.verdicts(...)`, `<handle>.checks.read(...)` and `<handle>.agent.confidenceStated(...)`.
+        if (ts.isPropertyAccessExpression(object) && REVIEW_FUNCTIONS[object.name.text]?.has(callee.name.text))
+          found.add('review')
+        // `<handle>.change.opened(...)` and the change's other functions.
+        if (
+          CHANGE_FUNCTIONS.has(callee.name.text) &&
+          ts.isPropertyAccessExpression(object) &&
+          object.name.text === 'change'
+        )
+          found.add('change')
         // `<turn>.usage(...)` and `<handle>.usage.recorded(...)` record tokens.
         if (callee.name.text === 'usage') found.add('usage')
         if (callee.name.text === 'recorded' && ts.isPropertyAccessExpression(object) && object.name.text === 'usage')
@@ -1184,6 +1233,25 @@ describe('log-callers — agents and usage are written through the run handle, o
       "export function a() { const turn = runRecorder().turn({ seat: 'developer' }); turn.usage({ inputTokens: 1 }) }"
     ].join('\n')
     expect(subjectWritesOf('harness/kernel/x.ts', loud).map((w) => w.subject)).toEqual(['agents', 'usage'])
+  })
+
+  it('finds a round, a review, a checks read, a confidence and a change by their functions on the handle', () => {
+    const source = [
+      'export function a(log: any) {',
+      '  log.round.started({ number: 1 })',
+      '  log.phase.ended({ phase: "review" })',
+      '  log.review.verdicts({})',
+      '  log.checks.read({ green: true })',
+      '  log.agent.confidenceStated({})',
+      '  log.change.merged({})',
+      '}'
+    ].join('\n')
+    expect(subjectWritesOf('harness/kernel/x.ts', source).map((w) => w.subject)).toEqual(['change', 'review', 'round'])
+  })
+
+  it('names the owner of the round, review and change subjects', () => {
+    for (const subject of ['round', 'review', 'change'])
+      expect(SUBJECT_OWNERS[subject]).toEqual([DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH])
   })
 })
 

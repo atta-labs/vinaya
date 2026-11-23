@@ -59,12 +59,33 @@ import {
   makeWorld,
   runDriverLoopInProcess,
   runLoopInProcess,
+  runRecords,
   type LoopWorld,
   type RoleOutcome,
   defaultDeveloperTurnOutput
 } from '../dev-review-loop-harness.js'
 
 afterEach(cleanupWorlds)
+
+/**
+ * The watched pull request's end as the run's local copy holds it: one record of the state, none of the other, linked
+ * to the run's own trace and naming who ended it.
+ */
+function expectOneEnd(world: LoopWorld, state: 'merged' | 'closed'): void {
+  const other = state === 'merged' ? 'closed' : 'merged'
+  const records = runRecords(world)
+  const ended = records.events.filter((e) => e.eventName === `vinaya.change.${state}`)
+  expect(ended).toHaveLength(1)
+  expect(records.names.events).not.toContain(`vinaya.change.${other}`)
+  const attribute = (key: string) =>
+    ended[0].attributes?.find((a: { key: string }) => a.key === key)?.value?.stringValue
+  expect(attribute('vinaya.run.id')).toBe(world.runId)
+  // Only a merge names who ended it: the forge names no closer.
+  expect(attribute('vinaya.actor')).toBe(state === 'merged' ? 'octocat' : undefined)
+  // The same trace as the run's own start.
+  const start = records.events.find((e) => e.eventName === 'vinaya.run.started')
+  expect(ended[0].traceId).toBe(start.traceId)
+}
 
 /** The reviewer outcome for a round-1 `ESCALATE: authority` — the shortest real path into `pause{reason:'escalation'}`, the same shape `inproc-7.test.ts`'s own `makeEscalationWorld` uses. */
 const ESCALATE_REVIEWER: RoleOutcome = {
@@ -300,6 +321,8 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
     )
 
     expect(result.finalDecision).toEqual({ type: 'ended', reason: 'merged' })
+    // The run is paused and its watch sees the merge: one merge, linked to the run, and no close.
+    expectOneEnd(world, 'merged')
     // Round 1 stayed paused — no resumed dispatch ever ran.
     expect(world.dispatchCountByRole['code-reviewer']).toBe(1)
     expect(world.publishedRounds).toEqual([])
@@ -326,7 +349,47 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
     )
 
     expect(result.finalDecision).toEqual({ type: 'ended', reason: 'closed' })
+    // Closed without merging: one close, linked to the run, and no merge.
+    expectOneEnd(world, 'closed')
     expect(readDriverLock(world.runtimeDir, world.task)).toBeNull()
+  })
+
+  it('records a published pull request that merges while the driver waits for the merge as one merge, linked to the run', async () => {
+    const world = makeWorld()
+    world.afterPublish = 'watch'
+    let polls = 0
+    const result = await runDriverLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {},
+      {
+        sleep: async (ms) => {
+          if (++polls === 2) world.prState = 'MERGED'
+          await new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
+        }
+      }
+    )
+    expect(result.finalDecision).toEqual({ type: 'publish' })
+    expectOneEnd(world, 'merged')
+  })
+
+  it('records a published pull request closed while the driver waits for the merge as one close, never a merge', async () => {
+    const world = makeWorld()
+    world.afterPublish = 'watch'
+    let polls = 0
+    const result = await runDriverLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude' },
+      {},
+      {
+        sleep: async (ms) => {
+          if (++polls === 2) world.prState = 'CLOSED'
+          await new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
+        }
+      }
+    )
+    expect(result.finalDecision).toEqual({ type: 'ended', reason: 'closed' })
+    expectOneEnd(world, 'closed')
   })
 
   it('ends the driver on --cancel’s own resolution, consumed while it watches — the same single-consumption escalation record `cancelDevReviewLoop` writes', async () => {

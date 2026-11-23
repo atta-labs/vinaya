@@ -174,7 +174,7 @@ describe('the run lifecycle through the run handle', () => {
   it('leaves an event that is not a run lifecycle event to the earlier-format writer', () => {
     const world = createRunLifecycleWorld()
     const recorder = world.process()
-    const other = loop({ event: 'round_started', round: 1, base_head: 'abc' })
+    const other = loop({ event: 'local_checks_run', round: 1, head: 'abc', passed: true, wall_ms: 5 })
     expect(writeRunLifecycleEvent(other, { runId: 'run-1' }, { recorder, runtimeDir: () => world.runtimeDir })).toBe(
       false
     )
@@ -185,6 +185,226 @@ describe('the run lifecycle through the run handle', () => {
     const first = taskRunId(world.runtimeDir, 7, () => 'run-a')
     expect(taskRunId(world.runtimeDir, 7, () => 'run-b')).toBe(first)
     expect(taskRunId(world.runtimeDir, 8, () => 'run-c')).toBe('run-c')
+  })
+})
+
+describe('rounds, review and the change through the run handle', () => {
+  const loop = (fields: Record<string, unknown>): DevReviewLoopEventInput =>
+    ({ kind: 'dev_review_loop', payload: {}, loop_id: 'l1', ...fields }) as unknown as DevReviewLoopEventInput
+  const where = { runId: 'run-1', repository: 'atta-labs/vinaya' }
+  const write = (world: RunLifecycleWorld, recorder: RunRecorder, event: DevReviewLoopEventInput): void => {
+    expect(writeRunLifecycleEvent(event, where, { recorder, runtimeDir: () => world.runtimeDir })).toBe(true)
+  }
+  const started = loop({ event: 'loop_started', task: 7, title: 'A task', policy: { max_rounds: 5, reviewers: [] } })
+  const roundEnded = (round: number, outcome: string) =>
+    loop({
+      event: 'round_ended',
+      round,
+      base_head: 'aaa',
+      head: 'bbb',
+      files_changed: 2,
+      insertions: 10,
+      deletions: 3,
+      wall_ms: 5,
+      outcome
+    })
+
+  it('writes two rounds as two spans, each round once, with its review, gate read and confidence', async () => {
+    const world = createRunLifecycleWorld()
+    const recorder = world.process()
+    write(world, recorder, started)
+    write(world, recorder, loop({ event: 'round_started', round: 1, base_head: 'aaa' }))
+    write(
+      world,
+      recorder,
+      loop({
+        event: 'gate_result_read',
+        round: 1,
+        head: 'bbb',
+        green: true,
+        confidence_value: 80,
+        confidence_reason: 'tests pass',
+        extra_turn_spent: true
+      })
+    )
+    write(
+      world,
+      recorder,
+      loop({
+        event: 'verdicts_read',
+        round: 1,
+        head: 'bbb',
+        all_approve: false,
+        blockers: 1,
+        findings: [{ id: 'F1', severity: 'MAJOR', location: 'a.ts:1', policy_treatment: 'blocking' }],
+        reviewers: [
+          { role: 'code-reviewer', outcome: 'changes_requested', blockers: 1 },
+          { role: 'security', outcome: 'approve', blockers: 0 }
+        ]
+      })
+    )
+    write(
+      world,
+      recorder,
+      loop({ event: 'findings_compared', round: 1, open: ['F1'], resolved: [], new: ['F1'], recurring: [] })
+    )
+    write(world, recorder, loop({ event: 'phase_time', round: 1, phase: 'review', step: 'assess-round', wall_ms: 40 }))
+    write(world, recorder, roundEnded(1, 'changes_requested'))
+    write(world, recorder, loop({ event: 'round_started', round: 2, base_head: 'bbb' }))
+    write(
+      world,
+      recorder,
+      loop({
+        event: 'gate_result_read',
+        round: 2,
+        head: 'ccc',
+        green: true,
+        confidence_unavailable: true,
+        extra_turn_spent: false
+      })
+    )
+    write(world, recorder, roundEnded(2, 'green'))
+    await recorder.drain()
+
+    expect(world.errors).toEqual([])
+    const rounds = world.spans().filter((s) => s.name.startsWith('vinaya.round'))
+    expect(rounds.map((s) => s.name).sort()).toEqual(['vinaya.round 1', 'vinaya.round 2'])
+    expect(
+      attributeOf(
+        rounds.find((s) => s.name === 'vinaya.round 1'),
+        'vinaya.round.outcome'
+      )
+    ).toBe('changes_requested')
+    expect(
+      attributeOf(
+        rounds.find((s) => s.name === 'vinaya.round 1'),
+        'vinaya.round.start_commit'
+      )
+    ).toBe('aaa')
+    expect(world.spans().filter((s) => s.name === 'vinaya.phase review')).toHaveLength(1)
+    const names = world.events().map(eventNameOf)
+    expect(names.filter((n) => n === 'vinaya.round.started')).toHaveLength(2)
+    expect(names.filter((n) => n === 'vinaya.review.verdicts')).toHaveLength(1)
+    expect(names.filter((n) => n === 'vinaya.review.findings_compared')).toHaveLength(1)
+    expect(names.filter((n) => n === 'vinaya.checks.read')).toHaveLength(2)
+    const confidence = world.events().filter((e) => eventNameOf(e) === 'vinaya.agent.confidence_stated')
+    expect(confidence).toHaveLength(2)
+    const stated = confidence.find((e) => attributeOf(e, 'vinaya.confidence') === 80)
+    expect(stated).toBeDefined()
+    expect(attributeOf(stated, 'vinaya.confidence.after_extra_turn')).toBe(true)
+    // The other round stated none: not given, never a made-up number.
+    expect(confidence.filter((e) => attributeOf(e, 'vinaya.confidence') === undefined)).toHaveLength(1)
+    const verdicts = world.events().find((e) => eventNameOf(e) === 'vinaya.review.verdicts')
+    expect(attributeOf(verdicts, 'vinaya.review.blocking_count')).toBe(1)
+  })
+
+  it('writes the change, and a merge linked to the run, by the run’s own watch', async () => {
+    const world = createRunLifecycleWorld()
+    const recorder = world.process()
+    write(world, recorder, started)
+    write(world, recorder, loop({ event: 'storage_push', round: 1, branch: 'task/x/7', head: 'bbb' }))
+    write(world, recorder, loop({ event: 'unpushed_work_resume', round: 1, branch: 'task/x/7', detail: 'd' }))
+    write(
+      world,
+      recorder,
+      loop({
+        event: 'ready_push',
+        round: 2,
+        head: 'ccc',
+        outcome: 'passed',
+        selected: 4,
+        failed: 0,
+        rerun: false,
+        wall_ms: 9
+      })
+    )
+    write(world, recorder, loop({ event: 'pr_opened', round: 2, pr: 318, head: 'ccc' }))
+    write(world, recorder, loop({ event: 'conflict_reentry', task: 7, pr: 318, attempt: 1, bound: 3 }))
+    const readEnd = () => ({ when: Date.parse('2026-11-22T02:00:00Z'), by: 'octocat' })
+    const ended = { state: 'merged' as const, task: 7, pr: 318 }
+    lifecycle.recordWatchedChangeEnded(ended, { ...where, recorder, readEnd })
+    // The same end read twice is written once.
+    lifecycle.recordWatchedChangeEnded(ended, { ...where, recorder, readEnd })
+    await recorder.drain()
+
+    expect(world.errors).toEqual([])
+    const names = world.events().map(eventNameOf)
+    for (const name of [
+      'vinaya.change.saved',
+      'vinaya.change.recovered',
+      'vinaya.change.pushed',
+      'vinaya.change.opened',
+      'vinaya.change.conflicted'
+    ])
+      expect(names.filter((n) => n === name)).toHaveLength(1)
+    const merged = world.events().filter((e) => eventNameOf(e) === 'vinaya.change.merged')
+    expect(merged).toHaveLength(1)
+    expect(attributeOf(merged[0], 'vinaya.run.id')).toBe('run-1')
+    expect(attributeOf(merged[0], 'vinaya.actor')).toBe('octocat')
+    const opened = world.events().find((e) => eventNameOf(e) === 'vinaya.change.opened')
+    expect(attributeOf(opened, 'vinaya.change.id')).toBe('318')
+    const pushed = world.events().find((e) => eventNameOf(e) === 'vinaya.change.pushed')
+    expect(attributeOf(pushed, 'vinaya.change.tests_picked')).toBe(4)
+  })
+
+  it('writes a pull request closed without merging as closed, never merged', async () => {
+    const world = createRunLifecycleWorld()
+    const recorder = world.process()
+    write(world, recorder, started)
+    lifecycle.recordWatchedChangeEnded(
+      { state: 'closed', task: 7, pr: 318 },
+      { ...where, recorder, readEnd: () => ({}) }
+    )
+    await recorder.drain()
+    const names = world.events().map(eventNameOf)
+    expect(names.filter((n) => n === 'vinaya.change.closed')).toHaveLength(1)
+    expect(names).not.toContain('vinaya.change.merged')
+    const closed = world.events().find((e) => eventNameOf(e) === 'vinaya.change.closed')
+    expect(attributeOf(closed, 'vinaya.run.id')).toBe('run-1')
+  })
+
+  it('ends a round in a later process: one span, not two', async () => {
+    const world = createRunLifecycleWorld()
+    const first = world.process()
+    write(world, first, started)
+    write(world, first, loop({ event: 'round_started', round: 1, base_head: 'aaa' }))
+    await first.drain()
+    const second = world.process()
+    write(world, second, started)
+    write(world, second, roundEnded(1, 'green'))
+    await second.drain()
+    const rounds = world.spans().filter((s) => s.name === 'vinaya.round 1')
+    expect(rounds).toHaveLength(1)
+    expect(attributeOf(rounds[0], 'vinaya.round.outcome')).toBe('green')
+  })
+})
+
+describe('a round another process also starts', () => {
+  const loop = (fields: Record<string, unknown>): DevReviewLoopEventInput =>
+    ({ kind: 'dev_review_loop', payload: {}, loop_id: 'l1', ...fields }) as unknown as DevReviewLoopEventInput
+  const where = { runId: 'run-1', repository: 'atta-labs/vinaya' }
+
+  it('is one span: a later process that starts the round the first holds open writes no second span', async () => {
+    const world = createRunLifecycleWorld()
+    const options = (recorder: RunRecorder) => ({ recorder, runtimeDir: () => world.runtimeDir })
+    const started = loop({ event: 'loop_started', task: 7, policy: { max_rounds: 5, reviewers: [] } })
+    const first = world.process()
+    writeRunLifecycleEvent(started, where, options(first))
+    writeRunLifecycleEvent(loop({ event: 'round_started', round: 1, base_head: 'aaa' }), where, options(first))
+    await first.drain()
+    const second = world.process()
+    writeRunLifecycleEvent(started, where, options(second))
+    writeRunLifecycleEvent(loop({ event: 'round_started', round: 1, base_head: 'aaa' }), where, options(second))
+    writeRunLifecycleEvent(
+      loop({ event: 'round_ended', round: 1, files_changed: 1, insertions: 2, deletions: 0, outcome: 'green' }),
+      where,
+      options(second)
+    )
+    await second.drain()
+    const rounds = world.spans().filter((s) => s.name === 'vinaya.round 1')
+    expect(rounds).toHaveLength(1)
+    expect(attributeOf(rounds[0], 'vinaya.round.outcome')).toBe('green')
+    expect(world.errors).toEqual([])
   })
 })
 

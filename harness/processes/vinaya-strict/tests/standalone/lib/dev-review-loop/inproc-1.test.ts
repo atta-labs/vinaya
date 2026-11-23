@@ -15,7 +15,6 @@ import {
   developerDir,
   makeInProcessDeps,
   makeWorld,
-  outboxLines as ipOutboxLines,
   runLoopInProcess,
   taskRunDir as ipTaskRunDir
 } from '../dev-review-loop-harness.js'
@@ -154,7 +153,7 @@ describe('runLoopInProcess — the run never inherits the outer CI runner’s or
       expect(result.finalDecision.type).toBe('publish')
       expect(seen.length).toBeGreaterThan(0)
       expect(seen.every((s) => s.ci === undefined && s.role === undefined)).toBe(true)
-      expect(ipOutboxLines(world).length).toBeGreaterThan(0)
+      expect(world.runEvents.length).toBeGreaterThan(0)
 
       expect(process.env.GITHUB_ACTIONS).toBe('true')
       expect(process.env.VINAYA_ROLE).toBe('developer')

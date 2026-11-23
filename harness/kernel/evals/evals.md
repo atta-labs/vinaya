@@ -122,6 +122,8 @@ The contract-kinds shard registers the Developer's `repair_plan` both as a tool 
 A fault-and-attack or cutover-gate row also carries `backendEvidence`: one entry for each backend its `backends` field lists, and no other. An entry is one of two shapes:
 
 - **`{ "test": "<path>" }`** — the test file that proves the row on that backend, as a path from the repository root. It is accepted only when the file exists in the repository and contains the row's full registry id, `fault-attack:<order>-<slug>` or `cutover-gate:gate-<n>`, as a whole id: the short name alone does not count, and neither does a longer id the full id begins, as `cutover-gate:gate-16` begins with `cutover-gate:gate-1`. A test file is bound to a row only when it asserts the row's behaviour on that backend; a task case marked `present` declares the case and proves nothing.
+A fault row's test reads the loop's events from the run's own record of them: a run's rounds, review and change are records on its Log handle, so a failing earlier-format destination warns only for what that writer still writes, and the row holds the outcome and the bound on warnings.
+
 - **`{ "owed": "<reason>" }`** — the proof does not exist yet, with a one-line reason. The rows owned by the Operator on one host project owe their evidence to that project and say so.
 
 A test that runs only when an opt-in live environment variable is set — such as `VINAYA_SANDBOX_CONFORMANCE`, the sandbox conformance switch — is marked `"liveGated": { "variable": "<name>" }`. It proves its row only once the entry also records `liveProbePullRequest`, the pull request whose body carries the pasted live probe output; until then the live run is owed.

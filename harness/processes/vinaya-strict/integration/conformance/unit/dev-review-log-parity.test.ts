@@ -44,18 +44,11 @@ const STRUCTURAL_EXCLUSIONS: Readonly<Record<string, string>> = {
  * the replay leaves out of the standalone Log for a scenario the corpus maps to it. Each must still remove a line:
  * a mapping whose defect standalone no longer shows fails the replay.
  */
-const STANDALONE_DEFECTS: Readonly<Record<string, (lines: Line[]) => Line[]>> = {
-  // A round revisited after a red gate starts again in standalone's Log; the Engine starts each round once.
-  'DEF-03': (lines) => {
-    const started = new Set<string>()
-    return lines.filter((l) => {
-      if (l.kind !== 'dev_review_loop' || l.event !== 'round_started') return true
-      const round = `${String((l.meta as Line | undefined)?.run_id)}:${String(l.round)}`
-      if (started.has(round)) return false
-      started.add(round)
-      return true
-    })
-  }
+const STANDALONE_DEFECTS: Readonly<Record<string, ((lines: Line[]) => Line[]) | null>> = {
+  // A round revisited after a red gate starts again in standalone's Log; the Engine starts each round once. Round
+  // starts are records on the run's Log handle now, so no earlier-format line carries the defect and there is nothing
+  // left to leave out of the lines; the architecture exit gate still asserts the scenario shows the defect (a repeated round start in the loop's own events), so it stays checked there.
+  'DEF-03': null
 }
 
 /** The run identity fields: their values name this run, so only whether each is present is compared. */

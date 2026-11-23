@@ -74,7 +74,8 @@ import {
   parseIssueTestPlan,
   type TaskFileFacts,
   type TaskIssueFacts,
-  type TaskSurfaceFacts
+  type TaskSurfaceFacts,
+  parseLiveTestPlanItems
 } from './issue-validation'
 
 // The recorded Issue bodies under fixtures/ name the core package by its retired
@@ -4265,5 +4266,16 @@ describe('checkDecisionsText', () => {
         '`b-check`: decided outside the section here.'
       ].join('\n')
     )
+  })
+})
+
+describe('parseLiveTestPlanItems — objective ids', () => {
+  const plan = (item: string): string => ['## Test plan', '', item, ''].join('\n')
+
+  it('gives the live check the bare command for an item that names objective ids', () => {
+    const bare = parseLiveTestPlanItems(plan('- **[live]** `bun apps/cli/src/index.ts doctor`'))
+    expect(bare).toEqual(['bun apps/cli/src/index.ts doctor'])
+    expect(parseLiveTestPlanItems(plan('- **[live]** `bun apps/cli/src/index.ts doctor` `(O1, O2)`'))).toEqual(bare)
+    expect(parseLiveTestPlanItems(plan('- **[live]** bun apps/cli/src/index.ts doctor `(O2)`'))).toEqual(bare)
   })
 })

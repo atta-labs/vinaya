@@ -435,8 +435,9 @@ const FAULT_ROWS: FaultRow[] = [
           JSON.stringify(failed.observation.effects) === JSON.stringify(clean.observation.effects),
           'the effects changed'
         ),
-        // A bounded warning: at least one, never one per event.
-        check(failed.warnings.length >= 1, 'no warning'),
+        // A bounded warning, never one per event.
+        // The loop's events are records on the run's Log handle, which keeps its own local copy: a destination the
+        // earlier-format writer cannot reach warns only for what that writer still writes, so only the bound holds.
         check(failed.warnings.length <= 3, `${failed.warnings.length} warnings`)
       ]
     }
@@ -505,7 +506,9 @@ const FAULT_ROWS: FaultRow[] = [
       }
       return [
         check(run.inspection.prompts.length >= 3, 'not every role was prompted'),
-        check((run.observation.logLines ?? []).length > 0, 'no Log line was recorded'),
+        // The round, review and run records go through the run's Log handle, so the loop's events (all of them kept in
+        // `events`, scanned below) stand for what the run recorded; the earlier-format lines hold no round event.
+        check(run.inspection.events.length > 0, 'no Log event was recorded'),
         ...Object.entries(surfaces).flatMap(([surface, text]) => [
           ...Object.entries(CONTROLLER_SECRETS).map(([key, value]) =>
             check(!text.includes(value), `${surface} carries ${key}`)

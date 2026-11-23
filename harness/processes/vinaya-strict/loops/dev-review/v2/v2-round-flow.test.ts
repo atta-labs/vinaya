@@ -7,6 +7,8 @@ import { loadProcess } from '../../../../../../harness/kernel/dev-process-socket
 import { fixtureDir } from '../../../../../kernel/conformance/unit/test-temp-fixture'
 import { decodeLoopState, type latestRecord, recordOutput } from '../../../executing/actions'
 import { V2_APPROVED_REPAIR_ALLOWANCE, exhaustedPause, withPolicyCeilings } from '../../../bin/run-engine'
+import { writeRunLifecycleEvent } from '../standalone/dev-review-loop/driver-lifecycle'
+import { attributeOf, createRunLifecycleWorld, eventNameOf } from '../../../tests/run-lifecycle-world'
 import { heldVerdictPath } from '../standalone/dev-review-loop/reviewer-dispatch'
 import { publicationEffectKey } from '../standalone/dev-review-loop/publication'
 import { conflictRepairFailure, readyTestPlanCommand, type RoundTestsResult } from './v2-actions'
@@ -61,6 +63,35 @@ for (const agent of AGENTS) {
     })
   })
 }
+
+describe('the version 2 run writes its phases, ready push and opened change through the run Log handle', () => {
+  test('the local copy holds one ready push, one opened change and the phases, and no earlier-format line', async () => {
+    const world = createRunLifecycleWorld()
+    const recorder = world.process()
+    const routed: string[] = []
+    const observed = await runV2('claude', {
+      onEvent: (event) => {
+        if (
+          writeRunLifecycleEvent(event as never, { runId: 'run-1' }, { recorder, runtimeDir: () => world.runtimeDir })
+        )
+          routed.push(String(event.event))
+      }
+    })
+    expect(observed.outcome).toBe('completed')
+    await recorder.drain()
+    // Every one of these events was written through the handle: none is left for the earlier-format writer.
+    for (const name of ['ready_push', 'pr_opened', 'phase_time', 'round_started', 'round_ended'])
+      expect(routed).toContain(name)
+    const names = world.events().map(eventNameOf)
+    expect(names.filter((n) => n === 'vinaya.change.pushed')).toHaveLength(1)
+    const opened = world.events().filter((e) => eventNameOf(e) === 'vinaya.change.opened')
+    expect(opened).toHaveLength(1)
+    expect(attributeOf(opened[0], 'vinaya.change.id')).toBe(String(PR))
+    expect(world.spans().filter((s) => s.name.startsWith('vinaya.phase')).length).toBeGreaterThan(0)
+    expect(world.spans().filter((s) => s.name === 'vinaya.round 1')).toHaveLength(1)
+    expect(world.errors).toEqual([])
+  })
+})
 
 describe("the loop's own git processes in one scenario", () => {
   /**

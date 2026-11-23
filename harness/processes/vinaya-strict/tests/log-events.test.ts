@@ -816,6 +816,89 @@ describe('the Engine path writes the run lifecycle through the run Log handle', 
   })
 })
 
+describe('the Engine path writes rounds, review and the change through the run Log handle', () => {
+  const where = { runId: 'run-1', repository: 'atta-labs/vinaya' }
+  const loopStarted = {
+    kind: 'dev_review_loop',
+    payload: {},
+    loop_id: config.loopId,
+    event: 'loop_started',
+    task: config.task,
+    policy: { max_rounds: 3, reviewers: ['code-reviewer', 'security'], models: { developer: 'opus' } }
+  }
+
+  test('two rounds are two round spans, each with its review, and no earlier-format line carries them', async () => {
+    const world = createRunLifecycleWorld()
+    const recorder = world.process()
+    const routed: string[] = []
+    const run = setup({
+      assess: assessments([false, true]),
+      emit: (event) => {
+        if (writeRunLifecycleEvent(event as never, where, { recorder, runtimeDir: () => world.runtimeDir }))
+          routed.push(String(event.event))
+      }
+    })
+    writeRunLifecycleEvent(loopStarted as never, where, { recorder, runtimeDir: () => world.runtimeDir })
+    const outcome = await runLeg(run.translator, () => startProcessRun(run.options), { resumed: false })
+    expect(outcome.reason).toBe('completed')
+    await recorder.drain()
+
+    expect(world.errors).toEqual([])
+    // Every round, review and gate-read event the run emitted was written through the handle.
+    for (const name of ['round_started', 'round_ended', 'gate_result_read', 'verdicts_read', 'findings_compared'])
+      expect(routed.filter((n) => n === name)).toHaveLength(2)
+    expect(
+      world
+        .spans()
+        .filter((s) => s.name.startsWith('vinaya.round'))
+        .map((s) => s.name)
+        .sort()
+    ).toEqual(['vinaya.round 1', 'vinaya.round 2'])
+    const names = world.events().map(eventNameOf)
+    expect(names.filter((n) => n === 'vinaya.review.verdicts')).toHaveLength(2)
+    expect(names.filter((n) => n === 'vinaya.checks.read')).toHaveLength(2)
+    expect(names.filter((n) => n === 'vinaya.review.findings_compared')).toHaveLength(2)
+  })
+
+  test('a round the first leg opened and a later leg ended is one round span', async () => {
+    const world = createRunLifecycleWorld()
+    let recorder = world.process()
+    const control = createRunControl()
+    const run = setup({
+      onAction: (step) => {
+        if (step === 'validate-developer-output') control.halt('stop here')
+      },
+      emit: (event) =>
+        void writeRunLifecycleEvent(event as never, where, { recorder, runtimeDir: () => world.runtimeDir })
+    })
+    run.options.control = control
+    // The first leg starts the run on its handle with round 1 open, then halts before the round is assessed.
+    writeRunLifecycleEvent(loopStarted as never, where, {
+      recorder,
+      runtimeDir: () => world.runtimeDir,
+      round: 1
+    })
+    const paused = await runLeg(run.translator, () => startProcessRun(run.options), { resumed: false })
+    expect(paused.reason).toBe('paused')
+    await recorder.drain()
+
+    // The next leg is a new process: it ends the round the first one opened.
+    recorder = world.process()
+    const resumed = await runLeg(
+      run.translator,
+      () => resumeProcessRun({ ...run.options, control: undefined }, paused.identity),
+      { resumed: true }
+    )
+    expect(resumed.reason).toBe('completed')
+    await recorder.drain()
+
+    const rounds = world.spans().filter((s) => s.name === 'vinaya.round 1')
+    expect(rounds).toHaveLength(1)
+    expect(attributeOf(rounds[0], 'vinaya.round.outcome')).toBe('green')
+    expect(world.errors).toEqual([])
+  })
+})
+
 describe('every produced row has a producer that wrote it', () => {
   test('each event a produced row names was written by a run or a producer above', () => {
     // The run's liveness is the Log handle's own alive; the runner writes only the exit record, which its own suite runs.
