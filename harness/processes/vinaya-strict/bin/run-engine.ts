@@ -1776,6 +1776,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   // The run's Log handle: the id every record of the run carries, the repository, and the driver log each agent
   // record is narrated into as it is written.
   runRecorder().bind({
+    effort: runEffort,
     ...(options.sink.runId === undefined ? {} : { runId: options.sink.runId }),
     ...(resolvedRepo === null ? {} : { repository: `${resolvedRepo.owner}/${resolvedRepo.repo}` }),
     narrate: (record) =>

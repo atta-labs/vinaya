@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { traceIdFor } from '../../../packages/log-sdk/src/index.js'
@@ -7,9 +8,18 @@ import { createRunRecorder } from './run-recorder.js'
 
 const RUN = 'run-recorder'
 
-function setup(options: { off?: boolean } = {}) {
+const IDENTITY = {
+  runnerName: 'atta-engine',
+  runnerVersion: '4.5.6',
+  cliVersion: '0.9.1',
+  flowId: 'example-flow',
+  flowVersion: 'v2',
+  processDigest: 'a'.repeat(64)
+}
+
+function setup(options: { off?: boolean; root?: string; identity?: typeof IDENTITY | {}; folder?: string } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-run-recorder-'))
-  const folder = join(dir, 'logs')
+  const folder = options.folder ?? join(dir, 'logs')
   const errors: unknown[] = []
   const sent: unknown[] = []
   let drained = 0
@@ -19,6 +29,7 @@ function setup(options: { off?: boolean } = {}) {
     repository: () => 'atta-labs/vinaya',
     place: (repository) => (options.off ? undefined : { folder, repository }),
     processIdentity: () => ({ name: 'Example', version: '1.2.3' }),
+    ...(options.identity === undefined ? {} : { runIdentity: () => options.identity as typeof IDENTITY }),
     sender: () => ({
       request: (place) => void sent.push(place),
       remember: () => {},
@@ -27,7 +38,7 @@ function setup(options: { off?: boolean } = {}) {
       }
     }),
     home: () => dir,
-    cwd: () => mkdtempSync(join(tmpdir(), 'vinaya-run-recorder-root-')),
+    cwd: () => options.root ?? mkdtempSync(join(tmpdir(), 'vinaya-run-recorder-root-')),
     onError: (e) => errors.push(e)
   })
   const records = (signal: 'traces' | 'logs'): any[] => {
@@ -46,7 +57,13 @@ function setup(options: { off?: boolean } = {}) {
     records('traces').flatMap((r) => r.resourceSpans.flatMap((g: any) => g.scopeSpans.flatMap((s: any) => s.spans)))
   const events = () =>
     records('logs').flatMap((r) => r.resourceLogs.flatMap((g: any) => g.scopeLogs.flatMap((s: any) => s.logRecords)))
-  return { recorder, errors, sent, drained: () => drained, folder, spans, events }
+  const resources = (): Record<string, unknown>[] =>
+    records('traces').flatMap((r) =>
+      r.resourceSpans.map((g: any) =>
+        Object.fromEntries(g.resource.attributes.map((a: any) => [a.key, a.value.stringValue ?? a.value.boolValue]))
+      )
+    )
+  return { recorder, errors, sent, drained: () => drained, folder, spans, events, resources }
 }
 
 const attribute = (record: any, key: string): unknown => {
@@ -197,4 +214,87 @@ test('the drain sends the local copy through the shared sender', async () => {
   recorder.turn({ seat: 'developer', key: 'turn-5' }).returned({ outcome: 'done' })
   await recorder.drain()
   expect(drained()).toBe(1)
+})
+
+const RESOURCE_KEYS = {
+  runnerName: 'vinaya.runner.name',
+  runnerVersion: 'vinaya.runner.version',
+  cliVersion: 'vinaya.cli.version',
+  flowId: 'vinaya.flow.id',
+  flowVersion: 'vinaya.flow.version',
+  processDigest: 'vinaya.process.digest',
+  settingsDigest: 'vinaya.settings.digest'
+} as const
+
+const rootWith = (config?: string): string => {
+  const root = mkdtempSync(join(tmpdir(), 'vinaya-run-recorder-config-'))
+  if (config !== undefined) writeFileSync(join(root, 'vinaya.config.json'), config)
+  return root
+}
+
+test('every record carries the run identity, with the settings digest hashed from the file bytes', () => {
+  const config = '{ "a":1 }\n'
+  const { recorder, errors, resources } = setup({ root: rootWith(config), identity: IDENTITY })
+  recorder.turn({ seat: 'developer', key: 'turn-0' }).returned({ outcome: 'done' })
+  expect(errors).toEqual([])
+  const resource = resources()[0]!
+  for (const [part, key] of Object.entries(RESOURCE_KEYS)) {
+    if (part === 'settingsDigest') continue
+    expect(resource[key]).toBe(IDENTITY[part as keyof typeof IDENTITY])
+  }
+  expect(resource[RESOURCE_KEYS.settingsDigest]).toBe(createHash('sha256').update(config).digest('hex'))
+})
+
+test('a reformatted settings file reads as changed, and an absent one writes no settings digest', () => {
+  const first = setup({ root: rootWith('{"a":1}'), identity: IDENTITY })
+  first.recorder.turn({ seat: 'developer', key: 'turn-0' }).returned()
+  const second = setup({ root: rootWith('{ "a": 1 }'), identity: IDENTITY })
+  second.recorder.turn({ seat: 'developer', key: 'turn-0' }).returned()
+  expect(first.resources()[0]![RESOURCE_KEYS.settingsDigest]).not.toBe(
+    second.resources()[0]![RESOURCE_KEYS.settingsDigest]
+  )
+  const absent = setup({ root: rootWith(), identity: IDENTITY })
+  absent.recorder.turn({ seat: 'developer', key: 'turn-0' }).returned()
+  const resource = absent.resources()[0]!
+  expect(RESOURCE_KEYS.settingsDigest in resource).toBe(false)
+  expect(resource[RESOURCE_KEYS.runnerName]).toBe('atta-engine')
+})
+
+test('a part whose source is absent is not written', () => {
+  const { recorder, resources } = setup({ root: rootWith(), identity: { runnerName: 'standalone' } })
+  recorder.turn({ seat: 'developer', key: 'turn-0' }).returned()
+  const resource = resources()[0]!
+  expect(resource[RESOURCE_KEYS.runnerName]).toBe('standalone')
+  for (const key of [
+    RESOURCE_KEYS.runnerVersion,
+    RESOURCE_KEYS.cliVersion,
+    RESOURCE_KEYS.flowId,
+    RESOURCE_KEYS.processDigest
+  ])
+    expect(key in resource).toBe(false)
+})
+
+test('a second recorder for the same run in a new process connects with the same parts', () => {
+  const root = rootWith('{}')
+  const folder = join(mkdtempSync(join(tmpdir(), 'vinaya-run-recorder-shared-')), 'logs')
+  const first = setup({ root, identity: IDENTITY, folder })
+  first.recorder.turn({ seat: 'developer', key: 'turn-0' }).returned()
+  const second = setup({ root, identity: IDENTITY, folder })
+  second.recorder.turn({ seat: 'code-reviewer', key: 'turn-1' }).returned()
+  const all = second.resources()
+  expect(all.length).toBeGreaterThanOrEqual(2)
+  expect(new Set(all.map((r) => JSON.stringify(r))).size).toBe(1)
+})
+
+test("each agent turn records its effort: the one named, the run's own, else medium", () => {
+  const { recorder, spans } = setup()
+  recorder.turn({ seat: 'developer', key: 'a' }).returned()
+  recorder.bind({ effort: 'high' })
+  recorder.turn({ seat: 'developer', key: 'b' }).returned()
+  recorder.turn({ seat: 'developer', key: 'c', effort: 'low' }).returned()
+  expect(
+    spans()
+      .map((s) => attribute(s, 'vinaya.agent.effort'))
+      .sort()
+  ).toEqual(['high', 'low', 'medium'])
 })

@@ -19,6 +19,7 @@ import {
   type LogSinkDeps,
   resolveLogAppendPath
 } from '../../../../kernel/log/log-sink.js'
+import { registerCliVersionSource } from '../../../../kernel/log/run-identity.js'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
@@ -73,7 +74,7 @@ export function createVinayaLogSink(overrides: Partial<LogSinkDeps> = {}): LogSi
   })
 }
 
-function readVinayaVersion(): string {
+export function readVinayaVersion(): string {
   try {
     const pkg = JSON.parse(readFileSync(join(cliPackageRoot(), 'package.json'), 'utf8')) as {
       version?: string
@@ -108,5 +109,6 @@ export function resolveVinayaLogAppendPath(
 
 /** Installs `createVinayaLogSink` as the factory the Log client's default sink is built from. */
 export function installVinayaLogSinkFactory(): void {
+  registerCliVersionSource(readVinayaVersion)
   installDefaultLogSinkFactory(createVinayaLogSink)
 }
