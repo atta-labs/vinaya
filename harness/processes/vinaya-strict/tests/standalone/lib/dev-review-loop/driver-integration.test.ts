@@ -1361,18 +1361,14 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     expect(lines.filter((l) => l.event === 'paused')).toEqual([])
     const pausedEvents = homeRecords(home).events.filter((e) => e.eventName === 'vinaya.pause.started')
     expect(pausedEvents).toHaveLength(1)
-    // `postPauseComment` (`pause-resume.ts`) runs through the SAME
-    // `EffectExecutor` this task instruments — its own `effect` family
-    // one `verified` event for the pause-comment post
-    // lands in this SAME outbox file, alongside the policy layer's own
-    // `dev_review_loop` events, because both are `log()` calls made from
-    // this one process.
-    const effectEvents = lines.filter((l) => l.kind === 'effect')
-    expect(effectEvents.length).toBeGreaterThan(0)
-    expect(effectEvents.map((e) => e.event)).toContain('verified')
-    const runs = new Set(effectEvents.map((l) => (l.meta as { lineage: { run: string | null } }).lineage.run))
-    expect(runs.size).toBe(1)
-    expect([...runs][0]).not.toBeNull()
+    // `postPauseComment` runs through the same `EffectExecutor`: its final outcome is one `log.action.verified`
+    // record on the same run, and no earlier-format `effect` line is written.
+    expect(lines.filter((l) => l.kind === 'effect')).toEqual([])
+    const actionEvents = homeRecords(home).events.filter((e) => e.eventName === 'vinaya.action.verified')
+    expect(actionEvents.length).toBeGreaterThan(0)
+    const traceOf = (e: any) => e.traceId ?? e.spanContext?.traceId
+    expect(new Set(actionEvents.map(traceOf)).size).toBe(1)
+    expect(traceOf(actionEvents[0])).toBe(traceOf(pausedEvents[0]))
   }, 45000)
 })
 describe('devReviewLoop — O1 (`[task-operator-v1]`/Issue #662): the pause comment post itself retries with backoff, and this function itself never crashes the driver', () => {

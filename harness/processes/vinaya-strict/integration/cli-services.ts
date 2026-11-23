@@ -2,6 +2,7 @@ import { processHasLogDestination } from '../../../../apps/cli/src/lib/log-desti
 
 type InstallProcessModule = typeof import('../../../kernel/dev-process-socket/contract/install-process.js')
 type IntegrationModule = typeof import('./process/process-integration.js')
+type ConfigProviderModule = typeof import('../../../kernel/config/loader/config-provider.js')
 type OutsideLogModule = typeof import('../../../kernel/log/outside-log.js')
 type OperationLogModule = typeof import('../../../kernel/log/client/cli-operation-log.js')
 
@@ -33,6 +34,10 @@ export function registerOperationRecord(argv: readonly string[]): void {
     on: (event, handler) => process.on(event, handler),
     record: (record) => {
       installServices()
+      // The invocation's settings are read as the process reads them, so a setting it ignores is reported once.
+      ;(require('../../../kernel/config/loader/config-provider.js') as ConfigProviderModule)
+        .configProvider()
+        .loadConfig()
       ;(require('../../../kernel/log/outside-log.js') as OutsideLogModule).writeCommand(record)
     }
   })

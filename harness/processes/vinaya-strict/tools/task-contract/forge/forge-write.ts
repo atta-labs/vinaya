@@ -367,6 +367,11 @@ function recordForgeRefusal(errors: CheckError[]): void {
   )
 }
 
+/** The action a gh write is recorded under: its command and subcommand, such as `issue edit`. */
+export function ghWriteAction(ghCmd: string[]): string {
+  return ghCmd.slice(0, 2).join(' ')
+}
+
 /**
  * Records a forge write that was made, as `log.forge.written`. The action and target the gate named when it checked
  * the write win; a write that was never checked here (a caller that went straight to the forge) names its own.
@@ -736,10 +741,12 @@ function customRecovery(section: CustomSection, retryCommand: string): string {
  * `CheckError`; an empty array means the write may proceed.
  */
 export function validateForgeWrite(input: ForgeValidationInput): CheckError[] {
+  // A write left in view by an earlier check never carries into this one.
+  writeInView = null
   const errors = checkForgeWrite(input)
-  // The write now in view: its command and its branch (a pull request) or title (an Issue or a milestone). The body
+  // The write now in view: its command and its branch when it has one (a pull request); a title is free text and is never recorded. The body
   // is never named. A write that passes is recorded as validated; one that does not is recorded when it is refused.
-  writeInView = { action: input.retryCommand, target: input.branch || input.title || UNKNOWN_WRITE_TARGET }
+  writeInView = { action: input.retryCommand, target: input.branch || UNKNOWN_WRITE_TARGET }
   if (errors.length === 0) {
     const view = writeInView
     recordForge(() => writeForgeValidated(view))
@@ -2116,7 +2123,7 @@ export function runGhWriteOutcome(
   try {
     const out = execFileSync('gh', [...ghCmd, ...finalArgs], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] })
     const url = out.trim()
-    recordForgeWritten({ action: ghCmd.slice(0, 2).join(' '), target: url || ghCmd[2] || UNKNOWN_WRITE_TARGET })
+    recordForgeWritten({ action: ghWriteAction(ghCmd), target: url || UNKNOWN_WRITE_TARGET })
     return { ok: true, url }
   } catch (cause) {
     return {

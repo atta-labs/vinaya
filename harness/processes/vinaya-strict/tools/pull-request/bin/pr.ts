@@ -7,6 +7,7 @@ import {
   collectBodyCheckErrors,
   ForgeArgError,
   extractTitle,
+  ghWriteAction,
   locateBody,
   makeCheckError,
   parseIssueNumberFromRef,
@@ -72,7 +73,7 @@ function runGhWrite(ghCmd: string[], ghArgs: string[], bodyResult: BodyResult | 
   try {
     const out = execFileSync('gh', [...ghCmd, ...finalArgs], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] })
     const url = out.trim()
-    recordForgeWritten({ action: ghCmd.join(' '), target: url || ghCmd[2] || 'unknown' })
+    recordForgeWritten({ action: ghWriteAction(ghCmd), target: url || 'unknown' })
     if (json) printJson({ validated: true, written: true, url })
     else if (url) process.stdout.write(`${url}\n`)
     return url

@@ -35,6 +35,7 @@ import { writePauseState } from './pause-resume.js'
 import { issueTitleOrNone } from './developer-dispatch.js'
 
 import { createVinayaLogSink } from '../../../../integration/log/log-sink-factory.js'
+import { runRecorder } from '../../../../../../kernel/log/run-recorder.js'
 import { loopLogPathFor } from '../../../../../../kernel/log/client/loop-log.js'
 import { appendRunStartMarker } from '../../../../../../kernel/log/client/loop-log.js'
 import { randomUUID } from 'node:crypto'
@@ -402,6 +403,8 @@ export async function initializeRunEntry(c: LoopRunContext): Promise<void> {
 
   // The run's records, whichever sink writes them, belong to the one run this task names.
   process.env.VINAYA_RUN_ID = c.runId
+  // So is every record the harness writes through the process's own Log handle: an outside action, a command.
+  runRecorder().bind({ runId: c.runId })
 
   // O3: two independent sink instances can both have a `log()` call in
   // flight when this driver is about to exit — this closure's own
