@@ -5,8 +5,9 @@
 import { expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { spawnSyncBudgeted } from '../../../../harness/kernel/conformance/unit/process-fixture'
+import { storedEvents } from '../../../../harness/kernel/gates/checks/runner/local-copy-probe'
 
 const ENTRY = join(import.meta.dir, '../../src/index.ts')
 
@@ -46,25 +47,13 @@ it('`check --plan` loads no Log client', () => {
 
 /** The `vinaya.command.completed` records of the local copy under `dir`, each as its attributes by name. */
 function commandRecordsUnder(dir: string): Array<Record<string, string>> {
-  const files = [...new Bun.Glob('**/*.logs.jsonl').scanSync({ cwd: dir, absolute: true })]
-  const records: Array<Record<string, string>> = []
-  for (const file of files) {
-    for (const line of readFileSync(file, 'utf8').split('\n').filter(Boolean)) {
-      for (const group of JSON.parse(line).resourceLogs ?? [])
-        for (const scope of group.scopeLogs ?? [])
-          for (const record of scope.logRecords ?? [])
-            if (record.eventName === 'vinaya.command.completed')
-              records.push(
-                Object.fromEntries(
-                  record.attributes.map((a: { key: string; value: { stringValue?: string } }) => [
-                    a.key,
-                    a.value.stringValue ?? ''
-                  ])
-                )
-              )
-    }
-  }
-  return records
+  const folders = new Set(
+    [...new Bun.Glob('**/*.logs.jsonl').scanSync({ cwd: dir, absolute: true })].map((f) => dirname(f))
+  )
+  return [...folders]
+    .flatMap((folder) => storedEvents(folder))
+    .filter((e) => e.name === 'vinaya.command.completed')
+    .map((e) => Object.fromEntries(Object.entries(e.attributes).map(([k, v]) => [k, String(v)])))
 }
 
 it('with a `logs.folder` in the working directory config, `version` still records its operation at exit', () => {
