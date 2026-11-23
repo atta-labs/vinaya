@@ -673,14 +673,6 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
       { kind: 'custom', event: 'recorded' },
       { kind: 'operation', event: 'completed' }
     ]
-  },
-  {
-    name: 'pause-resume — a human handoff raised at the escalation record write, resolved at the resolution record',
-    files: [DEV_REVIEW_LOOP_PAUSE_RESUME_PATH],
-    requires: [
-      { kind: 'handoff', event: 'raised' },
-      { kind: 'handoff', event: 'resolved' }
-    ]
   }
 ]
 
@@ -718,6 +710,11 @@ const LOG_COVERAGE_EXEMPTIONS: RequiredEvent[] = [
   // The Log handle sends a run's alive itself, so the driver's own heartbeat is never written; the event stays in the
   // schema so a line stored before that still reads.
   { kind: 'dev_review_loop', event: 'driver_heartbeat' },
+  // A person the harness asks and their answer are written through the run's Log handle, a `vinaya.person {kind}`
+  // span (`SUBJECT_OWNERS.person`); the earlier `handoff` events stay in the schema so a line stored before that
+  // still reads, and nothing emits them.
+  { kind: 'handoff', event: 'raised' },
+  { kind: 'handoff', event: 'resolved' },
   { kind: 'forge_write', event: 'validated' },
   { kind: 'forge_write', event: 'refused' },
   { kind: 'forge_write', event: 'written' }
@@ -873,7 +870,9 @@ const FAMILY_OWNERS: Record<string, readonly string[]> = {
   // An outside action is written through the run's Log handle (`SUBJECT_OWNERS.action`); the schema keeps the
   // family so an old line still parses.
   effect: [],
-  handoff: [DEV_REVIEW_LOOP_PAUSE_RESUME_PATH],
+  // A person the harness asks is written through the run's Log handle (`SUBJECT_OWNERS.person`); the schema keeps the
+  // family so an old line still parses.
+  handoff: [],
   custom: [LOG_CUSTOM_PATH],
   // The custom-event writer's own refusal is the one earlier-format operation event left; every command the harness
   // records is written through the run's Log handle (`SUBJECT_OWNERS.command`).
@@ -1082,7 +1081,10 @@ const SUBJECT_OWNERS: Record<string, readonly string[]> = {
   ],
   // A forge write: validated, refused and written, recorded at the forge write gate through the outside-log writer;
   // the earlier `forge_write` lines are never written for them.
-  forge: [OUTSIDE_LOG_PATH, FORGE_WRITE_PATH]
+  forge: [OUTSIDE_LOG_PATH, FORGE_WRITE_PATH],
+  // A person asked and their answer: the escalation record writer's `log.person.asked` and the escalation resolver's
+  // `log.person.answered`, through the outside-log writer; the earlier `handoff` lines are never written for them.
+  person: [OUTSIDE_LOG_PATH, DEV_REVIEW_LOOP_PAUSE_RESUME_PATH]
 }
 
 /** The writer functions of the outside-log module, by the subject each writes; naming one anywhere but its import is a write of that subject. */
@@ -1092,7 +1094,9 @@ const OUTSIDE_WRITERS: ReadonlyMap<string, string> = new Map(
     writeCommand: 'command',
     writeForgeValidated: 'forge',
     writeForgeRefused: 'forge',
-    writeForgeWritten: 'forge'
+    writeForgeWritten: 'forge',
+    writePersonAsked: 'person',
+    writePersonAnswered: 'person'
   })
 )
 
@@ -1199,6 +1203,13 @@ function subjectWritesOf(rel: string, source: string): SubjectWrite[] {
           object.name.text === 'forge'
         )
           found.add('forge')
+        // `<handle>.person.asked(...)` and `<handle>.person.answered(...)`.
+        if (
+          (callee.name.text === 'asked' || callee.name.text === 'answered') &&
+          ts.isPropertyAccessExpression(object) &&
+          object.name.text === 'person'
+        )
+          found.add('person')
         // `<turn>.usage(...)` and `<handle>.usage.recorded(...)` record tokens.
         if (callee.name.text === 'usage') found.add('usage')
         if (callee.name.text === 'recorded' && ts.isPropertyAccessExpression(object) && object.name.text === 'usage')
@@ -1345,9 +1356,11 @@ describe('log-callers — agents and usage are written through the run handle, o
   })
 
   it('names the owners of the action, command and forge subjects, each with the outside-log writer', () => {
-    for (const subject of ['action', 'command', 'forge']) expect(SUBJECT_OWNERS[subject]).toContain(OUTSIDE_LOG_PATH)
+    for (const subject of ['action', 'command', 'forge', 'person'])
+      expect(SUBJECT_OWNERS[subject]).toContain(OUTSIDE_LOG_PATH)
     expect(SUBJECT_OWNERS.action).toEqual([OUTSIDE_LOG_PATH, EFFECTS_PATH])
     expect(SUBJECT_OWNERS.forge).toEqual([OUTSIDE_LOG_PATH, FORGE_WRITE_PATH])
+    expect(SUBJECT_OWNERS.person).toEqual([OUTSIDE_LOG_PATH, DEV_REVIEW_LOOP_PAUSE_RESUME_PATH])
   })
 
   it('names the owners of the checks subject: the check runner and the driver lifecycle module', () => {

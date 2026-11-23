@@ -45,7 +45,8 @@ import {
   postMarkedCommentOrThrow,
   reconcileGhComment
 } from '../../../../tools/task-contract/forge/forge-write.js'
-import { log } from '../../../../../../kernel/log/log-sink.js'
+import { writePersonAnswered, writePersonAsked } from '../../../../../../kernel/log/outside-log.js'
+import { spanIdFor } from '../../../../../../../packages/log-sdk/src/index.js'
 import {
   isRateLimitPauseDetail,
   isUsageLimitPauseDetail,
@@ -1118,8 +1119,23 @@ export function escalationIdFor(task: number, round: number, head: string): stri
   return `${task}-${round}-${head}`
 }
 
+/** The decision every escalation asks a person for, as the code the Log records. */
+const PERSON_DECISION = 'ruling'
+
+/** The Log key naming one escalation: every process that asks or answers it derives the same span id from it. */
+export function personQuestionKey(escalationId: string): string {
+  return `person:${escalationId}`
+}
+
+/** What a person is told to do to answer: the ruling command when the run has a pull request, else the pause reason's first next action. */
+function howToAnswerFor(reason: string, pr: number | null): string {
+  if (pr !== null) return `vinaya pr rule ${pr} --file <ruling.md>`
+  const profile = (PAUSE_REASON_PROFILE as Record<string, { nextActions: string[] }>)[reason]
+  return profile?.nextActions[0] ?? 'resume or cancel'
+}
+
 /**
- * O1/O2 — the `handoff` Log family's `class`, derived from this pause's own
+ * The person's kind in the Log, derived from this pause's own
  * `requestedAuthority` (`PAUSE_REASON_PROFILE`, above): the one
  * classification already available at either of this module's two call
  * sites, since no caller threads a reviewer's own `ESCALATE: <class>` choice
@@ -1129,13 +1145,13 @@ export function escalationIdFor(task: number, round: number, head: string): stri
  * Principal has the AUTHORITY to make; an operator-addressed pause is a
  * mechanical PRODUCT/environment fix; a self-addressed pause is the loop's
  * own STRATEGY input moving underneath it. Takes `string`, not `PauseReason`
- * — the `resolved`-event call site re-derives this from an
+ * — the answer call site re-derives this from an
  * `EscalationRecord.reason`, which the control-store schema types as a plain
  * string — and falls back to `'strategy'` for a value outside today's
  * `PauseReason` union, which a durable record written under a future reason
  * could in principle carry.
  */
-function handoffClassFor(reason: string): 'authority' | 'strategy' | 'product' {
+function personKindFor(reason: string): 'authority' | 'strategy' | 'product' {
   const profile = (PAUSE_REASON_PROFILE as Record<string, { requestedAuthority: RequestedAuthority }>)[reason]
   if (profile?.requestedAuthority === 'principal') return 'authority'
   if (profile?.requestedAuthority === 'operator') return 'product'
@@ -1224,20 +1240,23 @@ export function writeEscalationRecord(facts: EscalationFacts): EscalationRecord 
   appendTransition(deps, facts.task, acquired.epoch, { from: 'running', to: 'paused', detail: facts.reason, at: now })
   // O1: logged only AFTER both control-store writes above succeed — a
   // failed write throws out of this function before reaching this line,
-  // recording no handoff. O3: exactly one `raised` per real escalation — a
+  // recording no question. Exactly one question per real escalation — a
   // new `escalationId` (none existed before, or a genuinely different pause
   // collided and claimed its own disambiguating suffix) is the one real
   // occurrence; an idempotent rerun of the identical instance, which keeps
-  // the SAME canonical id, logs nothing a second time.
+  // the SAME canonical id, asks nothing a second time.
   if (!existedBefore || record.escalationId !== escalationId) {
-    log({
-      kind: 'handoff',
-      event: 'raised',
-      payload: {},
-      class: handoffClassFor(facts.reason),
-      reason: facts.reason,
-      requested_decision: facts.detail ? sanitizePublicPauseDetail(facts.detail) : null
-    })
+    writePersonAsked(
+      {
+        kind: personKindFor(facts.reason),
+        key: personQuestionKey(record.escalationId),
+        why: facts.reason,
+        decision: PERSON_DECISION,
+        howToAnswer: howToAnswerFor(facts.reason, facts.pr),
+        startTime: new Date(now)
+      },
+      { task: facts.task, runId: facts.runId }
+    )
   }
   return record
 }
@@ -1416,23 +1435,25 @@ export function resolveEscalation(
     detail: authenticatedFrom,
     at: now
   })
-  // O2/O3: a `resolved` handoff only for an actual resolution — a
+  // An answer only for an actual resolution — a
   // cancellation ends the escalation without anyone ruling on it, a
-  // different outcome this family does not record. Reached at most once per
+  // different outcome the Log does not record as an answer. Reached at most once per
   // escalation: `consumeResolutionOnce` above already refused a replay of an
   // already-consumed decision (`ReplayedResolutionError`, thrown before this
   // point), and the pre-check earlier in this function refuses one racing in
   // ahead of that.
   if (decision === 'resume') {
-    log({
-      kind: 'handoff',
-      event: 'resolved',
-      payload: {},
-      class: handoffClassFor(escalation.value.reason),
-      reason: escalation.value.reason,
-      resolution: outcome.record.decision,
-      resolved_by: outcome.record.authenticatedBy
-    })
+    writePersonAnswered(
+      {
+        kind: personKindFor(escalation.value.reason),
+        spanId: spanIdFor(escalation.value.runId, personQuestionKey(escalationId)),
+        why: escalation.value.reason,
+        decision: PERSON_DECISION,
+        answer: outcome.record.decision,
+        by: outcome.record.authenticatedBy
+      },
+      { task, runId: escalation.value.runId }
+    )
   }
   return { escalation: escalation.value, resolution: outcome.record, epoch: acquired.epoch }
 }

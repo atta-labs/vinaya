@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -31,6 +32,7 @@ import { readEscalationPacket } from '../../../loops/dev-review/run-control/read
 import { programFile } from '../../../tools/programs.js'
 import { type CommandRecord, type RecordScope, writeCommand } from '../../../../../kernel/log/outside-log'
 import { isolatedLocalCopy } from '../../../integration/log/client/local-copy-fixture'
+import { runRecorder } from '../../../../../kernel/log/run-recorder'
 
 /**
  * `task_resume` (task-operator-v1 4, O1) driven in-process with injected
@@ -416,6 +418,37 @@ describe('task_resume handler', () => {
         'vinaya.outside.target': `task:${ISSUE}`,
         'vinaya.result': 'ok',
         'vinaya.work.ref': String(ISSUE)
+      })
+      expect(copy.earlierFormatFiles()).toEqual([])
+    } finally {
+      copy.restore()
+    }
+  })
+
+  it("ends the person span another process asked, once, from the escalation's own run, with no earlier-format handoff event (O2, O4)", async () => {
+    writePause({ prNumber: null })
+    writeEscalationFixture({ pr: null })
+    const copy = isolatedLocalCopy()
+    try {
+      const asker = join(import.meta.dir, '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.ts')
+      const outside = join(import.meta.dir, '../../../../../kernel/log/outside-log.ts')
+      const script = `import { personQuestionKey } from ${JSON.stringify(asker)}
+import { writePersonAsked } from ${JSON.stringify(outside)}
+writePersonAsked({ kind: 'authority', key: personQuestionKey(${JSON.stringify(`${ISSUE}-1-headsha1`)}), why: 'escalation', decision: 'ruling', howToAnswer: 'a first next action', startTime: new Date() }, { task: ${ISSUE}, runId: 'run-1' })
+process.exit(0)`
+      const asked = spawnSync(process.execPath, ['-e', script], { env: process.env, encoding: 'utf8' })
+      expect(asked.status).toBe(0)
+      const { handler } = harness({ issueRulings: ['Ruling: proceed as briefed.'], newestIssueRulingOrdinal: 1 })
+      const result = await handler({ task: { issue: ISSUE } }, CALLER)
+      expect(result.ok).toBe(true)
+      await runRecorder().drain()
+      expect(copy.events().filter((e) => e.name === 'vinaya.person.asked')).toHaveLength(1)
+      const spans = copy.spans().filter((s) => s.name.startsWith('vinaya.person '))
+      expect(spans).toHaveLength(1)
+      expect(spans[0]?.name).toBe('vinaya.person authority')
+      expect(spans[0]?.attributes).toMatchObject({
+        'vinaya.person.answer': 'resume',
+        'vinaya.person.answered_by': 'principal-1'
       })
       expect(copy.earlierFormatFiles()).toEqual([])
     } finally {
