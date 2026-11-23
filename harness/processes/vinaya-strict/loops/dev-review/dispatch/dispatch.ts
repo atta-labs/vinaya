@@ -95,6 +95,7 @@ import {
 import type { TranscriptSummary } from '../../../../../kernel/adapters/agents/claude-code/transcript-summary'
 import type { Role, RoleAttemptOutcome } from '../../../../../kernel/log/schema'
 import { drainLogSpool } from '../../../../../kernel/log/log-sink.js'
+import type { LogHandle } from '../../../../../../packages/log-sdk/src/index.js'
 import { type AgentTurn, runRecorder } from '../../../../../kernel/log/run-recorder.js'
 import { createVinayaLogSink } from '../../../integration/log/log-sink-factory.js'
 // The command line installs the process's sink factory through the dispatch module it already loads.
@@ -4325,7 +4326,7 @@ export async function dispatchRole(
     ...(opts.pr !== undefined ? { VINAYA_PR: String(opts.pr) } : {}),
     VINAYA_ATTEMPT: sinkAttempt === undefined ? undefined : String(sinkAttempt)
   })
-  const { log, drain, runId } = createVinayaLogSink({
+  const { drain, runId } = createVinayaLogSink({
     env: sinkEnv,
     provenance: 'parent_attributed',
     inputVersions: () => opts.inputVersions
@@ -4396,6 +4397,16 @@ export async function dispatchRole(
   // The agent turn is one `invoke_agent` span on the run's Log handle: it opens when the agent is sent, or at the
   // moment a dispatch is refused, and ends once, with what came out of it or with why it failed.
   const repository = repo === null ? undefined : `${repo.owner}/${repo.repo}`
+  /** One command record on the same handle as the turn: an infrastructure fact a refusal can follow. A Log that cannot be written never changes the dispatch. */
+  const writeCommandRecord = (record: Parameters<LogHandle['command']['completed']>[0]): void => {
+    try {
+      runRecorder()
+        .handle(runId, repository, opts.task === undefined ? undefined : String(opts.task))
+        ?.command.completed(record)
+    } catch {
+      // Observation only.
+    }
+  }
   let turn: AgentTurn | undefined
   const beginTurn = (): AgentTurn => {
     turn ??= runRecorder().turn({
@@ -4587,27 +4598,19 @@ export async function dispatchRole(
       : null
   if (claudeConfinement !== null && !claudeConfinement.confined) {
     // O5: named in the run's own output (`writeLifecycle`, which mirrors to
-    // the terminal and `roleLogPath`'s driver.log) AND the Vinaya Log.
-    // Round 2 review, MAJOR: `writeLifecycle` alone never reaches the Log —
-    // it never calls `log()` — so this ALSO records a real `operation`
-    // event, the same established "an infrastructure-level fact, not a
-    // dispatch outcome" family `broker.ts`'s own `operationEvent` helper
-    // already writes (`kind: 'operation'`, `event: 'completed'`); `result:
-    // 'unavailable'` is this family's own documented answer for exactly
-    // this case — a mechanism that could not be established. `target`
-    // names the missing tool(s), never a free-text message (the schema's
-    // own fields carry no prose slot, and `OperationResult` already says
-    // WHAT happened); the full warning text stays in `writeLifecycle`'s own
-    // line, which is what an operator actually reads.
+    // the terminal and `roleLogPath`'s driver.log) AND the Log.
+    // `writeLifecycle` alone never reaches the Log, so this ALSO writes one
+    // `log.command.completed` record, an infrastructure-level fact rather
+    // than a dispatch outcome; `result: 'unavailable'` is its answer for
+    // exactly this case — a mechanism that could not be established.
+    // `target` names the missing tool(s), never a free-text message; the full
+    // warning text stays in `writeLifecycle`'s own line, which is what an
+    // operator actually reads.
     writeLifecycle(`[vinaya dispatch ${effectId}] ${role} via ${agent}: WARNING — ${claudeConfinement.warning}`)
-    log({
-      kind: 'operation',
-      event: 'completed',
-      payload: {},
-      operation: 'claude-sandbox-confinement',
-      target: claudeConfinement.missingTools.length > 0 ? claudeConfinement.missingTools.join(',') : null,
+    writeCommandRecord({
+      action: 'claude-sandbox-confinement',
       result: 'unavailable',
-      error_class: null
+      ...(claudeConfinement.missingTools.length > 0 ? { target: claudeConfinement.missingTools.join(',') } : {})
     })
     // A refusal can end the process right after; the earlier queue has nothing else to wait on, so land this line.
     await drain()
@@ -5081,15 +5084,7 @@ export async function dispatchRole(
       if (!probe.ok) sandboxProbeError = probe.error
     }
     if (sandboxProbeError !== null) {
-      log({
-        kind: 'operation',
-        event: 'completed',
-        payload: {},
-        operation: 'linux-sandbox-probe',
-        target: agent,
-        result: 'unavailable',
-        error_class: null
-      })
+      writeCommandRecord({ action: 'linux-sandbox-probe', target: agent, result: 'unavailable' })
       // The refusal that follows can end the process; land this line first.
       await drain()
     }

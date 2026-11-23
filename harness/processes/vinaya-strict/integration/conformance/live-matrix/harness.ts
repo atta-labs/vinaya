@@ -642,7 +642,7 @@ export function defineConformanceSuite(runtime: 'claude' | 'codex', invocation: 
               consumedAt: '2026-01-01T00:00:00.000Z'
             })
           },
-          log: () => {}
+          record: () => {}
         })
         const handlers: TaskToolHandlers = {
           ...defaultTaskToolHandlers,
@@ -708,7 +708,7 @@ export function defineConformanceSuite(runtime: 'claude' | 'codex', invocation: 
             return Promise.resolve({ status: 'confirmed', pid: null })
           },
           now: () => '2026-01-01T00:01:00.000Z',
-          log: () => {}
+          record: () => {}
         })
         const handlers: TaskToolHandlers = {
           ...defaultTaskToolHandlers,

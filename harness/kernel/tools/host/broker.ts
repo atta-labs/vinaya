@@ -43,18 +43,30 @@
 import { acquireOwnership, type ControlStoreDeps, readEffect } from '../../connectors/checkpoint/control-store/index'
 import { normalizeTouchedPath } from './touched-path.js'
 import { createEffectExecutor, type EffectReconciler, sha256Hex } from '../../effects/effects.js'
-import { log as defaultLogEvent, type LogEventInput } from '../../log/log-sink.js'
+import { type ActionRecord, type CommandRecord, writeCommand } from '../../log/outside-log.js'
 
 /**
- * Every `operation` log line this module emits (O1: "normalized invocation,
- * authorization ... outcomes"): one call for authenticating the invocation
- * context itself (`authenticate*Invocation`), one for the grant/target/
- * replay checks `requestEffect` runs before ever reaching the effect
- * executor (whose own `attempted`/`observed`/`verified` sequence,
- * `effects.ts`, picks up from there). Threaded as an optional trailing
- * parameter, defaulting to the real global sink.
+ * What this module records (O1: "normalized invocation, authorization ...
+ * outcomes"): `command` takes each command record — one for authenticating
+ * the invocation context itself (`authenticate*Invocation`), one for the
+ * grant/target/replay checks `requestEffect` runs before ever reaching the
+ * effect executor — and `action` takes the executor's own final record
+ * (`effects.ts`), which picks up from there. Threaded as an optional
+ * trailing parameter; each defaults to the run's own Log handle.
  */
-export type BrokerLogEvent = (e: LogEventInput) => void
+export type BrokerRecords = {
+  command?: (record: CommandRecord) => void
+  action?: (record: ActionRecord) => void
+}
+
+/** Writes one command record; a Log that cannot be written never changes the broker's answer. */
+function recordCommand(records: BrokerRecords, record: CommandRecord): void {
+  try {
+    ;(records.command ?? writeCommand)(record)
+  } catch {
+    // Observation only: never a reason to refuse or fail a request.
+  }
+}
 
 // --- the policies a broker is built from -----------------------------------
 
@@ -117,13 +129,18 @@ function assertBrokerPolicies(policies: BrokerPolicies | undefined): BrokerPolic
   return policies
 }
 
-function operationEvent(
+function operationRecord(
   operation: string,
   target: string | null,
   result: 'ok' | 'refused' | 'error',
   errorClass: string | null
-): LogEventInput {
-  return { kind: 'operation', event: 'completed', payload: {}, operation, target, result, error_class: errorClass }
+): CommandRecord {
+  return {
+    action: operation,
+    result,
+    ...(target === null ? {} : { target }),
+    ...(errorClass === null ? {} : { errorType: errorClass })
+  }
 }
 
 // --- invocation context (O1) ------------------------------------------------
@@ -224,7 +241,7 @@ function assertPositiveTaskId(task: number, raw: unknown): number {
 function authenticateWorkerInvocation(
   policies: BrokerPolicies,
   env: Readonly<Record<string, string | undefined>>,
-  logEvent: BrokerLogEvent = defaultLogEvent
+  records: BrokerRecords = {}
 ): InvocationContext {
   try {
     const role = env.VINAYA_ROLE
@@ -252,11 +269,12 @@ function authenticateWorkerInvocation(
         `no launch record names run ${JSON.stringify(runId)} as role ${JSON.stringify(role)} for task ${validTask} — the claimed task does not match what dispatchRole actually launched this child for`
       )
     }
-    logEvent(operationEvent('authenticate-invocation', `task:${validTask}`, 'ok', null))
+    recordCommand(records, operationRecord('authenticate-invocation', `task:${validTask}`, 'ok', null))
     return mintInvocationContext(mapped, validTask)
   } catch (err) {
-    logEvent(
-      operationEvent(
+    recordCommand(
+      records,
+      operationRecord(
         'authenticate-invocation',
         null,
         'refused',
@@ -280,7 +298,7 @@ function authenticateWorkerInvocation(
 export function authenticateOperatorInvocation(
   env: Readonly<Record<string, string | undefined>>,
   task: number,
-  logEvent: BrokerLogEvent = defaultLogEvent
+  records: BrokerRecords = {}
 ): InvocationContext {
   try {
     const callerId = env.VINAYA_MCP_CALLER
@@ -288,11 +306,12 @@ export function authenticateOperatorInvocation(
       throw new ForgedInvocationError('no VINAYA_MCP_CALLER on this invocation — the Operator channel requires one')
     }
     const context = mintInvocationContext('operator', assertPositiveTaskId(task, task))
-    logEvent(operationEvent('authenticate-invocation', `task:${context.task}`, 'ok', null))
+    recordCommand(records, operationRecord('authenticate-invocation', `task:${context.task}`, 'ok', null))
     return context
   } catch (err) {
-    logEvent(
-      operationEvent(
+    recordCommand(
+      records,
+      operationRecord(
         'authenticate-invocation',
         null,
         'refused',
@@ -537,7 +556,7 @@ function requestEffect(
   deps: ControlStoreDeps,
   context: InvocationContext,
   request: BrokerEffectRequest,
-  logEvent: BrokerLogEvent = defaultLogEvent
+  records: BrokerRecords = {}
 ): string {
   try {
     assertAuthenticatedContext(context)
@@ -547,8 +566,9 @@ function requestEffect(
     assertNoProtectedPaths(policies, request.touchedPaths, request.surfaceCoversPath)
     assertNoReplayedInputVersion(deps, context.task, request.key, request.inputVersion)
   } catch (err) {
-    logEvent(
-      operationEvent(
+    recordCommand(
+      records,
+      operationRecord(
         request.operation,
         request.target,
         'refused',
@@ -560,7 +580,7 @@ function requestEffect(
   // O1's "authorization" outcome — the four checks above all passed, before
   // the effect executor's own `attempted`/`observed`/`verified` sequence
   // (`effects.ts`) picks up the write itself.
-  logEvent(operationEvent(request.operation, request.target, 'ok', null))
+  recordCommand(records, operationRecord(request.operation, request.target, 'ok', null))
 
   // Publishing the same commit is the same intent even after the driver advances its round.
   // Keep the durable identity so an interrupted push is reconciled before any poster can run.
@@ -577,7 +597,7 @@ function requestEffect(
       : request.inputVersion
 
   const ownerId = `broker:${context.task}:${context.role}:${request.operation}:${request.key}`
-  const executor = createEffectExecutor(deps, context.task, ownerId, logEvent)
+  const executor = createEffectExecutor(deps, context.task, ownerId, records.action)
   return executor.execute({
     key: request.key,
     identity: {
@@ -597,14 +617,14 @@ function requestEffect(
 export type Broker = {
   authenticateWorkerInvocation: (
     env: Readonly<Record<string, string | undefined>>,
-    logEvent?: BrokerLogEvent
+    records?: BrokerRecords
   ) => InvocationContext
   authenticateOperatorInvocation: typeof authenticateOperatorInvocation
   requestEffect: (
     deps: ControlStoreDeps,
     context: InvocationContext,
     request: BrokerEffectRequest,
-    logEvent?: BrokerLogEvent
+    records?: BrokerRecords
   ) => string
 }
 
@@ -617,9 +637,9 @@ export type Broker = {
 export function createBroker(policies: BrokerPolicies): Broker {
   const bound = assertBrokerPolicies(policies)
   return {
-    authenticateWorkerInvocation: (env, logEvent) => authenticateWorkerInvocation(bound, env, logEvent),
+    authenticateWorkerInvocation: (env, records) => authenticateWorkerInvocation(bound, env, records),
     authenticateOperatorInvocation,
-    requestEffect: (deps, context, request, logEvent) => requestEffect(bound, deps, context, request, logEvent)
+    requestEffect: (deps, context, request, records) => requestEffect(bound, deps, context, request, records)
   }
 }
 

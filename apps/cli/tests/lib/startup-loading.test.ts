@@ -5,8 +5,9 @@
 import { expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { spawnSyncBudgeted } from '../../../../harness/kernel/conformance/unit/process-fixture'
+import { storedEvents } from '../../../../harness/kernel/gates/checks/runner/local-copy-probe'
 
 const ENTRY = join(import.meta.dir, '../../src/index.ts')
 
@@ -44,8 +45,15 @@ it('`check --plan` loads no Log client', () => {
   expect(logClient(loadedBy(['check', '--plan']))).toEqual([])
 })
 
-function filesUnder(dir: string): string[] {
-  return [...new Bun.Glob('**/*.ndjson').scanSync({ cwd: dir, absolute: true })]
+/** The `vinaya.command.completed` records of the local copy under `dir`, each as its attributes by name. */
+function commandRecordsUnder(dir: string): Array<Record<string, string>> {
+  const folders = new Set(
+    [...new Bun.Glob('**/*.logs.jsonl').scanSync({ cwd: dir, absolute: true })].map((f) => dirname(f))
+  )
+  return [...folders]
+    .flatMap((folder) => storedEvents(folder))
+    .filter((e) => e.name === 'vinaya.command.completed')
+    .map((e) => Object.fromEntries(Object.entries(e.attributes).map(([k, v]) => [k, String(v)])))
 }
 
 it('with a `logs.folder` in the working directory config, `version` still records its operation at exit', () => {
@@ -56,8 +64,8 @@ it('with a `logs.folder` in the working directory config, `version` still record
     mkdirSync(cwd, { recursive: true })
     writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logs: { folder } }))
     loadedBy(['version'], { VINAYA_RUNTIME_DIR: join(root, 'runtime'), HOME: root }, cwd)
-    const lines = filesUnder(folder).flatMap((file) => readFileSync(file, 'utf8').split('\n'))
-    expect(lines.filter((line) => line.includes('"cli_command"')).length).toBe(1)
+    const records = commandRecordsUnder(root)
+    expect(records.filter((r) => r['vinaya.outside.action'] === 'cli_command').length).toBe(1)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -67,12 +75,11 @@ it('with a Log destination, `version` still records its operation at exit', () =
   const spool = mkdtempSync(join(tmpdir(), 'vinaya-startup-spool-'))
   try {
     mkdirSync(spool, { recursive: true })
-    loadedBy(['version'], { VINAYA_LOG_SPOOL_DIR: spool })
-    const lines = filesUnder(spool).flatMap((file) => readFileSync(file, 'utf8').split('\n'))
-    const events = lines.filter((line) => line.includes('"cli_command"'))
+    loadedBy(['version'], { VINAYA_LOG_SPOOL_DIR: spool, VINAYA_RUNTIME_DIR: join(spool, 'runtime'), HOME: spool })
+    const events = commandRecordsUnder(spool).filter((r) => r['vinaya.outside.action'] === 'cli_command')
     expect(events.length).toBe(1)
-    expect(events[0]).toContain('"target":"version"')
-    expect(events[0]).toContain('"result":"ok"')
+    expect(events[0]?.['vinaya.outside.target']).toBe('version')
+    expect(events[0]?.['vinaya.result']).toBe('ok')
   } finally {
     rmSync(spool, { recursive: true, force: true })
   }

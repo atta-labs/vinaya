@@ -21,7 +21,7 @@ import {
   scopeTarget
 } from '../broker'
 
-const noLog = (): void => {}
+const noLog = { command: (): void => {}, action: (): void => {} }
 
 function syntheticPolicies(seen: { protectedAsked: string[] } = { protectedAsked: [] }): BrokerPolicies {
   return {

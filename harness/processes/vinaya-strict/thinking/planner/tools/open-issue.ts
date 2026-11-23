@@ -49,8 +49,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { installProcess } from '../../../../../kernel/dev-process-socket/contract/install-process.js'
-import { CLI_OPERATION_STREAM, recordCliOperationAtExit } from '../../../../../kernel/log/client/cli-operation-log.js'
-import { logSync } from '../../../../../kernel/log/log-sink.js'
+import { recordCliOperationAtExit } from '../../../../../kernel/log/client/cli-operation-log.js'
 import { vinayaProcessIntegration } from '../../../integration/process/process-integration.js'
 import { amendRationaleDeps } from './amend-rationale-deps'
 import {
@@ -940,10 +939,7 @@ if (import.meta.main) {
   process.chdir(REPO_ROOT)
   installProcess(vinayaProcessIntegration, ['log', 'config', 'checks'])
   recordCliOperationAtExit(['open-issue', ...process.argv.slice(2)], {
-    on: (event, handler) => process.on(event, handler),
-    logSync,
-    now: Date.now,
-    unattributedStream: CLI_OPERATION_STREAM
+    on: (event, handler) => process.on(event, handler)
   })
   await main()
 }

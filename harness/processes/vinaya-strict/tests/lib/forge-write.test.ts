@@ -16,12 +16,15 @@ import {
   checkTestPlanDeveloperRunnable
 } from '../../tools/task-contract/issue-validation'
 import {
+  captureRefusalSync,
   collectTaskIssueErrors,
   DEFERRED_FINDINGS_LABEL,
   deferredFindingsMarker,
   type GhRunner,
   isPendingOnlyFailure,
   readCommandReference,
+  recordForgeWritten,
+  refuse,
   readPinnedFileImporters,
   renderDeferredFindingsIssueBody,
   tokenExistsInTree,
@@ -35,6 +38,8 @@ import {
 import { readFileSync } from 'node:fs'
 import { resolveMilestoneAttachTarget } from '../../tools/task-contract/forge/fetch-milestone'
 import { COMMANDS } from '../../integration/commands.js'
+import { currentRunId } from '../../../../kernel/log/log-sink'
+import { isolatedLocalCopy } from '../../integration/log/client/local-copy-fixture'
 
 const CLI_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', 'apps', 'cli')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')
@@ -2113,5 +2118,87 @@ describe('collectTaskIssueErrors — Milestone attach on edit', () => {
     expect(target?.title).toBe(TARGET)
     const { attach } = await run({ kind: 'edit', issueRef: '7' }, { ok: true, title: TARGET }, target?.title ?? null)
     expect(attach).toEqual([])
+  })
+})
+
+/**
+ * The forge write gate records every write it checks, refuses or makes through the Log: `log.forge.validated` when a
+ * write passes the check, `log.forge.refused` with why when it refuses one, `log.forge.written` once the write is
+ * made. Only the action, its target and the reason are recorded — never the body — and a write made outside any task
+ * run carries this process's own run id.
+ */
+describe('the forge write gate records through the Log (O3)', () => {
+  const BODY = 'a body that must never reach the Log: SECRET-BODY-TEXT'
+  const write = (title: string) => ({
+    body: BODY,
+    title,
+    sections: [],
+    changedFiles: [],
+    retryCommand: 'task_issue_create',
+    branch: 'fix/some-change'
+  })
+
+  it('a passing write records validated, then written, naming the action and its target and nothing of the body', () => {
+    const copy = isolatedLocalCopy()
+    try {
+      expect(validateForgeWrite(write('Fix(log): A passing title'))).toEqual([])
+      recordForgeWritten({ action: 'issue create', target: 'https://example.test/issues/1' })
+      const forge = copy.events().filter((e) => e.name.startsWith('vinaya.forge.'))
+      expect(forge.map((e) => e.name)).toEqual(['vinaya.forge.validated', 'vinaya.forge.written'])
+      for (const e of forge)
+        expect(e.attributes).toMatchObject({
+          'vinaya.outside.action': 'task_issue_create',
+          'vinaya.outside.target': 'fix/some-change'
+        })
+      expect(JSON.stringify(copy.events())).not.toContain('SECRET-BODY-TEXT')
+      expect(copy.earlierFormatFiles()).toEqual([])
+    } finally {
+      copy.restore()
+    }
+  })
+
+  it('a refused write records refused with why, as the names of the checks that refused, and no validated record', () => {
+    const copy = isolatedLocalCopy()
+    try {
+      const errors = validateForgeWrite(write('not a valid title'))
+      expect(errors.length).toBeGreaterThan(0)
+      const outcome = captureRefusalSync(() => refuse(errors))
+      expect(outcome.ok).toBe(false)
+      const forge = copy.events().filter((e) => e.name.startsWith('vinaya.forge.'))
+      expect(forge.map((e) => e.name)).toEqual(['vinaya.forge.refused'])
+      expect(forge[0]?.attributes).toMatchObject({
+        'vinaya.outside.action': 'task_issue_create',
+        'vinaya.outside.target': 'fix/some-change',
+        'vinaya.reason': 'forge-title'
+      })
+      expect(JSON.stringify(copy.events())).not.toContain('SECRET-BODY-TEXT')
+    } finally {
+      copy.restore()
+    }
+  })
+
+  it("a write made outside any task run carries this process's own run id", () => {
+    const copy = isolatedLocalCopy()
+    try {
+      validateForgeWrite(write('Fix(log): A passing title'))
+      const files = copy.copyFiles().filter((f) => f.endsWith('.logs.jsonl'))
+      expect(files.length).toBeGreaterThan(0)
+      for (const file of files) expect(file.split('~')[0]).toBe(currentRunId())
+    } finally {
+      copy.restore()
+    }
+  })
+
+  it('a Log that cannot be written never changes what the gate answers', () => {
+    const copy = isolatedLocalCopy()
+    try {
+      // The runtime directory is a file, so nothing can be written under it.
+      rmSync(copy.runtimeDir, { recursive: true, force: true })
+      writeFileSync(copy.runtimeDir, 'not a directory')
+      expect(validateForgeWrite(write('Fix(log): A passing title'))).toEqual([])
+      expect(captureRefusalSync(() => refuse(validateForgeWrite(write('not a valid title')))).ok).toBe(false)
+    } finally {
+      copy.restore()
+    }
   })
 })

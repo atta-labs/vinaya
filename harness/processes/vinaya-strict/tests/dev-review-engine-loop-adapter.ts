@@ -1092,7 +1092,7 @@ async function drive(
           sleep: (ms) => new Promise((r) => setTimeout(r, ms > 0 ? 1 : 0))
         }),
       hostname,
-      log: () => {},
+      record: () => {},
       runner: readTaskRunner
     })
     await between({

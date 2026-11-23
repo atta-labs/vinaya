@@ -416,6 +416,56 @@ export function processLocalCopyFolder(): string {
   return place.folder
 }
 
+/** One command record of a run's local copy: the command, its target and its result. */
+export type RecordedCommand = { action: string; target: string | null; result: string }
+
+/** The `command.completed` records a run wrote to its local copy under `logFolder` (the Log folder, searched whole). */
+export function commandRecordsOf(logFolder: string): RecordedCommand[] {
+  const out: RecordedCommand[] = []
+  const text = (list: Array<{ key: string; value: { stringValue?: string } }>, key: string): string | null =>
+    list.find((a) => a.key === key)?.value.stringValue ?? null
+  const walk = (dir: string): void => {
+    if (!existsSync(dir)) return
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) walk(path)
+      else if (entry.name.endsWith('.logs.jsonl')) {
+        for (const line of readFileSync(path, 'utf8').split('\n')) {
+          if (line.trim() === '') continue
+          for (const group of JSON.parse(line).resourceLogs ?? [])
+            for (const scope of group.scopeLogs ?? [])
+              for (const record of scope.logRecords ?? [])
+                if (record.eventName === 'vinaya.command.completed')
+                  out.push({
+                    action: text(record.attributes, 'vinaya.outside.action') ?? '',
+                    target: text(record.attributes, 'vinaya.outside.target'),
+                    result: text(record.attributes, 'vinaya.result') ?? ''
+                  })
+        }
+      }
+    }
+  }
+  walk(logFolder)
+  return out
+}
+
+/** Every earlier-format `operation` or `effect` line (`*.ndjson`) under `root`, searched whole: the harness writes none for what the Log now records. */
+export function earlierOperationLinesOf(root: string): string[] {
+  const out: string[] = []
+  const walk = (dir: string): void => {
+    if (!existsSync(dir)) return
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) walk(path)
+      else if (entry.name.endsWith('.ndjson'))
+        for (const line of readFileSync(path, 'utf8').split('\n'))
+          if (/"kind":\s*"(operation|effect)"/.test(line)) out.push(line)
+    }
+  }
+  walk(root)
+  return out
+}
+
 /** The Log folder a fixture home's unattended dispatch writes its local copy under (its runtime directory's `logs`). */
 export function localCopyFolderOf(home: string): string {
   return join(home, '.vinaya', 'runtime', 'unresolved', 'logs')

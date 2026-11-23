@@ -667,27 +667,12 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
     ]
   },
   {
-    name: 'EffectExecutor — one final `verified` observation per idempotent external write',
-    files: [EFFECTS_PATH],
-    requires: [{ kind: 'effect', event: 'verified' }]
-  },
-  {
-    name: 'broker — authenticate*Invocation / requestEffect',
-    files: [BROKER_PATH],
-    requires: [{ kind: 'operation', event: 'completed' }]
-  },
-  {
     name: 'emitCustomEvent — a declared event recorded, or its refusal',
     files: [LOG_CUSTOM_PATH],
     requires: [
       { kind: 'custom', event: 'recorded' },
       { kind: 'operation', event: 'completed' }
     ]
-  },
-  {
-    name: 'task-tools cancel/resume handlers',
-    files: [TASK_TOOLS_CANCEL_PATH, TASK_TOOLS_RESUME_PATH],
-    requires: [{ kind: 'operation', event: 'completed' }]
   },
   {
     name: 'pause-resume — a human handoff raised at the escalation record write, resolved at the resolution record',
@@ -713,6 +698,10 @@ const LOG_COVERAGE_EXEMPTIONS: RequiredEvent[] = [
   // before a write recorded one final event still reads; nothing emits them.
   { kind: 'effect', event: 'attempted' },
   { kind: 'effect', event: 'observed' },
+  // An outside action's final outcome is written through the run's Log handle, `log.action.verified`
+  // (`SUBJECT_OWNERS.action`); the earlier `verified` event stays in the schema so a line stored before that still
+  // reads, and nothing emits it.
+  { kind: 'effect', event: 'verified' },
   // An agent turn and its usage are written through the run's Log handle, an `invoke_agent` span carrying its
   // tokens (`SUBJECT_OWNERS`); the earlier `dispatch`, `role_attempt` and `usage` events stay in the schema so a
   // line stored before that still reads, and nothing emits them.
@@ -881,18 +870,16 @@ const FAMILY_OWNERS: Record<string, readonly string[]> = {
   // The check runner writes a run of checks through the run's Log handle (`SUBJECT_OWNERS.checks`); the schema keeps
   // the family so an old line still parses.
   gate: [],
-  effect: [EFFECTS_PATH],
+  // An outside action is written through the run's Log handle (`SUBJECT_OWNERS.action`); the schema keeps the
+  // family so an old line still parses.
+  effect: [],
   handoff: [DEV_REVIEW_LOOP_PAUSE_RESUME_PATH],
   custom: [LOG_CUSTOM_PATH],
-  operation: [
-    DISPATCH_PATH,
-    BROKER_PATH,
-    LOG_CUSTOM_PATH,
-    TASK_TOOLS_RESUME_PATH,
-    TASK_TOOLS_CANCEL_PATH,
-    CLI_OPERATION_LOG_PATH
-  ],
-  // The schema keeps `forge_write` so an old line still parses; no file emits it.
+  // The custom-event writer's own refusal is the one earlier-format operation event left; every command the harness
+  // records is written through the run's Log handle (`SUBJECT_OWNERS.command`).
+  operation: [LOG_CUSTOM_PATH],
+  // A forge write is recorded through the run's Log handle (`SUBJECT_OWNERS.forge`); the schema keeps the family so
+  // an old line still parses, and no file emits it.
   forge_write: []
 }
 
@@ -1051,6 +1038,10 @@ function familiesDeclaredBySchema(schemaSource: string): string[] {
  */
 const RUN_ENGINE_PATH = 'harness/processes/vinaya-strict/bin/run-engine.ts'
 const ACTIONS_PATH = 'harness/processes/vinaya-strict/executing/actions.ts'
+/** The one module whose functions write an outside action, a command or a forge write through the process's own run handle. */
+const OUTSIDE_LOG_PATH = 'harness/kernel/log/outside-log.ts'
+const FORGE_WRITE_PATH = 'harness/processes/vinaya-strict/tools/task-contract/forge/forge-write.ts'
+const CLI_SERVICES_PATH = 'harness/processes/vinaya-strict/integration/cli-services.ts'
 const SUBJECT_OWNERS: Record<string, readonly string[]> = {
   agents: [DISPATCH_PATH, RUN_ENGINE_PATH, DEV_REVIEW_LOOP_ROUND_LOOP_PATH, ACTIONS_PATH],
   usage: [DISPATCH_PATH, RUN_ENGINE_PATH],
@@ -1073,8 +1064,40 @@ const SUBJECT_OWNERS: Record<string, readonly string[]> = {
   // loop's own local checks, CI read and failed-test rerun from the driver lifecycle module; the earlier `gate`
   // `checked` and `summary` lines and the `local_checks_run`, `ci_result_read` and `failed_tests_rerun` lines are never
   // written for them.
-  checks: [RUNNER_PATH, DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH]
+  checks: [RUNNER_PATH, DEV_REVIEW_LOOP_DRIVER_LIFECYCLE_PATH],
+  // An outside action's final outcome: the effect executor's one `log.action.verified` per write, through the
+  // outside-log writer; the earlier `effect` `verified` line is never written for it.
+  action: [OUTSIDE_LOG_PATH, EFFECTS_PATH],
+  // A command that finished: the dispatch sandbox probes (the handle, directly), the broker's authentication and
+  // effects, the task tools' resume and cancel, and the one record per CLI invocation (its exit handler and the
+  // registration that points it at the writer); the earlier `operation` lines are never written for them.
+  command: [
+    OUTSIDE_LOG_PATH,
+    DISPATCH_PATH,
+    BROKER_PATH,
+    TASK_TOOLS_RESUME_PATH,
+    TASK_TOOLS_CANCEL_PATH,
+    CLI_OPERATION_LOG_PATH,
+    CLI_SERVICES_PATH
+  ],
+  // A forge write: validated, refused and written, recorded at the forge write gate through the outside-log writer;
+  // the earlier `forge_write` lines are never written for them.
+  forge: [OUTSIDE_LOG_PATH, FORGE_WRITE_PATH]
 }
+
+/** The writer functions of the outside-log module, by the subject each writes; naming one anywhere but its import is a write of that subject. */
+const OUTSIDE_WRITERS: ReadonlyMap<string, string> = new Map(
+  Object.entries({
+    writeAction: 'action',
+    writeCommand: 'command',
+    writeForgeValidated: 'forge',
+    writeForgeRefused: 'forge',
+    writeForgeWritten: 'forge'
+  })
+)
+
+/** The functions of the forge subject on the run's Log handle. */
+const FORGE_FUNCTIONS: ReadonlySet<string> = new Set(['validated', 'refused', 'written'])
 
 /** The functions of the round and phase subject on the run's Log handle, by the object that holds them. */
 const ROUND_FUNCTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
@@ -1165,6 +1188,17 @@ function subjectWritesOf(rel: string, source: string): SubjectWrite[] {
           object.name.text === 'change'
         )
           found.add('change')
+        // `<handle>.action.verified(...)`, `<handle>.command.completed(...)` and `<handle>.forge.<function>(...)`.
+        if (callee.name.text === 'verified' && ts.isPropertyAccessExpression(object) && object.name.text === 'action')
+          found.add('action')
+        if (callee.name.text === 'completed' && ts.isPropertyAccessExpression(object) && object.name.text === 'command')
+          found.add('command')
+        if (
+          FORGE_FUNCTIONS.has(callee.name.text) &&
+          ts.isPropertyAccessExpression(object) &&
+          object.name.text === 'forge'
+        )
+          found.add('forge')
         // `<turn>.usage(...)` and `<handle>.usage.recorded(...)` record tokens.
         if (callee.name.text === 'usage') found.add('usage')
         if (callee.name.text === 'recorded' && ts.isPropertyAccessExpression(object) && object.name.text === 'usage')
@@ -1174,6 +1208,15 @@ function subjectWritesOf(rel: string, source: string): SubjectWrite[] {
         found.add('usage')
       }
     }
+    // A reference to one of the outside-log writers — called, handed on as a default or a dependency — is a write of
+    // its subject; the import that brings it in is not.
+    if (
+      ts.isIdentifier(n) &&
+      OUTSIDE_WRITERS.has(n.text) &&
+      !ts.isImportSpecifier(n.parent) &&
+      !ts.isExportSpecifier(n.parent)
+    )
+      found.add(OUTSIDE_WRITERS.get(n.text) as string)
     ts.forEachChild(n, visit)
   }
   visit(sf)
@@ -1274,6 +1317,37 @@ describe('log-callers — agents and usage are written through the run handle, o
       '}'
     ].join('\n')
     expect(subjectWritesOf('harness/kernel/x.ts', source).map((w) => w.subject)).toEqual(['checks'])
+  })
+
+  it('finds an action, a command and a forge write by their functions on the handle, and by the outside-log writers', () => {
+    const onHandle = [
+      'export function a(log: any) {',
+      '  log.action.verified({})',
+      '  log.command.completed({})',
+      '  log.forge.validated({})',
+      '  log.forge.refused({})',
+      '  log.forge.written({})',
+      '}'
+    ].join('\n')
+    expect(subjectWritesOf('harness/kernel/x.ts', onHandle).map((w) => w.subject)).toEqual([
+      'action',
+      'command',
+      'forge'
+    ])
+    const byWriter = [
+      "import { writeCommand, writeForgeWritten } from './outside-log.js'",
+      'export const defaults = { record: writeCommand }',
+      'export function b() { writeForgeWritten({ action: "x", target: "y" }) }'
+    ].join('\n')
+    expect(subjectWritesOf('harness/kernel/x.ts', byWriter).map((w) => w.subject)).toEqual(['command', 'forge'])
+    const importOnly = "import { writeAction } from './outside-log.js'\nexport const x = 1"
+    expect(subjectWritesOf('harness/kernel/x.ts', importOnly)).toEqual([])
+  })
+
+  it('names the owners of the action, command and forge subjects, each with the outside-log writer', () => {
+    for (const subject of ['action', 'command', 'forge']) expect(SUBJECT_OWNERS[subject]).toContain(OUTSIDE_LOG_PATH)
+    expect(SUBJECT_OWNERS.action).toEqual([OUTSIDE_LOG_PATH, EFFECTS_PATH])
+    expect(SUBJECT_OWNERS.forge).toEqual([OUTSIDE_LOG_PATH, FORGE_WRITE_PATH])
   })
 
   it('names the owners of the checks subject: the check runner and the driver lifecycle module', () => {

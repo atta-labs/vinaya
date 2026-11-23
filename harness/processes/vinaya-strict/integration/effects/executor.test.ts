@@ -25,7 +25,8 @@ import {
   type EffectReconcileResult,
   sha256Hex
 } from '../../../../kernel/effects/effects'
-import type { LogEventInput } from '../../../../kernel/log/log-sink'
+import type { ActionRecord } from '../../../../kernel/log/outside-log'
+import { isolatedLocalCopy } from '../log/client/local-copy-fixture'
 
 let dir: string
 let deps: ControlStoreDeps
@@ -420,14 +421,14 @@ describe('EffectExecutor', () => {
  * observation identities).
  */
 describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () => {
-  function loggingExecutor(task: number, ownerId = 'owner-a'): { executor: EffectExecutor; events: LogEventInput[] } {
-    const events: LogEventInput[] = []
+  function loggingExecutor(task: number, ownerId = 'owner-a'): { executor: EffectExecutor; events: ActionRecord[] } {
+    const events: ActionRecord[] = []
     const acquired = acquireOwnership(deps, task, ownerId)
     if (!acquired.acquired) throw new Error('test setup: could not acquire a control-store epoch')
     return { executor: new EffectExecutor(deps, task, acquired.epoch, (e) => events.push(e)), events }
   }
 
-  it('emits one verified(success) for a fresh write, under the key as effect_id', () => {
+  it('emits one action record, success, for a fresh write, naming the operation and its target', () => {
     const { executor, events } = loggingExecutor(1)
     executor.execute({
       key: 'k1',
@@ -435,9 +436,9 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
       poster: () => 'https://example.com/comment/1',
       reconcile: neverReconcile
     })
-    expect(events.map((e) => e.event)).toEqual(['verified'])
-    expect((events[0] as { effect_id: string }).effect_id).toBe('k1')
-    expect((events[0] as { outcome: string }).outcome).toBe('success')
+    expect(events).toHaveLength(1)
+    expect((events[0] as ActionRecord).action).toBe('pr-comment')
+    expect((events[0] as ActionRecord).result).toBe('success')
   })
 
   it('an idempotent replay of an already-verified write emits one verified(success) observation of its own', () => {
@@ -453,8 +454,8 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
       },
       reconcile: neverReconcile
     })
-    expect(events.map((e) => e.event)).toEqual(['verified'])
-    expect((events[0] as { effect_id: string }).effect_id).toBe('k1')
+    expect(events).toHaveLength(1)
+    expect((events[0] as ActionRecord).action).toBe('pr-comment')
   })
 
   it('a poster failure emits one verified(failure) event and rethrows', () => {
@@ -469,8 +470,8 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
         reconcile: neverReconcile
       })
     ).toThrow('simulated crash')
-    expect(events.map((e) => e.event)).toEqual(['verified'])
-    expect((events[0] as { outcome: string }).outcome).toBe('failure')
+    expect(events).toHaveLength(1)
+    expect((events[0] as ActionRecord).result).toBe('failure')
   })
 
   it('a lost acknowledgement that reconciles ambiguous emits verified(uncertain), visible rather than silently dropped (O3: visible gaps)', () => {
@@ -497,9 +498,9 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
         reconcile: () => ({ outcome: 'ambiguous', reason: 'gh unreachable' })
       })
     ).toThrow(EffectRetryRefusedError)
-    expect(events.map((e) => e.event)).toEqual(['verified'])
-    expect((events[0] as { outcome: string; effect_id: string }).outcome).toBe('uncertain')
-    expect((events[0] as { effect_id: string }).effect_id).toBe('k1')
+    expect(events).toHaveLength(1)
+    expect((events[0] as ActionRecord).result).toBe('uncertain')
+    expect((events[0] as ActionRecord).action).toBe('pr-comment')
   })
 
   it('a reconciliation confirming the write already landed emits one verified(success)', () => {
@@ -522,8 +523,8 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
       poster: () => 'should-not-be-called',
       reconcile: () => ({ outcome: 'confirmed', url: 'https://example.com/comment/already-there' })
     })
-    expect(events.map((e) => e.event)).toEqual(['verified'])
-    expect((events[0] as { outcome: string }).outcome).toBe('success')
+    expect(events).toHaveLength(1)
+    expect((events[0] as ActionRecord).result).toBe('success')
   })
 
   it('a corrupt existing record emits verified(uncertain), the SAME line the ambiguous-reconciliation branch emits, before refusing (round 2 review, MAJOR)', () => {
@@ -546,8 +547,31 @@ describe('EffectExecutor — effect log events (task-log-v1 task 6, O1/O3)', () 
         reconcile: neverReconcile
       })
     ).toThrow(EffectRetryRefusedError)
-    expect(events.map((e) => e.event)).toEqual(['verified'])
-    expect((events[0] as { outcome: string; effect_id: string }).outcome).toBe('uncertain')
-    expect((events[0] as { effect_id: string }).effect_id).toBe('k1')
+    expect(events).toHaveLength(1)
+    expect((events[0] as ActionRecord).result).toBe('uncertain')
+    expect((events[0] as ActionRecord).action).toBe('pr-comment')
+  })
+
+  it("writes one action.verified to the run's local copy — and no earlier-format effect event (O1, O4)", () => {
+    const copy = isolatedLocalCopy()
+    try {
+      const executor = createEffectExecutor(deps, 1, 'owner-copy')
+      executor.execute({
+        key: 'k-copy',
+        identity: { operation: 'pr-comment', target: 'pr:1', inputVersion: 1, payloadDigest: sha256Hex('body') },
+        poster: () => 'https://example.com/comment/1',
+        reconcile: neverReconcile
+      })
+      const written = copy.events().filter((e) => e.name.startsWith('vinaya.action.'))
+      expect(written.map((e) => e.name)).toEqual(['vinaya.action.verified'])
+      expect(written[0]?.attributes).toMatchObject({
+        'vinaya.outside.action': 'pr-comment',
+        'vinaya.outside.target': 'pr:1',
+        'vinaya.result': 'success'
+      })
+      expect(copy.earlierFormatFiles()).toEqual([])
+    } finally {
+      copy.restore()
+    }
   })
 })

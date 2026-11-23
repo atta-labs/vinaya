@@ -25,11 +25,11 @@
  * `StaleEpochWriteError` propagates unchanged from a caller who no longer
  * holds it (O3's "stale ownership rejected").
  *
- * This is a distinct mechanism from the Vinaya Log's own `effect` event
- * family (`harness/kernel/log/log.md`, "the spec's 'shared effect executor'"):
- * that family is fail-open telemetry — one `verified` OBSERVATION of a
- * write's final outcome that never blocks anything — while this is the fail-closed
- * durable control store this module is built on. Neither replaces the other.
+ * This is a distinct mechanism from the Log's action record
+ * (`harness/kernel/log/log.md`): that record is fail-open telemetry — one
+ * `log.action.verified` OBSERVATION of a write's final outcome that never
+ * blocks anything — while this is the fail-closed durable control store this
+ * module is built on. Neither replaces the other.
  */
 
 import { createHash } from 'node:crypto'
@@ -39,7 +39,7 @@ import {
   readEffect,
   writeEffect
 } from '../connectors/checkpoint/control-store/index'
-import { log as logEvent, type LogEventInput } from '../log/log-sink.js'
+import { type ActionRecord, writeAction } from '../log/outside-log.js'
 import { runtimeDirForThisRepo, tasksExecutionRoot } from '../run-paths.js'
 
 /**
@@ -152,36 +152,18 @@ function sameIdentity(a: EffectIdentity, b: EffectIdentity): boolean {
   )
 }
 
-/**
- * Builds this write's `effect` log family target (O1: "normalized ...
- * outcomes", one final event per write). `effect_id` is the
- * control-store `key` itself — the SAME idempotent identity every retry or
- * idempotent replay of this write already shares, so two log lines carrying
- * the same `effect_id` are provably the same effect observed twice, never a
- * coincidence of two unrelated writes (O3's "idempotent observation
- * identities").
- */
-function effectLogTarget(
-  key: string,
-  identity: EffectIdentity
-): { effect_id: string; target: { kind: string; ref: string } } {
-  return { effect_id: key, target: { kind: identity.operation, ref: identity.target } }
-}
-
 export class EffectExecutor {
   constructor(
     private readonly deps: ControlStoreDeps,
     private readonly task: number,
     private readonly epoch: number,
     /**
-     * Injectable for a test that wants to assert on the emitted sequence —
-     * defaults to the real global sink every production call site relies on
-     * implicitly, the same bare-singleton convention `dispatch.ts`/
-     * `round-assess.ts` already use for the `dispatch`/`dev_review_loop`
-     * families. Never throws (`log()`'s own contract) — a log failure never
-     * fails the write it is only observing.
+     * Injectable for a test that wants to assert on what is recorded —
+     * defaults to the run's own Log handle, which every production call site
+     * relies on implicitly. A log failure never fails the write it is only
+     * observing.
      */
-    private readonly logEffectEvent: (e: LogEventInput) => void = logEvent
+    private readonly recordAction: (record: ActionRecord) => void = writeAction
   ) {}
 
   execute(input: EffectExecuteInput): string {
@@ -207,7 +189,7 @@ export class EffectExecutor {
       // the SAME observed/uncertain log line that branch emits (round 2
       // review, MAJOR: this branch used to throw with no log event at all,
       // leaving a real refused-replay outcome invisible in the Vinaya Log).
-      this.logFinal('uncertain', key, identity)
+      this.logFinal('uncertain', identity)
       throw new EffectRetryRefusedError(this.task, key, `existing effect record is corrupt: ${existing.reason}`)
     }
 
@@ -240,11 +222,11 @@ export class EffectExecutor {
       // second `log()` line at the SAME `effect_id`, reporting the SAME
       // true outcome, is what tells a reader "this ran twice and both
       // times agreed" apart from "this never ran a second time at all."
-      this.logFinal('success', key, recorded)
+      this.logFinal('success', recorded)
       return recorded.url
     }
     if (recorded.status === 'uncertain') {
-      this.logFinal('uncertain', key, recorded)
+      this.logFinal('uncertain', recorded)
       throw new EffectRetryRefusedError(
         this.task,
         key,
@@ -290,12 +272,12 @@ export class EffectExecutor {
         url: result.url,
         recordedAt: now
       })
-      this.logFinal('success', key, identity)
+      this.logFinal('success', identity)
       return result.url
     }
     if (result.outcome === 'ambiguous') {
       writeEffect(this.deps, this.task, this.epoch, key, { ...identity, status: 'uncertain', recordedAt: now })
-      this.logFinal('uncertain', key, identity)
+      this.logFinal('uncertain', identity)
       throw new EffectRetryRefusedError(this.task, key, result.reason)
     }
     // 'absent' — the intent was recorded but nothing actually landed
@@ -311,30 +293,29 @@ export class EffectExecutor {
     try {
       url = poster()
     } catch (err) {
-      this.logFinal('failure', key, identity)
+      this.logFinal('failure', identity)
       throw err
     }
     const verifiedAt = this.deps.now().toISOString()
     writeEffect(this.deps, this.task, this.epoch, key, { ...identity, status: 'verified', url, recordedAt: verifiedAt })
-    this.logFinal('success', key, identity)
+    this.logFinal('success', identity)
     return url
   }
 
   /**
-   * The write's ONE `effect` event: its final outcome, recorded as
-   * `verified` whatever that outcome is (`success`, `failure` or
-   * `uncertain`). The local control-store record still advances through
-   * `started`/`verified`/`uncertain` — that is what recovery reads — and
-   * this is only the observation of where it ended.
+   * The write's ONE action record: its final outcome, written as
+   * `log.action.verified` whatever that outcome is (`success`, `failure` or
+   * `uncertain`), naming the operation and its target. The local
+   * control-store record still advances through `started`/`verified`/
+   * `uncertain` — that is what recovery reads — and this is only the
+   * observation of where it ended.
    */
-  private logFinal(outcome: 'success' | 'failure' | 'uncertain', key: string, identity: EffectIdentity): void {
-    this.logEffectEvent({
-      kind: 'effect',
-      event: 'verified',
-      outcome,
-      payload: {},
-      ...effectLogTarget(key, identity)
-    })
+  private logFinal(result: 'success' | 'failure' | 'uncertain', identity: EffectIdentity): void {
+    try {
+      this.recordAction({ action: identity.operation, target: identity.target, result })
+    } catch {
+      // A record that cannot be written never fails the write it observes.
+    }
   }
 }
 
@@ -343,7 +324,7 @@ export function createEffectExecutor(
   deps: ControlStoreDeps,
   task: number,
   ownerId: string,
-  logEffectEvent: (e: LogEventInput) => void = logEvent
+  recordAction: (record: ActionRecord) => void = writeAction
 ): EffectExecutor {
   const acquired = acquireOwnership(deps, task, ownerId)
   if (!acquired.acquired) {
@@ -351,5 +332,5 @@ export function createEffectExecutor(
       `effects: could not acquire a control-store epoch for task ${task} — epoch ${acquired.currentEpoch} is currently held by ${acquired.currentOwnerId ?? 'unknown'}`
     )
   }
-  return new EffectExecutor(deps, task, acquired.epoch, logEffectEvent)
+  return new EffectExecutor(deps, task, acquired.epoch, recordAction)
 }

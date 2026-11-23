@@ -29,6 +29,8 @@ import {
 import { writeTurnResultRecord } from '../../../loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import { readEscalationPacket } from '../../../loops/dev-review/run-control/read.js'
 import { programFile } from '../../../tools/programs.js'
+import { type CommandRecord, type RecordScope, writeCommand } from '../../../../../kernel/log/outside-log'
+import { isolatedLocalCopy } from '../../../integration/log/client/local-copy-fixture'
 
 /**
  * `task_resume` (task-operator-v1 4, O1) driven in-process with injected
@@ -186,6 +188,8 @@ function harness(
     resolveIssue?: (ref: unknown) => number | null
     isPidAlive?: (pid: number) => boolean
     now?: () => string
+    /** Replaces the capturing writer, so a test can write through the run's own handle. */
+    record?: (record: CommandRecord, scope: RecordScope) => void
   } = {}
 ) {
   const launches: Array<{ pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string }> = []
@@ -224,10 +228,13 @@ function harness(
         | Promise<LaunchResult>
     },
     now: overrides.now ?? (() => '2026-01-01T00:00:00.000Z'),
-    log: (e) => {
-      if (e.kind === 'operation')
-        events.push({ operation: e.operation, target: e.target ?? '', result: e.result, error_class: e.error_class })
-    }
+    record:
+      overrides.record ??
+      ((r, scope) => {
+        // The record names the task the handler acts on, as its scope, never as the process's environment.
+        expect(scope).toEqual({ task: ISSUE })
+        events.push({ operation: r.action, target: r.target ?? '', result: r.result, error_class: r.errorType ?? null })
+      })
   })
   return { handler, launches, map, events, prRulingReads }
 }
@@ -392,6 +399,28 @@ describe('task_resume handler', () => {
     expect(result.result.authenticatedBy).toBe('principal-1')
     expect(launches).toEqual([{ pr: PR, agent: 'claude', issue: ISSUE, branch: 'task/x/1' }])
     expect(events).toEqual([{ operation: 'task_resume', target: `task:${ISSUE}`, result: 'ok', error_class: null }])
+  })
+
+  it("writes one command.completed to the run's local copy, filed under the task, and no earlier-format operation event (O2, O4)", async () => {
+    writePause()
+    writeEscalationFixture()
+    const copy = isolatedLocalCopy()
+    try {
+      const { handler } = harness({ record: writeCommand })
+      const result = await handler({ task: { issue: ISSUE } }, CALLER)
+      expect(result.ok).toBe(true)
+      const written = copy.events().filter((e) => e.name.startsWith('vinaya.command.'))
+      expect(written.map((e) => e.name)).toEqual(['vinaya.command.completed'])
+      expect(written[0]?.attributes).toMatchObject({
+        'vinaya.outside.action': 'task_resume',
+        'vinaya.outside.target': `task:${ISSUE}`,
+        'vinaya.result': 'ok',
+        'vinaya.work.ref': String(ISSUE)
+      })
+      expect(copy.earlierFormatFiles()).toEqual([])
+    } finally {
+      copy.restore()
+    }
   })
 
   it('is idempotent per escalation — a duplicate call never launches a second worker', async () => {

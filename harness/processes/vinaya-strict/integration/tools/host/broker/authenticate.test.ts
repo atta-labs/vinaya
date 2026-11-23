@@ -8,7 +8,8 @@ import { describe, expect, it } from 'bun:test'
 import type { DispatchTeeRecoveryDeps } from '../../../../loops/dev-review/dispatch/dispatch'
 import { authenticateOperatorInvocation, ForgedInvocationError } from '../../../../../../kernel/tools/host/broker'
 import { authenticateWorkerInvocation } from './vinaya-broker'
-import type { LogEventInput } from '../../../../../../kernel/log/log-sink'
+import type { CommandRecord } from '../../../../../../kernel/log/outside-log'
+import { isolatedLocalCopy } from '../../../log/client/local-copy-fixture'
 
 /** An in-memory `DispatchTeeRecoveryDeps` naming exactly one launch record — `records` is `[runId, role, task]` triples, mirroring what `dispatchRole` would have durably written before spawning this child. */
 function fakeDispatchDeps(records: readonly [string, string, number][]): DispatchTeeRecoveryDeps {
@@ -150,44 +151,63 @@ describe('authenticateOperatorInvocation', () => {
   })
 })
 
-/** task-log-v1 task 6 (O1): both `authenticate*Invocation` functions emit one `operation` event for the invocation itself — `ok` on success, `refused` (naming `ForgedInvocationError`) on failure — before ever returning or throwing. */
-describe('authenticate*Invocation — operation log events (task-log-v1 task 6, O1)', () => {
-  it('authenticateWorkerInvocation emits operation(ok) on success', () => {
-    const events: LogEventInput[] = []
+/** Both `authenticate*Invocation` functions write one `log.command.completed` record for the invocation itself — `ok` on success, `refused` (naming `ForgedInvocationError`) on failure — before ever returning or throwing. */
+describe('authenticate*Invocation — command records', () => {
+  it('authenticateWorkerInvocation records ok on success', () => {
+    const commands: CommandRecord[] = []
     authenticateWorkerInvocation(
       { VINAYA_ROLE: 'developer', VINAYA_TASK: '2', VINAYA_RUN_ID: 'run-abc' },
       REAL_DISPATCH,
-      (e) => events.push(e)
+      { command: (r) => void commands.push(r) }
     )
-    expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({ kind: 'operation', event: 'completed', result: 'ok' })
+    expect(commands).toEqual([{ action: 'authenticate-invocation', target: 'task:2', result: 'ok' }])
   })
 
-  it('authenticateWorkerInvocation emits operation(refused) naming ForgedInvocationError on failure, never a silent throw', () => {
-    const events: LogEventInput[] = []
+  it('authenticateWorkerInvocation records refused naming ForgedInvocationError on failure, never a silent throw', () => {
+    const commands: CommandRecord[] = []
     expect(() =>
       authenticateWorkerInvocation(
         { VINAYA_ROLE: 'principal', VINAYA_TASK: '2', VINAYA_RUN_ID: 'run-abc' },
         REAL_DISPATCH,
-        (e) => events.push(e)
+        { command: (r) => void commands.push(r) }
       )
     ).toThrow(ForgedInvocationError)
-    expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({
-      kind: 'operation',
-      event: 'completed',
-      result: 'refused',
-      error_class: 'ForgedInvocationError'
-    })
+    expect(commands).toEqual([
+      { action: 'authenticate-invocation', result: 'refused', errorType: 'ForgedInvocationError' }
+    ])
   })
 
-  it('authenticateOperatorInvocation emits operation(ok) on success and operation(refused) on failure', () => {
-    const okEvents: LogEventInput[] = []
-    authenticateOperatorInvocation({ VINAYA_MCP_CALLER: 'operator-session-1' }, 2, (e) => okEvents.push(e))
-    expect(okEvents).toMatchObject([{ result: 'ok' }])
+  it('authenticateOperatorInvocation records ok on success and refused on failure', () => {
+    const ok: CommandRecord[] = []
+    authenticateOperatorInvocation({ VINAYA_MCP_CALLER: 'operator-session-1' }, 2, {
+      command: (r) => void ok.push(r)
+    })
+    expect(ok).toMatchObject([{ result: 'ok' }])
 
-    const refusedEvents: LogEventInput[] = []
-    expect(() => authenticateOperatorInvocation({}, 2, (e) => refusedEvents.push(e))).toThrow(ForgedInvocationError)
-    expect(refusedEvents).toMatchObject([{ result: 'refused', error_class: 'ForgedInvocationError' }])
+    const refused: CommandRecord[] = []
+    expect(() => authenticateOperatorInvocation({}, 2, { command: (r) => void refused.push(r) })).toThrow(
+      ForgedInvocationError
+    )
+    expect(refused).toMatchObject([{ result: 'refused', errorType: 'ForgedInvocationError' }])
+  })
+
+  it("writes one command.completed to the run's local copy, and no earlier-format operation event (O2, O4)", () => {
+    const copy = isolatedLocalCopy()
+    try {
+      authenticateWorkerInvocation(
+        { VINAYA_ROLE: 'developer', VINAYA_TASK: '2', VINAYA_RUN_ID: 'run-abc' },
+        REAL_DISPATCH
+      )
+      const written = copy.events().filter((e) => e.name.startsWith('vinaya.command.'))
+      expect(written.map((e) => e.name)).toEqual(['vinaya.command.completed'])
+      expect(written[0]?.attributes).toMatchObject({
+        'vinaya.outside.action': 'authenticate-invocation',
+        'vinaya.outside.target': 'task:2',
+        'vinaya.result': 'ok'
+      })
+      expect(copy.earlierFormatFiles()).toEqual([])
+    } finally {
+      copy.restore()
+    }
   })
 })

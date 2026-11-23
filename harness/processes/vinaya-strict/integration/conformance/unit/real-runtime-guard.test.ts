@@ -411,8 +411,8 @@ describe('real runtime directory guard', () => {
     }
   }
 
-  it('passes a run while a taskless CLI command appends its operation event, and fails one that also leaks beside it', () => {
-    producerRun(() => ['bun', CLI_ENTRY, 'version'], CLI_OPERATION_STREAM)
+  it('passes a run while a taskless CLI command writes its command record to the local copy, and fails one that also leaks beside it', () => {
+    producerRun(() => ['bun', CLI_ENTRY, 'version'], LOCAL_COPY)
   }, 60_000)
 
   it('passes a run while a taskless check run writes its local copy, and fails one that also leaks beside it', () => {

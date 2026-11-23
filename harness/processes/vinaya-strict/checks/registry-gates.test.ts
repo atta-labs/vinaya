@@ -211,7 +211,7 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       'harness/processes/vinaya-strict/checks/bin/check-main-branch-refusal.ts': checkBin,
       'harness/processes/vinaya-strict/checks/bin/check-token-collection-wired.ts': checkBin,
       'harness/kernel/gates/checks/resolver.ts':
-        'the pure step that decides which checks `vinaya check` runs; the runner it feeds writes each run through the run Log handle and the invocation records its own operation at exit',
+        'the pure step that decides which checks `vinaya check` runs; the runner it feeds writes each run through the run Log handle and the invocation records its own command at exit',
       'harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/verify-task.ts': script,

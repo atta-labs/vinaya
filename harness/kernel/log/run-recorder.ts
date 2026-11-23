@@ -317,10 +317,10 @@ export function createRunRecorder(deps: RunRecorderDeps) {
       bound.narrate = run.narrate
       bound.effort = run.effort
     },
-    /** The run's handle, for every subject the harness writes through it; `undefined` while recording is off. */
-    handle(runId: string = runIdNow(), repository?: string): LogHandle | undefined {
+    /** The run's handle, for every subject the harness writes through it; `undefined` while recording is off. A work reference names the task the records belong to when it is not the process's own. */
+    handle(runId: string = runIdNow(), repository?: string, workRef?: string): LogHandle | undefined {
       try {
-        return open(runId, repository)?.log
+        return open(runId, repository, workRef)?.log
       } catch (error) {
         report(error)
         return undefined

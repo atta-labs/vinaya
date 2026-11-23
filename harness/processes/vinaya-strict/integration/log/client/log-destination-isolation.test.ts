@@ -1255,7 +1255,12 @@ const BOUNDARY_PRODUCERS = [
   'drainOutboxToWebhook',
   'createTaskCancelHandler',
   'createTaskResumeHandler',
-  'emitCustomEvent'
+  'emitCustomEvent',
+  'writeAction',
+  'writeCommand',
+  'writeForgeValidated',
+  'writeForgeRefused',
+  'writeForgeWritten'
 ] as const
 const LOG_PRODUCERS: readonly string[] = [...SINK_PRODUCERS, ...BOUNDARY_PRODUCERS]
 
@@ -1330,7 +1335,7 @@ function producerCallSites(code: string): { index: number; calledAs: string; pro
   return out.sort((a, b) => a.index - b.index)
 }
 
-/** A `log` dependency the call itself is handed — how a test drives a boundary producer without writing anywhere real. */
+/** A writer dependency (`log`, `record` or `command`) the call itself is handed — how a test drives a boundary producer without writing anywhere real. */
 function callIsHandedALogDependency(code: string, index: number, producerNames: Set<string>): boolean {
   const open = code.indexOf('(', index)
   if (open === -1) return false
@@ -1340,12 +1345,12 @@ function callIsHandedALogDependency(code: string, index: number, producerNames: 
   // list reported that as an offender though it writes nowhere real, leaving
   // inlining the object or a grandfather entry as the only ways out (round 6
   // review, MINOR). An identifier argument is resolved to its own binding.
-  if (!/\blog\s*:/.test(args)) {
+  if (!/\b(?:log|record|command)\s*:/.test(args)) {
     // The class is written `[),]` rather than the other way round: the reverse
     // reads as retired vocabulary to the architecture test that scans this tree.
     for (const identifier of args.matchAll(/(?<![.\w$])([A-Za-z_$][\w$]*)\s*[),]/g)) {
       const binding = bindingsIn(code).find((candidate) => candidate.name === identifier[1])
-      if (binding && /\blog\s*:/.test(binding.initializer)) {
+      if (binding && /\b(?:log|record|command)\s*:/.test(binding.initializer)) {
         args = `(${binding.initializer})`
         break
       }
@@ -1360,7 +1365,11 @@ function callIsHandedALogDependency(code: string, index: number, producerNames: 
     // the call, `{` the deps object. Deeper than that is a property of some
     // nested object, which decides nothing about where this call writes (round
     // 5 security review, LOW).
-    else if (depth === 2 && /(?<![.\w$])log\s*:/.test(args.slice(i, i + 6))) {
+    else if (
+      depth === 2 &&
+      !/[.\w$]/.test(args[i - 1] ?? '') &&
+      /^(?:log|record|command)\s*:/.test(args.slice(i, i + 12))
+    ) {
       const value = args.slice(i + args.slice(i).indexOf(':') + 1, i + 60).trim()
       const named = /^([A-Za-z_$][\w$.]*)\s*[,}]/.exec(value)?.[1]
       // `log: log` hands the call the module-level producer — the default sink

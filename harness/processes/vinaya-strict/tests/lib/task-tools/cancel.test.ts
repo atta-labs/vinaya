@@ -20,6 +20,8 @@ import { createTaskCancelHandler } from '../../../loops/dev-review/run-control/c
 import type { CancelInput } from '../../../loops/dev-review/standalone/dev-review-loop.js'
 import { writePauseState } from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import { isolatedConfigFixture } from '../../../../../kernel/conformance/unit/process-fixture'
+import { type CommandRecord, type RecordScope, writeCommand } from '../../../../../kernel/log/outside-log'
+import { isolatedLocalCopy } from '../../../integration/log/client/local-copy-fixture'
 
 /**
  * `task_cancel` (task-operator-v1 4, O2) driven in-process against a real,
@@ -161,6 +163,8 @@ function harness(
     hostname?: string
     cancelResult?: { escalationId: string; fencedEffectKeys: string[] }
     cancelError?: Error
+    /** Replaces the capturing writer, so a test can write through the run's own handle. */
+    record?: (record: CommandRecord, scope: RecordScope) => void
   } = {}
 ) {
   const calls: CancelInput[] = []
@@ -189,10 +193,13 @@ function harness(
         fencedEffectKeys: overrides.cancelResult?.fencedEffectKeys ?? []
       }
     },
-    log: (e) => {
-      if (e.kind === 'operation')
-        events.push({ operation: e.operation, target: e.target ?? '', result: e.result, error_class: e.error_class })
-    }
+    record:
+      overrides.record ??
+      ((r, scope) => {
+        // The record names the task the handler acts on, as its scope, never as the process's environment.
+        expect(scope).toEqual({ task: ISSUE })
+        events.push({ operation: r.action, target: r.target ?? '', result: r.result, error_class: r.errorType ?? null })
+      })
   })
   return { handler, calls, events, prRulingReads }
 }
@@ -254,6 +261,28 @@ describe('task_cancel handler', () => {
     expect(result.result.pr).toBe(PR)
     expect(calls).toEqual([{ cancelPr: PR, agent: 'claude' }])
     expect(events).toEqual([{ operation: 'task_cancel', target: `task:${ISSUE}`, result: 'ok', error_class: null }])
+  })
+
+  it("writes one command.completed with its result to the run's local copy, filed under the task, and no earlier-format operation event (O2, O4)", async () => {
+    writePause()
+    writeEscalationFixture({ host: 'test-host' })
+    const copy = isolatedLocalCopy()
+    try {
+      const { handler } = harness({ hostname: 'test-host', record: writeCommand })
+      const result = await handler({ task: { issue: ISSUE }, reason: 'superseded' }, CALLER)
+      expect(result.ok).toBe(true)
+      const written = copy.events().filter((e) => e.name.startsWith('vinaya.command.'))
+      expect(written.map((e) => e.name)).toEqual(['vinaya.command.completed'])
+      expect(written[0]?.attributes).toMatchObject({
+        'vinaya.outside.action': 'task_cancel',
+        'vinaya.outside.target': `task:${ISSUE}`,
+        'vinaya.result': 'ok',
+        'vinaya.work.ref': String(ISSUE)
+      })
+      expect(copy.earlierFormatFiles()).toEqual([])
+    } finally {
+      copy.restore()
+    }
   })
 
   it('reports pending when the run was dispatched on a different host', async () => {
@@ -443,6 +472,39 @@ function findOutboxFile(root: string, name: string): string {
   throw new Error(`no file named ${name} found under ${root}`)
 }
 
+/** Every `command.completed` record under a folder's local copy: its action, target, result and the work reference it is filed under. */
+function commandRecordsUnder(root: string): Array<{ action: string; target: string; result: string; workRef: string }> {
+  const out: Array<{ action: string; target: string; result: string; workRef: string }> = []
+  const stack = [root]
+  const text = (list: Array<{ key: string; value: { stringValue?: string } }>, key: string): string =>
+    list.find((a) => a.key === key)?.value.stringValue ?? ''
+  while (stack.length > 0) {
+    const dir = stack.pop() as string
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry)
+      if (statSync(full).isDirectory()) stack.push(full)
+      else if (entry.endsWith('.logs.jsonl')) {
+        for (const line of readFileSync(full, 'utf8').split('\n').filter(Boolean)) {
+          for (const group of JSON.parse(line).resourceLogs ?? []) {
+            for (const scope of group.scopeLogs ?? []) {
+              for (const record of scope.logRecords ?? []) {
+                if (record.eventName !== 'vinaya.command.completed') continue
+                out.push({
+                  action: text(record.attributes, 'vinaya.outside.action'),
+                  target: text(record.attributes, 'vinaya.outside.target'),
+                  result: text(record.attributes, 'vinaya.result'),
+                  workRef: text(record.attributes, 'vinaya.work.ref')
+                })
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return out
+}
+
 /**
  * Both fixtures below spawn their child with `isolatedConfigFixture`'s own
  * working directory rather than this checkout's. `config.ts`'s
@@ -588,7 +650,7 @@ import { installVinayaLogSinkFactory } from '../../../integration/log/log-sink-f
 // This program is an entry point: it installs the process's Log sink factory, as the command line does.
 installVinayaLogSinkFactory()
 import { controlStoreRoot } from '../../../../../kernel/effects/effects.js'
-import { log } from '../../../../../kernel/log/log-sink.js'
+import { writeCommand } from '../../../../../kernel/log/outside-log.js'
 import { createTaskResumeHandler } from '../../../loops/dev-review/run-control/resume.js'
 
 const ISSUE = 558
@@ -669,31 +731,11 @@ const resumeHandler = createTaskResumeHandler({
   store: { claim: () => ({ claimed: false, record: { escalationId: '', caller: '', pr: 0, startedAt: '' } }), release: () => {} },
   launch: () => {},
   now: () => new Date().toISOString(),
-  log
+  record: writeCommand
 })
 const resumeOutcome = await resumeHandler({ task: { issue: OTHER_ISSUE } }, { caller: { id: 'other-caller' } })
 console.log('RESUME_REFUSED:' + (resumeOutcome.ok === false))
 
-function fileExistsUnder(root, name) {
-  if (!existsSync(root)) return false
-  const stack = [root]
-  while (stack.length > 0) {
-    const dir = stack.pop()
-    for (const entry of readdirSync(dir)) {
-      const full = join(dir, entry)
-      if (statSync(full).isDirectory()) stack.push(full)
-      else if (entry === name) return true
-    }
-  }
-  return false
-}
-
-const outboxRootPath = \`\${process.env.HOME}/.vinaya\`
-const deadline = Date.now() + 10000
-while (Date.now() < deadline) {
-  if (fileExistsUnder(outboxRootPath, \`\${OTHER_ISSUE}.ndjson\`)) break
-  await new Promise((resolve) => setTimeout(resolve, 20))
-}
 console.log('DONE')
 `
     writeFileSync(scriptPath, script)
@@ -709,17 +751,16 @@ console.log('DONE')
       // `~/.vinaya/outbox/` — searching the whole `~/.vinaya` tree keeps
       // this fixture robust to exactly which folder that resolves to.
       const outboxRoot = join(home, '.vinaya')
-      const otherOutboxPath = findOutboxFile(outboxRoot, '991.ndjson')
-      const otherLines = readFileSync(otherOutboxPath, 'utf8').trim().split('\n').filter(Boolean)
-      expect(otherLines).toHaveLength(1)
-      const otherEvent = JSON.parse(otherLines[0] as string) as { subject: { issue: number }; operation: string }
-      expect(otherEvent.subject.issue).toBe(991)
-      expect(otherEvent.operation).toBe('task_resume')
+      // The other task's own command record is filed under that task — its work reference — and not under the
+      // ambient one the process carried (`sentinel-task`), which the handler never touched.
+      const records = commandRecordsUnder(outboxRoot)
+      expect(records.map((r) => r.action)).toEqual(['task_resume'])
+      expect(records[0]).toMatchObject({ target: 'task:991', result: 'refused', workRef: '991' })
 
-      // The OTHER task's own operation event never lands in the cancelled
-      // task's outbox — no fabricated cross-task history.
-      // The cancel itself is a record on the run's Log handle, so no earlier-format line lands for the cancelled task.
+      // The cancelled task's own record is the cancel on the run's Log handle: no earlier-format line lands for
+      // either task.
       expect(() => findOutboxFile(outboxRoot, '558.ndjson')).toThrow()
+      expect(() => findOutboxFile(outboxRoot, '991.ndjson')).toThrow()
     } finally {
       rmSync(scriptPath, { force: true })
       rmSync(home, { recursive: true, force: true })
