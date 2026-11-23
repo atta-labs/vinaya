@@ -137,6 +137,11 @@ export interface RoleContract {
 export interface RoleGrants {
   role: RoleName
   vendor: { claude: { model: string }; codex: { model: string } }
+  /**
+   * The reasoning effort the run launches the role's agent at. It is a run argument, never written in a grants
+   * file: each adapter turns it into its vendor's own per-run argument. Absent, the launch carries none.
+   */
+  effort?: string
   tools: {
     claude: Record<ClaudeBuiltin, Decision>
     codex: Record<CodexBuiltin, Decision>
@@ -225,6 +230,11 @@ export function loadRoleGrants(path: string): RoleGrants {
 
 export function mcpRule(server: string, tool: string): string {
   return `mcp__${server}__${tool}`
+}
+
+/** A role's grants carrying the run's reasoning effort; an absent effort leaves them unchanged. */
+export function withEffort(grants: RoleGrants, effort: string | undefined): RoleGrants {
+  return effort === undefined ? grants : { ...grants, effort }
 }
 
 /** A role's grants with every `process-supplied` model replaced by `model`; an absent model leaves them unchanged. */

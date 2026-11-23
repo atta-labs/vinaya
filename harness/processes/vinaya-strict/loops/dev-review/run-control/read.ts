@@ -258,7 +258,8 @@ export function readEscalationPacket(root: string, task: number): TaskEscalation
               issue: pause.task,
               pr: pause.prNumber,
               agent: pause.agent === 'codex' ? 'codex' : 'claude',
-              ...(pause.model ? { model: pause.model } : {})
+              ...(pause.model ? { model: pause.model } : {}),
+              ...(pause.effort ? { effort: pause.effort } : {})
             })
           : pause.prNumber === null
             ? noPushResumeCommandFor(pause.task, pause.branch, pause.agent, pause.model, undefined, pause.effort)

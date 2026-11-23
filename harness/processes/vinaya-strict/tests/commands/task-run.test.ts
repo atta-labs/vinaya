@@ -374,30 +374,28 @@ describe('vinaya task run --widen-surface — argv parsing', () => {
 
 describe('vinaya task run --effort — argv parsing', () => {
   it.each(['low', 'medium', 'high', 'xhigh'])('accepts --effort %s on the standalone runner', (level) => {
-    expect(effortForFlags(parseFlags(['--effort', level]), 'standalone')).toEqual({ effort: level })
+    expect(effortForFlags(parseFlags(['--effort', level]))).toEqual({ effort: level })
   })
 
   it('names no effort when the flag is absent, so a fresh run takes the default and a resume keeps the held one', () => {
-    expect(effortForFlags(parseFlags([]), 'standalone')).toEqual({})
+    expect(effortForFlags(parseFlags([]))).toEqual({})
   })
 
   it.each(['max', 'minimal', 'MEDIUM', ''])('refuses --effort %p with the one message', (level) => {
-    expect(effortForFlags(parseFlags(['--effort', level]), 'standalone')).toEqual({
+    expect(effortForFlags(parseFlags(['--effort', level]))).toEqual({
       error: '--effort takes one of low, medium, high, xhigh.'
     })
   })
 
   it('refuses a bare --effort with no value', () => {
-    expect(effortForFlags(parseFlags(['--effort']), 'standalone')).toEqual({
+    expect(effortForFlags(parseFlags(['--effort']))).toEqual({
       error: '--effort takes one of low, medium, high, xhigh.'
     })
   })
 
-  it('refuses an explicit --effort on the atta-engine runner, and an Engine run with none is unchanged', () => {
-    expect(effortForFlags(parseFlags(['--effort', 'high']), 'atta-engine')).toEqual({
-      error: '--effort is not yet supported on the atta-engine runner.'
-    })
-    expect(effortForFlags(parseFlags([]), 'atta-engine')).toEqual({})
+  it('takes the same levels for an Engine run, which has no runner-specific refusal', () => {
+    expect(effortForFlags(parseFlags(['--effort', 'high']))).toEqual({ effort: 'high' })
+    expect(effortForFlags(parseFlags([]))).toEqual({})
   })
 
   it('is a known flag, never refused as unrecognized', () => {
@@ -410,7 +408,7 @@ describe('vinaya task run --effort — argv parsing', () => {
     expect(r.stderr).toContain('--effort takes one of low, medium, high, xhigh.')
   })
 
-  it('exits 2 on --runner atta-engine with --effort before anything launches', () => {
+  it('exits 2 on --effort max with --runner atta-engine, with the same message as the standalone runner', () => {
     const r = runCli([
       'task',
       'run',
@@ -421,10 +419,10 @@ describe('vinaya task run --effort — argv parsing', () => {
       '--runner',
       'atta-engine',
       '--effort',
-      'high'
+      'max'
     ])
     expect(r.status).toBe(2)
-    expect(r.stderr).toContain('--effort is not yet supported on the atta-engine runner.')
+    expect(r.stderr).toContain('--effort takes one of low, medium, high, xhigh.')
   })
 
   it('carries --effort onto the printed resume and background commands', () => {

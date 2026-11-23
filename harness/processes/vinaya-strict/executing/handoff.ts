@@ -40,6 +40,8 @@ export interface HandoffRun {
   runId: string
   agent: string
   model?: string
+  /** The reasoning effort the run launches its agents at; the pause record and the resume command carry it. */
+  effort?: string
   /** The review round the run is in now. */
   round: () => number
   /** The head the run's work stands at now. */
@@ -192,6 +194,7 @@ export function createHandoff(run: HandoffRun, loopId: string, deps: HandoffDeps
           pausedAt: new Date().toISOString(),
           agent: run.agent,
           ...(run.model ? { model: run.model } : {}),
+          ...(run.effort ? { effort: run.effort } : {}),
           escalationId: escalation?.escalationId,
           infrastructureRetries
         })
@@ -199,8 +202,9 @@ export function createHandoff(run: HandoffRun, loopId: string, deps: HandoffDeps
         const invocation = {
           agent: run.agent,
           ...(run.model ? { model: run.model } : {}),
+          ...(run.effort ? { effort: run.effort } : {}),
           runner: 'atta-engine' as const,
-          resumeCommand: noPushResumeCommandFor(run.task, run.branch, run.agent, run.model, 'atta-engine')
+          resumeCommand: noPushResumeCommandFor(run.task, run.branch, run.agent, run.model, 'atta-engine', run.effort)
         }
         const posted =
           pr === null

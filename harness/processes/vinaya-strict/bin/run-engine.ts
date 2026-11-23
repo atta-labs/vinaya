@@ -175,6 +175,7 @@ import {
   restoreExecutionRound,
   restoreExecutionRoundBeforeDispatch,
   type ExecutionRoundRestore,
+  resumeEffort,
   resumeModel,
   taskSwitchCommand,
   revisionMovedLine,
@@ -235,6 +236,10 @@ import {
   recordUsage,
   readDispatchUsage,
   terminateChildWithGrace,
+  DEFAULT_DISPATCH_EFFORT,
+  DISPATCH_EFFORT_REFUSAL,
+  parseDispatchEffort,
+  type DispatchEffort,
   type DispatchUsageReading,
   type UsageLimit
 } from '../loops/dev-review/dispatch/dispatch'
@@ -388,6 +393,8 @@ export interface EngineArgs {
   dryRun: boolean
   /** The agent model for every role whose grants say `process-supplied`; absent leaves the vendor's default. */
   model?: string
+  /** The reasoning effort every role's agent launches at; absent runs at the default, `medium`. */
+  effort?: DispatchEffort
   /** The flow key the run chooses (`v1`, `v2`); absent takes the process's default flow. */
   flow?: string
   /** The runtime directory of a shadow run of the task, beside its live run; absent runs the task live. */
@@ -395,7 +402,7 @@ export interface EngineArgs {
 }
 
 const USAGE =
-  'Usage: run-engine.ts --task <n> --agent <claude|codex> [--model <id>] [--flow <key>] [--dry-run] [--shadow <dir>]'
+  'Usage: run-engine.ts --task <n> --agent <claude|codex> [--model <id>] [--effort <level>] [--flow <key>] [--dry-run] [--shadow <dir>]'
 
 /** A flow key as the process contract spells one. */
 const FLOW_KEY = /^[a-z0-9][a-z0-9-]*$/
@@ -405,12 +412,17 @@ export function parseArgs(argv: readonly string[]): EngineArgs {
   let agent: Agent | undefined
   let dryRun = false
   let model: string | undefined
+  let effort: DispatchEffort | undefined
   let flow: string | undefined
   let shadow: string | undefined
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]
     if (flag === '--dry-run') dryRun = true
-    else if (flag === '--flow') {
+    else if (flag === '--effort') {
+      const value = parseDispatchEffort(argv[++i])
+      if (value === null) throw new Error(`${DISPATCH_EFFORT_REFUSAL} ${USAGE}`)
+      effort = value
+    } else if (flag === '--flow') {
       const value = argv[++i] ?? ''
       if (!FLOW_KEY.test(value)) throw new Error(`--flow takes a flow key such as v1 or v2. ${USAGE}`)
       flow = value
@@ -438,6 +450,7 @@ export function parseArgs(argv: readonly string[]): EngineArgs {
     agent,
     dryRun,
     ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
     ...(flow ? { flow } : {}),
     ...(shadow ? { shadow } : {})
   }
@@ -449,20 +462,28 @@ export interface ResumeArgs {
   agent?: Agent
   /** The model for the resumed run; absent takes the one the run's checkpoint recorded. */
   model?: string
+  /** The effort for the resumed run; absent takes the one the run's checkpoint recorded, else `medium`. */
+  effort?: DispatchEffort
   /** The flow key for the resumed run; absent takes the one the run recorded. A different one is refused. */
   flow?: string
 }
 
-const RESUME_USAGE = 'Usage: run-engine.ts --resume <pr> [--agent <claude|codex>] [--model <id>] [--flow <key>]'
+const RESUME_USAGE =
+  'Usage: run-engine.ts --resume <pr> [--agent <claude|codex>] [--model <id>] [--effort <level>] [--flow <key>]'
 
 export function parseResumeArgs(argv: readonly string[]): ResumeArgs {
   let resume: number | undefined
   let agent: Agent | undefined
   let model: string | undefined
+  let effort: DispatchEffort | undefined
   let flow: string | undefined
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]
-    if (flag === '--flow') {
+    if (flag === '--effort') {
+      const value = parseDispatchEffort(argv[++i])
+      if (value === null) throw new Error(`${DISPATCH_EFFORT_REFUSAL} ${RESUME_USAGE}`)
+      effort = value
+    } else if (flag === '--flow') {
       const value = argv[++i] ?? ''
       if (!FLOW_KEY.test(value)) throw new Error(`--flow takes a flow key such as v1 or v2. ${RESUME_USAGE}`)
       flow = value
@@ -481,7 +502,13 @@ export function parseResumeArgs(argv: readonly string[]): ResumeArgs {
     } else throw new Error(`Unknown argument "${flag}". ${RESUME_USAGE}`)
   }
   if (resume === undefined) throw new Error(RESUME_USAGE)
-  return { resume, ...(agent ? { agent } : {}), ...(model ? { model } : {}), ...(flow ? { flow } : {}) }
+  return {
+    resume,
+    ...(agent ? { agent } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
+    ...(flow ? { flow } : {})
+  }
 }
 
 /**
@@ -509,6 +536,31 @@ export function recordedCheckpointModel(runtimeDir: string, task: number): strin
   }
 }
 
+/**
+ * The effort the newest checkpoint of the task's run recorded; undefined when the run has none, the checkpoint
+ * predates the effort, or its file cannot be read (the run itself refuses that checkpoint when it starts).
+ */
+export function recordedCheckpointEffort(runtimeDir: string, task: number): string | undefined {
+  const file = checkpointPath(runDirectory(runtimeDir, task))
+  if (!existsSync(file)) return undefined
+  let saver: SqliteCheckpointer
+  try {
+    saver = new SqliteCheckpointer({ path: file, revision: 'unknown' })
+  } catch (error) {
+    if (error instanceof CheckpointCorruptError) return undefined
+    throw error
+  }
+  try {
+    const effort = saver.latestEffort(runIdentityOfTask(task, currentRunGeneration(saver, task)).threadId)
+    return effort === null || effort === '' ? undefined : effort
+  } catch (error) {
+    if (error instanceof CheckpointCorruptError) return undefined
+    throw error
+  } finally {
+    saver.close()
+  }
+}
+
 export interface ResumeEngineInput {
   args: ResumeArgs
   runtimeDir: string
@@ -519,7 +571,8 @@ export interface ResumeEngineInput {
 
 /**
  * `--resume <pr>`: settles the task, the agent and the authenticated resolution (`claimResume`), then continues the
- * halted run from its checkpoint with the model `--model` names, else the one the checkpoint recorded.
+ * halted run from its checkpoint with the model `--model` names, else the one the checkpoint recorded, and with the
+ * effort `--effort` names, else the one the checkpoint recorded, else `medium`.
  */
 export async function resumeEngine(input: ResumeEngineInput): Promise<EngineRunResult> {
   const claim = claimResume(
@@ -528,12 +581,14 @@ export async function resumeEngine(input: ResumeEngineInput): Promise<EngineRunR
     input.deps ?? liveResumeDeps
   )
   const model = resumeModel(input.args.model, recordedCheckpointModel(input.runtimeDir, claim.task))
+  const effort = resumeEffort(input.args.effort, recordedCheckpointEffort(input.runtimeDir, claim.task))
   const flow = continuationFlow(input.runtimeDir, claim.task, input.args.flow)
   return input.run({
     task: claim.task,
     agent: claim.agent,
     dryRun: false,
     ...(model ? { model } : {}),
+    effort,
     ...(flow ? { flow } : {})
   })
 }
@@ -1708,6 +1763,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   if (options.process.flowKey === 'v2') await sweepReadyGateRuns()
   const out = options.out ?? ((line: string) => process.stdout.write(`${line}\n`))
   const { args } = options
+  // Every role's agent launches at this effort; a run that names none takes the default.
+  const runEffort = args.effort ?? DEFAULT_DISPATCH_EFFORT
   // The repository the run's Log handle files its records under.
   const resolvedRepo = await resolveRepo().catch(() => null)
   const lifecycle = options.lifecycle ?? {}
@@ -1924,6 +1981,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         runId: options.loopId,
         agent: args.agent,
         ...(args.model ? { model: args.model } : {}),
+        effort: runEffort,
         round: () => taskForHandoff?.reviewRound?.() ?? 1,
         head: () => {
           try {
@@ -2056,6 +2114,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           : undefined,
         mcpCommands,
         model: args.model,
+        effort: runEffort,
         allowUnixSockets: options.allowUnixSockets === true,
         ...(devToolsTimeoutSec === undefined ? {} : { devToolsTimeoutSec }),
         stageCodexLogin: true,
@@ -2137,6 +2196,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         revision,
         model: args.model,
         agent: args.agent,
+        effort: runEffort,
         flow: options.process.flowKey,
         // The round is mirrored once the saver's own write has committed; a failed mirror stops the next step.
         ...(mirror
@@ -4016,7 +4076,12 @@ export async function main(argv: readonly string[]): Promise<number> {
     })
     return result.exitCode
   }
-  const parsed = parseArgs(argv)
+  const named = parseArgs(argv)
+  // --task also continues an existing checkpoint, which keeps its effort unless `--effort` names another.
+  const parsed: EngineArgs = {
+    ...named,
+    effort: resumeEffort(named.effort, recordedCheckpointEffort(runtimeDir, named.task))
+  }
   // --task also continues an existing checkpoint; only a new generation may choose another flow.
   const flow = continuationFlow(runtimeDir, parsed.task, parsed.flow)
   const { args, loaded } = withLoadedFlow<EngineArgs>({ ...parsed, ...(flow ? { flow } : {}) }, processFolder)

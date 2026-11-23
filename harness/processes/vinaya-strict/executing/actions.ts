@@ -20,7 +20,7 @@ import type { PostedVerdictBodies } from '../tools/review-gate'
 import type { RoleBinaryConfig, StepNodeResult } from '@atta/executor-agent-spawn'
 import { generateClaudeSettings } from '../../../../harness/kernel/adapters/agents/claude-code/settings'
 import { generateCodexConfig } from '../../../../harness/kernel/adapters/agents/codex/config'
-import { loadRoleGrants, withModel } from '../../../../harness/kernel/adapters/agents/manifest'
+import { loadRoleGrants, withEffort, withModel } from '../../../../harness/kernel/adapters/agents/manifest'
 import { VINAYA_LAUNCHED_ROLES } from '../integration/policies/launched-roles'
 import { sessionIdOf, structuredResult } from '../../../../harness/kernel/adapters/agents/structured-result'
 import { pullRequestCheckEnv, type PullRequestView } from './pull-request-env'
@@ -3026,6 +3026,8 @@ export function createRoleLaunchers(options: {
   mcpCommands?: Readonly<Partial<Record<string, string>>>
   /** Replaces a `process-supplied` model in every role's grants for this run. */
   model?: string
+  /** The reasoning effort every role's agent launches at for this run; absent, a launch carries none. */
+  effort?: string
   /** Claude's sandbox may use Unix sockets (the Linux host opt-in); the Codex adapter has no such filter. */
   allowUnixSockets?: boolean
   /** Seconds each role's dev-tools calls may run; the generators never go below the shared default, which an absent value keeps. */
@@ -3037,7 +3039,10 @@ export function createRoleLaunchers(options: {
 }): RoleLauncher {
   const launchers: Record<string, ReturnType<typeof createRoleLauncher>> = {}
   for (const role of VINAYA_LAUNCHED_ROLES) {
-    const grants = withModel(loadRoleGrants(join(executing, role, 'grants.yaml')), options.model)
+    const grants = withEffort(
+      withModel(loadRoleGrants(join(executing, role, 'grants.yaml')), options.model),
+      options.effort
+    )
     const outputSchemaPath = join(executing, role, 'output.schema.json')
     const generatedDir = join(options.generatedRoot, role)
     const paths: GeneratorPaths = {

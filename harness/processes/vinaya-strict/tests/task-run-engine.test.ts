@@ -158,7 +158,9 @@ describe('task runner selection', () => {
           '--agent',
           'codex',
           '--model',
-          'resolved-model'
+          'resolved-model',
+          '--effort',
+          'medium'
         ],
         options: { stdio: 'inherit' }
       }
@@ -208,6 +210,40 @@ describe('task runner selection', () => {
     expect(calls[0]?.slice(-2)).toEqual(['--flow', 'v2'])
   })
 
+  it('starts the Engine with the effort --effort names, else medium', async () => {
+    const run = async (effort?: 'xhigh') => {
+      const calls: string[][] = []
+      await runTask(
+        { issue: 42, agent: 'claude', runner: 'atta-engine', ...(effort ? { effort } : {}) },
+        fixture({
+          engine: {
+            scriptPath: () => '/s/run-engine.ts',
+            exists: () => true,
+            spawn: async (argv) => {
+              calls.push(argv)
+              return 0
+            },
+            findBun: () => BUN
+          },
+          devReviewLoop: async () => {
+            throw new Error('unexpected standalone call')
+          }
+        })
+      )
+      return calls[0] as string[]
+    }
+    const named = await run('xhigh')
+    expect(named.slice(named.indexOf('--effort'), named.indexOf('--effort') + 2)).toEqual(['--effort', 'xhigh'])
+    const unnamed = await run()
+    expect(unnamed.slice(unnamed.indexOf('--effort'), unnamed.indexOf('--effort') + 2)).toEqual(['--effort', 'medium'])
+  })
+
+  it('carries a held effort onto the continuation of a halted Engine run', () => {
+    const continuation = engineContinuationArgv({ issue: 9, pr: 70, agent: 'codex', effort: 'high' })
+    expect(continuation.slice(-2)).toEqual(['--effort', 'high'])
+    expect(engineContinuationArgv({ issue: 9, pr: null, agent: 'codex' })).not.toContain('--effort')
+  })
+
   it('--flow parses, refuses an empty key, and refuses a flow other than v1 on the standalone runner', () => {
     expect(flowForFlags(parseFlags(['--flow', 'v2']), 'atta-engine')).toBe('v2')
     expect(flowForFlags(parseFlags([]), 'standalone')).toBeUndefined()
@@ -234,7 +270,7 @@ describe('task runner selection', () => {
         }
       })
     )
-    expect(calls).toEqual([['bun', '/runner.ts', '--task', '42', '--agent', 'claude']])
+    expect(calls).toEqual([['bun', '/runner.ts', '--task', '42', '--agent', 'claude', '--effort', 'medium']])
   })
 
   it('runs a repository that names no runner, started with no --runner, on the Atta Engine', async () => {

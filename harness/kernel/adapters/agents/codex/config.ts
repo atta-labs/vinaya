@@ -152,6 +152,9 @@ export function generateCodexConfig(grants: RoleGrants, paths: GeneratorPaths): 
     '--output-schema',
     paths.outputSchemaPath,
     ...(grants.vendor.codex.model === 'process-supplied' ? [] : ['--model', grants.vendor.codex.model]),
+    // The effort is a per-run `-c` override, before the final `-`, so the resume launch (which reuses these
+    // arguments) keeps it; it is never written into the generated config file.
+    ...(grants.effort === undefined ? [] : ['-c', `model_reasoning_effort="${grants.effort}"`]),
     '-'
   ]
   return {

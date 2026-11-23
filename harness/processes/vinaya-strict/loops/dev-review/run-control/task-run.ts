@@ -141,7 +141,7 @@ export type RunTaskInput = ({ tranche: string; n: number } | { issue: number }) 
   model?: string
   /**
    * `--effort <level>`: the reasoning effort every agent turn of a standalone run is launched with. Absent, a fresh
-   * run takes `medium` and a continued one keeps the effort its pause holds. The Engine runner refuses an explicit one.
+   * run takes `medium` and a continued one keeps the effort its pause holds. The Engine runner takes the same levels.
    */
   effort?: DispatchEffort
   runner?: TaskRunner
@@ -561,9 +561,6 @@ export async function resolveIssueForRunTask(
 /** The Engine check `runTask` makes, re-exported so the `task run` command makes the same one before it prepares. */
 export { engineStartRefusal }
 
-/** The refusal for an explicit `--effort` on the Atta Engine runner, which takes none yet. */
-export const ENGINE_EFFORT_REFUSAL = '--effort is not yet supported on the atta-engine runner.'
-
 export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRunTaskDeps): Promise<RunTaskOutcome> {
   // Round 2 review (MAJOR) / security review (MEDIUM): a driver runs with no
   // human watching, so it must resolve `runtimeDir` through the
@@ -575,8 +572,6 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   markProcessUnattended()
   const { agent, model: explicitModel, effort } = input
   const taskLabel = taskLabelFor(input)
-  // The Engine runner takes no effort yet; an explicit one is refused rather than ignored.
-  if (runner === 'atta-engine' && effort !== undefined) throw new RunTaskError(ENGINE_EFFORT_REFUSAL)
   const issue = await resolveIssueForRunTask(input, deps)
 
   // O1: resolved once, right after the Issue number is known and before
@@ -691,6 +686,7 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
         task: issue,
         agent,
         ...(resolvedModel ? { model: resolvedModel } : {}),
+        effort: effortForRun(effort, readPauseState(runtimeDir(), issue)?.effort),
         ...(input.flow ? { flow: input.flow } : {})
       },
       deps.engine,

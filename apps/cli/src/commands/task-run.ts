@@ -69,7 +69,6 @@ import {
   type TaskRunner
 } from '../../../../harness/processes/vinaya-strict/integration/config/compose.js'
 import {
-  ENGINE_EFFORT_REFUSAL,
   engineStartRefusal,
   runTask,
   type RunTaskResult,
@@ -241,21 +240,19 @@ const USAGE = [
 /**
  * `--effort <level>`: the reasoning effort every agent turn of a standalone run takes. `undefined` when the flag is
  * absent (a fresh run then takes `medium` and a continued one keeps its held effort); a refusal message for a missing
- * or unknown level, or for any level on the Atta Engine runner, which takes none yet.
+ * or unknown level. Both runners take the same levels.
  */
 export function effortForFlags(
-  parsed: Pick<ParsedFlags, 'effort' | 'effortFlagPresent'>,
-  runner: TaskRunner
+  parsed: Pick<ParsedFlags, 'effort' | 'effortFlagPresent'>
 ): { effort?: DispatchEffort } | { error: string } {
   if (!parsed.effortFlagPresent) return {}
   const effort = parseDispatchEffort(parsed.effort)
   if (effort === null) return { error: DISPATCH_EFFORT_REFUSAL }
-  if (runner === 'atta-engine') return { error: ENGINE_EFFORT_REFUSAL }
   return { effort }
 }
 
-function effortOrExit(parsed: ParsedFlags, runner: TaskRunner): { effort?: DispatchEffort } {
-  const result = effortForFlags(parsed, runner)
+function effortOrExit(parsed: ParsedFlags): { effort?: DispatchEffort } {
+  const result = effortForFlags(parsed)
   if ('error' in result) {
     console.error(`vinaya task run: ${result.error}`)
     process.exit(2)
@@ -575,7 +572,7 @@ export async function taskRunCommand(args: string[]): Promise<void> {
     const runner = runnerOrExit(parsed)
     const flow = flowOrExit(parsed, runner)
     const widen = widenSurfaceOrExit(parsed)
-    const effort = effortOrExit(parsed, runner)
+    const effort = effortOrExit(parsed)
     engineStartOrExit({ runner, ...flow, ...rollback })
     applyQuiet(parsed)
     if (parsed.background) {
@@ -612,7 +609,7 @@ export async function taskRunCommand(args: string[]): Promise<void> {
   const runner = runnerOrExit(parsed)
   const flow = flowOrExit(parsed, runner)
   const widen = widenSurfaceOrExit(parsed)
-  const effort = effortOrExit(parsed, runner)
+  const effort = effortOrExit(parsed)
   engineStartOrExit({ runner, ...flow, ...rollback })
   applyQuiet(parsed)
   if (parsed.background) {

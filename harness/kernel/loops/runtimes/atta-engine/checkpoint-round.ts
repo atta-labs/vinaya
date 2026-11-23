@@ -35,9 +35,13 @@ export interface EffectiveResumedState {
   checkpointId: string
 }
 
-/** Checkpoint provenance including the agent; `agent` is null on a checkpoint written before it was recorded. */
+/**
+ * Checkpoint provenance including the agent and the reasoning effort; each is null on a checkpoint written before it
+ * was recorded.
+ */
 export interface AgentCheckpointProvenance extends CheckpointProvenance {
   agent: CheckpointAgent | null
+  effort: string | null
 }
 
 /** The control-store mirror of the execution round, written after the checkpoint commits. The checkpoint wins. */
@@ -175,10 +179,11 @@ export function readAgentProvenance(checkpointPath: string, threadId: string): A
           format_version: number | null
           runtime_version: string | null
           agent: string | null
+          effort: string | null
         },
         [string]
       >(
-        `SELECT revision, model, ${optional('format_version')}, ${optional('runtime_version')}, ${optional('agent')}
+        `SELECT revision, model, ${optional('format_version')}, ${optional('runtime_version')}, ${optional('agent')}, ${optional('effort')}
          FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = '' ORDER BY checkpoint_id DESC LIMIT 1`
       )
       .get(threadId)
@@ -188,7 +193,8 @@ export function readAgentProvenance(checkpointPath: string, threadId: string): A
       model: row.model,
       formatVersion: row.format_version,
       runtimeVersion: row.runtime_version,
-      agent: isAgent(row.agent) ? row.agent : null
+      agent: isAgent(row.agent) ? row.agent : null,
+      effort: row.effort ?? null
     }
   } catch (error) {
     throw error instanceof CheckpointCorruptError ? error : new CheckpointCorruptError(checkpointPath, error)
