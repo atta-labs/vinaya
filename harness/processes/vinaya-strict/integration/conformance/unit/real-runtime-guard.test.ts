@@ -345,6 +345,8 @@ describe('real runtime directory guard', () => {
   })
 
   // A real producer, run beside a test process whose real runtime directory is a fixture, and the preload's end-of-run check.
+  /** Names a producer whose events land in the run's local copy files rather than in a stream file. */
+  const LOCAL_COPY = 'local-copy'
   const producerRun = (producer: (work: string) => string[], stream: string) => {
     const home = mkdtempSync(join(tmpdir(), 'guard-home-'))
     const work = mkdtempSync(join(tmpdir(), 'guard-producer-probe-'))
@@ -368,8 +370,10 @@ describe('real runtime directory guard', () => {
             "  if (r.exitCode !== 0) throw new Error('producer failed: ' + r.stderr.toString())",
             "  const folders = readdirSync(join(ROOT, 'logs'))",
             "  if (folders.length !== 1) throw new Error('expected one repository folder, found ' + folders.join(' '))",
-            `  const file = join(ROOT, 'logs', folders[0], ${JSON.stringify(`${stream}.ndjson`)})`,
-            "  if (!existsSync(file)) throw new Error('the producer wrote no event to its stream: ' + readdirSync(join(ROOT, 'logs', folders[0])).join(' '))",
+            stream === LOCAL_COPY
+              ? "  const wrote = readdirSync(join(ROOT, 'logs', folders[0])).some((n) => /^[^~]+~[^~]+~\\d{12}\\.(logs|traces)\\.jsonl$/.test(n))"
+              : `  const wrote = existsSync(join(ROOT, 'logs', folders[0], ${JSON.stringify(`${stream}.ndjson`)}))`,
+            "  if (!wrote) throw new Error('the producer wrote no event to its stream: ' + readdirSync(join(ROOT, 'logs', folders[0])).join(' '))",
             "  if (existsSync(join(ROOT, 'logs', folders[0], 'none.ndjson'))) throw new Error('the producer wrote the shared none.ndjson')",
             "  console.log('PRODUCER_FOLDER=' + folders[0])",
             leak ? "  writeFileSync(join(ROOT, 'logs', folders[0], '9.ndjson'), 'x')" : '',
@@ -411,7 +415,7 @@ describe('real runtime directory guard', () => {
     producerRun(() => ['bun', CLI_ENTRY, 'version'], CLI_OPERATION_STREAM)
   }, 60_000)
 
-  it('passes a run while a taskless check run appends its gate events, and fails one that also leaks beside it', () => {
+  it('passes a run while a taskless check run writes its local copy, and fails one that also leaks beside it', () => {
     const integration = join(import.meta.dir, '..', '..')
     const kernel = join(import.meta.dir, '..', '..', '..', '..', '..', 'kernel')
     producerRun((work) => {
@@ -425,14 +429,14 @@ describe('real runtime directory guard', () => {
           `import { drainLogSink } from ${JSON.stringify(join(kernel, 'log', 'log-sink.ts'))}`,
           'installVinayaLogSinkFactory()',
           'installVinayaConfigProvider()',
-          // one failing check: the run records its `checked` and `summary` gate events, naming no Issue
+          // one failing check: the run writes its checks span and not-passed event to the run's local copy
           "await runChecks([{ name: 'probe-fails', run: 'false', scope: 'full' }], { parallel: 1, diffOnly: false, changedFiles: null, defaultTimeoutMs: 10000 })",
           'await drainLogSink()',
           ''
         ].join('\n')
       )
       return ['bun', script]
-    }, GATE_STREAM)
+    }, LOCAL_COPY)
   }, 60_000)
 
   // The preload's own end-of-run check, in a child test process whose real runtime directory is a fixture.

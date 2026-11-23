@@ -899,6 +899,81 @@ describe('the Engine path writes rounds, review and the change through the run L
   })
 })
 
+describe("the Engine path writes the loop's own checks through the run Log handle", () => {
+  const where = { runId: 'run-1', repository: 'atta-labs/vinaya' }
+  const loopEvent = (fields: Record<string, unknown>) =>
+    ({ kind: 'dev_review_loop', payload: {}, loop_id: config.loopId, ...fields }) as never
+  const nanos = (span: any, key: 'startTimeUnixNano' | 'endTimeUnixNano'): bigint => BigInt(span[key])
+
+  test('local checks, a CI read and a rerun are checks spans with their own time, and no earlier-format line', async () => {
+    const world = createRunLifecycleWorld()
+    const recorder = world.process()
+    const options = { recorder, runtimeDir: () => world.runtimeDir }
+    const written = [
+      loopEvent({ event: 'loop_started', task: config.task, policy: { max_rounds: 3, reviewers: [], models: {} } }),
+      loopEvent({ event: 'local_checks_run', round: 1, head: 'abc', passed: false, wall_ms: 1500 }),
+      loopEvent({
+        event: 'ready_push',
+        round: 1,
+        head: 'abc',
+        outcome: 'passed',
+        selected: 3,
+        failed: 0,
+        rerun: true,
+        wall_ms: 4000
+      }),
+      loopEvent({
+        event: 'failed_tests_rerun',
+        round: 1,
+        head: 'abc',
+        rerun_of: 'def',
+        failed_files: 1,
+        affected_files: 2,
+        full_count: 9
+      }),
+      loopEvent({
+        event: 'ci_result_read',
+        round: 1,
+        pr: 7,
+        head: 'abc',
+        conclusion: 'red',
+        failing_checks: ['lint'],
+        wait_ms: 2000
+      })
+    ].map((event) => writeRunLifecycleEvent(event, where, options))
+    // Every one of them was written through the handle: no earlier-format line is left to write.
+    expect(written).toEqual([true, true, true, true, true])
+    await recorder.drain()
+    expect(world.errors).toEqual([])
+
+    const spans = world.spans().filter((s) => s.name.startsWith('vinaya.checks'))
+    expect(spans.map((s) => s.name).sort()).toEqual(['vinaya.checks ci', 'vinaya.checks local', 'vinaya.checks rerun'])
+    const local = spans.find((s) => s.name === 'vinaya.checks local')
+    expect(attributeOf(local, 'vinaya.result')).toBe('failed')
+    expect(nanos(local, 'endTimeUnixNano') - nanos(local, 'startTimeUnixNano')).toBe(1_500_000_000n)
+    const ci = spans.find((s) => s.name === 'vinaya.checks ci')
+    expect(attributeOf(ci, 'vinaya.result')).toBe('red')
+    expect(attributeOf(ci, 'vinaya.checks.wait_ms')).toBe(2000)
+    expect(nanos(ci, 'endTimeUnixNano') - nanos(ci, 'startTimeUnixNano')).toBe(2_000_000_000n)
+    const rerun = spans.find((s) => s.name === 'vinaya.checks rerun')
+    expect(attributeOf(rerun, 'vinaya.checks.rerun_failed')).toBe(1)
+    expect(attributeOf(rerun, 'vinaya.checks.rerun_affected')).toBe(2)
+    expect(attributeOf(rerun, 'vinaya.checks.rerun_total')).toBe(9)
+    expect(nanos(rerun, 'endTimeUnixNano') - nanos(rerun, 'startTimeUnixNano')).toBe(4_000_000_000n)
+  })
+
+  test('a CI read with a conclusion the Log does not know writes nothing', () => {
+    const world = createRunLifecycleWorld()
+    const options = { recorder: world.process(), runtimeDir: () => world.runtimeDir }
+    writeRunLifecycleEvent(
+      loopEvent({ event: 'ci_result_read', round: 1, pr: 7, head: 'abc', conclusion: 'unpushed', wait_ms: 1 }),
+      where,
+      options
+    )
+    expect(world.spans().filter((s) => s.name.startsWith('vinaya.checks'))).toEqual([])
+  })
+})
+
 describe('every produced row has a producer that wrote it', () => {
   test('each event a produced row names was written by a run or a producer above', () => {
     // The run's liveness is the Log handle's own alive; the runner writes only the exit record, which its own suite runs.

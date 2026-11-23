@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { LogEventInput } from '../../../log/log-sink'
+import { createRunRecorder } from '../../../log/run-recorder'
+import type { CheckLog } from '../runner'
 import type { CheckSpec } from '../contract'
 import { runChecks } from '../runner'
+import { storedEvents, storedSpans } from './local-copy-probe'
+
+type NotPassed = Parameters<CheckLog['checks']['notPassed']>[0]
+type Ran = Parameters<CheckLog['checks']['ran']>[0]
 
 const FIXTURES = join(import.meta.dir, '../fixtures')
 const PASSING = join(FIXTURES, 'passing-check.ts')
@@ -17,16 +24,16 @@ function fullScope(overrides: Partial<CheckSpec> & Pick<CheckSpec, 'name' | 'run
 
 /** `events` holds the per-check `checked` observations (a check that did not pass); `summaries` the run's one `summary`. */
 function capture(): {
-  events: LogEventInput[]
-  summaries: LogEventInput[]
-  log: (e: LogEventInput) => void
+  events: NotPassed[]
+  summaries: Ran[]
+  log: CheckLog
 } {
-  const events: LogEventInput[] = []
-  const summaries: LogEventInput[] = []
+  const events: NotPassed[] = []
+  const summaries: Ran[] = []
   return {
     events,
     summaries,
-    log: (e) => (e.kind === 'gate' && e.event === 'summary' ? summaries : events).push(e)
+    log: { checks: { notPassed: (e) => void events.push(e), ran: (e) => void summaries.push(e) } }
   }
 }
 
@@ -54,8 +61,8 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     const [outcome] = await runChecks([fullScope({ name: 'failing', run: FAILING })], { ...BASE_OPTS, log })
     expect(outcome?.status).toBe('fail')
     expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
-    expect(e.outcome).toBe('fail')
+    const e = events[0] as NotPassed
+    expect(e.result).toBe('fail')
     expect(e.reason).toBe('errors:1')
     expect(e.reason).not.toContain('fixture finding')
   })
@@ -66,8 +73,8 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     expect(outcome?.status).toBe('fail')
     expect(outcome?.errors[0]?.pending).toBe(true)
     expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
-    expect(e.outcome).toBe('wait')
+    const e = events[0] as NotPassed
+    expect(e.result).toBe('wait')
     expect(e.reason).toBe('pending_principal_action')
   })
 
@@ -82,7 +89,7 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     })
     expect(outcome?.status).toBe('skipped')
     expect(events).toHaveLength(0)
-    expect(summaries[0]).toMatchObject({ ran: 0, skipped: 1, failed_checks: [] })
+    expect(summaries[0]).toMatchObject({ ran: 0, skipped: 1, failedNames: [] })
   })
 
   it('skip — requiresOpenPr under localOnly records no event, and the outcome names its own reason', async () => {
@@ -111,8 +118,8 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     })
     expect(outcome?.status).toBe('timeout')
     expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
-    expect(e.outcome).toBe('timeout')
+    const e = events[0] as NotPassed
+    expect(e.result).toBe('timeout')
     expect(e.reason).toBe('timeout_ms:300')
   })
 
@@ -121,8 +128,8 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     const [outcome] = await runChecks([fullScope({ name: 'malformed', run: MALFORMED })], { ...BASE_OPTS, log })
     expect(outcome?.status).toBe('error')
     expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
-    expect(e.outcome).toBe('invalid_input')
+    const e = events[0] as NotPassed
+    expect(e.result).toBe('invalid_input')
     expect(e.reason).toBe('malformed_output')
   })
 
@@ -134,8 +141,8 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     })
     expect(outcome?.status).toBe('error')
     expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
-    expect(e.outcome).toBe('unavailable_dependency')
+    const e = events[0] as NotPassed
+    expect(e.result).toBe('unavailable_dependency')
     expect(e.reason).toBe('spawn_failed:ENOENT')
   })
 
@@ -149,24 +156,74 @@ describe('runChecks — gate observations, one per terminal outcome', () => {
     })
     expect(outcome?.status).toBe('error')
     expect(events).toHaveLength(1)
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
-    expect(e.outcome).toBe('unavailable_dependency')
+    const e = events[0] as NotPassed
+    expect(e.result).toBe('unavailable_dependency')
     expect(e.reason).toBe('missing_env:SECRET_TOKEN')
   })
 
-  it('the input fingerprint never carries a forwarded secret value in the clear', async () => {
+  it('a not-passed record names the check and its version and carries no forwarded secret value', async () => {
     const { events, log } = capture()
-    // A failing check, because a passing one records no event to read the fingerprint from.
+    // A failing check, because a passing one records no event of its own.
     const spec = fullScope({ name: 'with-secret', run: FAILING, env: { SECRET_TOKEN: true } })
     await runChecks([spec], {
       ...BASE_OPTS,
       callerEnv: { PATH: process.env.PATH as string, SECRET_TOKEN: 'sk-super-secret-value' },
       log
     })
-    const e = events[0] as Extract<LogEventInput, { kind: 'gate'; event: 'checked' }>
-    expect(e.input_fingerprint).not.toContain('sk-super-secret-value')
-    // sha256 hex digest — fixed shape, not the JSON it was built from.
-    expect(e.input_fingerprint as string).toMatch(/^[0-9a-f]{64}$/)
+    const e = events[0] as NotPassed
+    expect(e.name).toBe('with-secret')
+    expect(e.version).toBe('1')
+    expect(JSON.stringify(e)).not.toContain('sk-super-secret-value')
+  })
+})
+
+/** A run with one failing check, written through a real run handle into a temporary local copy and read back. */
+describe('runChecks — what the local copy holds after a run', () => {
+  const RUN = 'checks-run-own'
+  const setup = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-checks-local-copy-'))
+    const folder = join(dir, 'logs')
+    const recorder = createRunRecorder({
+      runId: () => RUN,
+      workRef: () => undefined,
+      repository: () => 'atta-labs/vinaya',
+      place: (repository) => ({ folder, repository }),
+      processIdentity: () => undefined,
+      sender: () => ({ request: () => {}, remember: () => {}, drain: async () => {} }),
+      home: () => dir,
+      cwd: () => mkdtempSync(join(tmpdir(), 'vinaya-checks-root-')),
+      onError: (e) => {
+        throw e
+      }
+    })
+    const handle = recorder.handle()
+    if (handle === undefined) throw new Error('the run handle did not open')
+    return { dir, handle, folder: join(folder, 'atta-labs-vinaya') }
+  }
+
+  it('one checks span and one not-passed event, under the run id, and no earlier-format gate event', async () => {
+    const { dir, handle, folder } = setup()
+    try {
+      await runChecks([fullScope({ name: 'passing', run: PASSING }), fullScope({ name: 'failing', run: FAILING })], {
+        ...BASE_OPTS,
+        log: { checks: handle.checks, flush: () => handle.flush() },
+        where: 'local'
+      })
+      const spans = storedSpans(folder).filter((s) => s.name.startsWith('vinaya.checks'))
+      expect(spans.map((s) => s.name)).toEqual(['vinaya.checks local'])
+      expect(spans[0]?.attributes['vinaya.checks.ran']).toBe(2)
+      expect(spans[0]?.attributes['vinaya.checks.passed']).toBe(1)
+      expect(spans[0]?.attributes['vinaya.checks.failed']).toBe(1)
+      const notPassed = storedEvents(folder).filter((e) => e.name === 'vinaya.checks.not_passed')
+      expect(notPassed).toHaveLength(1)
+      expect(notPassed[0]?.attributes['vinaya.checks.name']).toBe('failing')
+      expect(notPassed[0]?.attributes['vinaya.result']).toBe('fail')
+      // The run's own id: the process's, as nothing here is inside a task run.
+      expect(handle.runId).toBe(RUN)
+      expect(JSON.stringify([storedSpans(folder), storedEvents(folder)])).not.toContain('"gate"')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 

@@ -88,6 +88,9 @@ const startedHandles = new WeakSet<object>()
 /** The round each handle has open, so one round is started on it once. */
 const openRounds = new WeakMap<object, number>()
 
+/** The time of the last ready push written on a handle: a rerun is that push, so its span takes the same time. */
+const lastReadyPushMs = new WeakMap<object, number>()
+
 /**
  * Starts `number` as the open round on the run's handle, once per round, so the handle's automatic `run.alive`
  * carries it. A process that carries on a run takes the open round from the copy; this only moves it on.
@@ -138,9 +141,9 @@ const listOf = (value: unknown): string[] => (Array.isArray(value) ? value.map(S
  * Writes a run, round, review, gate-read or change event through the run's Log handle, with the function that stands
  * for it: `run.started`, `run.ended`, `run.paused`, `run.resumed`, `run.cancelled`, `run.retried`, `run.stopRuleMet`
  * and `run.exited`; `round.started`, `round.ended` and `phase.ended`; `review.verdicts`, `review.findingsCompared`,
- * `checks.read` and `agent.confidenceStated`; `change.saved`, `change.pushed`, `change.opened`,
- * `change.conflicted` and `change.recovered`. Returns `true` when the event is one of these, and no earlier-format
- * line is then written for it.
+ * `checks.read`, `checks.local`, `checks.rerun`, `checks.ci` and `agent.confidenceStated`; `change.saved`,
+ * `change.pushed`, `change.opened`, `change.conflicted` and `change.recovered`. Returns `true` when the event is
+ * one of these, and no earlier-format line is then written for it.
  * The handle writes the start once per run, whatever process asks, and a process that did not start a span ends it
  * whole from the start in the run's local copy.
  */
@@ -279,6 +282,52 @@ export function writeRunLifecycleEvent(
         })
       break
     }
+    case 'local_checks_run': {
+      const endTime = Date.now()
+      log.checks.local({
+        passed: e.passed === true,
+        startTime: endTime - Math.max(0, numberOf(e.wall_ms) ?? 0),
+        endTime
+      })
+      break
+    }
+    case 'failed_tests_rerun': {
+      const endTime = Date.now()
+      const pushMs = lastReadyPushMs.get(log)
+      if (pushMs === undefined)
+        process.stderr.write(
+          'vinaya: a failed-test rerun was written with no ready push before it, so it has no start\n'
+        )
+      log.checks.rerun({
+        failed: numberOf(e.failed_files) ?? 0,
+        affected: numberOf(e.affected_files) ?? 0,
+        total: numberOf(e.full_count) ?? 0,
+        // The rerun is the ready push that ran only those tests, written just before it: its time is the rerun's.
+        startTime: endTime - Math.max(0, pushMs ?? 0),
+        endTime
+      })
+      break
+    }
+    case 'ci_result_read': {
+      const conclusion = textOf(e.conclusion)
+      if (conclusion !== 'green' && conclusion !== 'red' && conclusion !== 'pending' && conclusion !== 'skipped') {
+        // A read the Log has no result for (the head was never pushed): said on stderr, never written as a result.
+        process.stderr.write(
+          `vinaya: a CI read with the conclusion "${conclusion ?? 'none'}" is not written to the Log\n`
+        )
+        break
+      }
+      const endTime = Date.now()
+      const waitMs = Math.max(0, numberOf(e.wait_ms) ?? 0)
+      log.checks.ci({
+        result: conclusion,
+        failing: listOf(e.failing_checks),
+        waitMs,
+        startTime: endTime - waitMs,
+        endTime
+      })
+      break
+    }
     case 'verdicts_read': {
       const reviewers = (Array.isArray(e.reviewers) ? e.reviewers : []) as EventReviewer[]
       const findings = (Array.isArray(e.findings) ? e.findings : []) as EventFinding[]
@@ -309,6 +358,7 @@ export function writeRunLifecycleEvent(
       })
       break
     case 'ready_push':
+      lastReadyPushMs.set(log, numberOf(e.wall_ms) ?? 0)
       log.change.pushed({
         result: e.outcome === 'refused' ? 'refused' : 'passed',
         ...(numberOf(e.selected) === undefined ? {} : { picked: numberOf(e.selected) as number }),
@@ -384,8 +434,8 @@ export function readForgeChangeEnd(pr: number, repository?: string): ForgeChange
   }
 }
 
-/** The pull requests whose end this process wrote, by run: a watch that reads the same end twice writes it once. */
-const writtenEnds = new Set<string>()
+/** The pull request ends written on each run handle: a watch that reads the same end twice writes it once. */
+const writtenEnds = new WeakMap<object, Set<string>>()
 
 /**
  * Records a pull request the run watches as merged (`log.change.merged`) or closed without merging
@@ -416,10 +466,12 @@ export function recordWatchedChangeEnded(
     }
     if (runId === undefined) return
     const key = `${runId}\0${ended.pr}\0${ended.state}`
-    if (writtenEnds.has(key)) return
     const log = (options.recorder ?? runRecorder()).handle(runId, options.repository)
     if (log === undefined) return
-    writtenEnds.add(key)
+    const written = writtenEnds.get(log) ?? new Set<string>()
+    if (written.has(key)) return
+    written.add(key)
+    writtenEnds.set(log, written)
     const end = (options.readEnd ?? ((pr) => readForgeChangeEnd(pr, options.repository)))(ended.pr)
     const detail = {
       runId,
