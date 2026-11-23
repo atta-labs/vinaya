@@ -446,6 +446,50 @@ describe('a stub run on the Engine path', () => {
     ).toEqual([])
   })
 
+  for (const named of [undefined, 'high'] as const) {
+    test(`each agent launch's span records ${named ?? 'medium, the effort of a run that named none'}, on a resource that carries what ran the run`, async () => {
+      const names = [
+        'VINAYA_RUNNER_ID',
+        'VINAYA_RUNNER_VERSION',
+        'VINAYA_FLOW',
+        'VINAYA_FLOW_VERSION',
+        'VINAYA_PROCESS_DIGEST'
+      ] as const
+      const before = Object.fromEntries(names.map((name) => [name, process.env[name]]))
+      const digest = 'c'.repeat(64)
+      Object.assign(process.env, {
+        VINAYA_RUNNER_ID: 'atta-engine',
+        VINAYA_RUNNER_VERSION: '3.2.1',
+        VINAYA_FLOW: 'example-flow',
+        VINAYA_FLOW_VERSION: 'v2',
+        VINAYA_PROCESS_DIGEST: digest
+      })
+      try {
+        const run = stubRun()
+        run.options.sink.runId = `stub-run-${randomUUID()}`
+        if (named !== undefined) run.options.args.effort = named
+        await runEngine(run.options)
+        const turns = agentTurnsOf(processLocalCopyFolder(), run.options.sink.runId)
+        expect(turns.length).toBeGreaterThan(0)
+        for (const turn of turns) {
+          expect(turn.effort).toBe(named ?? 'medium')
+          expect(turn.resource).toMatchObject({
+            'vinaya.runner.name': 'atta-engine',
+            'vinaya.runner.version': '3.2.1',
+            'vinaya.flow.id': 'example-flow',
+            'vinaya.flow.version': 'v2',
+            'vinaya.process.digest': digest
+          })
+        }
+      } finally {
+        for (const name of names) {
+          if (before[name] === undefined) delete process.env[name]
+          else process.env[name] = before[name]
+        }
+      }
+    })
+  }
+
   test('starts the host before the Developer and writes the executable shim', async () => {
     const { options, calls } = stubRun()
     const result = await runEngine(options)

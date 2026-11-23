@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os'
 import { readOtlpDocument } from '../../../../../../packages/log-sdk/src/index.js'
 import { createRunRecorder } from '../../../../../kernel/log/run-recorder.js'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readdirSync, statSync } from 'node:fs'
 import {
   DEFAULT_TIMEOUT_MS,
@@ -319,6 +319,82 @@ describe('dispatchRole — a successful dispatch', () => {
     expect(turns[0]?.requestModel).toBeUndefined()
     const earlier = outboxLines(home, 9001) as Array<{ kind: string }>
     expect(earlier.filter((line) => ['dispatch', 'role_attempt', 'usage'].includes(line.kind))).toEqual([])
+  })
+
+  for (const named of [undefined, 'high'] as const) {
+    it(`records what ran the run on every record and ${named ?? 'the default effort, medium'} on the agent span`, () => {
+      const home = tempDir('vinaya-identity-home-')
+      const cwd = tempDir('vinaya-identity-cwd-')
+      const binDir = tempDir('vinaya-identity-bin-')
+      writeFakeBinary(
+        binDir,
+        'claude',
+        `#!/bin/sh\ncat > /dev/null\necho '{"usage":{"input_tokens":1,"output_tokens":2}}'\nexit 0\n`
+      )
+      const settings = '{ }\n'
+      writeFileSync(join(cwd, 'vinaya.config.json'), settings)
+      const promptFile = join(cwd, 'prompt.txt')
+      writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+      const digest = 'b'.repeat(64)
+      const r = runDispatch(
+        [
+          'developer',
+          '--agent',
+          'claude',
+          '--prompt-file',
+          promptFile,
+          '--task',
+          '9001',
+          ...(named ? ['--effort', named] : [])
+        ],
+        cwd,
+        home,
+        `${binDir}:${pathWithoutRealVendors()}`,
+        {
+          VINAYA_RUNNER_ID: 'standalone',
+          VINAYA_RUNNER_VERSION: '9.9.9',
+          VINAYA_FLOW: 'example-flow',
+          VINAYA_FLOW_VERSION: 'v2',
+          VINAYA_PROCESS_DIGEST: digest
+        }
+      )
+      expect(r.status).toBe(0)
+      const turn = agentTurnsOf(localCopyFolderOf(home))[0]
+      expect(turn?.effort).toBe(named ?? 'medium')
+      expect(turn?.resource).toMatchObject({
+        'vinaya.runner.name': 'standalone',
+        'vinaya.runner.version': '9.9.9',
+        'vinaya.cli.version': expect.stringMatching(/^\d+\.\d+\.\d+/),
+        'vinaya.flow.id': 'example-flow',
+        'vinaya.flow.version': 'v2',
+        'vinaya.process.digest': digest,
+        'vinaya.settings.digest': createHash('sha256').update(settings).digest('hex')
+      })
+    })
+  }
+
+  it('writes no settings digest when the repository holds no vinaya.config.json, and the other parts stay', () => {
+    const home = tempDir('vinaya-identity-home-')
+    const cwd = tempDir('vinaya-identity-cwd-')
+    const binDir = tempDir('vinaya-identity-bin-')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\necho '{"usage":{"input_tokens":1,"output_tokens":2}}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const r = runDispatch(
+      ['developer', '--agent', 'claude', '--prompt-file', promptFile, '--task', '9001'],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`,
+      { VINAYA_RUNNER_ID: 'standalone', VINAYA_RUNNER_VERSION: '9.9.9' }
+    )
+    expect(r.status).toBe(0)
+    const resource = agentTurnsOf(localCopyFolderOf(home))[0]?.resource ?? {}
+    expect(resource['vinaya.runner.name']).toBe('standalone')
+    expect('vinaya.settings.digest' in resource).toBe(false)
   })
 
   for (const explicitPr of [true, false]) {
@@ -2535,7 +2611,8 @@ describe('dispatch usage envelopes match between runners', () => {
         // What a turn carries on either runner: the seat, the model it asked for and the one that ran, the outcome,
         // the attempt, the round and the usage; never the timing or the run's own ids.
         const comparable = (turn: RecordedAgentTurn) => {
-          const { steps, ...fields } = turn
+          // The resource names the process that wrote the record, which differs by runner by design.
+          const { steps, resource: _resource, ...fields } = turn
           return { ...fields, steps: steps.length }
         }
         for (const round of [1, 2]) {
