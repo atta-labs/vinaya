@@ -142,8 +142,8 @@ const listOf = (value: unknown): string[] => (Array.isArray(value) ? value.map(S
  * for it: `run.started`, `run.ended`, `run.paused`, `run.resumed`, `run.cancelled`, `run.retried`, `run.stopRuleMet`
  * and `run.exited`; `round.started`, `round.ended` and `phase.ended`; `review.verdicts`, `review.findingsCompared`,
  * `checks.read`, `checks.local`, `checks.rerun`, `checks.ci` and `agent.confidenceStated`; `change.saved`,
- * `change.pushed`, `change.opened`, `change.conflicted` and `change.recovered`. Returns `true` when the event is one of these, and no earlier-format
- * line is then written for it.
+ * `change.pushed`, `change.opened`, `change.conflicted` and `change.recovered`. Returns `true` when the event is
+ * one of these, and no earlier-format line is then written for it.
  * The handle writes the start once per run, whatever process asks, and a process that did not start a span ends it
  * whole from the start in the run's local copy.
  */
@@ -293,12 +293,17 @@ export function writeRunLifecycleEvent(
     }
     case 'failed_tests_rerun': {
       const endTime = Date.now()
+      const pushMs = lastReadyPushMs.get(log)
+      if (pushMs === undefined)
+        process.stderr.write(
+          'vinaya: a failed-test rerun was written with no ready push before it, so it has no start\n'
+        )
       log.checks.rerun({
         failed: numberOf(e.failed_files) ?? 0,
         affected: numberOf(e.affected_files) ?? 0,
         total: numberOf(e.full_count) ?? 0,
         // The rerun is the ready push that ran only those tests, written just before it: its time is the rerun's.
-        startTime: endTime - Math.max(0, lastReadyPushMs.get(log) ?? 0),
+        startTime: endTime - Math.max(0, pushMs ?? 0),
         endTime
       })
       break
