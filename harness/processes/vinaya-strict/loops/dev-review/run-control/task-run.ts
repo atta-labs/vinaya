@@ -54,7 +54,7 @@ import {
   runTaskEngine,
   type EngineRunnerDeps
 } from './task-run-engine.js'
-import { type AgentVendor, terminateChildWithGrace } from '../dispatch/dispatch.js'
+import { type AgentVendor, type DispatchEffort, terminateChildWithGrace } from '../dispatch/dispatch.js'
 import {
   developerBranchFor as realDeveloperBranchFor,
   type DriverResult,
@@ -138,6 +138,11 @@ export function isAlreadyDispatchedError(err: unknown): boolean {
 export type RunTaskInput = ({ tranche: string; n: number } | { issue: number }) & {
   agent: AgentVendor
   model?: string
+  /**
+   * `--effort <level>`: the reasoning effort every agent turn of a standalone run is launched with. Absent, a fresh
+   * run takes `medium` and a continued one keeps the effort its pause holds. The Engine runner refuses an explicit one.
+   */
+  effort?: DispatchEffort
   runner?: TaskRunner
   /** The developer-review flow key the Engine runner runs (`v1`, `v2`); absent takes the process default. */
   flow?: string
@@ -555,6 +560,9 @@ export async function resolveIssueForRunTask(
 /** The Engine check `runTask` makes, re-exported so the `task run` command makes the same one before it prepares. */
 export { engineStartRefusal }
 
+/** The refusal for an explicit `--effort` on the Atta Engine runner, which takes none yet. */
+export const ENGINE_EFFORT_REFUSAL = '--effort is not yet supported on the atta-engine runner.'
+
 export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRunTaskDeps): Promise<RunTaskOutcome> {
   // Round 2 review (MAJOR) / security review (MEDIUM): a driver runs with no
   // human watching, so it must resolve `runtimeDir` through the
@@ -564,8 +572,10 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   // inherits its environment.
   const runner = deps.runnerConfig ? resolveTaskRunner(input.runner, deps.runnerConfig()) : loadTaskRunner(input.runner)
   markProcessUnattended()
-  const { agent, model: explicitModel } = input
+  const { agent, model: explicitModel, effort } = input
   const taskLabel = taskLabelFor(input)
+  // The Engine runner takes no effort yet; an explicit one is refused rather than ignored.
+  if (runner === 'atta-engine' && effort !== undefined) throw new RunTaskError(ENGINE_EFFORT_REFUSAL)
   const issue = await resolveIssueForRunTask(input, deps)
 
   // O1: resolved once, right after the Issue number is known and before
@@ -584,7 +594,12 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
       startStandalone: async (task) => {
         deps.assignIssue(task)
         // A fresh run from the frozen brief on the Issue: the cancelled pause is never resumed.
-        const result = await deps.devReviewLoop({ task, agent, ...(resolvedModel ? { model: resolvedModel } : {}) })
+        const result = await deps.devReviewLoop({
+          task,
+          agent,
+          ...(resolvedModel ? { model: resolvedModel } : {}),
+          ...(effort ? { effort } : {})
+        })
         restarted.result = result
         return { terminalState: terminalStateOf(result.finalDecision) }
       }
@@ -680,8 +695,13 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
   deps.recordRunner?.(issue, 'standalone')
   const loopResult = await deps.devReviewLoop(
     shouldResumeFromPause
-      ? { resumePr: existingPr.number, agent, ...(resolvedModel ? { model: resolvedModel } : {}) }
-      : { task: issue, agent, ...(resolvedModel ? { model: resolvedModel } : {}) }
+      ? {
+          resumePr: existingPr.number,
+          agent,
+          ...(resolvedModel ? { model: resolvedModel } : {}),
+          ...(effort ? { effort } : {})
+        }
+      : { task: issue, agent, ...(resolvedModel ? { model: resolvedModel } : {}), ...(effort ? { effort } : {}) }
   )
   const prUrl = await resolvePrUrl(deps.resolveRepo, loopResult.prNumber)
   return { ...loopResult, prUrl, branch }
@@ -731,7 +751,8 @@ export function widenSurfaceCommandFor(
   branch: string,
   globs: readonly string[],
   agent?: string,
-  model?: string
+  model?: string,
+  effort?: string
 ): string {
   const argv = [
     ...noPushResumeArgv(task, branch),
@@ -740,7 +761,8 @@ export function widenSurfaceCommandFor(
     '--reason',
     '<why the Surface widens>',
     ...(agent ? ['--agent', agent] : []),
-    ...(model ? ['--model', model] : [])
+    ...(model ? ['--model', model] : []),
+    ...(effort ? ['--effort', effort] : [])
   ]
   return `vinaya ${argv.map(shellWord).join(' ')}`
 }
@@ -757,7 +779,7 @@ export function widenSurfaceContinuationFor(root: string, pause: PauseState): st
   const request = widenSurfaceRequestOf(readTurnResultRecords(root, pause.task, pause.round))
   return request === null
     ? null
-    : widenSurfaceCommandFor(pause.task, pause.branch, request.globs, pause.agent, pause.model)
+    : widenSurfaceCommandFor(pause.task, pause.branch, request.globs, pause.agent, pause.model, pause.effort)
 }
 
 /** This invocation's own command line, named as the retry in the write gate's findings. */
@@ -798,13 +820,13 @@ export function widenSurfaceEscalationOf(
   const request = pause.reason === 'escalation' ? widenSurfaceRequestOf(facts.turnResults) : null
   if (request === null) {
     throw new RunTaskError(
-      `runTask: ${label}'s pause (reason \`${pause.reason}\`, round ${pause.round}) is not a widen-surface escalation — the round's accepted Developer result asks for no \`widen_surface\` decision. Continue it with \`${noPushResumeCommandFor(issue, pause.branch, pause.agent, pause.model)}\` once its own ruling is settled.`
+      `runTask: ${label}'s pause (reason \`${pause.reason}\`, round ${pause.round}) is not a widen-surface escalation — the round's accepted Developer result asks for no \`widen_surface\` decision. Continue it with \`${noPushResumeCommandFor(issue, pause.branch, pause.agent, pause.model, undefined, pause.effort)}\` once its own ruling is settled.`
     )
   }
   const escalationId = pause.escalationId ?? escalationIdFor(issue, pause.round, pause.head)
   if (facts.resolution !== null) {
     throw new RunTaskError(
-      `runTask: ${label}'s escalation '${escalationId}' already has a consumed '${facts.resolution.decision}' resolution (by ${facts.resolution.authenticatedBy}, from ${facts.resolution.authenticatedFrom}) — replay refused; the Surface is not widened twice. Continue the task with \`${noPushResumeCommandFor(issue, pause.branch, pause.agent, pause.model)}\`.`
+      `runTask: ${label}'s escalation '${escalationId}' already has a consumed '${facts.resolution.decision}' resolution (by ${facts.resolution.authenticatedBy}, from ${facts.resolution.authenticatedFrom}) — replay refused; the Surface is not widened twice. Continue the task with \`${noPushResumeCommandFor(issue, pause.branch, pause.agent, pause.model, undefined, pause.effort)}\`.`
     )
   }
   if (!facts.escalationRecorded) {

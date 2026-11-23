@@ -52,8 +52,11 @@ import {
   taskRunDir,
   withWorldEnv
 } from '../dev-review-loop-harness'
+import { buildReexecArgs } from '../../../../loops/dev-review/standalone/dev-review-loop/driver-helpers'
+import { spawnSync } from 'node:child_process'
 import {
   consumeHostRepairPauseOnStart,
+  effortForRun,
   type EscalationFacts,
   escalationIdFor,
   isAutomaticRecoveryPause,
@@ -1308,5 +1311,180 @@ describe('runDriverLoop — the published pull request watch', () => {
       '--pause-on-conflict',
       'd'
     ])
+  })
+})
+
+// --- the run's effort -------------------------------------------------------------
+
+describe('effort — held across every way a run continues', () => {
+  afterEach(cleanupWorlds)
+
+  /** A pid that has definitely already exited, so a same-process resume never refuses itself as a running driver. */
+  function deadPid(): number {
+    const r = spawnSync('true', [])
+    return (r.pid ?? 999_999) + 1_000_000
+  }
+
+  type Seen = { role: string; effort: string | undefined }
+
+  function recordingDeps(world: LoopWorld, seen: Seen[]): Partial<LoopDeps> {
+    const base = makeInProcessDeps(world)
+    return {
+      dispatchRole: async (role, agent, prompt, opts) => {
+        seen.push({ role, effort: opts.effort })
+        return base.dispatchRole!(role, agent, prompt, opts)
+      }
+    }
+  }
+
+  function escalatingWorld(): LoopWorld {
+    return makeWorld({
+      developerPushed: true,
+      roleOutcomes: {
+        1: {
+          reviewer: {
+            findings: '',
+            report: 'ESCALATE: authority\nSUMMARY: needs a call.\n',
+            objectives: null,
+            sessionId: 'rev-1'
+          }
+        }
+      }
+    })
+  }
+
+  /** Pauses a run started at `startEffort`, then resumes it given `resumeEffort`; returns every dispatch each leg made. */
+  async function pauseThenResume(startEffort: LoopInput['effort'], resumeEffort: LoopInput['effort']) {
+    const world = escalatingWorld()
+    const first: Seen[] = []
+    const paused = await runLoopInProcess(
+      world,
+      { task: world.task, agent: 'claude', ...(startEffort ? { effort: startEffort } : {}) },
+      recordingDeps(world, first)
+    )
+    expect(paused.finalDecision).toMatchObject({ type: 'pause', reason: 'escalation' })
+    const held = readPauseState(world.runtimeDir, world.task)
+
+    world.rulings = ['Go ahead and fix it.']
+    world.rulingOrdinal = 1
+    world.rulingAuthor = 'daniboomerang'
+    world.roleOutcomes[1]!.reviewer = undefined
+    writeFileSync(
+      join(taskRunDir(world), 'driver.pid.json'),
+      JSON.stringify({ pid: deadPid(), startedAt: new Date(0).toISOString() }),
+      'utf8'
+    )
+    const second: Seen[] = []
+    const resumed = await runLoopInProcess(
+      world,
+      { resumePr: world.prNumber, agent: 'claude', ...(resumeEffort ? { effort: resumeEffort } : {}) },
+      recordingDeps(world, second)
+    )
+    return { first, second, held, resumed }
+  }
+
+  it('a fresh run given no effort launches both reviewers at medium, and holds it in the pause record', async () => {
+    // The task's branch is already pushed, so round 1 starts at the reviewers and the developer turn comes on resume.
+    const { first, second, held } = await pauseThenResume(undefined, undefined)
+    expect(first.map((s) => s.role).sort()).toEqual(['code-reviewer', 'security'])
+    expect(first.every((s) => s.effort === 'medium')).toBe(true)
+    expect(held?.effort).toBe('medium')
+    expect(second.map((s) => s.role)).toContain('developer')
+    expect(second.every((s) => s.effort === 'medium')).toBe(true)
+  })
+
+  it('a paused run resumed with no --effort keeps the held effort', async () => {
+    const { first, second, held, resumed } = await pauseThenResume('xhigh', undefined)
+    expect(first.every((s) => s.effort === 'xhigh')).toBe(true)
+    expect(held?.effort).toBe('xhigh')
+    expect(resumed.finalDecision.type).toBe('publish')
+    expect(second.length).toBeGreaterThan(0)
+    expect(second.every((s) => s.effort === 'xhigh')).toBe(true)
+  })
+
+  it('a paused run resumed with --effort high uses high, for the developer and both reviewers', async () => {
+    const { second, resumed } = await pauseThenResume('low', 'high')
+    expect(resumed.finalDecision.type).toBe('publish')
+    expect(second.map((s) => s.role)).toEqual(expect.arrayContaining(['developer', 'code-reviewer', 'security']))
+    expect(second.every((s) => s.effort === 'high')).toBe(true)
+  })
+
+  it('effortForRun: the one given, else the held one, else medium; a held value outside the levels is ignored', () => {
+    expect(effortForRun('high', 'low')).toBe('high')
+    expect(effortForRun(undefined, 'low')).toBe('low')
+    expect(effortForRun(undefined, undefined)).toBe('medium')
+    expect(effortForRun(undefined, 'max')).toBe('medium')
+  })
+
+  it('every printed resume command carries --effort', () => {
+    expect(noPushResumeArgv(7, 'task/issue-7', 'claude', 'opus', 'standalone', 'high')).toEqual([
+      'task',
+      'run',
+      '--issue',
+      '7',
+      '--agent',
+      'claude',
+      '--model',
+      'opus',
+      '--effort',
+      'high',
+      '--runner',
+      'standalone'
+    ])
+    expect(noPushResumeCommandFor(7, 'task/issue-7', 'codex', undefined, undefined, 'low')).toBe(
+      'vinaya task run --issue 7 --agent codex --effort low --runner standalone'
+    )
+    expect(renderPauseComment(682, 'infrastructure', undefined, { agent: 'codex', effort: 'high' })).toContain(
+      'vinaya-dev-review-loop --resume 682 --agent codex --effort high'
+    )
+    expect(
+      renderNoPushStopComment(631, 'task/issue-631', 'escalation', 'refused', { agent: 'claude', effort: 'xhigh' })
+    ).toContain('vinaya task run --issue 631 --agent claude --effort xhigh --runner standalone')
+  })
+
+  it("the driver's re-exec argv carries --effort, and none when the run names none", () => {
+    expect(buildReexecArgs({ task: 9001, agent: 'codex', model: 'm', effort: 'high' }, 9001)).toEqual([
+      'dev-review-loop',
+      '--task',
+      '9001',
+      '--agent',
+      'codex',
+      '--model',
+      'm',
+      '--effort',
+      'high'
+    ])
+    expect(buildReexecArgs({ task: 9001, agent: 'codex' }, 9001)).not.toContain('--effort')
+  })
+
+  it('the stale-driver hand-off of a published pull request carries the run effort', async () => {
+    const reexecs: string[][] = []
+    let baseReads = 0
+    const published: LoopResult = { finalDecision: { type: 'publish' }, prNumber: 42, task: 1621 }
+    await runDriverLoop(
+      { task: 1621, agent: 'claude', effort: 'high' },
+      {},
+      {
+        devReviewLoop: async () => published,
+        fetchPrState: () => 'OPEN',
+        fetchMergeableState: () => 'CONFLICTING',
+        readPauseState: () => null,
+        logEvent: () => {},
+        clearDriverLock: () => {},
+        gitRevParseOriginMain: () => (baseReads++ === 0 ? 'start' : 'moved'),
+        gitCommitsTouchingDriverPaths: () => ['abc apps/cli/src/lib/dev-review-loop.ts'],
+        pullDefaultBranch: () => ({ ok: true }),
+        reexecSelf: (args) => {
+          reexecs.push(args)
+          return 0
+        },
+        exitProcess: (() => {}) as never,
+        runtimeDir: () => '/nonexistent',
+        sleep: async () => {},
+        watchPollIntervalMs: 0
+      },
+      { conflictReentries: 1 }
+    )
+    expect(reexecs[0]).toEqual(expect.arrayContaining(['--effort', 'high']))
   })
 })

@@ -120,6 +120,15 @@ export const COMMANDS: readonly Command[] = [
         description: 'Vendor for the developer and both reviewers this run dispatches'
       },
       {
+        flag: '--model <model>',
+        description: "Model the developer runs on; absent, the Issue's suggested agent-class, else the vendor default"
+      },
+      {
+        flag: '--effort <level>',
+        description:
+          'Reasoning effort of every agent turn of the run, one of low, medium, high or xhigh; absent, a fresh run takes medium and a continued run keeps the effort its pause holds. The atta-engine runner refuses it for now'
+      },
+      {
         flag: '--quiet',
         description:
           "Hide the detail lines (an agent's prose, full commands, failed-result tails) on the live terminal; the driver log file keeps them"

@@ -9,6 +9,8 @@ import { appendRoleLine } from '../../../../kernel/log/client/loop-log.js'
 import { quietLogWriter } from '../../../../../apps/cli/src/commands/task-status.js'
 import {
   applyQuiet,
+  attachedRunNotice,
+  effortForFlags,
   parseFlags,
   parseWidenSurface,
   pauseResumeCommand
@@ -367,5 +369,76 @@ describe('vinaya task run --widen-surface — argv parsing', () => {
     const r = runCli(['task', 'run', 'task-run-v1', '2', '--agent', 'claude', '--widen-surface', 'a/b'])
     expect(r.status).toBe(2)
     expect(r.stderr).toContain('--widen-surface requires --reason <text>')
+  })
+})
+
+describe('vinaya task run --effort — argv parsing', () => {
+  it.each(['low', 'medium', 'high', 'xhigh'])('accepts --effort %s on the standalone runner', (level) => {
+    expect(effortForFlags(parseFlags(['--effort', level]), 'standalone')).toEqual({ effort: level })
+  })
+
+  it('names no effort when the flag is absent, so a fresh run takes the default and a resume keeps the held one', () => {
+    expect(effortForFlags(parseFlags([]), 'standalone')).toEqual({})
+  })
+
+  it.each(['max', 'minimal', 'MEDIUM', ''])('refuses --effort %p with the one message', (level) => {
+    expect(effortForFlags(parseFlags(['--effort', level]), 'standalone')).toEqual({
+      error: '--effort takes one of low, medium, high, xhigh.'
+    })
+  })
+
+  it('refuses a bare --effort with no value', () => {
+    expect(effortForFlags(parseFlags(['--effort']), 'standalone')).toEqual({
+      error: '--effort takes one of low, medium, high, xhigh.'
+    })
+  })
+
+  it('refuses an explicit --effort on the atta-engine runner, and an Engine run with none is unchanged', () => {
+    expect(effortForFlags(parseFlags(['--effort', 'high']), 'atta-engine')).toEqual({
+      error: '--effort is not yet supported on the atta-engine runner.'
+    })
+    expect(effortForFlags(parseFlags([]), 'atta-engine')).toEqual({})
+  })
+
+  it('is a known flag, never refused as unrecognized', () => {
+    expect(parseFlags(['--effort', 'high']).unknown).toEqual([])
+  })
+
+  it('exits 2 on --effort max before anything launches', () => {
+    const r = runCli(['task', 'run', 'task-run-v1', '2', '--agent', 'claude', '--effort', 'max'])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--effort takes one of low, medium, high, xhigh.')
+  })
+
+  it('exits 2 on --runner atta-engine with --effort before anything launches', () => {
+    const r = runCli([
+      'task',
+      'run',
+      'task-run-v1',
+      '2',
+      '--agent',
+      'claude',
+      '--runner',
+      'atta-engine',
+      '--effort',
+      'high'
+    ])
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('--effort is not yet supported on the atta-engine runner.')
+  })
+
+  it('carries --effort onto the printed resume and background commands', () => {
+    expect(
+      pauseResumeCommand({ prNumber: 501, task: 785, branch: 'task/issue-785' }, { agent: 'claude', effort: 'high' })
+    ).toBe('vinaya-dev-review-loop --resume 501 --agent claude --effort high')
+    expect(
+      pauseResumeCommand(
+        { prNumber: 0, task: 512, branch: 'task/task-run-v1/3' },
+        { agent: 'codex', model: 'gpt-5.6-terra', effort: 'xhigh' }
+      )
+    ).toBe('vinaya task run task-run-v1 3 --agent codex --model gpt-5.6-terra --effort xhigh --runner standalone')
+    expect(attachedRunNotice({ issue: 9, agent: 'claude', effort: 'low' }, true)).toContain(
+      '--agent claude --effort low --background'
+    )
   })
 })

@@ -231,7 +231,7 @@ export type { LaunchResult }
  * `dev-review-loop` program in place of this runtime, with the same argv.
  */
 export function resumeContinuation(
-  target: { pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string },
+  target: { pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string; effort?: string },
   runner: 'standalone' | 'atta-engine',
   program: string,
   launcher?: string
@@ -240,7 +240,7 @@ export function resumeContinuation(
   if (target.pr === null)
     return {
       command: program,
-      argv: noPushResumeArgv(target.issue, target.branch, target.agent, target.model, 'standalone')
+      argv: noPushResumeArgv(target.issue, target.branch, target.agent, target.model, 'standalone', target.effort)
     }
   const invocation = programInvocation('dev-review-loop', ['--resume', String(target.pr), '--agent', target.agent])
   return { command: launcher ?? invocation.command, argv: invocation.argv }
@@ -254,7 +254,7 @@ export function resumeContinuation(
  * overrides neither).
  */
 export function defaultResumeLaunch(
-  target: { pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string },
+  target: { pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string; effort?: string },
   meta: { escalationId: string; caller: string },
   root: string = runtimeDir(),
   timeoutMs: number = RESUME_CONFIRM_TIMEOUT_MS
@@ -319,7 +319,7 @@ export type TaskResumeDeps = {
    * the process still alive (O1) — see this file's own header.
    */
   launch: (
-    target: { pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string },
+    target: { pr: number | null; agent: AgentVendor; issue: number; branch: string; model?: string; effort?: string },
     meta: { escalationId: string; caller: string }
   ) => Promise<LaunchResult>
   now: () => string
@@ -498,7 +498,7 @@ export function createTaskResumeHandler(
         return fail(
           taskToolError(
             'precondition',
-            `task ${issue}'s escalation '${escalationId}' already has a consumed 'resume' resolution (by ${existingResolution.authenticatedBy}, from ${existingResolution.authenticatedFrom}) — replay refused. This escalation's decision is spent for good: no later ruling reopens it. Continue the task by running \`${noPushResumeCommandFor(issue, held.branch, held.agent, held.model)}\` directly, and the run's next pause will carry the next decision.`
+            `task ${issue}'s escalation '${escalationId}' already has a consumed 'resume' resolution (by ${existingResolution.authenticatedBy}, from ${existingResolution.authenticatedFrom}) — replay refused. This escalation's decision is spent for good: no later ruling reopens it. Continue the task by running \`${noPushResumeCommandFor(issue, held.branch, held.agent, held.model, undefined, held.effort)}\` directly, and the run's next pause will carry the next decision.`
           )
         )
       }
@@ -681,7 +681,14 @@ export function createTaskResumeHandler(
       // flag — the comment and `permittedNextActions` both rendered `--model`
       // while the spawned argv dropped it.
       outcome = await deps.launch(
-        { pr: escalationPr, agent, issue, branch: held.branch, ...(held.model ? { model: held.model } : {}) },
+        {
+          pr: escalationPr,
+          agent,
+          issue,
+          branch: held.branch,
+          ...(held.model ? { model: held.model } : {}),
+          ...(held.effort ? { effort: held.effort } : {})
+        },
         { escalationId, caller: caller.id }
       )
     } catch (err) {
@@ -700,7 +707,7 @@ export function createTaskResumeHandler(
         taskToolError(
           'infrastructure',
           escalationPr === null
-            ? `task_resume: task ${issue} did not confirm alive: ${outcome.error.message}. Its ruling was already consumed as this escalation's resolution and no later ruling reopens that escalation, so this tool cannot retry it — run \`${noPushResumeCommandFor(issue, held.branch, held.agent, held.model)}\` directly once the cause is fixed.`
+            ? `task_resume: task ${issue} did not confirm alive: ${outcome.error.message}. Its ruling was already consumed as this escalation's resolution and no later ruling reopens that escalation, so this tool cannot retry it — run \`${noPushResumeCommandFor(issue, held.branch, held.agent, held.model, undefined, held.effort)}\` directly once the cause is fixed.`
             : `task_resume: task ${issue} (PR ${pr}) did not confirm alive: ${outcome.error.message}`,
           outcome.error.message
         )

@@ -261,8 +261,8 @@ export function readEscalationPacket(root: string, task: number): TaskEscalation
               ...(pause.model ? { model: pause.model } : {})
             })
           : pause.prNumber === null
-            ? noPushResumeCommandFor(pause.task, pause.branch, pause.agent, pause.model)
-            : resumeCommandFor(pause.prNumber)
+            ? noPushResumeCommandFor(pause.task, pause.branch, pause.agent, pause.model, undefined, pause.effort)
+            : resumeCommandFor(pause.prNumber, undefined, undefined, pause.effort)
       }`
     ],
     runIdentity: escalation ? { runId: escalation.runId, pid: escalation.pid, host: escalation.host } : null,

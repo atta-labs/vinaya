@@ -1,5 +1,5 @@
 /**
- * `vinaya task run <tranche> <n> --agent <claude|codex> [--model <model>]` — argv
+ * `vinaya task run <tranche> <n> --agent <claude|codex> [--model <model>] [--effort <level>]` — argv
  * parsing around `runTask` (`lib/task-run.js`), plus `colourLoopLine`
  * (`lib/dispatch.js`) to role-colour its two summary lines the same way
  * `dev-review-loop`'s own equivalent lines already are, and the two continuation
@@ -53,7 +53,14 @@
  * operator action rather than a signal.
  */
 
-import { colourLoopLine } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
+import {
+  colourLoopLine,
+  DEFAULT_DISPATCH_EFFORT,
+  DISPATCH_EFFORT_REFUSAL,
+  type DispatchEffort,
+  isDispatchEffort,
+  parseDispatchEffort
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
 import {
   DISPATCH_AGENTS,
   type DispatchAgent
@@ -64,6 +71,7 @@ import {
   type TaskRunner
 } from '../../../../harness/processes/vinaya-strict/integration/config/compose.js'
 import {
+  ENGINE_EFFORT_REFUSAL,
   engineStartRefusal,
   runTask,
   type RunTaskResult,
@@ -71,7 +79,11 @@ import {
 } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run.js'
 import { startBackgroundRun } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-background.js'
 import { resumeCommandFor } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-status.js'
-import { noPushResumeCommandFor } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import {
+  noPushResumeCommandFor,
+  readPauseState
+} from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { runtimeDir } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
 
 /** Any failure other than a usage/argv error or a policy `pause` — see the module doc comment's exit-code table. */
 const TASK_RUN_FAILURE_EXIT_CODE = 3
@@ -81,6 +93,7 @@ const KNOWN_FLAGS = [
   '--issue',
   '--background',
   '--model',
+  '--effort',
   '--quiet',
   '--widen-surface',
   '--reason',
@@ -100,6 +113,8 @@ type ParsedFlags = {
   background: boolean
   quiet: boolean
   model: string | undefined
+  effort: string | undefined
+  effortFlagPresent: boolean
   widenSurface: string | undefined
   widenSurfaceFlagPresent: boolean
   reason: string | undefined
@@ -132,6 +147,8 @@ export function parseFlags(rest: string[]): ParsedFlags {
   let background = false
   let quiet = false
   let model: string | undefined
+  let effort: string | undefined
+  let effortFlagPresent = false
   let widenSurface: string | undefined
   let widenSurfaceFlagPresent = false
   let reason: string | undefined
@@ -161,6 +178,9 @@ export function parseFlags(rest: string[]): ParsedFlags {
       quiet = true
     } else if (a === '--model') {
       model = rest[++i]
+    } else if (a === '--effort') {
+      effortFlagPresent = true
+      effort = rest[++i]
     } else if (a === '--widen-surface') {
       widenSurfaceFlagPresent = true
       widenSurface = rest[++i]
@@ -179,6 +199,8 @@ export function parseFlags(rest: string[]): ParsedFlags {
     background,
     quiet,
     model,
+    effort,
+    effortFlagPresent,
     widenSurface,
     widenSurfaceFlagPresent,
     reason,
@@ -218,9 +240,34 @@ export function applyQuiet(parsed: Pick<ParsedFlags, 'quiet'>): void {
 }
 
 const USAGE = [
-  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--runner <standalone|atta-engine>] [--flow <v1|v2>] [--widen-surface <glob,...> --reason <text>] [--rollback]`,
-  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--runner <standalone|atta-engine>] [--flow <v1|v2>] [--widen-surface <glob,...> --reason <text>] [--rollback]`
+  `Usage: vinaya task run <tranche> <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--effort <low|medium|high|xhigh>] [--runner <standalone|atta-engine>] [--flow <v1|v2>] [--widen-surface <glob,...> --reason <text>] [--rollback]`,
+  `   or: vinaya task run --issue <n> --agent ${DISPATCH_AGENTS.join(' | ')} [--background] [--quiet] [--model <model>] [--effort <low|medium|high|xhigh>] [--runner <standalone|atta-engine>] [--flow <v1|v2>] [--widen-surface <glob,...> --reason <text>] [--rollback]`
 ].join('\n')
+
+/**
+ * `--effort <level>`: the reasoning effort every agent turn of a standalone run takes. `undefined` when the flag is
+ * absent (a fresh run then takes `medium` and a continued one keeps its held effort); a refusal message for a missing
+ * or unknown level, or for any level on the Atta Engine runner, which takes none yet.
+ */
+export function effortForFlags(
+  parsed: Pick<ParsedFlags, 'effort' | 'effortFlagPresent'>,
+  runner: TaskRunner
+): { effort?: DispatchEffort } | { error: string } {
+  if (!parsed.effortFlagPresent) return {}
+  const effort = parseDispatchEffort(parsed.effort)
+  if (effort === null) return { error: DISPATCH_EFFORT_REFUSAL }
+  if (runner === 'atta-engine') return { error: ENGINE_EFFORT_REFUSAL }
+  return { effort }
+}
+
+function effortOrExit(parsed: ParsedFlags, runner: TaskRunner): { effort?: DispatchEffort } {
+  const result = effortForFlags(parsed, runner)
+  if ('error' in result) {
+    console.error(`vinaya task run: ${result.error}`)
+    process.exit(2)
+  }
+  return result
+}
 
 /**
  * `--rollback` runs the terminate-and-restart procedure in this process and always restarts on the standalone
@@ -362,14 +409,25 @@ function resolveAgentOrReport(parsed: ParsedFlags): DispatchAgent | null {
  */
 export function pauseResumeCommand(
   result: Pick<RunTaskResult, 'prNumber' | 'task' | 'branch'>,
-  invocation: { agent: DispatchAgent; model?: string }
+  invocation: { agent: DispatchAgent; model?: string; effort?: string }
 ): string {
-  if (result.prNumber > 0) return resumeCommandFor(result.prNumber, invocation.agent, invocation.model)
-  return noPushResumeCommandFor(result.task, result.branch, invocation.agent, invocation.model)
+  if (result.prNumber > 0)
+    return resumeCommandFor(result.prNumber, invocation.agent, invocation.model, invocation.effort)
+  return noPushResumeCommandFor(
+    result.task,
+    result.branch,
+    invocation.agent,
+    invocation.model,
+    undefined,
+    invocation.effort
+  )
 }
 
 /** The publish/pause summary — shared by the tranche-keyed and `--issue` invocations, which differ only in how `result` was obtained. */
-function reportRunTaskResult(result: RunTaskResult, invocation: { agent: DispatchAgent; model?: string }): void {
+function reportRunTaskResult(
+  result: RunTaskResult,
+  invocation: { agent: DispatchAgent; model?: string; effort?: string }
+): void {
   // `prUrl` is `null` only when the repo genuinely could not be resolved
   // (`lib/task-run.ts`'s own `resolvePrUrl` doc comment) — falls back to the
   // bare `PR #<n>` form rather than printing a broken/missing URL.
@@ -434,8 +492,9 @@ export function attachedRunNotice(input: Parameters<typeof runTask>[0], stdinIsT
   if (!stdinIsTty) return null
   const address = 'tranche' in input ? `${input.tranche} ${input.n}` : `--issue ${input.issue}`
   const model = input.model ? ` --model ${input.model}` : ''
+  const effort = input.effort ? ` --effort ${input.effort}` : ''
   const runner = input.runner ? ` --runner ${input.runner}` : ''
-  return `vinaya task run: this run is attached to this terminal and stops when the terminal closes. To keep it running after the terminal closes, use: vinaya task run ${address} --agent ${input.agent}${model}${runner} --background`
+  return `vinaya task run: this run is attached to this terminal and stops when the terminal closes. To keep it running after the terminal closes, use: vinaya task run ${address} --agent ${input.agent}${model}${effort}${runner} --background`
 }
 
 async function runAndReport(input: Parameters<typeof runTask>[0]): Promise<void> {
@@ -453,7 +512,21 @@ async function runAndReport(input: Parameters<typeof runTask>[0]): Promise<void>
     process.exitCode = result.exitCode
     return
   }
-  reportRunTaskResult(result, { agent: input.agent, ...(input.model ? { model: input.model } : {}) })
+  reportRunTaskResult(result, {
+    agent: input.agent,
+    ...(input.model ? { model: input.model } : {}),
+    effort: effortOfRun(input, result)
+  })
+}
+
+/**
+ * The effort the run went on at, for the resume command a pause prints: the one this invocation named, else the one
+ * the pause holds (a continued run keeps it), else the default a fresh run takes.
+ */
+function effortOfRun(input: Parameters<typeof runTask>[0], result: RunTaskResult): string {
+  if (input.effort) return input.effort
+  const held = readPauseState(runtimeDir(), result.task)?.effort
+  return isDispatchEffort(held) ? held : DEFAULT_DISPATCH_EFFORT
 }
 
 /**
@@ -518,13 +591,14 @@ export async function taskRunCommand(args: string[]): Promise<void> {
     const runner = runnerOrExit(parsed)
     const flow = flowOrExit(parsed, runner)
     const widen = widenSurfaceOrExit(parsed)
+    const effort = effortOrExit(parsed, runner)
     engineStartOrExit({ runner, ...flow, ...rollback })
     applyQuiet(parsed)
     if (parsed.background) {
-      await runBackgroundAndReport({ issue: issueN, agent, model: parsed.model, runner, ...flow, ...widen })
+      await runBackgroundAndReport({ issue: issueN, agent, model: parsed.model, runner, ...flow, ...widen, ...effort })
       return
     }
-    await runAndReport({ issue: issueN, agent, model: parsed.model, runner, ...flow, ...widen, ...rollback })
+    await runAndReport({ issue: issueN, agent, model: parsed.model, runner, ...flow, ...widen, ...effort, ...rollback })
     return
   }
 
@@ -554,13 +628,33 @@ export async function taskRunCommand(args: string[]): Promise<void> {
   const runner = runnerOrExit(parsed)
   const flow = flowOrExit(parsed, runner)
   const widen = widenSurfaceOrExit(parsed)
+  const effort = effortOrExit(parsed, runner)
   engineStartOrExit({ runner, ...flow, ...rollback })
   applyQuiet(parsed)
   if (parsed.background) {
-    await runBackgroundAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, runner, ...flow, ...widen })
+    await runBackgroundAndReport({
+      tranche: trancheSlug,
+      n,
+      agent,
+      model: parsed.model,
+      runner,
+      ...flow,
+      ...widen,
+      ...effort
+    })
     return
   }
-  await runAndReport({ tranche: trancheSlug, n, agent, model: parsed.model, runner, ...flow, ...widen, ...rollback })
+  await runAndReport({
+    tranche: trancheSlug,
+    n,
+    agent,
+    model: parsed.model,
+    runner,
+    ...flow,
+    ...widen,
+    ...effort,
+    ...rollback
+  })
 }
 
 import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'

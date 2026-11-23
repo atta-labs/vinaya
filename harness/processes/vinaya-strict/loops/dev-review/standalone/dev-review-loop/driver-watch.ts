@@ -31,7 +31,7 @@ import { usageLimitResetFromDetail } from './round-assess.js'
 import { MAX_AUTOMATIC_RATE_LIMIT_RESUMES } from './round-assess.js'
 import { usageLimitWaitMs } from './round-assess.js'
 import { rateLimitWaitMs } from './round-assess.js'
-import { isAgentVendor } from '../../dispatch/dispatch.js'
+import { isAgentVendor, isDispatchEffort } from '../../dispatch/dispatch.js'
 import { ReplayedResolutionError } from './pause-resume.js'
 import { spendsInfrastructureRetry } from './round-assess.js'
 import { MAX_INFRASTRUCTURE_RETRIES } from './round-assess.js'
@@ -251,7 +251,8 @@ export function handOffStaleWatchingDriver(
         ...(watch ? driverCarryArgs(watch) : []),
         '--agent',
         continuation.agent,
-        ...(continuation.model ? ['--model', continuation.model] : [])
+        ...(continuation.model ? ['--model', continuation.model] : []),
+        ...(continuation.effort ? ['--effort', continuation.effort] : [])
       ]
     : null
   if (!args) throw new Error('stale watcher hand-off requires a resolved agent')
@@ -412,6 +413,7 @@ export async function watchPauseThenResume(
   const held = w.readPauseState(w.runtimeDir(), task)
   let agent = held?.agent
   let model = held?.model
+  let effort = held?.effort
   classifyRateLimitPause(
     held ?? { detail: pauseResult.finalDecision.type === 'pause' ? pauseResult.finalDecision.detail : undefined }
   )
@@ -446,6 +448,7 @@ export async function watchPauseThenResume(
     escalationId = current.escalationId
     agent = current.agent
     model = current.model
+    effort = current.effort
     infrastructureRetriesSpent = current.infrastructureRetries ?? 0
     bareRetryExhausted = false
     isBoundedRetry = current.reason === 'infrastructure' || current.reason === 'stale_driver'
@@ -508,7 +511,8 @@ export async function watchPauseThenResume(
       const continuation: LoopInput = {
         resumePr: prNumber,
         ...(agent !== undefined && isAgentVendor(agent) ? { agent } : {}),
-        ...(model ? { model } : {})
+        ...(model ? { model } : {}),
+        ...(isDispatchEffort(effort) ? { effort } : {})
       }
       if (handOffStaleWatchingDriver(baseHeadAtStart, continuation, task, driverLockToken, w))
         return { kind: 'unwatched' }
@@ -648,9 +652,10 @@ export async function watchPrePrPauseThenResume(
   // request exists yet. This is the same bounded allowance `--resume` grants
   // them after a PR is available; the watcher owns only the wait and lock.
   const model = held.model ?? input.model
+  const effort = isDispatchEffort(held.effort) ? held.effort : input.effort
   const continuation: LoopInput = openPr
-    ? { resumePr: openPr.number, agent, ...(model ? { model } : {}) }
-    : { task, agent, ...(model ? { model } : {}) }
+    ? { resumePr: openPr.number, agent, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }
+    : { task, agent, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }
   if (handOffStaleWatchingDriver(baseHeadAtStart, continuation, task, driverLockToken, w)) return { kind: 'unwatched' }
   try {
     return {
@@ -714,6 +719,7 @@ export async function watchPublishedPullRequest(
     return { kind: 'unwatched' }
   }
   const model = input.model ?? held?.model
+  const effort = input.effort ?? (isDispatchEffort(held?.effort) ? held.effort : undefined)
   const loopLogPath = loopLogPathFor(null, task)
   appendDriverLine(loopLogPath, `Watching PR #${prNumber} after its publication, until it is merged or closed.`)
   while (true) {
@@ -727,7 +733,7 @@ export async function watchPublishedPullRequest(
       return { kind: 'ended', reason: read }
     }
     if (read === 'conflicting') {
-      const continuation: LoopInput = { task, agent, ...(model ? { model } : {}) }
+      const continuation: LoopInput = { task, agent, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }
       const boundSpent = reentries.count >= MAX_AUTOMATIC_CONFLICT_REENTRIES
       if (boundSpent) {
         appendDriverLine(

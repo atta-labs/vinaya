@@ -87,6 +87,8 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
 
     dispatchModel,
 
+    dispatchEffort,
+
     input,
 
     log,
@@ -1314,6 +1316,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
         pausedAt: new Date().toISOString(),
         agent: dispatchAgent,
         ...(dispatchModel ? { model: dispatchModel } : {}),
+        effort: dispatchEffort,
         escalationId: escalationRecord?.escalationId,
         infrastructureRetries: c.infrastructureRetries
       })
@@ -1328,7 +1331,11 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       // already takes, for the same reason: a comment can only be posted
       // against a pull request that exists, and this site is not
       // structurally guaranteed to have one.
-      const pauseInvocation = { agent: dispatchAgent, ...(dispatchModel ? { model: dispatchModel } : {}) }
+      const pauseInvocation = {
+        agent: dispatchAgent,
+        ...(dispatchModel ? { model: dispatchModel } : {}),
+        effort: dispatchEffort
+      }
       await logPauseCommentRetryIfNotable(
         c,
         c.round,

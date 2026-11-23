@@ -394,6 +394,8 @@ export async function startBackgroundRun(
   // scratch), so dropping the flag here silently loses the operator's
   // explicit choice to the class-mapped/vendor-default model instead.
   if (input.model) argv.push('--model', input.model)
+  // The effort travels the same way: the detached child re-parses this argv from scratch.
+  if (input.effort) argv.push('--effort', input.effort)
   if (input.runner) argv.push('--runner', input.runner)
   if (input.flow) argv.push('--flow', input.flow)
   const fd = openLoopLogAppendFd(logPath)

@@ -22,7 +22,7 @@ import type { ReviewInputManifest } from '../../../../tools/task-contract/review
 import type { ReviewPolicy } from '../../../../tools/task-contract/review-policy'
 import type { RoundHeadIdentity } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
 import type { Role } from '../../../../../../kernel/log/schema'
-import type { AgentVendor } from '../../dispatch/dispatch.js'
+import type { AgentVendor, DispatchEffort } from '../../dispatch/dispatch.js'
 import type { DeferredFindingEntry } from '../../../../tools/task-contract/forge/forge-write.js'
 import type { createVinayaLogSink } from '../../../../integration/log/log-sink-factory.js'
 import type { resolveRepo } from '../../../../../../kernel/adapters/code-host/github/resolve-repo'
@@ -55,6 +55,8 @@ export type LoopRunContext = {
   branch: string
   dispatchAgent: AgentVendor
   dispatchModel: string | undefined
+  /** The reasoning effort every agent turn of this run is launched with: the one given, else the held one on a resume, else `medium`. */
+  dispatchEffort: DispatchEffort
   pauseBoundRuling: import('../../../../tools/task-contract/review-input-manifest').PauseBoundRuling | null
   log: ReturnType<typeof createVinayaLogSink>['log']
   runId: string
