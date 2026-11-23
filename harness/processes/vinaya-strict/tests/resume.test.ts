@@ -818,9 +818,58 @@ describe('the watch for a ruling spaces its forge reads', () => {
   })
 })
 
-describe('a run-engine --resume start ends the person span through the one escalation resolver', () => {
-  test('claims the resolution with the standalone loop resolver, which writes the answer under the escalation run (cross-process proof: pause-resume.test.ts)', async () => {
-    const { resolveEscalation } = await import('../loops/dev-review/standalone/dev-review-loop/pause-resume')
-    expect(liveResumeDeps.resolveEscalation).toBe(resolveEscalation)
+describe('a run-engine --resume start ends the person span an earlier process asked', () => {
+  test('claimResume with the real resolver: one asked event, one whole person span, no handoff', async () => {
+    const harness = await import('./standalone/lib/dev-review-loop-harness')
+    const support = await import('./standalone/lib/person-span-support')
+    const { claimResume } = await import('../bin/run-lifecycle')
+    const { escalationIdFor } = await import('../loops/dev-review/standalone/dev-review-loop/pause-resume')
+    const world = harness.makeWorld()
+    try {
+      const facts = support.escalationFactsFor(world)
+      const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
+      const deps: ResumeDeps = {
+        ...liveResumeDeps,
+        crossRunnerRefusal: () => null,
+        liveDriver: () => null,
+        infrastructureRetries: () => 0,
+        taskFromPrBody: () => facts.task,
+        fetchPrBody: () => `Closes #${facts.task}`,
+        readPauseState: () => ({
+          task: facts.task,
+          round: facts.round,
+          head: facts.head,
+          branch: facts.branch,
+          prNumber: facts.pr,
+          reason: 'escalation',
+          pausedAt: '2026-01-01T00:00:00.000Z',
+          agent: 'claude',
+          escalationId
+        }),
+        fetchRulings: () => ['Go ahead.'],
+        fetchIssueRulings: () => ['Go ahead.'],
+        fetchNewestRulingOrdinal: () => 1,
+        fetchNewestIssueRulingOrdinal: () => 1,
+        fetchNewestRulingAuthor: () => 'principal-1',
+        fetchNewestIssueRulingAuthor: () => 'principal-1'
+      }
+      const claim = await harness.withWorldEnv(world, async () => {
+        support.raiseInAnotherProcess(facts)
+        const claimed = claimResume(world.runtimeDir, { pr: world.prNumber }, deps)
+        await (await import('../../../kernel/log/run-recorder')).runRecorder().drain()
+        return claimed
+      })
+      expect(claim.escalationId).toBe(escalationId)
+      const seen = support.personRecordsOf(world)
+      expect(seen.asked()).toHaveLength(1)
+      expect(seen.spans()).toHaveLength(1)
+      expect(seen.spans()[0]?.attributes).toMatchObject({
+        'vinaya.person.answer': 'resume',
+        'vinaya.person.answered_by': 'principal-1'
+      })
+      expect(seen.earlier()).toEqual([])
+    } finally {
+      harness.cleanupWorlds()
+    }
   })
 })

@@ -1392,10 +1392,62 @@ describe('a watched pull request that ends is recorded on the run', () => {
 
 // --- the person's answer ------------------------------------------------------------------
 
-describe('the Engine ruling watch ends the person span through the one escalation resolver', () => {
-  test('its resolver is the standalone loop resolver, which writes the answer under the escalation run (cross-process proof: pause-resume.test.ts)', async () => {
-    const { liveResumeDeps } = await import('../bin/run-lifecycle')
-    const { resolveEscalation } = await import('../loops/dev-review/standalone/dev-review-loop/pause-resume')
-    expect(liveResumeDeps.resolveEscalation).toBe(resolveEscalation)
+describe('the Engine ruling watch ends the person span an earlier process asked', () => {
+  test('a ruling posted after the pause is claimed by the watch: one asked event, one whole person span, no handoff', async () => {
+    const harness = await import('./standalone/lib/dev-review-loop-harness')
+    const support = await import('./standalone/lib/person-span-support')
+    const { liveResumeDeps, watchForRuling } = await import('../bin/run-lifecycle')
+    const { escalationIdFor } = await import('../loops/dev-review/standalone/dev-review-loop/pause-resume')
+    const world = harness.makeWorld()
+    try {
+      const facts = support.escalationFactsFor(world)
+      const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
+      let ordinal = 0
+      const deps = {
+        ...liveResumeDeps,
+        readPauseState: () => ({
+          task: facts.task,
+          round: facts.round,
+          head: facts.head,
+          branch: facts.branch,
+          prNumber: facts.pr,
+          reason: 'escalation' as const,
+          pausedAt: '2026-01-01T00:00:00.000Z',
+          agent: 'claude',
+          escalationId
+        }),
+        fetchPrState: () => 'OPEN' as const,
+        fetchRulings: () => ['Go ahead.'],
+        fetchIssueRulings: () => ['Go ahead.'],
+        fetchNewestRulingOrdinal: () => ordinal,
+        fetchNewestIssueRulingOrdinal: () => ordinal,
+        fetchNewestRulingAuthor: () => 'principal-1',
+        fetchNewestIssueRulingAuthor: () => 'principal-1'
+      }
+      const result = await harness.withWorldEnv(world, async () => {
+        support.raiseInAnotherProcess(facts)
+        const watch = {
+          deps,
+          pollMs: 1,
+          sleep: async () => {
+            ordinal = 1
+          }
+        }
+        const watched = await watchForRuling(world.runtimeDir, facts.task, watch, new AbortController().signal)
+        await (await import('../../../kernel/log/run-recorder')).runRecorder().drain()
+        return watched
+      })
+      expect(result).toMatchObject({ kind: 'ruled', escalationId })
+      const seen = support.personRecordsOf(world)
+      expect(seen.asked()).toHaveLength(1)
+      expect(seen.spans()).toHaveLength(1)
+      expect(seen.spans()[0]?.attributes).toMatchObject({
+        'vinaya.person.answer': 'resume',
+        'vinaya.person.answered_by': 'principal-1'
+      })
+      expect(seen.earlier()).toEqual([])
+    } finally {
+      harness.cleanupWorlds()
+    }
   })
 })

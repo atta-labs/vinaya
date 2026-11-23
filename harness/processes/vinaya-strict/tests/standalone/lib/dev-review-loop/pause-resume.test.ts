@@ -54,6 +54,7 @@ import {
 } from '../dev-review-loop-harness'
 import { buildReexecArgs } from '../../../../loops/dev-review/standalone/dev-review-loop/driver-helpers'
 import { spawnSync } from 'node:child_process'
+import { runRecorder } from '../../../../../../kernel/log/run-recorder'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture'
 import {
   consumeHostRepairPauseOnStart,
@@ -1087,8 +1088,20 @@ process.exit(0)`
     const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
 
     await withWorldEnv(world, async () => {
+      runRecorder().bind({})
       writeEscalationRecord(facts)
-      resolveInAnotherProcess(facts.task, escalationId, null, 'resume', 'driver-self')
+      writePauseState(world.runtimeDir, {
+        task: facts.task,
+        round: facts.round,
+        head: facts.head,
+        branch: facts.branch,
+        prNumber: null,
+        reason: 'sandbox_refused',
+        pausedAt: '2026-01-01T00:00:00.000Z',
+        escalationId
+      })
+      expect(consumeHostRepairPauseOnStart(world.runtimeDir, facts.task)).toBe(true)
+      await runRecorder().drain()
     })
 
     const seen = copyOf(world)
