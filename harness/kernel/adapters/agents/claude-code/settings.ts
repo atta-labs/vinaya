@@ -171,7 +171,9 @@ export function generateClaudeSettings(grants: RoleGrants, paths: GeneratorPaths
     mcpPath,
     '--json-schema',
     JSON.stringify(paths.outputSchema),
-    ...(grants.vendor.claude.model === 'process-supplied' ? [] : ['--model', grants.vendor.claude.model])
+    ...(grants.vendor.claude.model === 'process-supplied' ? [] : ['--model', grants.vendor.claude.model]),
+    // The effort follows the model flag; the resume launch reuses these arguments, so it keeps it too.
+    ...(grants.effort === undefined ? [] : ['--effort', grants.effort])
   ]
   return {
     vendor: 'claude-code',

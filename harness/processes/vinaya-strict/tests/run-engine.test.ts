@@ -70,7 +70,8 @@ import {
 import { readPauseState } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { loopLogPathFor } from '../../../kernel/log/client/loop-log'
 import { SqliteCheckpointer } from '../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
-import { currentRunGeneration, runIdentityOfTask } from '../bin/run-lifecycle'
+import { currentRunGeneration, resumeEffort, runIdentityOfTask } from '../bin/run-lifecycle'
+import { createHandoff } from '../executing/handoff'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
 import {
   claimLaunchAttribution,
@@ -83,6 +84,8 @@ import {
   engineLiveDevToolsContext,
   liveTaskInput,
   parseArgs,
+  parseResumeArgs,
+  recordedCheckpointEffort,
   runEngine,
   shimContent,
   type EngineRunOptions,
@@ -2217,5 +2220,102 @@ describe("a restarted Engine run keeps the round's handed-over finding ids", () 
     expect(resumed.exitCode).toBe(2)
     expect(schemas).toHaveLength(2)
     expect(schemas[1]).toContain('R1-CR-1')
+  })
+})
+
+describe('the run effort on the Engine runner', () => {
+  const recordRow = (runtimeDir: string, task: number, effort: string | null, withColumn = true): void => {
+    const file = checkpointPath(runDirectory(runtimeDir, task))
+    const saver = new SqliteCheckpointer({ path: file, revision: 'r' })
+    saver.close()
+    const db = new Database(file)
+    if (!withColumn) db.exec('ALTER TABLE checkpoints DROP COLUMN effort')
+    const columns = withColumn
+      ? 'thread_id, checkpoint_ns, checkpoint_id, type, checkpoint, metadata, revision, model, effort'
+      : 'thread_id, checkpoint_ns, checkpoint_id, type, checkpoint, metadata, revision, model'
+    const marks = withColumn ? '?, ?, ?, ?, ?, ?, ?, ?, ?' : '?, ?, ?, ?, ?, ?, ?, ?'
+    const values: Array<string | Uint8Array | null> = [
+      runIdentityOfTask(task, 1).threadId,
+      '',
+      'c1',
+      'json',
+      new Uint8Array(),
+      new Uint8Array(),
+      'r',
+      ''
+    ]
+    if (withColumn) values.push(effort)
+    db.query(`INSERT INTO checkpoints (${columns}) VALUES (${marks})`).run(...values)
+    db.close()
+  }
+
+  test('--effort takes the four levels on a start and a resume, and refuses any other value', () => {
+    expect(parseArgs(['--task', '7', '--agent', 'claude', '--effort', 'xhigh']).effort).toBe('xhigh')
+    expect(parseArgs(['--task', '7', '--agent', 'claude']).effort).toBeUndefined()
+    expect(parseResumeArgs(['--resume', '70', '--effort', 'low'])).toEqual({ resume: 70, effort: 'low' })
+    for (const bad of ['max', 'minimal', ''])
+      expect(() => parseArgs(['--task', '7', '--agent', 'claude', '--effort', bad])).toThrow(
+        '--effort takes one of low, medium, high, xhigh.'
+      )
+    expect(() => parseResumeArgs(['--resume', '70', '--effort'])).toThrow('--effort takes one of')
+  })
+
+  test('a resume runs at --effort, else the checkpoint’s recorded effort, else medium', () => {
+    const runtimeDir = fixtureDir('effort-resume-')
+    recordRow(runtimeDir, 7, 'high')
+    expect(recordedCheckpointEffort(runtimeDir, 7)).toBe('high')
+    expect(resumeEffort(undefined, recordedCheckpointEffort(runtimeDir, 7))).toBe('high')
+    expect(resumeEffort('low', recordedCheckpointEffort(runtimeDir, 7))).toBe('low')
+    expect(resumeEffort(undefined, undefined)).toBe('medium')
+  })
+
+  test('a checkpoint file with no effort column opens, gains it, and resumes at medium', () => {
+    const runtimeDir = fixtureDir('effort-older-')
+    recordRow(runtimeDir, 7, null, false)
+    const file = checkpointPath(runDirectory(runtimeDir, 7))
+    expect(recordedCheckpointEffort(runtimeDir, 7)).toBeUndefined()
+    const db = new Database(file, { readonly: true })
+    const names = db
+      .query<{ name: string }, []>('PRAGMA table_info(checkpoints)')
+      .all()
+      .map((column) => column.name)
+    db.close()
+    expect(names).toContain('effort')
+    expect(resumeEffort(undefined, recordedCheckpointEffort(runtimeDir, 7))).toBe('medium')
+  })
+
+  test('the pause record and the printed resume command carry the run’s effort', () => {
+    const runtimeDir = fixtureDir('effort-pause-')
+    const recorded = recordedHandoff()
+    const commands: string[] = []
+    const deps = {
+      ...recorded.deps,
+      postIssuePauseComment: (...args: Parameters<typeof recorded.deps.postIssuePauseComment>) => {
+        commands.push((args[5] as { resumeCommand: string }).resumeCommand)
+        return recorded.deps.postIssuePauseComment(...args)
+      }
+    }
+    const handoff = createHandoff(
+      {
+        task: 7,
+        branch: 'task/log-sdk-product-v1/18',
+        runtimeDir,
+        runId: 'run-1',
+        agent: 'claude',
+        effort: 'high',
+        round: () => 1,
+        head: () => 'abc123',
+        prNumber: () => null,
+        versions: () => ({ briefHash: 'b', objectivesVersion: 'o', rulingOrdinal: 0, policyDigest: 'p' }),
+        halt: () => {}
+      },
+      'loop-1',
+      deps
+    )
+    handoff.pause({ reason: 'escalation', detail: 'needs a call' })
+    expect(readPauseState(runtimeDir, 7)?.effort).toBe('high')
+    expect(commands).toHaveLength(1)
+    expect(commands[0]).toContain('--effort high')
+    expect(commands[0]).toContain('--runner atta-engine')
   })
 })

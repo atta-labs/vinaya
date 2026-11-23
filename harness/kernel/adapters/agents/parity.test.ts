@@ -13,7 +13,7 @@ import {
   generatedFile,
   offeredBeyondGrants
 } from './fixtures/generated-capabilities'
-import { type RoleCapabilities, type RoleContract, READ_ONLY_COMMANDS, resolveRoleGrants } from './manifest'
+import { type RoleCapabilities, type RoleContract, READ_ONLY_COMMANDS, resolveRoleGrants, withEffort } from './manifest'
 import type { GeneratedAgentConfig } from '../../isolation/policy'
 import { evaluateShellGuards } from '../../isolation/shell-eval'
 import { ORDINARY_COMMANDS, SHELL_ATTACKS } from '../../isolation/shell-attacks'
@@ -208,6 +208,37 @@ describe('a Claude launch offers only the built-ins its capabilities allow', () 
     expect(offeredBeyondGrants(widened, grants)).toEqual(['Bash', 'DesignSync'])
     const unflagged = { ...claude, launch: claude.launch.filter((_, i) => i !== at && i !== at + 1) }
     expect(() => claudeOffered(unflagged)).toThrow(/default built-in set/)
+  })
+})
+
+describe('the run effort reaches each vendor launch', () => {
+  const paths = { generatedDir: '/tmp/generated/effort', outputSchemaPath: '/x.json', outputSchema: {}, variables: {} }
+  const grants = resolveRoleGrants(READER)
+
+  test('a Claude launch carries --effort on a first launch and a resume', () => {
+    const claude = generateClaudeSettings(withEffort(grants, 'medium'), paths)
+    for (const argv of [claude.launch, claude.resumeLaunch ?? []]) {
+      const at = argv.indexOf('--effort')
+      expect(at).toBeGreaterThan(0)
+      expect(argv[at + 1]).toBe('medium')
+    }
+  })
+
+  test('a Codex launch carries -c model_reasoning_effort before the final - on a first launch and a resume', () => {
+    const codex = generateCodexConfig(withEffort(grants, 'medium'), paths)
+    for (const argv of [codex.launch, codex.resumeLaunch ?? []]) {
+      const at = argv.indexOf('model_reasoning_effort="medium"')
+      expect(at).toBeGreaterThan(0)
+      expect(argv[at - 1]).toBe('-c')
+      expect(argv[argv.length - 1]).toBe('-')
+      expect(at).toBeLessThan(argv.length - 1)
+    }
+    expect(generatedFile(codex, 'config.toml')).not.toContain('model_reasoning_effort')
+  })
+
+  test('a launch built with no effort carries none', () => {
+    expect(generateClaudeSettings(grants, paths).launch).not.toContain('--effort')
+    expect(generateCodexConfig(grants, paths).launch.join(' ')).not.toContain('model_reasoning_effort')
   })
 })
 

@@ -364,7 +364,7 @@ describe('task_escalation_read', () => {
     expect(engine.runIdentity).toEqual(standalone.runIdentity)
     expect(engine.inputVersions).toEqual(standalone.inputVersions)
     expect(engine.permittedNextActions.at(-1)).toBe(
-      `Or run: bun ${engineRunnerScriptPath()} --resume ${world.prNumber} --agent claude`
+      `Or run: bun ${engineRunnerScriptPath()} --resume ${world.prNumber} --agent claude --effort medium`
     )
   })
 })
@@ -428,7 +428,7 @@ describe('task_resume', () => {
       expect(continuation!.command).toBe('bun')
       expect(continuation!.argv[0]).toBe(engineRunnerScriptPath())
       // The Engine's own `--resume` parser takes it: through the pull request, under the paused run's agent.
-      expect(parseResumeArgs(continuation!.argv.slice(1))).toEqual({ resume: pr, agent: 'codex' })
+      expect(parseResumeArgs(continuation!.argv.slice(1))).toEqual({ resume: pr, agent: 'codex', effort: 'medium' })
       checked = true
     })
     expect(checked).toBe(true)

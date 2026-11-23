@@ -42,9 +42,12 @@ import {
   checkpointRefusal
 } from '../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import {
+  DEFAULT_DISPATCH_EFFORT,
   detectUsageLimit,
   getProcessSnapshot,
+  isDispatchEffort,
   resolveDispatchTimeoutMs,
+  type DispatchEffort,
   type UsageLimit
 } from '../loops/dev-review/dispatch/dispatch'
 import {
@@ -807,6 +810,15 @@ export const taskSwitchCommand = (task: number, agent: string): string => {
 export function resumeModel(explicit: string | undefined, recorded: string | undefined): string | undefined {
   if (explicit !== undefined && explicit !== '') return explicit
   return recorded !== undefined && recorded !== '' ? recorded : undefined
+}
+
+/** The effort a resume runs at: the one `--effort` names, else the one the run's checkpoint recorded, else `medium`. */
+export function resumeEffort(
+  explicit: DispatchEffort | undefined,
+  recorded: string | null | undefined
+): DispatchEffort {
+  if (explicit !== undefined) return explicit
+  return isDispatchEffort(recorded) ? recorded : DEFAULT_DISPATCH_EFFORT
 }
 
 // --- recovery --------------------------------------------------------------------

@@ -7,7 +7,7 @@ import { programFile } from '../../../tools/programs.js'
 import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../../kernel/run-paths.js'
 import type { TaskRunner } from '../../../integration/config/compose.js'
 
-export type EngineRunInput = { task: number; agent: AgentVendor; model?: string; flow?: string }
+export type EngineRunInput = { task: number; agent: AgentVendor; model?: string; effort?: string; flow?: string }
 
 export type RecordedTaskRunner = { schemaVersion: 1; runner: TaskRunner; recordedAt: string }
 
@@ -123,13 +123,15 @@ export function engineContinuationArgv(target: {
   pr: number | null
   agent: AgentVendor
   model?: string
+  effort?: string
 }): string[] {
   return [
     engineRunnerScriptPath(),
     ...(target.pr === null ? ['--task', String(target.issue)] : ['--resume', String(target.pr)]),
     '--agent',
     target.agent,
-    ...(target.model ? ['--model', target.model] : [])
+    ...(target.model ? ['--model', target.model] : []),
+    ...(target.effort ? ['--effort', target.effort] : [])
   ]
 }
 
@@ -235,6 +237,7 @@ export async function runTaskEngine(
       '--agent',
       input.agent,
       ...(input.model ? ['--model', input.model] : []),
+      ...(input.effort ? ['--effort', input.effort] : []),
       ...(input.flow ? ['--flow', input.flow] : [])
     ],
     { stdio: 'inherit' }

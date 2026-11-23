@@ -377,13 +377,49 @@ describe('the agent in checkpoint provenance', () => {
       model: '',
       formatVersion: 1,
       runtimeVersion: 'engine@0.0.1',
-      agent: null
+      agent: null,
+      effort: null
     })
     const after = new Database(path, { readonly: true })
     const columns = after.query<{ name: string }, []>('PRAGMA table_info(checkpoints)').all()
     after.close()
     expect(columns.map((column) => column.name)).not.toContain('agent')
     expect(statSync(path).mtimeMs).toBe(before)
+  })
+})
+
+describe('the effort in checkpoint provenance', () => {
+  test('is recorded on every checkpoint and read back', async () => {
+    const folder = sampleFolder()
+    const path = join(scratch(), 'effort.sqlite')
+    const saver = new SqliteCheckpointer({ path, revision: 'r', agent: 'claude', effort: 'high' })
+    const done = await startProcessRun(driver(folder, saver).options)
+    expect(saver.latestEffort(done.identity.threadId)).toBe('high')
+    expect(saver.latestEffort('no-such-thread')).toBeUndefined()
+    saver.close()
+    expect(readAgentProvenance(path, done.identity.threadId)).toMatchObject({ effort: 'high' })
+  })
+
+  test('a file with no effort column opens, gains it, and reads no effort for its earlier rows', () => {
+    const path = join(scratch(), 'no-effort.sqlite')
+    const db = new Database(path, { create: true })
+    db.exec(`CREATE TABLE checkpoints (
+      thread_id TEXT NOT NULL, checkpoint_ns TEXT NOT NULL, checkpoint_id TEXT NOT NULL, parent_id TEXT,
+      type TEXT NOT NULL, checkpoint BLOB NOT NULL, metadata BLOB NOT NULL, revision TEXT NOT NULL, model TEXT NOT NULL,
+      format_version INTEGER, runtime_version TEXT, agent TEXT, flow TEXT,
+      PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id))`)
+    db.query(
+      `INSERT INTO checkpoints VALUES ('thread', '', 'c1', NULL, 'json', X'7B7D', X'7B7D', 'r', '', 1, 'engine@0.0.1', 'claude', 'v1')`
+    ).run()
+    db.close()
+    expect(readAgentProvenance(path, 'thread')?.effort).toBeNull()
+    const saver = new SqliteCheckpointer({ path, revision: 'r' })
+    expect(saver.latestEffort('thread')).toBeNull()
+    saver.close()
+    const after = new Database(path, { readonly: true })
+    const columns = after.query<{ name: string }, []>('PRAGMA table_info(checkpoints)').all()
+    after.close()
+    expect(columns.map((column) => column.name)).toContain('effort')
   })
 })
 
