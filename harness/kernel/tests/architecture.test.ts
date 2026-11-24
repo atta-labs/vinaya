@@ -94,6 +94,67 @@ describe('harness never imports a process', () => {
   })
 })
 
+// The harness writes no earlier-format Log event. The Log goes through the Log SDK's handle, so no source file
+// imports the earlier-format sink's write functions (`log`, `logSync`, `logWithOptions`) or the Log SDK's live
+// earlier-format converter. The Log server's self-test posts one fixed earlier-format line of its own and is the one
+// file named here; the sink keeps its queue drain and its readers, which are not writes.
+
+/** The earlier-format writers a source file may not reach for. */
+const EARLIER_WRITER_NAMES = new Set(['log', 'logSync', 'logWithOptions'])
+const EARLIER_CONVERTER_NAMES = new Set(['createLiveEarlierConverter', 'createLocalCopyWriter'])
+/** The one source that posts an earlier-format line, to check that the Log server still accepts the format it stores. */
+const EARLIER_FORMAT_SELFTEST = 'harness/processes/vinaya-strict/integration/bin/log-selftest.ts'
+
+/** What a source text imports of the earlier-format writer or converter, by name. */
+export function earlierFormatWrites(source: string): string[] {
+  const found: string[] = []
+  const sf = ts.createSourceFile('source.ts', source, ts.ScriptTarget.Latest, true)
+  sf.forEachChild((node) => {
+    if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier)) return
+    const specifier = node.moduleSpecifier.text
+    const base = specifier.replace(/\.js$/, '')
+    if (base.endsWith('/convert-live')) found.push(`imports the live converter (${specifier})`)
+    const bindings = node.importClause?.namedBindings
+    if (bindings === undefined || !ts.isNamedImports(bindings)) return
+    for (const element of bindings.elements) {
+      const imported = (element.propertyName ?? element.name).text
+      if (base.endsWith('/log-sink') && EARLIER_WRITER_NAMES.has(imported))
+        found.push(`imports the earlier-format writer's ${imported}`)
+      if (EARLIER_CONVERTER_NAMES.has(imported)) found.push(`imports ${imported}`)
+    }
+  })
+  return found
+}
+
+describe('the harness writes no earlier-format Log event', () => {
+  test('no source of the harness or the command line calls the earlier-format writer or its live converter', () => {
+    const violations: string[] = []
+    for (const root of ['harness', 'apps/cli/src']) {
+      for (const file of sourceFiles(join(REPOSITORY_ROOT, root))) {
+        const path = relative(REPOSITORY_ROOT, file).split(sep).join('/')
+        if (path === import.meta.path.slice(REPOSITORY_ROOT.length + 1) || path === EARLIER_FORMAT_SELFTEST) continue
+        if (/\.test\.[tj]sx?$/.test(path) || path.split('/').includes('tests') || path.includes('/fixtures/')) continue
+        for (const write of earlierFormatWrites(readFileSync(file, 'utf8'))) violations.push(`${path} ${write}`)
+      }
+    }
+    expect(violations).toEqual([])
+  })
+
+  test('the scan names a planted writer or converter import', () => {
+    expect(earlierFormatWrites("import { log } from '../log/log-sink.js'")).toEqual([
+      "imports the earlier-format writer's log"
+    ])
+    expect(earlierFormatWrites("import { logSync as sync, currentRunId } from './log-sink'")).toEqual([
+      "imports the earlier-format writer's logSync"
+    ])
+    expect(earlierFormatWrites("import { createLiveEarlierConverter } from '../x/convert-live.js'")).toEqual([
+      'imports the live converter (../x/convert-live.js)',
+      'imports createLiveEarlierConverter'
+    ])
+    expect(earlierFormatWrites("import { drainLogSink, outboxPathFor } from './log-sink.js'")).toEqual([])
+  })
+})
+
 // ── Planted repositories ────────────────────────────────────────────────────
 
 const scratch = mkdtempSync(join(tmpdir(), 'architecture-ratchet-'))

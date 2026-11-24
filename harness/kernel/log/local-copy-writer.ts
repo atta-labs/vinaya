@@ -1,17 +1,12 @@
-import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { createLiveEarlierConverter as createConverter } from '../../../packages/log-sdk/src/contract/convert-live.js'
-import { mapEarlierEvent } from '../../../packages/log-sdk/src/contract/convert-map.js'
-import { createConvertedCopy } from '../../../packages/log-sdk/src/local-copy/converted-copy.js'
 import { sendLocalCopy } from '../../../packages/log-sdk/src/index.js'
 import {
   defaultRuntimeDir as sdkDefaultRuntimeDir,
   resolveSettings as sdkResolveSettings
 } from '../../../packages/log-sdk/src/writer/settings.js'
 import { isInsideRepo } from '../run-paths.js'
-import type { LogEvent } from './schema.js'
 
-/** The longest the sink's drain waits on sending the local copy, whatever the OpenTelemetry address does. */
+/** The longest a drain waits on sending the local copy, whatever the OpenTelemetry address does. */
 export const LOCAL_COPY_SEND_BOUND_MS = 3_000
 /** The least time between the starts of two sends from one process. */
 export const LOCAL_COPY_SEND_INTERVAL_MS = 2_000
@@ -68,11 +63,6 @@ export type LocalCopySenderDeps = {
   sendBoundMs?: number
   sendIntervalMs?: number
   now?: () => number
-}
-
-export type LocalCopyWriterDeps = LocalCopySenderDeps & {
-  /** The home directory redaction rewrites to `~`. */
-  home: () => string
 }
 
 /** Sends of one folder never overlap within the process, whichever sender asks. */
@@ -208,118 +198,3 @@ export function createLocalCopySender(deps: LocalCopySenderDeps) {
 }
 
 export type LocalCopySender = ReturnType<typeof createLocalCopySender>
-
-type RunCopy = {
-  converter: ReturnType<typeof createConverter>
-  copy: ReturnType<typeof createConvertedCopy>
-}
-
-type Pending = { event: LogEvent; folder: string }
-
-let lastTarget: LocalCopyPlace | undefined
-
-/** Where this process's local copy is, as the last event any sink recorded put it; `undefined` before any. */
-export function localCopyTarget(): LocalCopyPlace | undefined {
-  return lastTarget
-}
-
-/** The sink's second write: converts each recorded event and keeps this process's own files of the run's local copy. */
-export function createLocalCopyWriter(deps: LocalCopyWriterDeps) {
-  const writerId = randomUUID()
-  const runs = new Map<string, RunCopy>()
-  const queue: Pending[] = []
-  let warned = false
-  let scheduled: ReturnType<typeof setImmediate> | undefined
-  const sender = createLocalCopySender(deps)
-
-  const warnOnce = (error: unknown): void => {
-    if (warned) return
-    warned = true
-    try {
-      deps.warn(
-        `vinaya: the OpenTelemetry local copy failed — ${error instanceof Error ? error.message : String(error)}\n`
-      )
-    } catch {
-      // A report that cannot be written is not a failure of the write it reports.
-    }
-  }
-
-  function write({ event, folder }: Pending): void {
-    const runId = event.meta.run_id
-    const key = `${folder}\0${runId}`
-    let run = runs.get(key)
-    if (run === undefined) {
-      run = {
-        converter: createConverter(runId, [], deps.home()),
-        copy: createConvertedCopy({
-          runId,
-          writerId,
-          repository: event.meta.repo ?? undefined,
-          folder
-        })
-      }
-      runs.set(key, run)
-    }
-    // An end may follow a start another process wrote, at any time after this process first saw the run.
-    const ends = event.kind === 'dispatch' || event.kind === 'role_attempt' || mapEarlierEvent(event).mode === 'end'
-    if (ends) run.converter.learn(run.copy.openStarts())
-    run.copy.append(run.converter.convert(event))
-  }
-
-  /** Writes everything queued, in the order it was queued; synchronous. */
-  function flush(): void {
-    if (scheduled !== undefined) {
-      clearImmediate(scheduled)
-      scheduled = undefined
-    }
-    while (queue.length > 0) {
-      const next = queue.shift() as Pending
-      try {
-        write(next)
-      } catch (error) {
-        warnOnce(error)
-      }
-    }
-  }
-
-  function schedule(): void {
-    if (scheduled !== undefined) return
-    scheduled = setImmediate(() => {
-      scheduled = undefined
-      flush()
-    })
-    scheduled.unref?.()
-  }
-
-  function placeOf(event: LogEvent, folder: string): LocalCopyPlace {
-    return { folder, repository: event.meta.repo ?? undefined }
-  }
-
-  return {
-    writerId,
-    /** Queues one recorded event for the local copy, written off the caller's write; call order is kept. */
-    record(event: LogEvent, folder: string): void {
-      const place = placeOf(event, folder)
-      lastTarget = place
-      queue.push({ event, folder })
-      schedule()
-      sender.request(place)
-    },
-    /** Writes one recorded event, and every one queued before it, before returning. */
-    recordSync(event: LogEvent, folder: string): void {
-      const place = placeOf(event, folder)
-      lastTarget = place
-      sender.remember(place)
-      queue.push({ event, folder })
-      flush()
-    },
-    flush,
-    /** Everything queued is in the local copy; then the local copy is sent for at most the bound. */
-    async drain(): Promise<void> {
-      flush()
-      await sender.drain()
-    }
-  }
-}
-
-export type LocalCopyWriter = ReturnType<typeof createLocalCopyWriter>

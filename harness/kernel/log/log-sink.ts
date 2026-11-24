@@ -35,7 +35,6 @@ import { redact } from './redact'
 import { loadDeferredLogSinkFactory } from './deferred-sink-factory.js'
 import {
   createLocalCopySender,
-  createLocalCopyWriter,
   type LocalCopyPlace,
   type LocalCopySender,
   type OtlpAddressDecision,
@@ -260,17 +259,6 @@ export type LogSinkDeps = {
    * read (`unresolvedLogDestination`). Never a folder on a CI host.
    */
   unresolvedLogDestination: (env: NodeJS.ProcessEnv) => ResolvedLogDestination
-  /**
-   * How the OpenTelemetry side of this sink sends and decides where: `address` answers the harness's address
-   * rule for this process, `fetch` sends the local copy, and the two numbers bound the sink's drain and space
-   * its sends. Each defaults to the real one.
-   */
-  otlp?: {
-    address?: () => Promise<OtlpAddressDecision> | OtlpAddressDecision
-    fetch?: (url: string, init: RequestInit) => Promise<Response>
-    sendBoundMs?: number
-    sendIntervalMs?: number
-  }
 }
 
 // Quiet: the fallback warning goes to stdout, and every process that logs —
@@ -1591,39 +1579,6 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
   /** The tail of this sink's serialized writes — see `log()`'s own comment on why order is held here rather than by the shared context. */
   let writeChain: Promise<void> = Promise.resolve()
 
-  // The OpenTelemetry side: every recorded event also goes, converted, to this process's own files of the run's
-  // local copy, and the local copy is sent to the address the harness's address rule resolves.
-  const localCopy = createLocalCopyWriter({
-    warn: (message) => warnOnce(message),
-    home: () => deps.home(),
-    address: deps.otlp?.address ?? (() => resolveProcessOtlpAddress({ readConfig: deps.readConfig, env: deps.env })),
-    fetch: deps.otlp?.fetch,
-    ...(deps.otlp?.sendBoundMs === undefined ? {} : { sendBoundMs: deps.otlp.sendBoundMs }),
-    ...(deps.otlp?.sendIntervalMs === undefined ? {} : { sendIntervalMs: deps.otlp.sendIntervalMs })
-  })
-  // The sink's one report per process, shared with its other warnings: a failure here adds no second line.
-  const warnLocalCopyOnce = (err: unknown): void =>
-    warnOnce(`vinaya: the OpenTelemetry local copy failed — ${err instanceof Error ? err.message : String(err)}\n`)
-  // The local copy sits where `vinaya log send` reads it: the SDK settings' `logs.folder`, else `<runtimeDir>/logs`,
-  // never the destination's own folder, which holds today's per-Issue files. An unattended process reads no working
-  // tree setting for it, and the runtime directory the process was handed wins, as for today's default folder.
-  const localCopyFolders = new Map<string, string | undefined>()
-  const localFolderFor = (repository: string | undefined): string | undefined => {
-    const memo = repository ?? ''
-    if (localCopyFolders.has(memo)) return localCopyFolders.get(memo)
-    const folder = resolveLocalCopyFolder(
-      {
-        home: deps.home(),
-        cwd: deps.cwd(),
-        handedRuntimeDir: deps.env()[RUNTIME_DIR_ENV_KEY],
-        unattended: isUnattendedProcess(process.env)
-      },
-      repository
-    )
-    localCopyFolders.set(memo, folder)
-    return folder
-  }
-
   const scheduleWebhookDrain = (
     issue: number | null,
     url: string,
@@ -1800,17 +1755,6 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
         warnOnce
       )
     }
-    // The same redacted event, converted for the OpenTelemetry local copy. Today's line has landed; nothing
-    // here can change or lose it, and a failure is one report per process.
-    try {
-      const folder = localFolderFor(redacted.meta.repo ?? undefined)
-      if (folder !== undefined) {
-        if (deliver) localCopy.record(redacted, folder)
-        else localCopy.recordSync(redacted, folder)
-      }
-    } catch (err) {
-      warnLocalCopyOnce(err)
-    }
   }
 
   /** Whether the process wrote the event through the run's Log handle: no earlier-format line is written for it. */
@@ -1965,8 +1909,6 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
     await drainChain.catch(() => undefined)
     // Records written through the run's Log handle are flushed to the local copy too.
     for (const drainExtra of extraDrains) await drainExtra().catch(() => undefined)
-    // Every record written so far is in the local copy before this resolves; sending it waits no longer than the bound.
-    await localCopy.drain().catch(() => undefined)
   }
 
   return { log, logSync, runId, warmup, drain, resetContext }
@@ -2062,46 +2004,6 @@ export function resetDefaultLogSinkContext(): void {
  */
 export function currentRunId(): string {
   return defaultSinkSlot.runId
-}
-
-/**
- * `log(e)` — the one call site every chokepoint (`dispatchRole`,
- * `devReviewLoop`, `runChecks`, `forgeWrite`, `collectTokens`) reaches to
- * record an act. Fills `meta`/`subject` from the environment, the remote,
- * the package and the tree; validates against `LogEventSchema`; appends one
- * ndjson line to the configured `logs` destination — a folder's own
- * `<repository>/<task>.ndjson` (the default, under this repository's own
- * `runtimeDir`), or the local retry queue ahead of a `logs.url` server drain
- * (`harness/kernel/log/log.md` § The destination). Returns `void`, and never throws once a
- * default sink factory is installed (`installDefaultLogSinkFactory`); with
- * none installed it is refused with an error naming the missing factory.
- */
-export function log(e: LogEventInput): void {
-  defaultSinkSlot.sink().log(e)
-}
-
-/**
- * `log(e)` with `LogOptions`: `opts.unattributedStream` places an event that
- * names no Issue in a folder file of the caller's choosing. Everything else is
- * `log(e)`'s, so `log`'s own call shape stays one argument.
- */
-export function logWithOptions(e: LogEventInput, opts: LogOptions): void {
-  defaultSinkSlot.sink().log(e, undefined, opts)
-}
-
-/**
- * `logSync(e)` — `log(e)` for a caller that ends the process straight after
- * it: validated and redacted exactly as `log()`'s line, and appended to the
- * same file before it returns, with nothing awaited and no process spawned.
- * It reuses what the default sink has already resolved (`warmupLogSink`, or
- * an earlier `log()`), records `null` or `unknown` for what it has not, and
- * never delivers: a server destination's line waits in the local retry queue
- * for the next drain (`harness/kernel/log/log.md` § Recording at process exit).
- * Returns `void`; refused, like `log()`, only when no default sink factory
- * is installed.
- */
-export function logSync(e: LogEventInput, opts?: LogSyncOptions): void {
-  defaultSinkSlot.sink().logSync(e, opts)
 }
 
 /**

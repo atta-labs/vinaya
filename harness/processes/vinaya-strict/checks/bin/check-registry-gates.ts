@@ -74,7 +74,7 @@
  * already has — no second source search: the crossing files are G3's own list,
  * the blocking-gate files are the Ring-0 rows' `.ts` implementations, and a
  * producer is a CLI source file, or one of the process folders' sources, that
- * imports the sink's `log` or `logSync`. Reaching is confined to the CLI
+ * writes through the run's Log handle. Reaching is confined to the CLI
  * package's own sources and the process folders' non-test sources; a file
  * outside them is named, with its reason, in `.vinaya/g7-exemptions.json` of the
  * repository being checked, so a change that moves a blocking-gate file updates

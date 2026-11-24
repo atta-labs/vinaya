@@ -20,7 +20,6 @@ import { defaultReexecSelf } from './runtime-defaults.js'
 import { defaultSleep } from './runtime-defaults.js'
 import { gatePollEnvOverride } from './runtime-defaults.js'
 import { defaultReadRateLimitReset } from './runtime-defaults.js'
-import { log as logToDefaultSink } from '../../../../../../kernel/log/log-sink.js'
 import { writeDriverLock } from './pause-resume.js'
 
 import { isHostRepairPause } from './pause-resume.js'
@@ -40,7 +39,12 @@ import { loopLogPathFor } from '../../../../../../kernel/log/client/loop-log.js'
 import { appendDriverLine } from '../../../../../../kernel/log/client/loop-log.js'
 import { readPublishedPullRequest } from './gate-reading.js'
 import { MAX_AUTOMATIC_CONFLICT_REENTRIES } from './gate-reading.js'
-import { conflictReentryEvent, recordWatchedChangeEnded } from './driver-lifecycle.js'
+import {
+  conflictReentryEvent,
+  recordWatchedChangeEnded,
+  taskRunId,
+  writeRunLifecycleEvent
+} from './driver-lifecycle.js'
 import { randomUUID } from 'node:crypto'
 import { narrateDriverEvent } from '../../../../../../kernel/log/client/loop-log.js'
 import { conflictReentryBoundDetail } from './gate-reading.js'
@@ -183,7 +187,7 @@ export type DriverWatchDeps = {
   findOpenPrForBranch: typeof findOpenPrForBranch
   /** The forge's mergeability of a published pull request, read on each watch tick — `UNKNOWN` is read again on the next. */
   fetchMergeableState: typeof fetchMergeableState
-  /** Where an automatic conflict re-entry's `conflict_reentry` event goes — the Vinaya Log. */
+  /** Where an automatic conflict re-entry goes — the run's Log handle, as `log.change.conflicted`. */
   logEvent: (event: DevReviewLoopEventInput) => void
   /** Where a watched pull request's merge or close goes: the run's own Log record, linked to the run. */
   recordChangeEnded: (ended: { state: 'merged' | 'closed'; task: number; pr: number }) => void
@@ -214,7 +218,11 @@ export function defaultDriverWatchDeps(): DriverWatchDeps {
     now: () => Date.now(),
     findOpenPrForBranch,
     fetchMergeableState,
-    logEvent: (event) => logToDefaultSink(event),
+    logEvent: (event) => {
+      const task = (event as { task?: unknown }).task
+      if (typeof task !== 'number') return
+      writeRunLifecycleEvent(event, { runId: process.env.VINAYA_RUN_ID || taskRunId(runtimeDir(), task) })
+    },
     recordChangeEnded: (ended) => recordWatchedChangeEnded(ended)
   }
 }
