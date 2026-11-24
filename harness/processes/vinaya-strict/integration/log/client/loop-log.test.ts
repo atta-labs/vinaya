@@ -12,9 +12,9 @@ import {
   appendRunStartMarker,
   LOOP_LOG_MAX_BYTES,
   loopLogPathFor,
-  marksByKind
+  marksByKind,
+  narrateDriverEvent
 } from '../../../../../kernel/log/client/loop-log'
-import { narrateDriverEvent } from '../../../../../kernel/log/client/agent-record-line'
 import { devReviewLoop, type LoopDeps } from '../../../loops/dev-review/standalone/dev-review-loop.js'
 import {
   cleanupWorlds,

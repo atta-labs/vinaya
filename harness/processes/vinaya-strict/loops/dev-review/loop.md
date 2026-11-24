@@ -406,14 +406,14 @@ asked, "not given" when unavailable, and a note when it came after the
 extra turn. A pause or a stop that needs a person says so, names what the
 person has to decide or repair, and says the run continues through the
 Operator's `task_resume` for that task, bound to the pause at its round; it prints no command.
-<!-- VINAYA:CLAIM: harness/kernel/log/client/agent-record-line.ts contains:export function narrateDriverEvent(path: string, event: unknown, earlier: readonly unknown[], task: number): void -->
+<!-- VINAYA:CLAIM: harness/kernel/log/client/loop-log.ts contains:export function narrateDriverEvent(path: string, event: unknown, earlier: readonly unknown[], task: number): void -->
 Of the driver's narrated lines written by `appendDriverLine`, no line carries a process id or a run id.
 <!-- VINAYA:CLAIM: harness/kernel/log/client/loop-log.ts contains:export function appendDriverLine(path: string, words: string, mark: AgentLineMark = 'working'): void -->
 <!-- VINAYA:CLAIM: harness/kernel/log/client/loop-log.ts contains:formatAgentLine('dev-review-loop', text, { mark, unicode: Boolean(process.stderr.isTTY) }) -->
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-turn.ts contains:Developer starting round -->
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-loop.ts contains:Reviewers starting round -->
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-logging.ts contains:narrateDriverEvent(loopLogPath, e, c.narratedEvents, task) -->
-<!-- VINAYA:CLAIM: harness/kernel/log/client/agent-record-line.ts contains:The Operator's task_resume for task -->
+<!-- VINAYA:CLAIM: harness/kernel/log/client/loop-log.ts contains:The Operator's task_resume for task -->
 
 ## The sweep, at the start of every run (non-blocking and narrated as it runs)
 

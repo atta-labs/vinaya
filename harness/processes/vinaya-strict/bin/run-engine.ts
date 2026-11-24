@@ -213,9 +213,10 @@ import {
   appendLoopLogLine,
   appendRoleLine,
   appendRunStartMarker,
-  loopLogPathFor
+  loopLogPathFor,
+  narrateDriverEvent
 } from '../../../kernel/log/client/loop-log'
-import { narrateAgentRecord, narrateDriverEvent } from '../../../kernel/log/client/agent-record-line'
+import { narrateAgentRecord } from '../../../kernel/log/client/agent-record-line'
 import {
   type AgentStep,
   type AgentStreamRenderer,
