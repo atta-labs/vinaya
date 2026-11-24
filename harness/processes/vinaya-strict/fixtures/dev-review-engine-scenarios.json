@@ -134,7 +134,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-watch.ts",
-        "sha256": "1d9267ebc832cdde0d2ad9e19ab53621250ef33318588a2a1da6b26f61202121"
+        "sha256": "cafbc2dc111dbc10ba0a8a5aced67ba6166212536b1b115f42f229ab7d42b59b"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/git-defaults.ts",
@@ -146,7 +146,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-logging.ts",
-        "sha256": "91d7551dd504bdfa71b5f577922c6218db06dcfa5e4dd1e070491f3c18e332cb"
+        "sha256": "450ed42e28989d6ea4f0d625c0532791767e9f558aa6212c4ef9e5b219800281"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-setup.ts",
