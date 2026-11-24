@@ -54,6 +54,7 @@ import {
 } from '../dev-review-loop-harness'
 import { buildReexecArgs } from '../../../../loops/dev-review/standalone/dev-review-loop/driver-helpers'
 import { spawnSync } from 'node:child_process'
+import { raiseInAnotherProcess } from '../person-span-support'
 import { runRecorder } from '../../../../../../kernel/log/run-recorder'
 import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture'
 import {
@@ -1082,14 +1083,13 @@ process.exit(0)`
     expect(copyOf(world).spans()).toHaveLength(1)
   })
 
-  it('the host-repair start ends the person span of a pause that has no pull request, from another process', async () => {
+  it('the host-repair start ends the person span another process asked, for a pause that has no pull request, from another process', async () => {
     const world = makeWorld()
     const facts = escalationFacts(world, { pr: null, reason: 'sandbox_refused' })
     const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
 
     await withWorldEnv(world, async () => {
-      runRecorder().bind({})
-      writeEscalationRecord(facts)
+      raiseInAnotherProcess(facts)
       writePauseState(world.runtimeDir, {
         task: facts.task,
         round: facts.round,
@@ -1108,6 +1108,42 @@ process.exit(0)`
     expect(seen.asked()).toHaveLength(1)
     expect(seen.spans()).toHaveLength(1)
     expect(seen.spans()[0]?.attributes).toMatchObject({ 'vinaya.person.answered_by': 'driver-self' })
+    expect(seen.earlier()).toEqual([])
+  })
+
+  it('the next --resume start ends the person span another process asked: one asked event, one whole span, no handoff', async () => {
+    const world = makeWorld({ developerPushed: true })
+    const facts = escalationFacts(world)
+    const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
+    await withWorldEnv(world, async () => {
+      raiseInAnotherProcess(facts)
+      writePauseState(world.runtimeDir, {
+        task: facts.task,
+        round: facts.round,
+        head: facts.head,
+        branch: facts.branch,
+        prNumber: world.prNumber,
+        reason: 'escalation',
+        pausedAt: '2026-01-01T00:00:00.000Z',
+        agent: 'claude',
+        escalationId
+      })
+    })
+    world.rulings = ['Go ahead.']
+    world.rulingOrdinal = 1
+    world.rulingAuthor = 'daniboomerang'
+    await runLoopInProcess(world, { resumePr: world.prNumber })
+    await withWorldEnv(world, async () => {
+      await runRecorder().drain()
+    })
+
+    const seen = copyOf(world)
+    expect(seen.asked()).toHaveLength(1)
+    expect(seen.spans().filter((s) => s.name === 'vinaya.person authority')).toHaveLength(1)
+    expect(seen.spans()[0]?.attributes).toMatchObject({
+      'vinaya.person.answer': 'resume',
+      'vinaya.person.answered_by': 'daniboomerang'
+    })
     expect(seen.earlier()).toEqual([])
   })
 })
