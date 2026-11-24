@@ -119,22 +119,23 @@ const LOG_SEND_PATH = 'harness/processes/vinaya-strict/integration/bin/log-send.
 const LOG_SELFTEST_PATH = 'harness/processes/vinaya-strict/integration/bin/log-selftest.ts'
 /**
  * The writer of a consumer's own declared events: it checks one event
- * against `logs.events` and calls `log()` once — a `custom` line, or the
- * `operation` refusal naming why none was written. It never touches the
- * outbox path itself, so it joins `CALLER_ALLOWLIST` alone.
+ * against `logs.events` and writes through the run's Log handle — a
+ * `log.custom.recorded` record, or the `log.command.completed` refusal
+ * naming why none was written. It never touches the outbox path itself, so
+ * it joins `CALLER_ALLOWLIST` alone.
  */
 const LOG_CUSTOM_PATH = 'harness/kernel/log/client/log-custom.ts'
 /**
  * `vinaya log emit <event>` is `LOG_CUSTOM_PATH`'s
  * `emitCustomEvent` for a caller that is not Vinaya code at all — a script, a
  * CI step, another agent runtime. Like `LOG_SEND_PATH` and `LOG_SELFTEST_PATH`
- * it is NOT a producer of its own: the one `log()` call any successful
- * invocation makes happens inside `emitCustomEvent`, already allowlisted
- * above. It separately resolves the destination it just recorded toward, the
+ * it is NOT a producer of its own: the one record any invocation writes
+ * is written inside `emitCustomEvent`, already allowlisted above, and the run
+ * recorder's drain sends the local copy. It separately resolves the destination it just recorded toward, the
  * SAME way a live event does, importing the sink's pure `resolveLogDestinationFrom`,
  * `withDeadline`, `LOG_DESTINATION_ANCHOR_DEADLINE_MS` and the
- * `ResolvedLogDestination` type, plus `drainLogSink` to wait for its own write
- * to land before the process exits. Same "imports the sink's pure helpers,
+ * `ResolvedLogDestination` type, and drains through the run recorder to wait
+ * for its own write to land before the process exits. Same "imports the sink's pure helpers,
  * never `log()` directly" shape as `LOG_SEND_PATH`/`LOG_SELFTEST_PATH`.
  */
 const LOG_EMIT_PATH = 'harness/processes/vinaya-strict/integration/bin/log-emit.ts'
@@ -665,14 +666,6 @@ const PRODUCER_BOUNDARIES: ProducerBoundary[] = [
       { kind: 'dev_review_loop', event: 'ci_result_read' },
       { kind: 'dev_review_loop', event: 'phase_time' }
     ]
-  },
-  {
-    name: 'emitCustomEvent — a declared event recorded, or its refusal',
-    files: [LOG_CUSTOM_PATH],
-    requires: [
-      { kind: 'custom', event: 'recorded' },
-      { kind: 'operation', event: 'completed' }
-    ]
   }
 ]
 
@@ -715,6 +708,12 @@ const LOG_COVERAGE_EXEMPTIONS: RequiredEvent[] = [
   // still reads, and nothing emits them.
   { kind: 'handoff', event: 'raised' },
   { kind: 'handoff', event: 'resolved' },
+  // A team's declared event is written through the run's Log handle, `log.custom.recorded`, and the refusal of one
+  // the declarations turn away is `log.command.completed` (`SUBJECT_OWNERS.custom`, `SUBJECT_OWNERS.command`); the
+  // earlier `custom` and `operation` events stay in the schema so a line stored before that still reads, and nothing
+  // emits them.
+  { kind: 'custom', event: 'recorded' },
+  { kind: 'operation', event: 'completed' },
   { kind: 'forge_write', event: 'validated' },
   { kind: 'forge_write', event: 'refused' },
   { kind: 'forge_write', event: 'written' }
@@ -873,10 +872,12 @@ const FAMILY_OWNERS: Record<string, readonly string[]> = {
   // A person the harness asks is written through the run's Log handle (`SUBJECT_OWNERS.person`); the schema keeps the
   // family so an old line still parses.
   handoff: [],
-  custom: [LOG_CUSTOM_PATH],
-  // The custom-event writer's own refusal is the one earlier-format operation event left; every command the harness
-  // records is written through the run's Log handle (`SUBJECT_OWNERS.command`).
-  operation: [LOG_CUSTOM_PATH],
+  // A team's declared event is written through the run's Log handle (`SUBJECT_OWNERS.custom`); the schema keeps the
+  // family so an old line still parses.
+  custom: [],
+  // Every command the harness records, a refused custom event included, is written through the run's Log handle
+  // (`SUBJECT_OWNERS.command`); the schema keeps the family so an old line still parses.
+  operation: [],
   // A forge write is recorded through the run's Log handle (`SUBJECT_OWNERS.forge`); the schema keeps the family so
   // an old line still parses, and no file emits it.
   forge_write: []
@@ -1077,8 +1078,12 @@ const SUBJECT_OWNERS: Record<string, readonly string[]> = {
     TASK_TOOLS_RESUME_PATH,
     TASK_TOOLS_CANCEL_PATH,
     CLI_OPERATION_LOG_PATH,
-    CLI_SERVICES_PATH
+    CLI_SERVICES_PATH,
+    LOG_CUSTOM_PATH
   ],
+  // A team's declared custom event, and the refusal of one the declarations turn away (a command), written by the one
+  // custom-event writer that `vinaya-log-emit` calls too; the earlier `custom` lines are never written for them.
+  custom: [LOG_CUSTOM_PATH],
   // A forge write: validated, refused and written, recorded at the forge write gate through the outside-log writer;
   // the earlier `forge_write` lines are never written for them.
   forge: [OUTSIDE_LOG_PATH, FORGE_WRITE_PATH],
@@ -1203,6 +1208,9 @@ function subjectWritesOf(rel: string, source: string): SubjectWrite[] {
           object.name.text === 'forge'
         )
           found.add('forge')
+        // `<handle>.custom.recorded(...)`.
+        if (callee.name.text === 'recorded' && ts.isPropertyAccessExpression(object) && object.name.text === 'custom')
+          found.add('custom')
         // `<handle>.person.asked(...)` and `<handle>.person.answered(...)`.
         if (
           (callee.name.text === 'asked' || callee.name.text === 'answered') &&
@@ -1361,6 +1369,15 @@ describe('log-callers — agents and usage are written through the run handle, o
     expect(SUBJECT_OWNERS.action).toEqual([OUTSIDE_LOG_PATH, EFFECTS_PATH])
     expect(SUBJECT_OWNERS.forge).toEqual([OUTSIDE_LOG_PATH, FORGE_WRITE_PATH])
     expect(SUBJECT_OWNERS.person).toEqual([OUTSIDE_LOG_PATH, DEV_REVIEW_LOOP_PAUSE_RESUME_PATH])
+  })
+
+  it('names the custom-event writer as the one owner of the custom subject, and an owner of the command subject', () => {
+    expect(SUBJECT_OWNERS.custom).toEqual([LOG_CUSTOM_PATH])
+    expect(SUBJECT_OWNERS.command).toContain(LOG_CUSTOM_PATH)
+    expect(FAMILY_OWNERS.custom).toEqual([])
+    expect(FAMILY_OWNERS.operation).toEqual([])
+    const source = 'export function f(log: any) { log.custom.recorded("a.b", {}) }'
+    expect(subjectWritesOf('harness/kernel/x.ts', source).map((w) => w.subject)).toEqual(['custom'])
   })
 
   it('names the owners of the checks subject: the check runner and the driver lifecycle module', () => {

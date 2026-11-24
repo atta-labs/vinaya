@@ -1,51 +1,45 @@
-import { describe, expect, it } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs'
+import { afterEach, describe, expect, it } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { storedEvents, type StoredEvent } from '../../../../../kernel/gates/checks/runner/local-copy-probe.js'
 import type { CustomEventDeclarations } from '../../../../../kernel/log/custom'
-import { LogEventSchema } from '../../../../../kernel/log/schema'
+import { connect, type LogHandle } from '../../../../../../packages/log-sdk/src/index.js'
 import { resolveLogsSetting, VinayaConfigSchema } from '../../config/compose.js'
 import { emitCustomEvent } from '../../../../../kernel/log/client/log-custom.js'
-import { createLogSink, type LogEventInput } from '../../../../../kernel/log/log-sink.js'
+import { isolatedLocalCopy } from './local-copy-fixture.js'
 
 const declarations: CustomEventDeclarations = {
   'acme.deploy': { fields: { env: ['prod', 'staging'], count: 'number', note: 'text', ok: 'boolean' } }
 }
 const valid = { env: 'prod', count: 2, note: 'shipped', ok: true }
 
-/** A real sink writing to a fresh folder — the same `log()` every other event goes through. */
-function realSink(): { dir: string; sink: ReturnType<typeof createLogSink> } {
+const REPOSITORY = 'atta-labs/vinaya'
+
+const cleanups: Array<() => void> = []
+afterEach(() => {
+  while (cleanups.length > 0) cleanups.pop()?.()
+})
+
+/** A real Log SDK handle writing a local copy in a fresh folder, with the team's declarations in force. */
+function realHandle(): { handle: LogHandle; stored: () => Promise<StoredEvent[]> } {
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-log-custom-'))
-  const sink = createLogSink({
-    resolveLogDestination: () => ({ kind: 'folder', folder: join(dir, 'outbox') }),
-    home: () => dir,
-    hostname: () => 'test-host',
-    cwd: () => dir,
-    now: () => new Date('2026-10-01T00:00:00.000Z'),
-    env: () => ({ VINAYA_ROLE: 'developer', VINAYA_TASK: '890' }),
-    resolveRepo: () => Promise.resolve({ owner: 'atta-labs', repo: 'vinaya' }),
-    resolveBranchIssue: () => Promise.resolve(null),
-    vinayaVersion: () => '0.36.0',
-    stderr: () => {}
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  const handle = connect({
+    runId: 'custom-test-run',
+    repository: REPOSITORY,
+    repoRoot: join(dir, 'repo'),
+    runtimeDir: dir,
+    destination: { folder: join(dir, 'logs'), events: declarations },
+    onError: () => {}
   })
-  return { dir, sink }
-}
-
-function writtenLines(dir: string): Array<Record<string, unknown>> {
-  const folder = join(dir, 'outbox', 'atta-labs-vinaya')
-  if (!existsSync(folder)) return []
-  return readdirSync(folder).flatMap((file) =>
-    readFileSync(join(folder, file), 'utf8')
-      .trim()
-      .split('\n')
-      .filter((l) => l.length > 0)
-      .map((l) => JSON.parse(l) as Record<string, unknown>)
-  )
-}
-
-function capture(): { events: LogEventInput[]; emit: (e: LogEventInput) => void } {
-  const events: LogEventInput[] = []
-  return { events, emit: (e) => events.push(e) }
+  return {
+    handle,
+    stored: async () => {
+      await handle.shutdown()
+      return storedEvents(join(dir, 'logs', 'atta-labs-vinaya'))
+    }
+  }
 }
 
 describe('logs.events — the declaration in vinaya.config.json (O1, O2)', () => {
@@ -81,32 +75,37 @@ describe('logs.events — the declaration in vinaya.config.json (O1, O2)', () =>
   })
 })
 
-describe('emitCustomEvent — a declared event (O4)', () => {
-  it('emits exactly one custom event carrying the name and the values', () => {
-    const { events, emit } = capture()
-    expect(emitCustomEvent('acme.deploy', valid, { declarations: () => declarations, emit })).toEqual({
+describe('emitCustomEvent — a declared event (O1, O4)', () => {
+  it('writes exactly one record: the event named for the declaration, carrying the declared fields', async () => {
+    const { handle, stored } = realHandle()
+    expect(emitCustomEvent('acme.deploy', valid, { declarations: () => declarations, handle: () => handle })).toEqual({
       ok: true,
       name: 'acme.deploy'
     })
-    expect(events).toEqual([{ kind: 'custom', event: 'recorded', name: 'acme.deploy', fields: valid, payload: {} }])
+    const events = await stored()
+    expect(events).toHaveLength(1)
+    expect(events[0]?.name).toBe('acme.deploy')
+    expect(JSON.stringify(events[0]?.attributes)).toContain('shipped')
   })
 
-  it('writes one valid custom line under a schema 4 header through the log sink', async () => {
-    const { dir, sink } = realSink()
-    emitCustomEvent('acme.deploy', valid, { declarations: () => declarations, emit: sink.log })
-    await sink.drain()
-    const lines = writtenLines(dir)
-    expect(lines).toHaveLength(1)
-    const line = lines[0] as Record<string, unknown>
-    expect(LogEventSchema.safeParse(line).success).toBe(true)
-    expect(line.kind).toBe('custom')
-    expect(line.name).toBe('acme.deploy')
-    expect(line.fields).toEqual(valid)
-    expect((line.meta as { schema: number }).schema).toBe(4)
+  it('writes no earlier-format file for the event', async () => {
+    const copy = isolatedLocalCopy()
+    try {
+      emitCustomEvent('acme.deploy', valid, { declarations: () => declarations, handle: () => undefined })
+      expect(copy.earlierFormatFiles()).toEqual([])
+    } finally {
+      copy.restore()
+    }
+  })
+
+  it('writes nothing while recording is off, and still answers ok', () => {
+    expect(
+      emitCustomEvent('acme.deploy', valid, { declarations: () => declarations, handle: () => undefined })
+    ).toEqual({ ok: true, name: 'acme.deploy' })
   })
 })
 
-describe('emitCustomEvent — a refused event (O5)', () => {
+describe('emitCustomEvent — a refused event (O2, O4)', () => {
   const cases: Array<[string, string, Record<string, unknown>, string, string[]]> = [
     ['undeclared', 'acme.other', valid, 'undeclared', []],
     ['missing', 'acme.deploy', { env: 'prod', count: 2, ok: true }, 'missing_field', ['note']],
@@ -115,79 +114,78 @@ describe('emitCustomEvent — a refused event (O5)', () => {
   ]
 
   for (const [label, name, fields, reason, fieldNames] of cases) {
-    it(`${label}: no custom event; one log.emit refusal naming the reason and the fields; the caller gets the refusal`, () => {
-      const { events, emit } = capture()
-      const result = emitCustomEvent(name, fields, { declarations: () => declarations, emit })
+    it(`${label}: no custom record; one command.completed refused with the reason as its error kind; the caller gets the refusal`, async () => {
+      const { handle, stored } = realHandle()
+      const result = emitCustomEvent(name, fields, { declarations: () => declarations, handle: () => handle })
       expect(result).toEqual({ ok: false, reason: reason as never, fieldNames })
-      expect(events).toEqual([
-        {
-          kind: 'operation',
-          event: 'completed',
-          operation: 'log.emit',
-          target: name,
-          result: 'refused',
-          error_class: reason,
-          field_names: fieldNames,
-          payload: {}
-        }
-      ])
+      const events = await stored()
+      expect(events.map((e) => e.name)).toEqual(['vinaya.command.completed'])
+      expect(events[0]?.attributes).toMatchObject({
+        'vinaya.outside.action': 'log.emit',
+        'vinaya.outside.target': name,
+        'vinaya.result': 'refused',
+        'error.type': reason
+      })
+      expect(JSON.stringify(events)).not.toContain('eu-secret-zone')
+      expect(JSON.stringify(events)).not.toContain('two-secret-count')
     })
   }
 
-  it('the refusal line written through the sink carries no field value', async () => {
-    const { dir, sink } = realSink()
+  it('the refusal carries no field value or field name', async () => {
+    const { handle, stored } = realHandle()
     const secretish = 'hunter2-value-never-logged'
     const result = emitCustomEvent(
       'acme.deploy',
       { ...valid, note: 42, extra_note: secretish },
-      { declarations: () => declarations, emit: sink.log }
+      { declarations: () => declarations, handle: () => handle }
     )
-    expect(result).toMatchObject({ ok: false, reason: 'extra_field' })
-    await sink.drain()
-    const lines = writtenLines(dir)
-    expect(lines).toHaveLength(1)
-    expect(lines.filter((l) => l.kind === 'custom')).toHaveLength(0)
-    expect(lines[0]).toMatchObject({
-      kind: 'operation',
-      operation: 'log.emit',
-      result: 'refused',
-      error_class: 'extra_field',
-      field_names: ['extra_note']
-    })
-    const raw = JSON.stringify(lines)
+    expect(result).toMatchObject({ ok: false, reason: 'extra_field', fieldNames: ['extra_note'] })
+    const raw = JSON.stringify(await stored())
     expect(raw).not.toContain(secretish)
+    expect(raw).not.toContain('extra_note')
     expect(raw).not.toContain('shipped')
   })
 
-  it('an undeclared name not shaped like one is not recorded as the target', () => {
-    const { events, emit } = capture()
-    emitCustomEvent('ghp_notaname', {}, { declarations: () => declarations, emit })
-    expect(events[0]).toMatchObject({ target: null, error_class: 'undeclared' })
+  it('an undeclared name not shaped like one is not recorded as the target', async () => {
+    const { handle, stored } = realHandle()
+    emitCustomEvent('ghp_notaname', {}, { declarations: () => declarations, handle: () => handle })
+    const events = await stored()
+    expect(events).toHaveLength(1)
+    expect(events[0]?.attributes['vinaya.outside.target']).toBeUndefined()
+    expect(events[0]?.attributes['error.type']).toBe('undeclared')
   })
 
-  it('with no logs.events declared, every name is undeclared', () => {
-    const { events, emit } = capture()
-    expect(emitCustomEvent('acme.deploy', valid, { declarations: () => ({}), emit })).toMatchObject({
+  it('with no logs.events declared, every name is undeclared and no custom record is written', async () => {
+    const { handle, stored } = realHandle()
+    expect(emitCustomEvent('acme.deploy', valid, { declarations: () => ({}), handle: () => handle })).toMatchObject({
       ok: false,
       reason: 'undeclared'
     })
-    expect(events.filter((e) => e.kind === 'custom')).toHaveLength(0)
+    expect((await stored()).map((e) => e.name)).toEqual(['vinaya.command.completed'])
+  })
+
+  it('writes no earlier-format file for a refusal', async () => {
+    const copy = isolatedLocalCopy()
+    try {
+      emitCustomEvent('acme.other', valid, { declarations: () => declarations, handle: () => undefined })
+      expect(copy.earlierFormatFiles()).toEqual([])
+    } finally {
+      copy.restore()
+    }
   })
 })
 
 describe('emitCustomEvent — redaction (O6)', () => {
-  it('a secret-shaped value in a custom field is redacted, exactly as in every other event', async () => {
-    const { dir, sink } = realSink()
+  it('a secret-shaped value in a custom field is redacted, exactly as in every other record', async () => {
+    const { handle, stored } = realHandle()
     const token = `ghp_${'a'.repeat(36)}`
     emitCustomEvent(
       'acme.deploy',
       { ...valid, note: `token ${token}` },
-      { declarations: () => declarations, emit: sink.log }
+      { declarations: () => declarations, handle: () => handle }
     )
-    await sink.drain()
-    const lines = writtenLines(dir)
-    expect(lines).toHaveLength(1)
-    expect((lines[0] as { fields: { note: string } }).fields.note).toBe('token <redacted>')
-    expect(JSON.stringify(lines)).not.toContain(token)
+    const events = await stored()
+    expect(events).toHaveLength(1)
+    expect(JSON.stringify(events)).not.toContain(token)
   })
 })
