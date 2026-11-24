@@ -49,6 +49,28 @@ function registeredSeats(): SeatNames {
   return seats
 }
 
+/** The header a record the driver has not yet written carries none of, so the line reader reads it as the stored record it will be. */
+const NO_HEADER = {
+  meta: {
+    schema: 1,
+    run_id: 'narration',
+    repo: 'narration/narration',
+    vinaya: '0.0.0',
+    doctrine: 'narration',
+    host: 'loop',
+    machine: 'narration',
+    ts: '1970-01-01T00:00:00.000Z',
+    seq: 0
+  },
+  subject: { issue: null, role: 'unattributed' },
+  payload: {}
+}
+
+/** The line a record is read from: the record itself, with the header it lacks. */
+function stored(record: object): string {
+  return JSON.stringify({ ...NO_HEADER, ...record })
+}
+
 /** The record an earlier event converts to, read after the events before it that its conversion needs. */
 function convert(event: object, earlier: readonly unknown[]): { record: OtelRecord | undefined; before: OtelRecord[] } {
   const lines = createLineReader('narration')
@@ -57,11 +79,11 @@ function convert(event: object, earlier: readonly unknown[]): { record: OtelReco
   if (needs) {
     for (const previous of earlier) {
       if (typeof previous !== 'object' || previous === null) continue
-      const read = lines.readLine(JSON.stringify(previous)).records[0]
+      const read = lines.readLine(stored(previous)).records[0]
       if (read !== undefined) before.push(read)
     }
   }
-  return { record: lines.readLine(JSON.stringify(event)).records[0], before }
+  return { record: lines.readLine(stored(event)).records[0], before }
 }
 
 /**

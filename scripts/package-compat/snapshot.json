@@ -733,7 +733,7 @@
             "DevReviewLoopEvent": ["type DevReviewLoopEvent = z.infer<typeof DevReviewLoopEventSchema>;"],
             "DevReviewLoopEventSchema": ["sha256:06a5a060f2e0d5ffb26beb50aa0fa8af8e160884c4be04e47e0fc7d0c1ebc7b7"],
             "DispatchEvent": ["type DispatchEvent = z.infer<typeof DispatchEventSchema>;"],
-            "DispatchEventSchema": ["sha256:5a492cd0496d57a4f5d377336fd6289a7d1faff2ceb84a34c6ffd25b21080069"],
+            "DispatchEventSchema": ["sha256:b8c3d9d4b0da3778b14a28e26e0d9ca59f0a9637a632c963c65b388758628e61"],
             "DispatchOutcome": ["type DispatchOutcome = z.infer<typeof DispatchOutcomeSchema>;"],
             "EARLIER_EVENT_PREFIX": ["const EARLIER_EVENT_PREFIX = \"vinaya.earlier.\""],
             "EARLIER_WRITER_PREFIX": ["const EARLIER_WRITER_PREFIX = \"earlier:\""],
@@ -822,7 +822,7 @@
               "type LocalCopyReport = { sent: number; setAside: Array<{ file: string; offset: number; reason: string; }>; failures: Array<{ file?: string; offset?: number; reason: string; }>; };"
             ],
             "LogEvent": ["type LogEvent = z.infer<typeof LogEventSchema>;"],
-            "LogEventSchema": ["sha256:15328999a87f372ee816cf388d55c70f1231f2a9944d56b3bc28d355522d7e08"],
+            "LogEventSchema": ["sha256:468f27c7e783e5792adea5d699589d3691d3c905e3436b7538d6d0911bb9b9ae"],
             "LogHandle": ["sha256:478b48f5db6585e4755d6024cd72bf1f01215761f859f1a59471f85f4f605c3d"],
             "LogStore": [
               "interface LogStore { /** Idempotently append records (raw ndjson strings or event objects). Redacts at this write (sink) boundary. */ append(records: readonly (string | object)[]): AppendOutcome; /** Read one page from `cursor` (validation + provenance + unknown-version preservation + transport-boundary redaction). */ readPage(cursor: number | null, limit: number): ReadPage; /** Remove exactly the named identities. Returns how many were present and removed. */ acknowledge(identities: readonly RecordIdentity[]): number; /** How many records are currently held. */ size(): number; }"
