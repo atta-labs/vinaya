@@ -302,16 +302,19 @@ describe('registry-gates G7 — anything that can block or write to the forge re
     expect(result.stderr.toString()).not.toContain('registry-gates.G7')
   }, 20_000)
 
-  it('follows a check program through the kernel to the kernel sink', () => {
+  it("follows a check program through the kernel to a kernel file that writes through the run's Log handle", () => {
     const root = initFixture('registry-gates-g7-kernel')
     const checkBin = 'harness/processes/vinaya-strict/checks/bin/check-demo.ts'
     try {
       mkdirSync(join(root, 'harness/processes/vinaya-strict/checks/bin'), { recursive: true })
       mkdirSync(join(root, 'harness/kernel/log'), { recursive: true })
-      writeFileSync(join(root, 'harness/kernel/log/log-sink.ts'), 'export function log(): void {}\n')
+      writeFileSync(
+        join(root, 'harness/kernel/log/run-recorder.ts'),
+        'export function runRecorder(): { handle: () => undefined } {\n  return { handle: () => undefined }\n}\n'
+      )
       writeFileSync(
         join(root, 'harness/kernel/control.ts'),
-        "import { log } from './log/log-sink.js'\nexport const runControl = log\n"
+        "import { runRecorder } from './log/run-recorder.js'\nexport const runControl = (): unknown => runRecorder().handle()\n"
       )
       writeFileSync(
         join(root, checkBin),
@@ -319,7 +322,6 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       )
       const { producers, imports } = gatherLogProducerGraph(root)
       expect(producers.has('harness/kernel/control.ts')).toBe(true)
-      expect(producers.has('apps/cli/src/lib/log-sink.ts')).toBe(false)
       expect(reachesProducer(checkBin, producers, imports)).toBe(true)
       const result = checkG7({
         enforcementMapPresent: true,
@@ -393,31 +395,33 @@ describe('registry-gates G7 — anything that can block or write to the forge re
     try {
       mkdirSync(join(root, 'harness/kernel/log'), { recursive: true })
       mkdirSync(join(root, 'harness/kernel/tests'), { recursive: true })
-      writeFileSync(join(root, 'harness/kernel/log/log-sink.ts'), 'export function log(): void {}\n')
+      writeFileSync(join(root, 'harness/kernel/log/run-recorder.ts'), 'export function runRecorder(): void {}\n')
       for (const [path, specifier] of [
-        ['tests/helper.ts', '../log/log-sink.js'],
-        ['control.test.ts', './log/log-sink.js'],
-        ['control.js', './log/log-sink.js']
+        ['tests/helper.ts', '../log/run-recorder.js'],
+        ['control.test.ts', './log/run-recorder.js'],
+        ['control.js', './log/run-recorder.js']
       ] as const) {
-        writeFileSync(join(root, 'harness/kernel', path), `import { log } from '${specifier}'\nlog()\n`)
+        writeFileSync(join(root, 'harness/kernel', path), `import { runRecorder } from '${specifier}'\nrunRecorder()\n`)
       }
       const { producers, imports } = gatherLogProducerGraph(root)
-      expect([...producers]).toEqual(['harness/kernel/log/log-sink.ts'])
-      expect([...imports.keys()]).toEqual(['harness/kernel/log/log-sink.ts'])
+      expect([...producers]).toEqual(['harness/kernel/log/run-recorder.ts'])
+      expect([...imports.keys()]).toEqual(['harness/kernel/log/run-recorder.ts'])
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
 
-  it('keeps the CLI sink as the fallback when neither sink exists', () => {
+  it("counts a file that imports an earlier-format sink's log as no producer", () => {
     const root = initFixture('registry-gates-g7-no-sink')
     const checkBin = 'harness/processes/vinaya-strict/checks/bin/check-demo.ts'
     try {
       mkdirSync(join(root, 'harness/processes/vinaya-strict/checks/bin'), { recursive: true })
-      writeFileSync(join(root, checkBin), "import { log } from '../../lib/log-sink.js'\nlog()\n")
+      mkdirSync(join(root, 'harness/kernel/log'), { recursive: true })
+      writeFileSync(join(root, 'harness/kernel/log/log-sink.ts'), 'export function log(): void {}\n')
+      writeFileSync(join(root, checkBin), "import { log } from '../../../../kernel/log/log-sink.js'\nlog()\n")
       const { producers, imports } = gatherLogProducerGraph(root)
-      expect([...producers]).toEqual(['apps/cli/src/lib/log-sink.ts'])
-      expect(imports.get(checkBin)).toEqual([])
+      expect([...producers]).toEqual([])
+      expect(imports.get(checkBin)).toEqual(['harness/kernel/log/log-sink.ts'])
       expect(reachesProducer(checkBin, producers, imports)).toBe(false)
       const result = checkG7({
         enforcementMapPresent: true,
@@ -435,7 +439,7 @@ describe('registry-gates G7 — anything that can block or write to the forge re
     }
   })
 
-  it("follows a check program's import through a process folder to the sink, and leaves that folder's tests out", () => {
+  it("follows a check program's import through a process folder to the run's Log handle, and leaves that folder's tests out", () => {
     const root = join(tmpdir(), `vinaya-g7-process-folder-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     const checkBin = 'harness/processes/vinaya-strict/checks/bin/check-demo.ts'
     const processModule = join(root, 'harness', 'processes', 'demo', 'run-control.ts')
@@ -457,18 +461,21 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       return { producers, result }
     }
     try {
-      write(join(root, 'apps', 'cli', 'src', 'lib', 'log-sink.ts'), 'export function log(): void {}\n')
+      write(
+        join(root, 'harness', 'kernel', 'log', 'run-recorder.ts'),
+        'export function runRecorder(): { handle: () => undefined } {\n  return { handle: () => undefined }\n}\n'
+      )
       write(
         join(root, checkBin),
         "import { runControl } from '../../../../../harness/processes/demo/run-control.js'\nrunControl()\n"
       )
       write(
         processModule,
-        "import { log } from '../../../apps/cli/src/lib/log-sink.js'\nexport function runControl(): void {\n  log()\n}\n"
+        "import { runRecorder } from '../../kernel/log/run-recorder.js'\nexport function runControl(): void {\n  runRecorder().handle()\n}\n"
       )
       write(
         join(root, 'harness', 'processes', 'demo', 'tests', 'helper.ts'),
-        "import { log } from '../../../kernel/log/log-sink.js'\nexport const helper = log\n"
+        "import { runRecorder } from '../../../kernel/log/run-recorder.js'\nexport const helper = runRecorder\n"
       )
 
       const withModule = evaluate()

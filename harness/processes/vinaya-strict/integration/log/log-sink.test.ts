@@ -1183,6 +1183,7 @@ describe('logSync — recording an event as the process ends (O1, O2, O3, O5)', 
   it('O2: the real default sink spawns no process at all, and the line lands before process.exit', () => {
     const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'vinaya-logsync-nospawn-')))
     const logSinkModule = join(import.meta.dir, '..', '..', '..', '..', 'kernel', 'log', 'log-sink.ts')
+    const logWriterModule = join(import.meta.dir, '..', '..', 'tests', 'default-sink-writes.ts')
     const logSinkFactoryModule = join(import.meta.dir, 'log-sink-factory.ts')
     // The working tree declares a server: with the repository unknown, the
     // line must still go to a folder, never to a queue no drain reads.
@@ -1212,7 +1213,7 @@ for (const name of ['spawn', 'spawnSync']) {
 await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', 'harness', 'processes', 'vinaya-strict', 'integration', 'config', 'compose.ts'))})).installVinayaConfigProvider()
 const { installVinayaLogSinkFactory } = await import(${JSON.stringify(logSinkFactoryModule)})
 installVinayaLogSinkFactory()
-const { logSync } = await import(${JSON.stringify(logSinkModule)})
+const { logSync } = await import(${JSON.stringify(logWriterModule)})
 logSync({ kind: 'dispatch', event: 'dispatched', payload: {}, target_role: 'developer', model: 'sonnet', effect_id: 'cold-exit', prompt_hash: 'sha256:abc' })
 process.stdout.write(JSON.stringify({ calls }))
 process.exit(0)`
@@ -1643,7 +1644,7 @@ describe('log-sink — the default sink is built lazily from an installed factor
     const probe = join(scratch, 'probe.ts')
     writeFileSync(
       probe,
-      `import { drainLogSink, log, resetDefaultLogSinkContext } from ${JSON.stringify(logSinkModule)}\n` +
+      `import { resetDefaultLogSinkContext } from ${JSON.stringify(logSinkModule)}\nimport { drainLogSink, log } from ${JSON.stringify(join(import.meta.dir, '..', '..', 'tests', 'default-sink-writes.ts'))}\n` +
         '// Nothing is built yet, so draining and resetting have nothing to act on and refuse nothing.\n' +
         'await drainLogSink()\n' +
         'resetDefaultLogSinkContext()\n' +

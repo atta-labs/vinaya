@@ -764,6 +764,7 @@ function initGitRepo(cwd: string): void {
 }
 
 const LOG_SINK_PATH = join(import.meta.dir, '..', '..', '..', '..', 'kernel', 'log', 'log-sink.ts')
+const LOG_WRITER_PATH = join(import.meta.dir, '..', '..', 'tests', 'default-sink-writes.ts')
 const LOG_SINK_FACTORY_PATH = join(
   import.meta.dir,
   '..',
@@ -916,7 +917,7 @@ async function runAbruptExitScript(cwd: string, home: string, drainOnExit: boole
   const script = join(cwd, `run-log-abrupt-${effectId}.ts`)
   writeFileSync(
     script,
-    `import { drainLogSink, log } from ${JSON.stringify(LOG_SINK_PATH)}
+    `import { drainLogSink, log } from ${JSON.stringify(LOG_WRITER_PATH)}
     await (await import(${JSON.stringify(join(import.meta.dir, '..', '..', '..', '..', '..', 'harness', 'processes', 'vinaya-strict', 'integration', 'config', 'compose.ts'))})).installVinayaConfigProvider()
     import { installVinayaLogSinkFactory } from ${JSON.stringify(LOG_SINK_FACTORY_PATH)}
     installVinayaLogSinkFactory()

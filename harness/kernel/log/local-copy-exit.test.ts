@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { mkdtempSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LOCAL_COPY_SEND_BOUND_MS } from './local-copy-writer.js'
@@ -24,8 +24,6 @@ const event = (id: string) => ({
   prompt_hash: 'sha256:abc'
 })
 
-const never = (): Promise<Response> => new Promise(() => {})
-
 function setup(extra: Partial<LogSinkOverrides> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-local-copy-exit-'))
   const folder = join(dir, 'out')
@@ -44,18 +42,12 @@ function setup(extra: Partial<LogSinkOverrides> = {}) {
     vinayaVersion: () => '0.0.0',
     stderr: () => {},
     runId: 'run-exit',
-    otlp: {
-      address: () => ({ kind: 'address', url: 'http://collector.invalid' }),
-      fetch: never,
-      sendBoundMs: 300
-    },
     ...extra
   })
   const inside = (root: string): string[] =>
     readdirSync(root, { withFileTypes: true }).flatMap((entry) =>
       entry.isDirectory() ? inside(join(root, entry.name)).map((n) => join(entry.name, n)) : [entry.name]
     )
-  const copy = join(dir, '.vinaya', 'runtime')
   const todayIds = (): string[] =>
     inside(folder)
       .filter((n) => n.endsWith('.ndjson'))
@@ -65,44 +57,28 @@ function setup(extra: Partial<LogSinkOverrides> = {}) {
           .split('\n')
           .map((line) => recordIdentity(JSON.parse(line)) as string)
       )
-  const copyIds = (): string[] => {
-    let names: string[] = []
-    try {
-      names = inside(copy)
-        .filter((n) => n.includes('run-exit~') && n.endsWith('.logs.jsonl'))
-        .sort((a, b) => (a.split('/').at(-1) as string).localeCompare(b.split('/').at(-1) as string))
-    } catch {}
-    return names.flatMap((name) =>
-      readFileSync(join(copy, name), 'utf8')
-        .trim()
-        .split('\n')
-        .map((line) => {
-          const record = JSON.parse(line).resourceLogs[0].scopeLogs[0].logRecords[0]
-          return record.attributes.find((a: any) => a.key === 'vinaya.event.id').value.stringValue as string
-        })
-    )
-  }
-  return { sink, todayIds, copyIds }
+  const copyExists = (): boolean => existsSync(join(dir, '.vinaya', 'runtime', 'atta-labs-vinaya', 'logs'))
+  return { sink, todayIds, copyExists }
 }
 
-test("an address that never answers neither delays today's line nor the local copy", async () => {
-  const { sink, todayIds, copyIds } = setup()
+test("an address that never answers does not delay today's line, and the sink writes no converted copy", async () => {
+  const { sink, todayIds, copyExists } = setup()
   sink.log(event('e1'))
   await new Promise((resolve) => setTimeout(resolve, 150))
   expect(todayIds()).toHaveLength(1)
-  expect(copyIds()).toHaveLength(1)
+  expect(copyExists()).toBe(false)
   await sink.drain()
 })
 
-test('a logSync event of a run the process has not seen is in the local copy when it returns', () => {
-  const { sink, todayIds, copyIds } = setup()
+test("a logSync event is in today's file when it returns, with no converted copy", () => {
+  const { sink, todayIds, copyExists } = setup()
   sink.logSync(event('e1'))
   expect(todayIds()).toHaveLength(1)
-  expect(copyIds()).toHaveLength(1)
+  expect(copyExists()).toBe(false)
 })
 
-test('after a mix of log and logSync the drain waits no longer than the bound and every record is there in write order', async () => {
-  const { sink, todayIds, copyIds } = setup()
+test('after a mix of log and logSync the drain returns promptly and every line is there', async () => {
+  const { sink, todayIds } = setup()
   sink.warmup()
   await new Promise((resolve) => setTimeout(resolve, 150))
   sink.log(event('a'))
@@ -111,10 +87,8 @@ test('after a mix of log and logSync the drain waits no longer than the bound an
   sink.logSync(event('d'))
   const started = Date.now()
   await sink.drain()
-  // The sender's own deadline and the drain's bound are both 300 ms here.
   expect(Date.now() - started).toBeLessThan(1_500)
-  expect(copyIds()).toEqual(todayIds())
-  expect(copyIds()).toHaveLength(4)
+  expect(todayIds()).toHaveLength(4)
 })
 
 test('the Log description states the bound the drain keeps', () => {

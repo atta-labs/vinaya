@@ -737,8 +737,9 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
 // `harness/processes/vinaya-strict/integration/config/compose.ts` directly, and two of them now sit one import from
 // this change set. The selection rule is unchanged.
 //
-// Raised 41 → 44: the sink's writer, exit and sending tests each build a sink and import `log-sink.ts` directly, so a
-// change to the sink selects those three extra suites. Same rule.
+// Raised 41 → 44: the sink's local-copy and exit tests each build a sink and import `log-sink.ts` directly, so a
+// change to the sink selects those extra suites. Same rule. The sink writes no converted copy any more, and the
+// ceiling stays where it was.
 //
 // Raised 44 → 45: `harness/kernel/log/with-deadline.test.ts` builds `withDeadline` from `log-sink.ts` directly — one new file, so a
 // change to the sink selects that one extra suite. Same rule.

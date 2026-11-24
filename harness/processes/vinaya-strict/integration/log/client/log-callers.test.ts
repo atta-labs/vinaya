@@ -22,9 +22,14 @@ import ts from 'typescript'
  *  - Every `kind`/`event` pair the schema declares has a producer boundary
  *    that really emits it (`PRODUCER_BOUNDARIES`), or is named in
  *    `LOG_COVERAGE_EXEMPTIONS`.
- *  - Each event family has one row in `FAMILY_OWNERS`: the file or few files
- *    that may emit it. A file that emits a family outside its row fails, and
- *    so does a row naming a file that no longer emits it.
+ *  - Each subject the harness writes through the run's Log handle has one row
+ *    in `SUBJECT_OWNERS`: the file or few files that write it. A file that
+ *    writes a subject outside its row fails, and so does a row naming a file
+ *    that no longer writes it. `FAMILY_OWNERS` lists only the files that still
+ *    build earlier-format events as data for the sink to route to the handle;
+ *    the harness writes no earlier-format line for them
+ *    (`harness/kernel/tests/architecture.test.ts` refuses a source that imports
+ *    the earlier-format writer).
  */
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..', '..', '..')
