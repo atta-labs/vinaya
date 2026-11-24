@@ -100,7 +100,7 @@ describe('harness never imports a process', () => {
 // file named here; the sink keeps its queue drain and its readers, which are not writes.
 
 /** The earlier-format writers a source file may not reach for. */
-const EARLIER_WRITER_NAMES = new Set(['log', 'logSync', 'logWithOptions'])
+const EARLIER_WRITER_NAMES = new Set(['log', 'logSync', 'logWithOptions', 'defaultLogSink'])
 const EARLIER_CONVERTER_NAMES = new Set(['createLiveEarlierConverter', 'createLocalCopyWriter'])
 /** The one source that posts an earlier-format line, to check that the Log server still accepts the format it stores. */
 const EARLIER_FORMAT_SELFTEST = 'harness/processes/vinaya-strict/integration/bin/log-selftest.ts'
@@ -152,6 +152,9 @@ describe('the harness writes no earlier-format Log event', () => {
     expect(earlierFormatWrites("import { createLiveEarlierConverter } from '../x/convert-live.js'")).toEqual([
       'imports the live converter (../x/convert-live.js)',
       'imports createLiveEarlierConverter'
+    ])
+    expect(earlierFormatWrites("import { defaultLogSink } from './log-sink.js'")).toEqual([
+      "imports the earlier-format writer's defaultLogSink"
     ])
     expect(earlierFormatWrites("import * as sink from './log-sink.js'")).toEqual([
       'imports the whole earlier-format sink as a namespace'
