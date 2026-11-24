@@ -2007,6 +2007,15 @@ export function currentRunId(): string {
 }
 
 /**
+ * The process's default sink, built from the installed factory; refused with an error naming
+ * `installDefaultLogSinkFactory` when none is installed. The harness writes no earlier-format event through it;
+ * tests of the sink itself use it to exercise the sink's own destination, queue and exit.
+ */
+export function defaultLogSink(): LogSink {
+  return defaultSinkSlot.sink()
+}
+
+/**
  * Starts the default sink's one-time context resolution (repo, doctrine,
  * destination) now rather than on its first `log()` call, so it is usually
  * settled before a batch of checks starts finishing (`runChecks` calls this

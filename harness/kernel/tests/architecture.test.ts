@@ -115,6 +115,8 @@ export function earlierFormatWrites(source: string): string[] {
     const base = specifier.replace(/\.js$/, '')
     if (base.endsWith('/convert-live')) found.push(`imports the live converter (${specifier})`)
     const bindings = node.importClause?.namedBindings
+    if (bindings !== undefined && ts.isNamespaceImport(bindings) && base.endsWith('/log-sink'))
+      found.push('imports the whole earlier-format sink as a namespace')
     if (bindings === undefined || !ts.isNamedImports(bindings)) return
     for (const element of bindings.elements) {
       const imported = (element.propertyName ?? element.name).text
@@ -150,6 +152,9 @@ describe('the harness writes no earlier-format Log event', () => {
     expect(earlierFormatWrites("import { createLiveEarlierConverter } from '../x/convert-live.js'")).toEqual([
       'imports the live converter (../x/convert-live.js)',
       'imports createLiveEarlierConverter'
+    ])
+    expect(earlierFormatWrites("import * as sink from './log-sink.js'")).toEqual([
+      'imports the whole earlier-format sink as a namespace'
     ])
     expect(earlierFormatWrites("import { drainLogSink, outboxPathFor } from './log-sink.js'")).toEqual([])
   })

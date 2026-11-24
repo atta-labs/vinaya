@@ -134,7 +134,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-watch.ts",
-        "sha256": "6a33b73b35a88422138f68b21c80905225415c5ffef5da59cd71608cc3754179"
+        "sha256": "1d9267ebc832cdde0d2ad9e19ab53621250ef33318588a2a1da6b26f61202121"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/git-defaults.ts",
