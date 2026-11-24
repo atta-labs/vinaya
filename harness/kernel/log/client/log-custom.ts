@@ -20,9 +20,11 @@ import {
   CUSTOM_EVENT_NAME_PATTERN,
   checkCustomEvent
 } from '../custom'
-import type { LogHandle } from '../../../../packages/log-sdk/src/index.js'
 import { configProvider } from '../../config/loader/config-provider.js'
-import { runRecorder } from '../run-recorder.js'
+import { type RunRecorder, runRecorder } from '../run-recorder.js'
+
+/** The run handle the record is written through; `undefined` while recording is off. */
+type RunHandle = ReturnType<RunRecorder['handle']>
 
 export type EmitCustomEventResult =
   | { ok: true; name: string }
@@ -32,7 +34,7 @@ export type EmitCustomEventDeps = {
   /** The declarations in force; defaults to the loaded config's `logs.events`. */
   declarations: () => CustomEventDeclarations
   /** The run handle the record is written through; `undefined` while recording is off. */
-  handle: (scope: { repository?: string; workRef?: string }) => LogHandle | undefined
+  handle: (scope: { repository?: string; workRef?: string }) => RunHandle
   /** The repository the record is filed under, as `owner/repo`, when the caller knows it. */
   repository?: string
   /** The work reference the record belongs to, when the caller has one outside Vinaya. */

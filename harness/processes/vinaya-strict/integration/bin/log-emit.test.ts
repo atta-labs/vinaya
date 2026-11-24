@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { storedEvents } from '../../../../kernel/gates/checks/runner/local-copy-probe.js'
 import type { CustomEventDeclarations } from '../../../../kernel/log/custom'
 import { emitCustomEvent } from '../../../../kernel/log/client/log-custom.js'
+import { createLocalCopySender } from '../../../../kernel/log/local-copy-writer.js'
 import { createRunRecorder } from '../../../../kernel/log/run-recorder.js'
 import { connect } from '../../../../../packages/log-sdk/src/index.js'
 import { type LogEmitDeps, logEmitCommand } from './log-emit.js'
@@ -181,20 +182,23 @@ describe('vinaya log emit — written through the Log SDK and sent (O3, O4)', ()
     const dir = mkdtempSync(join(tmpdir(), 'vinaya-log-emit-'))
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
     const folder = join(dir, 'logs')
-    const sent: Array<{ folder: string; repository: string | undefined }> = []
+    const sent: string[] = []
+    // The real sender over the real `sendLocalCopy`, with the address decided and only the network stubbed.
+    const sender = createLocalCopySender({
+      warn: () => {},
+      address: () => ({ kind: 'address', url: 'http://collector.test' }),
+      fetch: async (url) => {
+        sent.push(url)
+        return new Response('{}', { status: 200 })
+      }
+    })
     const recorder = createRunRecorder({
       runId: () => 'emit-test-run',
       workRef: () => undefined,
       repository: () => undefined,
       place: (repository) => ({ folder, repository }),
       processIdentity: () => undefined,
-      sender: () => ({
-        request: () => {},
-        remember: () => {},
-        drain: async () => {
-          sent.push({ folder, repository: 'atta-labs/vinaya' })
-        }
-      }),
+      sender: () => sender,
       home: () => dir,
       cwd: () => join(dir, 'repo'),
       onError: () => {},
@@ -226,7 +230,7 @@ describe('vinaya log emit — written through the Log SDK and sent (O3, O4)', ()
     expect(code).toBe(0)
     expect(out.join('')).toContain('recorded acme.review_started')
     expect(stored().map((e) => e.name)).toEqual(['acme.review_started'])
-    expect(sent).toHaveLength(1)
+    expect(sent.some((url) => url === 'http://collector.test/v1/logs')).toBe(true)
   })
 
   it('a refused event is one command.completed refused, exits 1, and sends nothing', async () => {

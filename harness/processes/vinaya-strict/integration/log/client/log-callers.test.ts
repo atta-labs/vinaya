@@ -134,8 +134,8 @@ const LOG_CUSTOM_PATH = 'harness/kernel/log/client/log-custom.ts'
  * recorder's drain sends the local copy. It separately resolves the destination it just recorded toward, the
  * SAME way a live event does, importing the sink's pure `resolveLogDestinationFrom`,
  * `withDeadline`, `LOG_DESTINATION_ANCHOR_DEADLINE_MS` and the
- * `ResolvedLogDestination` type, plus `drainLogSink` to wait for its own write
- * to land before the process exits. Same "imports the sink's pure helpers,
+ * `ResolvedLogDestination` type, and drains through the run recorder to wait
+ * for its own write to land before the process exits. Same "imports the sink's pure helpers,
  * never `log()` directly" shape as `LOG_SEND_PATH`/`LOG_SELFTEST_PATH`.
  */
 const LOG_EMIT_PATH = 'harness/processes/vinaya-strict/integration/bin/log-emit.ts'

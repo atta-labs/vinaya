@@ -30,6 +30,7 @@ import { loadConfig, loadTrustAnchorConfigAsync } from '../config/compose.js'
 import { emitCustomEvent, type EmitCustomEventResult } from '../../../../kernel/log/client/log-custom.js'
 import {
   LOG_DESTINATION_ANCHOR_DEADLINE_MS,
+  processLocalCopyPlace,
   resolveLogDestinationFrom,
   withDeadline,
   type ResolvedLogDestination
@@ -69,6 +70,8 @@ async function readStdinReal(): Promise<string> {
  * already does.
  */
 async function resolveDestinationKindReal(): Promise<ResolvedLogDestination['kind']> {
+  // Recording off writes nothing, whatever the settings name as a destination.
+  if (processLocalCopyPlace(await repositoryReal()) === undefined) return 'none'
   const repo = await resolveRepo()
   const localConfig = loadConfig()
   const unattended = isUnattendedProcess(process.env)
