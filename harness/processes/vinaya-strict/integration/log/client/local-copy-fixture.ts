@@ -1,7 +1,12 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type StoredEvent, storedEvents } from '../../../../../kernel/gates/checks/runner/local-copy-probe.js'
+import {
+  type StoredEvent,
+  type StoredSpan,
+  storedEvents,
+  storedSpans
+} from '../../../../../kernel/gates/checks/runner/local-copy-probe.js'
 
 const REPOSITORY = 'atta-labs/vinaya'
 
@@ -15,6 +20,8 @@ export function isolatedLocalCopy(): {
   copyFiles: () => string[]
   /** Every event the local copy holds, by name and attributes. */
   events: () => StoredEvent[]
+  /** Every span the local copy holds, by name and attributes. */
+  spans: () => StoredSpan[]
   /** Every earlier-format file the directory holds (`*.ndjson`): none is written for what the Log now records. */
   earlierFormatFiles: () => string[]
   restore: () => void
@@ -41,6 +48,7 @@ export function isolatedLocalCopy(): {
     runtimeDir,
     copyFiles: () => repositoryFolders().flatMap((folder) => readdirSync(folder).filter((f) => f.endsWith('.jsonl'))),
     events: () => repositoryFolders().flatMap((folder) => storedEvents(folder)),
+    spans: () => repositoryFolders().flatMap((folder) => storedSpans(folder)),
     earlierFormatFiles: () =>
       existsSync(logs)
         ? readdirSync(logs, { recursive: true, encoding: 'utf8' }).filter((f) => f.endsWith('.ndjson'))

@@ -12,7 +12,7 @@
  */
 import type { PauseReason } from '../../../../tools/dev-review-policy/types'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -35,7 +35,7 @@ import {
 } from '../../../../loops/dev-review/standalone/dev-review-loop'
 import { MAX_AUTOMATIC_CONFLICT_REENTRIES } from '../../../../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import type { DispatchHandle } from '../../../../loops/dev-review/dispatch/dispatch'
-import { drainLogSink } from '../../../../../../kernel/log/log-sink'
+import { storedEvents, storedSpans } from '../../../../../../kernel/gates/checks/runner/local-copy-probe'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../../../../loops/dev-review/standalone/dev-review-loop/round-assess'
 import { readEscalationPacket } from '../../../../loops/dev-review/run-control/read'
 import { type RunTaskDeps, runTask } from '../../../../loops/dev-review/run-control/task-run'
@@ -54,6 +54,9 @@ import {
 } from '../dev-review-loop-harness'
 import { buildReexecArgs } from '../../../../loops/dev-review/standalone/dev-review-loop/driver-helpers'
 import { spawnSync } from 'node:child_process'
+import { raiseInAnotherProcess } from '../person-span-support'
+import { runRecorder } from '../../../../../../kernel/log/run-recorder'
+import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture'
 import {
   consumeHostRepairPauseOnStart,
   effortForRun,
@@ -908,18 +911,14 @@ describe('a sandbox capability refusal pauses once for the Operator and is never
 })
 
 /**
- * Round 2 review, MAJOR: the once-only, cancel-skip and replay-skip emission
- * logic (O1/O3) had no behavioral test — only a source-text grep (the
- * producer-coverage boundary in `log-callers.test.ts`) confirmed the event
- * NAMES exist, which would still pass with the `decision === 'resume'` guard
- * or the `existedBefore` idempotency check inverted or removed. These drive
- * `writeEscalationRecord`/`resolveEscalation` directly — in-process, isolated
- * the same way `runLoopInProcess` isolates a full loop run (`withWorldEnv`,
- * `dev-review-loop-harness.ts`) — and read back the REAL logged ndjson lines
- * (`outboxLines`), never a mock of `log()`.
+ * An escalation is a person the harness asks and, later, their answer: `writeEscalationRecord` writes
+ * `log.person.asked` and `resolveEscalation` writes `log.person.answered`. These drive both directly, in-process
+ * for the asking and in a second process for the answering, and read back what the run's local copy holds.
  */
-describe('writeEscalationRecord / resolveEscalation — the handoff Log family (O1-O3)', () => {
-  afterEach(cleanupWorlds)
+describe('writeEscalationRecord / resolveEscalation — the person the harness asks and their answer', () => {
+  afterEach(() => {
+    cleanupWorlds()
+  })
 
   function escalationFacts(world: LoopWorld, overrides: Partial<EscalationFacts> = {}): EscalationFacts {
     return {
@@ -940,38 +939,82 @@ describe('writeEscalationRecord / resolveEscalation — the handoff Log family (
     }
   }
 
-  function handoffEvents(world: LoopWorld): Array<Record<string, unknown>> {
-    return outboxLines(world).filter((e) => e.kind === 'handoff')
+  /** The local copy of one world, read with the shared reader. */
+  function copyOf(world: LoopWorld) {
+    const logs = join(world.runtimeDir, 'logs')
+    const folders = existsSync(logs)
+      ? readdirSync(logs, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => join(logs, entry.name))
+      : []
+    return {
+      asked: () => folders.flatMap((f) => storedEvents(f)).filter((e) => e.name === 'vinaya.person.asked'),
+      spans: () => folders.flatMap((f) => storedSpans(f)).filter((s) => s.name.startsWith('vinaya.person ')),
+      earlier: () => outboxLines(world).filter((e) => e.kind === 'handoff')
+    }
   }
 
-  it('O1: logs exactly one handoff raised event, carrying class/reason/requested_decision, and none again on an idempotent rerun of the identical pause', async () => {
+  /** Answers an escalation from a second process, as a later start or a task tool does. */
+  function resolveInAnotherProcess(
+    task: number,
+    escalationId: string,
+    pr: number | null,
+    decision: 'resume' | 'cancel',
+    by: string
+  ): void {
+    const module = join(import.meta.dir, '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.ts')
+    const script = `import { resolveEscalation } from ${JSON.stringify(module)}
+resolveEscalation(${task}, ${JSON.stringify(escalationId)}, ${JSON.stringify(pr)}, ${JSON.stringify(decision)}, ${JSON.stringify(by)}, 'from-another-process')
+process.exit(0)`
+    const run = spawnSyncBudgeted(process.execPath, ['-e', script], {
+      env: {
+        ...stripVinayaEnv(),
+        HOME: process.env.HOME,
+        VINAYA_RUNTIME_DIR: process.env.VINAYA_RUNTIME_DIR,
+        VINAYA_TASK: process.env.VINAYA_TASK,
+        VINAYA_REPO: process.env.VINAYA_REPO
+      },
+      cwd: process.cwd(),
+      encoding: 'utf8'
+    })
+    if (run.status !== 0) throw new Error(`the second process failed: ${run.stderr}`)
+  }
+
+  it('asks one person, with the ruling command to answer, and asks nothing again on an idempotent rerun of the identical pause', async () => {
     const world = makeWorld()
     const facts = escalationFacts(world)
 
     await withWorldEnv(world, async () => {
       writeEscalationRecord(facts)
-      // A rerun of the SAME pause instance — identical round/head/branch/pr/
-      // reason/detail — which the control store answers with the same
-      // canonical escalation id (`writeEscalation`, `@attalabs/process-vinaya`).
       writeEscalationRecord(facts)
-      // `log()` is fire-and-forget (queued, never awaited by its own
-      // caller) — drained here, still inside this world's own isolated
-      // env/cwd, so the write actually lands before `outboxLines` reads it.
-      await drainLogSink()
     })
 
-    const raised = handoffEvents(world).filter((e) => e.event === 'raised')
-    expect(raised).toHaveLength(1)
-    expect(raised[0]).toMatchObject({
-      kind: 'handoff',
-      event: 'raised',
-      class: 'authority',
-      reason: 'escalation',
-      requested_decision: 'a concrete, observed fact about this pause'
+    const seen = copyOf(world)
+    const asked = seen.asked()
+    expect(asked).toHaveLength(1)
+    expect(asked[0]?.attributes).toMatchObject({
+      'vinaya.person.kind': 'authority',
+      'vinaya.person.why': 'escalation',
+      'vinaya.person.decision': 'ruling',
+      'vinaya.person.how_to_answer': `vinaya pr rule ${world.prNumber} --file <ruling.md>`
     })
+    expect(seen.earlier()).toEqual([])
   })
 
-  it('O1: a genuinely different pause colliding on the same round/head still logs its own raised event', async () => {
+  it('gives the pause reason’s first next action as how to answer when the run has no pull request', async () => {
+    const world = makeWorld()
+    const facts = escalationFacts(world, { pr: null })
+
+    await withWorldEnv(world, async () => {
+      writeEscalationRecord(facts)
+    })
+
+    expect(copyOf(world).asked()[0]?.attributes['vinaya.person.how_to_answer']).toBe(
+      PAUSE_REASON_PROFILE.escalation.nextActions[0]
+    )
+  })
+
+  it('a genuinely different pause colliding on the same round and head asks its own person', async () => {
     const world = makeWorld()
     const facts = escalationFacts(world)
     const collidingFacts = escalationFacts(world, { detail: 'a different pause condition, same round and head' })
@@ -979,36 +1022,37 @@ describe('writeEscalationRecord / resolveEscalation — the handoff Log family (
     await withWorldEnv(world, async () => {
       writeEscalationRecord(facts)
       writeEscalationRecord(collidingFacts)
-      await drainLogSink()
     })
 
-    expect(handoffEvents(world).filter((e) => e.event === 'raised')).toHaveLength(2)
+    expect(copyOf(world).asked()).toHaveLength(2)
   })
 
-  it('O2: resolving with `resume` logs exactly one handoff resolved event, naming the resolution and who resolved it', async () => {
+  it('a resume resolved in another process ends the person span: one asked event and one whole span, no earlier-format handoff', async () => {
     const world = makeWorld()
     const facts = escalationFacts(world)
     const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
 
     await withWorldEnv(world, async () => {
       writeEscalationRecord(facts)
-      resolveEscalation(facts.task, escalationId, facts.pr, 'resume', 'daniboomerang', `${facts.pr}-1`)
-      await drainLogSink()
+      resolveInAnotherProcess(facts.task, escalationId, facts.pr, 'resume', 'daniboomerang')
     })
 
-    const resolved = handoffEvents(world).filter((e) => e.event === 'resolved')
-    expect(resolved).toHaveLength(1)
-    expect(resolved[0]).toMatchObject({
-      kind: 'handoff',
-      event: 'resolved',
-      class: 'authority',
-      reason: 'escalation',
-      resolution: 'resume',
-      resolved_by: 'daniboomerang'
+    const seen = copyOf(world)
+    expect(seen.asked()).toHaveLength(1)
+    const spans = seen.spans()
+    expect(spans).toHaveLength(1)
+    expect(spans[0]?.name).toBe('vinaya.person authority')
+    expect(spans[0]?.attributes).toMatchObject({
+      'vinaya.person.why': 'escalation',
+      'vinaya.person.decision': 'ruling',
+      'vinaya.person.answer': 'resume',
+      'vinaya.person.answered_by': 'daniboomerang',
+      'vinaya.person.how_to_answer': `vinaya pr rule ${world.prNumber} --file <ruling.md>`
     })
+    expect(seen.earlier()).toEqual([])
   })
 
-  it('O3: a cancel records no resolved event at all, leaving the earlier raised event untouched', async () => {
+  it('a cancel writes no answer, leaving the one asked event', async () => {
     const world = makeWorld()
     const facts = escalationFacts(world)
     const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
@@ -1016,14 +1060,14 @@ describe('writeEscalationRecord / resolveEscalation — the handoff Log family (
     await withWorldEnv(world, async () => {
       writeEscalationRecord(facts)
       resolveEscalation(facts.task, escalationId, facts.pr, 'cancel', 'daniboomerang', `${facts.pr}-1`)
-      await drainLogSink()
     })
 
-    expect(handoffEvents(world).filter((e) => e.event === 'resolved')).toEqual([])
-    expect(handoffEvents(world).filter((e) => e.event === 'raised')).toHaveLength(1)
+    const seen = copyOf(world)
+    expect(seen.spans()).toEqual([])
+    expect(seen.asked()).toHaveLength(1)
   })
 
-  it('O3: a replayed resolve is refused and logs no second resolved event', async () => {
+  it('a replayed resolve is refused and writes no second person span', async () => {
     const world = makeWorld()
     const facts = escalationFacts(world)
     const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
@@ -1034,10 +1078,73 @@ describe('writeEscalationRecord / resolveEscalation — the handoff Log family (
       expect(() =>
         resolveEscalation(facts.task, escalationId, facts.pr, 'resume', 'daniboomerang', `${facts.pr}-2`)
       ).toThrow()
-      await drainLogSink()
     })
 
-    expect(handoffEvents(world).filter((e) => e.event === 'resolved')).toHaveLength(1)
+    expect(copyOf(world).spans()).toHaveLength(1)
+  })
+
+  it('the host-repair start ends the person span another process asked, for a pause that has no pull request, from another process', async () => {
+    const world = makeWorld()
+    const facts = escalationFacts(world, { pr: null, reason: 'sandbox_refused' })
+    const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
+
+    await withWorldEnv(world, async () => {
+      raiseInAnotherProcess(facts)
+      writePauseState(world.runtimeDir, {
+        task: facts.task,
+        round: facts.round,
+        head: facts.head,
+        branch: facts.branch,
+        prNumber: null,
+        reason: 'sandbox_refused',
+        pausedAt: '2026-01-01T00:00:00.000Z',
+        escalationId
+      })
+      expect(consumeHostRepairPauseOnStart(world.runtimeDir, facts.task)).toBe(true)
+      await runRecorder().drain()
+    })
+
+    const seen = copyOf(world)
+    expect(seen.asked()).toHaveLength(1)
+    expect(seen.spans()).toHaveLength(1)
+    expect(seen.spans()[0]?.attributes).toMatchObject({ 'vinaya.person.answered_by': 'driver-self' })
+    expect(seen.earlier()).toEqual([])
+  })
+
+  it('the next --resume start ends the person span another process asked: one asked event, one whole span, no handoff', async () => {
+    const world = makeWorld({ developerPushed: true })
+    const facts = escalationFacts(world)
+    const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
+    await withWorldEnv(world, async () => {
+      raiseInAnotherProcess(facts)
+      writePauseState(world.runtimeDir, {
+        task: facts.task,
+        round: facts.round,
+        head: facts.head,
+        branch: facts.branch,
+        prNumber: world.prNumber,
+        reason: 'escalation',
+        pausedAt: '2026-01-01T00:00:00.000Z',
+        agent: 'claude',
+        escalationId
+      })
+    })
+    world.rulings = ['Go ahead.']
+    world.rulingOrdinal = 1
+    world.rulingAuthor = 'daniboomerang'
+    await runLoopInProcess(world, { resumePr: world.prNumber })
+    await withWorldEnv(world, async () => {
+      await runRecorder().drain()
+    })
+
+    const seen = copyOf(world)
+    expect(seen.asked()).toHaveLength(1)
+    expect(seen.spans().filter((s) => s.name === 'vinaya.person authority')).toHaveLength(1)
+    expect(seen.spans()[0]?.attributes).toMatchObject({
+      'vinaya.person.answer': 'resume',
+      'vinaya.person.answered_by': 'daniboomerang'
+    })
+    expect(seen.earlier()).toEqual([])
   })
 })
 

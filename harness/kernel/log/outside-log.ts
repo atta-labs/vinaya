@@ -11,7 +11,7 @@ export type ForgeRecord = Parameters<LogHandle['forge']['validated']>[0]
 export type ForgeRefusalRecord = Parameters<LogHandle['forge']['refused']>[0]
 
 /** Where a record belongs when the process works for more than one task: the task a task tool acts on. */
-export type RecordScope = { task?: number }
+export type RecordScope = { task?: number; runId?: string }
 
 let warned = false
 
@@ -30,7 +30,7 @@ function warnOnce(error: unknown): void {
 function through(scope: RecordScope | undefined, write: (log: LogHandle) => void): void {
   try {
     const handle = runRecorder().handle(
-      undefined,
+      scope?.runId,
       undefined,
       scope?.task === undefined ? undefined : String(scope.task)
     )
@@ -39,6 +39,11 @@ function through(scope: RecordScope | undefined, write: (log: LogHandle) => void
     warnOnce(error)
   }
 }
+
+/** One person the harness asks, as the Log records it: the kind, a key naming the question, why, the decision asked for and how to answer. */
+export type PersonAskedRecord = Parameters<LogHandle['person']['asked']>[0]
+/** One person's answer: the kind, the question's span id, the answer and who gave it. */
+export type PersonAnsweredRecord = Parameters<LogHandle['person']['answered']>[0]
 
 /** Writes one outside action's final outcome. */
 export function writeAction(record: ActionRecord, scope?: RecordScope): void {
@@ -63,4 +68,14 @@ export function writeForgeRefused(record: ForgeRefusalRecord, scope?: RecordScop
 /** Writes a forge write that was made. */
 export function writeForgeWritten(record: ForgeRecord, scope?: RecordScope): void {
   through(scope, (log) => log.forge.written(record))
+}
+
+/** Writes a person being asked; the question stays open in the run's local copy until a process answers it. */
+export function writePersonAsked(record: PersonAskedRecord, scope?: RecordScope): void {
+  through(scope, (log) => log.person.asked(record))
+}
+
+/** Writes a person's answer, from whichever process resolves the question; the Log finds the question in the run's local copy. */
+export function writePersonAnswered(record: PersonAnsweredRecord, scope?: RecordScope): void {
+  through(scope, (log) => log.person.answered(record))
 }

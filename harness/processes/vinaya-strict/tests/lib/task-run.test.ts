@@ -1058,3 +1058,32 @@ describe('widenSurfaceRequestOf / widenSurfaceCommandFor', () => {
     )
   })
 })
+
+describe('vinaya task run ends the person span an earlier process asked', () => {
+  it('records a widen-surface resolution through its real default: one asked event, one whole person span, no handoff', async () => {
+    const harness = await import('../standalone/lib/dev-review-loop-harness')
+    const support = await import('../standalone/lib/person-span-support')
+    const { defaultRunTaskDeps } = await import('../../loops/dev-review/run-control/task-run')
+    const { escalationIdFor } = await import('../../loops/dev-review/standalone/dev-review-loop/pause-resume')
+    const world = harness.makeWorld()
+    try {
+      const facts = support.escalationFactsFor(world, { pr: null })
+      const escalationId = escalationIdFor(facts.task, facts.round, facts.head)
+      await harness.withWorldEnv(world, async () => {
+        support.raiseInAnotherProcess(facts)
+        defaultRunTaskDeps.widen?.recordResolution(facts.task, escalationId, 'principal-1', 'issue-ruling')
+        await (await import('../../../../kernel/log/run-recorder')).runRecorder().drain()
+      })
+      const seen = support.personRecordsOf(world)
+      expect(seen.asked()).toHaveLength(1)
+      expect(seen.spans()).toHaveLength(1)
+      expect(seen.spans()[0]?.attributes).toMatchObject({
+        'vinaya.person.answer': 'resume',
+        'vinaya.person.answered_by': 'principal-1'
+      })
+      expect(seen.earlier()).toEqual([])
+    } finally {
+      harness.cleanupWorlds()
+    }
+  })
+})
