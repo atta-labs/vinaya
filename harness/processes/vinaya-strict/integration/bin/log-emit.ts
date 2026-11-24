@@ -4,7 +4,8 @@
 // positional arguments, since the declared fields are flat and typed — and
 // records them through `emitCustomEvent` (`harness/kernel/log/log.md` § Custom
 // events), the same chokepoint every other custom-event caller goes
-// through, so the refusal event and the redaction stay in one place.
+// through: one `log.custom.recorded` record for a declared event, or one
+// `log.command.completed` refusal, written through the run's Log handle.
 //
 // A declared event with every field present and of its declared type exits
 // 0 and prints the event name and the kind of destination it was recorded
@@ -16,11 +17,10 @@
 // missing event name, unreadable JSON, or JSON that is not a flat object is
 // a usage error: exit 2, before anything is recorded.
 //
-// O3 needs no code of its own: a process with only `VINAYA_WORK_REF` and
-// `VINAYA_FLOW` set, and no `VINAYA_ROLE`/`VINAYA_TASK`, already gets a
-// header carrying that work reference and flow id — `log()`'s own
-// `snapshot()` reads all four from the environment unconditionally, for
-// every caller (`harness/kernel/log/log.md` § Attribution).
+// A process with `VINAYA_WORK_REF` set files the record under that work
+// reference; the run's local copy is then sent to the configured OpenTelemetry
+// address by the run recorder's drain (`sendLocalCopy`), and the command
+// reports where the event went.
 
 import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
 import { EMIT_USAGE, readFields } from '../../../../../packages/log-sdk/src/bin/args.js'
@@ -29,20 +29,22 @@ import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolv
 import { loadConfig, loadTrustAnchorConfigAsync } from '../config/compose.js'
 import { emitCustomEvent, type EmitCustomEventResult } from '../../../../kernel/log/client/log-custom.js'
 import {
-  drainLogSink,
   LOG_DESTINATION_ANCHOR_DEADLINE_MS,
   resolveLogDestinationFrom,
   withDeadline,
   type ResolvedLogDestination
 } from '../../../../kernel/log/log-sink.js'
+import { runRecorder } from '../../../../kernel/log/run-recorder.js'
 import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../../../../kernel/run-paths.js'
 
 export type LogEmitDeps = {
-  /** Records the event through the one chokepoint every custom event goes through — `emitCustomEvent`. */
-  emit: (name: string, fields: Readonly<Record<string, unknown>>) => EmitCustomEventResult
+  /** Records the event through the one chokepoint every custom event goes through — `emitCustomEvent`; `repository` is the one the record is filed under. */
+  emit: (name: string, fields: Readonly<Record<string, unknown>>, repository?: string) => EmitCustomEventResult
+  /** The repository (`owner/repo`) the process is in, when it can tell. */
+  repository: () => Promise<string | undefined>
   /** The kind of destination THIS process's own event just went toward — the sink's own decision, resolved the same way a live event's does. */
   resolveDestinationKind: () => Promise<ResolvedLogDestination['kind']>
-  /** Waits for the just-recorded event to land before the process exits — `drainLogSink`. */
+  /** Waits for the just-recorded event to land in the run's local copy and sends the copy to the OpenTelemetry address — the run recorder's drain. */
   drain: () => Promise<void>
   /** The field values as raw JSON text, read from standard input when `--json` is absent. */
   readStdin: () => Promise<string>
@@ -88,11 +90,27 @@ async function resolveDestinationKindReal(): Promise<ResolvedLogDestination['kin
   }).kind
 }
 
+/** The repository the record is filed under: the one the environment names, else the checkout's own. */
+async function repositoryReal(): Promise<string | undefined> {
+  if (process.env.VINAYA_REPO) return process.env.VINAYA_REPO
+  try {
+    const repo = await resolveRepo()
+    return repo === null ? undefined : `${repo.owner}/${repo.repo}`
+  } catch {
+    return undefined
+  }
+}
+
 export function realLogEmitDeps(): LogEmitDeps {
   return {
-    emit: (name, fields) => emitCustomEvent(name, fields),
+    emit: (name, fields, repository) =>
+      emitCustomEvent(name, fields, {
+        ...(repository === undefined ? {} : { repository }),
+        ...(process.env.VINAYA_WORK_REF ? { workRef: process.env.VINAYA_WORK_REF } : {})
+      }),
+    repository: () => repositoryReal(),
     resolveDestinationKind: () => resolveDestinationKindReal(),
-    drain: () => drainLogSink(),
+    drain: () => runRecorder().drain(),
     readStdin: () => readStdinReal(),
     stdout: (text) => {
       process.stdout.write(text)
@@ -116,7 +134,7 @@ export async function logEmitCommand(args: string[], deps: LogEmitDeps = realLog
     return 2
   }
 
-  const result = deps.emit(parsed.name, parsed.fields)
+  const result = deps.emit(parsed.name, parsed.fields, await deps.repository())
   if (!result.ok) {
     const fieldsNote = result.fieldNames.length > 0 ? ` (fields: ${result.fieldNames.join(', ')})` : ''
     deps.stderr(`vinaya log emit: refused — ${result.reason}${fieldsNote}\n`)

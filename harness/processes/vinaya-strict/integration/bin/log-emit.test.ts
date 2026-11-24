@@ -1,29 +1,38 @@
-import { describe, expect, it } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs'
+import { afterEach, describe, expect, it } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { storedEvents } from '../../../../kernel/gates/checks/runner/local-copy-probe.js'
 import type { CustomEventDeclarations } from '../../../../kernel/log/custom'
 import { emitCustomEvent } from '../../../../kernel/log/client/log-custom.js'
-import { createLogSink } from '../../../../kernel/log/log-sink.js'
+import { createRunRecorder } from '../../../../kernel/log/run-recorder.js'
+import { connect } from '../../../../../packages/log-sdk/src/index.js'
 import { type LogEmitDeps, logEmitCommand } from './log-emit.js'
 
 // The command is proved against injected seams — never a real destination —
-// the same shape `log-selftest.test.ts` uses: `emit`/`drain`/`resolveDestinationKind`
-// are decisions, not network or filesystem calls, so every exit code is
-// reproducible on Linux CI with no server and no config. The one exception is
-// the O3 describe block below, which drives a REAL (but fully isolated, local
-// `createLogSink` instance) to prove the written header, not a stub.
+// `emit`/`drain`/`resolveDestinationKind` are decisions, not network or
+// filesystem calls, so every exit code is reproducible on Linux CI with no
+// server and no config. The one exception is the O3 describe block below,
+// which drives a real run recorder over a fresh local copy to prove what is
+// written and what is sent, not a stub.
 
 const declarations: CustomEventDeclarations = {
   'acme.review_started': { fields: { phase: ['design', 'build', 'ship'] } }
 }
 const valid = { phase: 'design' }
 
+const cleanups: Array<() => void> = []
+afterEach(() => {
+  while (cleanups.length > 0) cleanups.pop()?.()
+})
+
 function deps(overrides: Partial<LogEmitDeps> = {}): { deps: LogEmitDeps; out: string[]; err: string[] } {
   const out: string[] = []
   const err: string[] = []
   const base: LogEmitDeps = {
-    emit: (name, fields) => emitCustomEvent(name, fields, { declarations: () => declarations }),
+    emit: (name, fields) =>
+      emitCustomEvent(name, fields, { declarations: () => declarations, handle: () => undefined }),
+    repository: async () => undefined,
     resolveDestinationKind: async () => 'folder',
     drain: async () => {},
     readStdin: async () => '',
@@ -56,7 +65,7 @@ describe('vinaya log emit — a declared event records (O1)', () => {
     expect(out.join('')).not.toContain('design')
   })
 
-  it('drains the sink before printing, so the write is guaranteed to have landed', async () => {
+  it('drains the run recorder before printing, so the write is guaranteed to have landed', async () => {
     let drained = false
     const { deps: d } = deps({
       drain: async () => {
@@ -166,58 +175,68 @@ describe('vinaya log emit — a usage error (O2)', () => {
   })
 })
 
-describe('vinaya log emit — a process outside Vinaya (O3)', () => {
-  /** A real sink writing to a fresh folder, with ONLY VINAYA_WORK_REF/VINAYA_FLOW
-   * set — no VINAYA_ROLE, no VINAYA_TASK — the exact environment O3 names. */
-  function externalProcessSink(): { dir: string; sink: ReturnType<typeof createLogSink> } {
-    const dir = mkdtempSync(join(tmpdir(), 'vinaya-log-emit-o3-'))
-    const sink = createLogSink({
-      resolveLogDestination: () => ({ kind: 'folder', folder: join(dir, 'outbox') }),
+describe('vinaya log emit — written through the Log SDK and sent (O3, O4)', () => {
+  /** A real run recorder over a fresh local copy, with the team's declarations in force and a sender that records what it is asked. */
+  function recorderOverFreshCopy() {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-log-emit-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const folder = join(dir, 'logs')
+    const sent: Array<{ folder: string; repository: string | undefined }> = []
+    const recorder = createRunRecorder({
+      runId: () => 'emit-test-run',
+      workRef: () => undefined,
+      repository: () => undefined,
+      place: (repository) => ({ folder, repository }),
+      processIdentity: () => undefined,
+      sender: () => ({
+        request: () => {},
+        remember: () => {},
+        drain: async () => {
+          sent.push({ folder, repository: 'atta-labs/vinaya' })
+        }
+      }),
       home: () => dir,
-      hostname: () => 'external-host',
-      cwd: () => dir,
-      now: () => new Date('2026-10-01T00:00:00.000Z'),
-      env: () => ({ VINAYA_WORK_REF: 'JIRA-4821', VINAYA_FLOW: 'acme-release-flow' }),
-      resolveRepo: () => Promise.resolve(null),
-      resolveBranchIssue: () => Promise.resolve(null),
-      vinayaVersion: () => '0.36.0',
-      stderr: () => {}
+      cwd: () => join(dir, 'repo'),
+      onError: () => {},
+      connect: (options) => connect({ ...options, destination: { folder, events: declarations } })
     })
-    return { dir, sink }
+    const stored = () => storedEvents(join(folder, 'atta-labs-vinaya'))
+    const real = (): LogEmitDeps => ({
+      ...deps().deps,
+      emit: (name, fields, repository) =>
+        emitCustomEvent(name, fields, {
+          declarations: () => declarations,
+          handle: (scope) => recorder.handle('emit-test-run', scope.repository, scope.workRef),
+          ...(repository === undefined ? {} : { repository }),
+          workRef: 'JIRA-4821'
+        }),
+      repository: async () => 'atta-labs/vinaya',
+      drain: () => recorder.drain()
+    })
+    return { sent, stored, real }
   }
 
-  function writtenLines(dir: string): Array<Record<string, unknown>> {
-    const folder = join(dir, 'outbox', 'unresolved')
-    if (!existsSync(folder)) return []
-    return readdirSync(folder).flatMap((file) =>
-      readFileSync(join(folder, file), 'utf8')
-        .trim()
-        .split('\n')
-        .filter((l) => l.length > 0)
-        .map((l) => JSON.parse(l) as Record<string, unknown>)
-    )
-  }
-
-  it("the recorded event's header carries the work reference and flow id from the environment alone", async () => {
-    const { dir, sink } = externalProcessSink()
-    const { deps: d } = deps({
-      emit: (name, fields) => emitCustomEvent(name, fields, { declarations: () => declarations, emit: sink.log }),
-      drain: () => sink.drain()
+  it('a declared event is one record named for the declaration, and the run is drained to the sender', async () => {
+    const { sent, stored, real } = recorderOverFreshCopy()
+    const out: string[] = []
+    const code = await logEmitCommand(['acme.review_started', '--json', JSON.stringify(valid)], {
+      ...real(),
+      stdout: (t) => out.push(t)
     })
-    const code = await logEmitCommand(['acme.review_started', '--json', JSON.stringify(valid)], d)
     expect(code).toBe(0)
+    expect(out.join('')).toContain('recorded acme.review_started')
+    expect(stored().map((e) => e.name)).toEqual(['acme.review_started'])
+    expect(sent).toHaveLength(1)
+  })
 
-    const lines = writtenLines(dir)
-    expect(lines).toHaveLength(1)
-    const line = lines[0] as {
-      meta: { work: { ref: string | null }; flow: { id: string | null }; schema: number }
-      subject: { role: string; issue: number | null }
-    }
-    expect(line.meta.schema).toBe(4)
-    expect(line.meta.work.ref).toBe('JIRA-4821')
-    expect(line.meta.flow.id).toBe('acme-release-flow')
-    // No Vinaya role or task was set — the header says so honestly.
-    expect(line.subject.role).toBe('unattributed')
-    expect(line.subject.issue).toBeNull()
+  it('a refused event is one command.completed refused, exits 1, and sends nothing', async () => {
+    const { sent, stored, real } = recorderOverFreshCopy()
+    const err: string[] = []
+    const code = await logEmitCommand(['acme.other', '--json', '{}'], { ...real(), stderr: (t) => err.push(t) })
+    expect(code).toBe(1)
+    expect(err.join('')).toContain('undeclared')
+    expect(stored().map((e) => e.name)).toEqual(['vinaya.command.completed'])
+    expect(stored()[0]?.attributes).toMatchObject({ 'vinaya.result': 'refused', 'error.type': 'undeclared' })
+    expect(sent).toHaveLength(0)
   })
 })
