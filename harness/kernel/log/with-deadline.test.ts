@@ -24,7 +24,13 @@ execFileSync('sleep', ['2'])
 console.log(await answer)
 `
     )
-    const built = await Bun.build({ entrypoints: [entry], target: 'node', format: 'esm', outdir: join(dir, 'out') })
+    const built = await Bun.build({
+      entrypoints: [entry],
+      target: 'node',
+      format: 'esm',
+      conditions: ['source'],
+      outdir: join(dir, 'out')
+    })
     expect(built.success).toBe(true)
     const r = spawnSyncBudgeted('node', [built.outputs[0]?.path as string], {
       encoding: 'utf8',

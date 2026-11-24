@@ -62,14 +62,14 @@ if (!external.includes('@attalabs/vinaya-log-sdk')) {
 }
 // The built CLI imports the Log SDK by name, and Node resolves that name to the package's built `dist/`, so the
 // package is built first: whatever runs the built CLI (the published install, CI, a test) finds it there.
-const sdkBuild = Bun.spawnSync(['bun', 'run', 'build'], {
-  cwd: join(pkgRoot, '..', '..', 'packages', 'log-sdk'),
-  stdout: 'inherit',
-  stderr: 'inherit'
-})
-if (sdkBuild.exitCode !== 0) {
-  console.error('build: the Log SDK build failed')
-  process.exit(1)
+// A built package is left as it is: its build empties `dist/`, which a build running beside this one may be loading.
+const sdkRoot = join(pkgRoot, '..', '..', 'packages', 'log-sdk')
+if (!existsSync(join(sdkRoot, 'dist', 'index.js'))) {
+  const sdkBuild = Bun.spawnSync(['bun', 'run', 'build'], { cwd: sdkRoot, stdout: 'inherit', stderr: 'inherit' })
+  if (sdkBuild.exitCode !== 0) {
+    console.error('build: the Log SDK build failed')
+    process.exit(1)
+  }
 }
 
 /** The bin contract every emitted entrypoint carries: a Node shebang, executable. Bun preserves the source file's own shebang, but normalize anyway so the artifact never depends on bundler behavior. */
