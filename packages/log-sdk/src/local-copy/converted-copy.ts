@@ -11,7 +11,8 @@ import {
   writeSync
 } from 'node:fs'
 import { join } from 'node:path'
-import { ATTRIBUTE_NAMES as A, SDK_VERSION } from '../contract/catalogue.js'
+import { ATTRIBUTE_NAMES as A } from '../contract/catalogue.js'
+import { SDK_VERSION } from '../contract/version.js'
 import type { ConvertedEarlierRecord, EarlierOpenStart } from '../contract/convert-live.js'
 import { spanIdFor } from '../contract/ids.js'
 import { MAX_COMPONENT_BYTES, repoSegment } from '../writer/settings.js'

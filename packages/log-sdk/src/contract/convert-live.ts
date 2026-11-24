@@ -2,9 +2,9 @@ import {
   ATTRIBUTE_NAMES as A,
   EARLIER_EVENT_PREFIX,
   EARLIER_WRITER_PREFIX,
-  GENAI_CONVENTIONS_VERSION,
-  SDK_VERSION
+  GENAI_CONVENTIONS_VERSION
 } from './catalogue.js'
+import { SDK_VERSION } from './version.js'
 import { type Fields, mapEarlierEvent } from './convert-map.js'
 import { spanIdFor, traceIdFor } from './ids.js'
 import { redact } from './redact.js'

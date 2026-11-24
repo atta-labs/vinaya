@@ -1,15 +1,16 @@
 import { readdir } from 'node:fs/promises'
 import {
+  agentSpanIdFor,
   ATTRIBUTE_NAMES as A,
+  createFolderSource,
+  createReader,
   EVENT_NAMES as E,
-  SPAN_NAMES as S
-} from '../../../../packages/log-sdk/src/contract/catalogue.js'
-import { spanIdFor } from '../../../../packages/log-sdk/src/contract/ids.js'
-import { agentSpanIdFor } from '../../../../packages/log-sdk/src/contract/convert-map.js'
-import { narrate } from '../../../../packages/log-sdk/src/narration/narrate.js'
-import { createFolderSource } from '../../../../packages/log-sdk/src/reader/folder-source.js'
-import type { OtelRecord } from '../../../../packages/log-sdk/src/reader/records.js'
-import { createReader, type ReaderUpdate } from '../../../../packages/log-sdk/src/reader/source.js'
+  narrate,
+  type OtelRecord,
+  type ReaderUpdate,
+  SPAN_NAMES as S,
+  spanIdFor
+} from '@attalabs/vinaya-log-sdk'
 import { type AgentLineMark, renderNarratedUpdate } from '../../../kernel/adapters/agents/agent-line.js'
 import type { ActionKind } from '../../../kernel/adapters/agents/claude-code/loop-narration-claude.js'
 import { lookupRole, registeredRoles } from '../../../kernel/log/roles.js'

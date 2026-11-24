@@ -23,7 +23,7 @@
 // reports where the event went.
 
 import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
-import { EMIT_USAGE, readFields } from '../../../../../packages/log-sdk/src/bin/args.js'
+import { EMIT_USAGE, readFields } from '@attalabs/vinaya-log-sdk'
 import { join } from 'node:path'
 import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
 import { loadConfig, loadTrustAnchorConfigAsync } from '../config/compose.js'
@@ -133,7 +133,7 @@ export function realLogEmitDeps(): LogEmitDeps {
 export async function logEmitCommand(args: string[], deps: LogEmitDeps = realLogEmitDeps()): Promise<number> {
   const parsed = await readFields(args, deps.readStdin)
   if (!parsed.ok) {
-    deps.stderr((parsed.message === undefined ? '' : 'vinaya log emit: ' + parsed.message + '\n') + EMIT_USAGE)
+    deps.stderr((parsed.message === undefined ? '' : `vinaya log emit: ${parsed.message}\n`) + EMIT_USAGE)
     return 2
   }
 

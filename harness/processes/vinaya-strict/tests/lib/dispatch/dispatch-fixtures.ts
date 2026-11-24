@@ -13,13 +13,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readdirSync } from 'node:fs'
 import { processLocalCopyPlace } from '../../../../../kernel/log/log-sink.js'
-import {
-  ATTRIBUTE_NAMES,
-  type OtelRecord,
-  readOtlpDocument,
-  SPAN_NAMES,
-  traceIdFor
-} from '../../../../../../packages/log-sdk/src/index.js'
+import { ATTRIBUTE_NAMES, type OtelRecord, readOtlpDocument, SPAN_NAMES, traceIdFor } from '@attalabs/vinaya-log-sdk'
 import {
   openOutputTee,
   timeoutWarningLeadMs,

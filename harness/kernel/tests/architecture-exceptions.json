@@ -260,11 +260,6 @@
     "owner": "@attalabs/harness"
   },
   {
-    "file": "harness/kernel/log/client/narration.ts",
-    "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
-    "owner": "@attalabs/harness"
-  },
-  {
     "file": "harness/kernel/log/log-sink.ts",
     "reason": "Kernel code that still names a role or the process; counted by the ratchet until its wording is generic.",
     "owner": "@attalabs/harness"

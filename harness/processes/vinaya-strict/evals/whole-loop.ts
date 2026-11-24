@@ -36,13 +36,7 @@
  * task run.
  */
 
-import {
-  ATTRIBUTE_NAMES,
-  EVENT_NAMES,
-  type OtelRecord,
-  readOtlpDocument,
-  SPAN_NAMES
-} from '../../../../packages/log-sdk/src/index.js'
+import { ATTRIBUTE_NAMES, EVENT_NAMES, type OtelRecord, readOtlpDocument, SPAN_NAMES } from '@attalabs/vinaya-log-sdk'
 import { PUBLISHED_MARKER_LINE } from '../tools/dev-review-policy/journal-reconstruction'
 import { COMMENT_MARKER_PREFIX_PATTERN, REGION_PREFIXES } from '../tools/legacy-markers'
 import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'

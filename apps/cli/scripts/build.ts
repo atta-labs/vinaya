@@ -55,6 +55,11 @@ const pkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf-8')) as 
 const external = Object.entries(pkg.dependencies ?? {})
   .filter(([, spec]) => !spec.startsWith('workspace:'))
   .map(([name]) => name)
+// The Log SDK is a real package, published with the CLI at its own version: it is a dependency, never bundled.
+if (!external.includes('@attalabs/vinaya-log-sdk')) {
+  console.error('build: @attalabs/vinaya-log-sdk must be a declared dependency, so it stays external')
+  process.exit(1)
+}
 
 /** The bin contract every emitted entrypoint carries: a Node shebang, executable. Bun preserves the source file's own shebang, but normalize anyway so the artifact never depends on bundler behavior. */
 function normalizeExecutable(outFile: string): void {

@@ -11,7 +11,7 @@ import {
   type ReadableSpan,
   SPAN_NAMES,
   type SpanParent
-} from '../../../packages/log-sdk/src/index.js'
+} from '@attalabs/vinaya-log-sdk'
 import type { AgentStep } from '../adapters/agents/agent-stream.js'
 import type { LocalCopyPlace, LocalCopySender } from './local-copy-writer.js'
 import { currentRunId, processLocalCopyPlace, processLocalCopySender, registerLogDrain } from './log-sink.js'

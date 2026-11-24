@@ -11,9 +11,10 @@
  * differs; `bun scripts/package-compat/facts.ts --write` records an intended one.
  */
 import { beforeAll, describe, expect, test } from 'bun:test'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { parse } from 'yaml'
 import { fixtureDir } from '../../harness/kernel/conformance/unit/test-temp-fixture.ts'
@@ -90,6 +91,57 @@ describe('every published package matches the snapshot from a scratch install ou
     for (const tarball of Object.values(run.tarballs)) expect(lock).toContain(tarball)
     expect(lock).not.toContain(REPO_ROOT)
     expect(run.problems).toEqual([])
+  })
+
+  test('the packed command line lists the Log SDK as a dependency at its own version, and the install resolved that package from its tarball', () => {
+    const cliManifest = JSON.parse(
+      readFileSync(join(run.installDir, 'node_modules/@attalabs/vinaya/package.json'), 'utf8')
+    ) as { version: string; dependencies?: Record<string, string> }
+    const sdkManifest = JSON.parse(
+      readFileSync(join(run.installDir, 'node_modules/@attalabs/vinaya-log-sdk/package.json'), 'utf8')
+    ) as { version: string }
+    expect(cliManifest.dependencies?.['@attalabs/vinaya-log-sdk']).toBe(cliManifest.version)
+    expect(sdkManifest.version).toBe(cliManifest.version)
+  })
+
+  test("the installed command line imports the Log SDK by name and holds none of the SDK's source", () => {
+    const dist = join(run.installDir, 'node_modules/@attalabs/vinaya/dist')
+    const files: string[] = []
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) walk(path)
+        else if (entry.name.endsWith('.js')) files.push(path)
+      }
+    }
+    walk(dist)
+    // Two strings only the SDK's source holds: its semantic-conventions version and the emit usage it prints.
+    const sdkOnly = ['semantic-conventions-genai@main-2026-11-18', 'Use vinaya-log emit <event> --run <id>']
+    const holding = files.filter((file) => sdkOnly.some((text) => readFileSync(file, 'utf8').includes(text)))
+    expect(holding.map((file) => file.slice(dist.length + 1))).toEqual([])
+    const importing = files.filter((file) =>
+      /from\s*["']@attalabs\/vinaya-log-sdk["']/.test(readFileSync(file, 'utf8'))
+    )
+    expect(importing.length).toBeGreaterThan(0)
+  })
+
+  test('from the packed install, vinaya version and vinaya-log-send --help exit 0, and vinaya-log-emit with no event exits 2 with its usage', () => {
+    const bin = (name: string, args: string[]) => {
+      const result = spawnSync(join(run.installDir, 'node_modules/.bin', name), args, {
+        cwd: run.installDir,
+        encoding: 'utf8',
+        env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: join(run.installDir, '.home'), TMPDIR: tmpdir() },
+        input: ''
+      })
+      return { status: result.status, out: `${result.stdout}${result.stderr}` }
+    }
+    const version = bin('vinaya', ['version'])
+    expect({ status: version.status, out: version.out.slice(0, 600) }).toMatchObject({ status: 0 })
+    const send = bin('vinaya-log-send', ['--help'])
+    expect({ status: send.status, out: send.out.slice(0, 600) }).toMatchObject({ status: 0 })
+    const emit = bin('vinaya-log-emit', [])
+    expect({ status: emit.status, out: emit.out.slice(0, 600) }).toMatchObject({ status: 2 })
+    expect(emit.out).toContain('Usage: vinaya-log-emit <event>')
   })
 
   test('every subpath each manifest exports was imported under Bun and typechecked', () => {

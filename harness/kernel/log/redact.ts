@@ -1,1 +1,1 @@
-export * from '../../../packages/log-sdk/src/contract/redact'
+export { redact } from '@attalabs/vinaya-log-sdk'

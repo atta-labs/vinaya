@@ -95,7 +95,7 @@ import {
 import type { TranscriptSummary } from '../../../../../kernel/adapters/agents/claude-code/transcript-summary'
 import type { Role, RoleAttemptOutcome } from '../../../../../kernel/log/schema'
 import { drainLogSpool } from '../../../../../kernel/log/log-sink.js'
-import type { LogHandle } from '../../../../../../packages/log-sdk/src/index.js'
+import type { LogHandle } from '@attalabs/vinaya-log-sdk'
 import { type AgentTurn, runRecorder } from '../../../../../kernel/log/run-recorder.js'
 import { createVinayaLogSink } from '../../../integration/log/log-sink-factory.js'
 // The command line installs the process's sink factory through the dispatch module it already loads.

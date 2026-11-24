@@ -1,7 +1,7 @@
 import { mkdtempSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { connect } from '../../../../packages/log-sdk/src/index.js'
+import { connect } from '@attalabs/vinaya-log-sdk'
 import { createRunRecorder, type RunRecorder } from '../../../kernel/log/run-recorder.js'
 
 /** A run's local copy as the tests read it: the spans and events the Log handle wrote, and a clock they move by hand. */

@@ -27,7 +27,47 @@ function narrated(name: Parameters<typeof buildExecution>[0]) {
   return all.map((record, index) => narrate(record, all.slice(0, index)))
 }
 
-const loop = { kind: 'dev_review_loop', loop_id: 'loop-x' }
+/** The header every stored record carries, which the Log SDK's line reader checks before it converts a record. */
+const stored = {
+  meta: {
+    schema: 1,
+    run_id: 'run-x',
+    repo: 'acme/widgets',
+    vinaya: '0.0.0',
+    doctrine: 'vinaya-strict@test',
+    host: 'cli',
+    machine: 'cafebabe',
+    ts: '2026-08-01T00:00:00.000Z',
+    seq: 1
+  },
+  subject: { issue: null, role: 'unattributed' },
+  payload: {}
+}
+const loop = { ...stored, kind: 'dev_review_loop', loop_id: 'loop-x' }
+
+/** The fields each loop event must carry to be a valid stored record; a test overrides the ones it is about. */
+const REQUIRED: Record<string, Record<string, unknown>> = {
+  gate_result_read: { round: 1, head: 'abc', green: true },
+  verdicts_read: { round: 1, head: 'abc', all_approve: false, blockers: 0 },
+  stop_condition_met: { round: 1, condition: 'green' },
+  paused: { round: 1, reason: 'principal_item' },
+  round_ended: {
+    round: 1,
+    base_head: 'abc',
+    head: 'abd',
+    files_changed: 0,
+    insertions: 0,
+    deletions: 0,
+    wall_ms: 0,
+    outcome: 'green'
+  },
+  conflict_reentry: { task: 1, pr: 1, attempt: 1, bound: 3 },
+  driver_exited: { task: 1, reason: 'finished', last_decision: 'none' },
+  resumed: { round: 1, by: 'principal' }
+}
+
+/** A loop event carrying every field its record requires. */
+const loopEvent = (event: string) => ({ ...loop, ...REQUIRED[event], event })
 
 describe('narrate — fixture executions, expected lines written by hand', () => {
   it('the three-round execution reads round by round', () => {
@@ -82,13 +122,12 @@ describe('narrate — fixture executions, expected lines written by hand', () =>
 
 describe('narrate — confidence at a round end', () => {
   const read = (extra: Record<string, unknown>) => ({
-    ...loop,
-    event: 'gate_result_read',
+    ...loopEvent('gate_result_read'),
     round: 2,
     green: true,
     ...extra
   })
-  const ended = { ...loop, event: 'round_ended', round: 2, wall_ms: 59_500, outcome: 'green' }
+  const ended = { ...loopEvent('round_ended'), round: 2, wall_ms: 59_500, outcome: 'green' }
 
   it('states the value as stated', () => {
     expect(narrate(ended, [read({ confidence_value: 64 })])?.text).toBe(
@@ -119,13 +158,14 @@ describe('narrate — confidence at a round end', () => {
   })
 
   it('never states an out-of-range value', () => {
-    expect(narrate(ended, [read({ confidence_value: 140 })])?.text).toContain('Confidence: —.')
+    // A gate read stating 140 is no valid stored record, so the round end has no read to take a number from.
+    expect(narrate(ended, [read({ confidence_value: 140 })])?.text).not.toContain('140')
   })
 })
 
 describe('narrate — who acts on a pause or stop', () => {
   const pause = (reason_code?: string, reason = 'principal_item') =>
-    narrate({ ...loop, event: 'paused', round: 1, reason, reason_code })
+    narrate({ ...loopEvent('paused'), round: 1, reason, reason_code })
 
   it('a reason a person must act on says so', () => {
     expect(pause('repeat_failure')).toEqual({
@@ -146,28 +186,19 @@ describe('narrate — who acts on a pause or stop', () => {
     expect(pause('unknown')).toEqual({ kind: 'paused', text: 'Paused: unknown.' })
   })
 
-  it('a code that is not a code is ignored', () => {
-    expect(pause('has spaces and /paths', 'refreeze_needed')).toEqual({
-      kind: 'paused',
-      text: 'Paused: refreeze_needed.'
-    })
-  })
-
-  it('a free-text reason that is not a code never reaches the line', () => {
-    expect(narrate({ ...loop, event: 'paused', round: 2, reason: '\u001b[31mred and /a/path' })).toEqual({
-      kind: 'paused',
-      text: 'Paused.'
-    })
+  it('a pause whose code is not a code, or whose reason is free text, is no stored record and has no line', () => {
+    expect(pause('has spaces and /paths', 'refreeze_needed')).toBeNull()
+    expect(narrate({ ...loopEvent('paused'), round: 2, reason: '\u001b[31mred and /a/path' })).toBeNull()
   })
 
   it('stop conditions read as who acts', () => {
-    const stop = (condition: unknown) => narrate({ ...loop, event: 'stop_condition_met', round: 3, condition })
+    const stop = (condition: unknown) => narrate({ ...loopEvent('stop_condition_met'), round: 3, condition })
     expect(stop('time_budget')).toEqual({
       kind: 'blocked',
       text: 'The loop stopped itself: the time budget was passed. A person has to act.'
     })
     expect(stop('green')?.kind).toBe('done')
-    expect(stop('from-the-future')).toEqual({ kind: 'information', text: 'Stopped: from-the-future.' })
+    expect(stop('from-the-future')).toBeNull()
     expect(stop(7)).toBeNull()
   })
 })
@@ -176,8 +207,7 @@ describe('narrate — other records', () => {
   it('a verdict names each reviewer, its outcome and its blockers', () => {
     expect(
       narrate({
-        ...loop,
-        event: 'verdicts_read',
+        ...loopEvent('verdicts_read'),
         round: 2,
         all_approve: false,
         blockers: 1,
@@ -193,14 +223,14 @@ describe('narrate — other records', () => {
   })
 
   it('a failed gate reads as failed', () => {
-    expect(narrate({ ...loop, event: 'gate_result_read', round: 4, green: false })).toEqual({
+    expect(narrate({ ...loopEvent('gate_result_read'), round: 4, green: false })).toEqual({
       kind: 'failed',
       text: 'Round 4: the checks failed.'
     })
   })
 
   it('a driver exit reads by how it ended', () => {
-    const exit = (extra: Record<string, unknown>) => narrate({ ...loop, event: 'driver_exited', ...extra })
+    const exit = (extra: Record<string, unknown>) => narrate({ ...loopEvent('driver_exited'), ...extra })
     expect(exit({ reason: 'finished', exit_code: 0 })).toEqual({
       kind: 'done',
       text: 'The driver finished (exit code 0).'
@@ -215,13 +245,11 @@ describe('narrate — other records', () => {
   })
 
   it('a conflict re-entry of a published pull request names the pull request and how many of the bound it spent', () => {
-    expect(narrate({ ...loop, event: 'conflict_reentry', task: 7, pr: 70, attempt: 1, bound: 3 })).toEqual({
+    expect(narrate({ ...loopEvent('conflict_reentry'), task: 7, pr: 70, attempt: 1, bound: 3 })).toEqual({
       kind: 'working',
       text: 'Pull request #70 fell into conflict with the default branch after it was published: the loop re-entered by itself to send it back to the Developer (re-entry 1 of 3).'
     })
-    expect(narrate({ ...loop, event: 'conflict_reentry', pr: 'x' })?.text).toMatch(
-      /^The pull request fell into conflict/
-    )
+    expect(narrate({ ...loopEvent('conflict_reentry'), pr: 'x' })).toBeNull()
   })
 
   it('no line carries a symbol other than the dash, a time or a path', () => {
@@ -241,8 +269,8 @@ describe('narrate — other records', () => {
 describe('narrate — records it has no wording for, and malformed ones', () => {
   it('returns nothing for a record kind or event it does not know', () => {
     expect(narrate({ kind: 'telepathy', event: 'sent' })).toBeNull()
-    expect(narrate({ ...loop, event: 'a_future_event' })).toBeNull()
-    expect(narrate({ ...loop, event: 'resumed', round: 1, by: 'principal' })).toBeNull()
+    expect(narrate({ ...loopEvent('a_future_event') })).toBeNull()
+    expect(narrate({ ...loopEvent('resumed'), round: 1, by: 'principal' })).toBeNull()
     expect(narrate({ kind: 'dispatch', event: 'dispatch_failed' })).toBeNull()
   })
 
@@ -255,28 +283,27 @@ describe('narrate — records it has no wording for, and malformed ones', () => 
       [],
       {},
       { kind: 'dev_review_loop' },
-      { ...loop, event: 'round_ended', round: 'two', wall_ms: 'long', outcome: {} },
-      { ...loop, event: 'verdicts_read', reviewers: [null, 4, { role: 9 }], blockers: 'many' },
+      { ...loopEvent('round_ended'), round: 'two', wall_ms: 'long', outcome: {} },
+      { ...loopEvent('verdicts_read'), reviewers: [null, 4, { role: 9 }], blockers: 'many' },
       {
-        ...loop,
-        event: 'paused',
+        ...loopEvent('paused'),
         reason_code: {
           toString: () => {
             throw new Error('boom')
           }
         }
       },
-      { ...loop, event: 'driver_exited', reason: 'error', error_class: 12, exit_code: 'x' },
+      { ...loopEvent('driver_exited'), reason: 'error', error_class: 12, exit_code: 'x' },
       { kind: 'dispatch', event: 'dispatched', target_role: { x: 1 }, round: 'one' },
       { kind: 'dispatch', event: 'outcome_received', outcome: null }
     ]
     for (const record of hostile) {
       expect(() => narrate(record)).not.toThrow()
-      expect(() => narrate({ ...loop, event: 'round_ended', round: 1 }, [record, null, 3] as unknown[])).not.toThrow()
+      expect(() => narrate({ ...loopEvent('round_ended'), round: 1 }, [record, null, 3] as unknown[])).not.toThrow()
     }
-    expect(() => narrate({ ...loop, event: 'round_ended', round: 1 }, 'nope' as unknown as unknown[])).not.toThrow()
+    expect(() => narrate({ ...loopEvent('round_ended'), round: 1 }, 'nope' as unknown as unknown[])).not.toThrow()
     expect(narrate(null)).toBeNull()
-    expect(narrate({ ...loop, event: 'gate_result_read', round: 1, green: 'yes' })).toBeNull()
+    expect(narrate({ ...loopEvent('gate_result_read'), round: 1, green: 'yes' })).toBeNull()
   })
 })
 
@@ -291,7 +318,7 @@ describe('reasonWaitsOn — the same table the lines read', () => {
 
   it('agrees with the line a pause reads as', () => {
     for (const code of ['max_rounds', 'stale_driver', 'ruling_posted', 'no_push', 'brand_new_reason']) {
-      const line = narrate({ ...loop, event: 'paused', round: 1, reason: 'escalation', reason_code: code })
+      const line = narrate({ ...loopEvent('paused'), round: 1, reason: 'escalation', reason_code: code })
       const waitsOn = reasonWaitsOn(code)
       expect(line?.kind).toBe(waitsOn === 'person' ? 'blocked' : 'paused')
       if (waitsOn === null) expect(line?.text).toBe(`Paused: ${code}.`)

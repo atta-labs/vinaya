@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { narrate } from '../../../../../../packages/log-sdk/src/index.js'
+import { narrate } from '@attalabs/vinaya-log-sdk'
 import { narrateAgentRecord } from '../../../../../kernel/log/client/agent-record-line'
 import type { NarrationKind } from '../../../../../kernel/log/client/narration'
 import {

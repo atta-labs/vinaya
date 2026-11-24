@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { connect } from '../../../../packages/log-sdk/src/index.js'
+import { connect } from '@attalabs/vinaya-log-sdk'
 import { dirname, join, resolve } from 'node:path'
 import {
   checkIssueObjectives,

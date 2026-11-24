@@ -59,6 +59,24 @@ Reuse the handle for the life of a run. Call `flush()` to flush processors durin
 - `logs.events` declares custom event names and their fields. Supply declarations inline under `destination.events` or in the config file.
 - Set `"logs": false` or pass `destination: false` to turn recording off. The handle still exposes the same methods.
 
+### Read the settings yourself
+
+The same settings reader `connect()` and the command line use is on the public entry, so a loop that sends or follows the Log reads settings the way the SDK does:
+
+- `resolveSettings({ repoRoot, repository?, vinayaHome?, passed? })` reads `log.config.json` or `vinaya.config.json` under `repoRoot`, applies the settings passed in, and returns `{ ok: true, settings, declarations }` or `{ ok: false, error }`.
+- `repoSegment(repository)` returns the `<owner>-<repo>` folder name the Log folder and the local copy key by, or `unresolved` when the repository is unknown or unsafe as a folder name.
+- `defaultRuntimeDir(repository, vinayaHome?)` returns the runtime directory used when none is set: `<vinayaHome>/runtime/<owner>-<repo>`, with `vinayaHome` defaulting to `~/.vinaya`.
+
+The types `PassedSettings`, `ResolvedSettings` and `SettingsResult` describe their arguments and results.
+
+### Read the fields of an emit command
+
+`readFields(args, readStdin)` reads the event name and the JSON object of a `vinaya-log emit`-style command from its arguments (`<event> --json '<object>'`) or, when `--json` is absent, from standard input, and returns `{ ok: true, name, fields }` or `{ ok: false }` with a `message` when the JSON was unreadable or not an object. `EMIT_USAGE` is the usage text such a command prints when the event is missing.
+
+### The version records carry
+
+Every record a handle writes carries the `version` field of this package's own `package.json`, as `vinaya.sdk.version` on its resource and as its instrumentation scope's version. The version is read from the package's manifest next to the module, so it is the same from the source and from the built package, and never a constant written into the code. The command-line package `@attalabs/vinaya` depends on this package at the same version.
+
 ## Record by subject
 
 | Subject | Methods |

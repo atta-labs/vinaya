@@ -7,9 +7,6 @@
 /** The version of the GenAI semantic conventions these names follow. */
 export const GENAI_CONVENTIONS_VERSION = 'semantic-conventions-genai@main-2026-11-18'
 
-/** The SDK's own version, recorded on every handle's resource. */
-export const SDK_VERSION = '0.0.0'
-
 /**
  * The base of every span name. A span's full name adds the part the product
  * table fills in after a space: `vinaya.round 3`, `invoke_agent reviewer`,

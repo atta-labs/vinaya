@@ -15,9 +15,9 @@ import {
   ATTRIBUTE_NAMES,
   GENAI_CONVENTIONS_VERSION,
   type RecordProvenance,
-  type RecordTrust,
-  SDK_VERSION
+  type RecordTrust
 } from '../contract/catalogue.js'
+import { SDK_VERSION } from '../contract/version.js'
 import type { CustomEventDeclarations } from '../contract/custom.js'
 import { createRunIdGenerator, type SpanParent, traceIdFor } from '../contract/ids.js'
 import { copyFilePrefix, copyFolder, createFileExporters } from '../local-copy/file-exporters.js'

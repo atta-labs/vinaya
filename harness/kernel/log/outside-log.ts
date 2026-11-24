@@ -1,4 +1,4 @@
-import type { LogHandle } from '../../../packages/log-sdk/src/index.js'
+import type { LogHandle } from '@attalabs/vinaya-log-sdk'
 import { runRecorder } from './run-recorder.js'
 
 /** One outside action, as the Log records it: the action, its target, and success, failure or uncertain. */

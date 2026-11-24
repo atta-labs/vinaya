@@ -203,6 +203,8 @@ The Durable Object class is declared with `new_sqlite_classes` in its migration:
 
 Setting `logs.url` moves local runs off the default local folder as well: a Vinaya installation delivers to exactly one destination.
 
+**How the Worker reaches the store and the redaction.** The kernel's Log modules (`harness/kernel/log/store.ts`, `redact.ts`, `schema.ts`) re-export the Log SDK package, `@attalabs/vinaya-log-sdk`, by its name. The Worker needs only the stored-event contract (the store's `classifyStoredLine` and `recordIdentity`, `redact`, the schemas), and the package's full entry also holds the writer and the sender, which use Node modules the Worker runtime does not provide. So the Worker's bundle (`wrangler.jsonc` `alias`) and the test pool (`vitest.config.ts`) resolve the package name to `src/log-sdk-contract.ts`, which re-exports those contract modules alone. No route, sequence number or token depends on this.
+
 ## 7. Tests run the real runtime
 
 The suite runs under Cloudflare's Vitest pool for Workers: every test drives the actual Worker in `workerd`, with the actual SQLite-backed Durable Object behind it, configured from this package's own `wrangler.jsonc`. There is no hand-written stand-in for the runtime, so a behaviour the tests prove is one a deployed copy has. The two secrets a deployment holds as Worker secrets are supplied to the pool as bindings, which is the one thing a test environment cannot read from a deployment.
