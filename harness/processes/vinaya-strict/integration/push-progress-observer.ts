@@ -9,10 +9,22 @@
  * Arguments: `<progress dir> <driver log path> <driver pid>`, all from the driver that spawned it. It only reads the
  * directory and only appends to the log; it never decides anything.
  */
-import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process.js'
-import { vinayaProcessIntegration } from './process/process-integration.js'
-import { appendLoopLogLine } from '../../../kernel/log/client/loop-log.js'
-import { ProgressReader } from '../../../kernel/gates/ring0-hooks/pre-push/push-progress.js'
+// A TERM that arrives while the heavier modules below are still loading is held until they are, so the last read is
+// never lost to a slow start.
+let terminated = false
+let finishNow: (() => void) | null = null
+const onSignal = (): void => {
+  terminated = true
+  finishNow?.()
+}
+process.on('SIGTERM', onSignal)
+process.on('SIGINT', onSignal)
+process.on('SIGHUP', onSignal)
+
+const { installProcess } = await import('../../../kernel/dev-process-socket/contract/install-process.js')
+const { vinayaProcessIntegration } = await import('./process/process-integration.js')
+const { appendLoopLogLine } = await import('../../../kernel/log/client/loop-log-append.js')
+const { ProgressReader } = await import('../../../kernel/gates/ring0-hooks/pre-push/push-progress.js')
 
 // The composition root: the driver starts this program on its own, and the loop log and run paths it reaches read
 // configuration only through the provider this installs.
@@ -55,9 +67,8 @@ const parentAlive = (): boolean => {
   }
 }
 
-process.on('SIGTERM', finish)
-process.on('SIGINT', finish)
-process.on('SIGHUP', finish)
+finishNow = finish
+if (terminated) finish()
 
 function poll(): void {
   if (stopping) return

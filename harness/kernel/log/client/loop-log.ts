@@ -18,22 +18,11 @@
  * restart) still reads as one continuous, delineated narration.
  */
 
-import {
-  closeSync,
-  constants as fsConstants,
-  existsSync,
-  fstatSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readSync,
-  statSync,
-  writeSync
-} from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { redact } from '../redact'
-import { type NarrationKind, narrate } from './narration'
+import { appendLoopLogLine, LOOP_LOG_MAX_BYTES } from './loop-log-append.js'
+import type { NarrationKind } from './narration'
 import { homedir } from 'node:os'
-import { dirname } from 'node:path'
 import { runPath, runtimeDirForThisRepo } from '../../run-paths.js'
 import {
   type AgentLineMark,
@@ -64,38 +53,7 @@ export function loopLogPathFor(_repo: LoopLogRepo, issue: number, root: string =
   return runPath(root, issue, { area: 'output', file: 'driver.log' })
 }
 
-/** Matches `dispatch.ts`'s own `openOutputTee` cap — past this, further lines are silently dropped rather than growing the file unbounded. Narration, not evidence: losing the tail of a very long run is an acceptable cost for never blocking or crashing the driver over disk growth. */
-export const LOOP_LOG_MAX_BYTES = 8 * 1024 * 1024
-
-/**
- * Appends one line (a trailing `\n` is added) to `path`, creating the file
- * and its parent directory as needed. Never throws — a narration write must
- * never be able to break the driver it is narrating, the same posture
- * `log-sink.ts`'s `appendLine` and `dispatch.ts`'s `openOutputTee` both
- * take. `O_NOFOLLOW` refuses to follow a symlink at `path` (the same
- * traversal/symlink hardening every other append-to-a-forge-adjacent-path
- * primitive in this codebase applies).
- */
-export function appendLoopLogLine(path: string, line: string): void {
-  try {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-    const fd = openSync(
-      path,
-      fsConstants.O_WRONLY | fsConstants.O_APPEND | fsConstants.O_CREAT | fsConstants.O_NOFOLLOW,
-      0o600
-    )
-    try {
-      const stat = fstatSync(fd)
-      if (stat.isFile() && stat.size < LOOP_LOG_MAX_BYTES) {
-        writeSync(fd, `${line}\n`)
-      }
-    } finally {
-      closeSync(fd)
-    }
-  } catch {
-    // Best-effort — see module doc comment.
-  }
-}
+export { appendLoopLogLine, LOOP_LOG_MAX_BYTES }
 
 /**
  * One agent record into the driver log: its primary line, then each detail as its own `·` record. `meta` adds, after
@@ -165,26 +123,6 @@ export function appendDriverLine(path: string, words: string, mark: AgentLineMar
   const text = redact(words, homedir())
   appendLoopLogLine(path, formatAgentLine('dev-review-loop', text, { log: true, unicode: false, mark }))
   console.error(formatAgentLine('dev-review-loop', text, { mark, unicode: Boolean(process.stderr.isTTY) }))
-}
-
-/**
- * The plain line for one Log event this driver just wrote — the shared
- * phrase function's words, so a live screen reads the same sentences. A
- * pause or stop that needs a person also says who acts and that the run
- * continues through the Operator's `task_resume`, for this task and the round
- * it paused in; it never prints a command. A record with no wording writes
- * nothing.
- */
-export function narrateDriverEvent(path: string, event: unknown, earlier: readonly unknown[], task: number): void {
-  const line = narrate(event, earlier)
-  if (!line) return
-  const fields = event as { event?: unknown; round?: unknown }
-  const needsPerson = line.kind === 'blocked' && (fields.event === 'paused' || fields.event === 'stop_condition_met')
-  const pause = typeof fields.round === 'number' ? `the pause at round ${fields.round}` : 'this pause'
-  const words = needsPerson
-    ? `${line.text} The Operator's task_resume for task ${task} continues this run, bound to ${pause}, once the person has decided or repaired it.`
-    : line.text
-  appendDriverLine(path, words, marksByKind[line.kind])
 }
 
 export type FollowLoopLogDeps = {

@@ -7,7 +7,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loopLogPathFor, narrateDriverEvent } from '../../../kernel/log/client/loop-log'
+import { loopLogPathFor } from '../../../kernel/log/client/loop-log'
+import { narrateDriverEvent } from '../../../kernel/log/client/agent-record-line'
 import {
   cleanupWorlds,
   makeInProcessDeps,

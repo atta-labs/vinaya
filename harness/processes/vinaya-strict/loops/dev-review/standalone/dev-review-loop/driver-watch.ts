@@ -46,7 +46,7 @@ import {
   writeRunLifecycleEvent
 } from './driver-lifecycle.js'
 import { randomUUID } from 'node:crypto'
-import { narrateDriverEvent } from '../../../../../../kernel/log/client/loop-log.js'
+import { narrateDriverEvent } from '../../../../../../kernel/log/client/agent-record-line.js'
 import { conflictReentryBoundDetail } from './gate-reading.js'
 import { AGENT_VENDOR_NAMES } from '../../dispatch/dispatch.js'
 

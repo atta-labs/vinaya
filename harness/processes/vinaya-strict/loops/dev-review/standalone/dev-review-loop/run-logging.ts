@@ -3,7 +3,7 @@ import type { DevReviewLoopEventInput } from '../../../../tools/dev-review-polic
 import { assertValidLoopEvent } from './git-defaults.js'
 import { sizeOfSafe } from './round-assess.js'
 import { waitForOwnLoopLine } from './round-assess.js'
-import { narrateDriverEvent } from '../../../../../../kernel/log/client/loop-log.js'
+import { narrateDriverEvent } from '../../../../../../kernel/log/client/agent-record-line.js'
 import { drainLogSink } from '../../../../../../kernel/log/log-sink.js'
 
 export function announcePr(c: LoopRunContext): void {
