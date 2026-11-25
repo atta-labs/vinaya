@@ -46,13 +46,14 @@ You turn an intent and a slice of work into a whole tranche — not one task, an
 
 **A task is planned only when the brief renders** — `brief_render` passes — for every Issue you cut or edit.
 
-**Your tools are your way of writing** — the Planner's tool server (`vinaya-planner-tools`, the seat generated into `.mcp.json`) serves exactly six, and a task Issue is written, checked and rendered through them, not by hand-composing a command:
+**Your tools are your way of writing** — the Planner's tool server (`vinaya-planner-tools`, the seat generated into `.mcp.json`) serves the tools listed here and no others, and a task Issue is written, checked and rendered through them, not by hand-composing a command:
 
 - `task_issue_create` writes a task Issue; `task_issue_edit` edits one.
 - `task_issue_surface` reports what a draft's Boundary pins force on its Surface, and writes nothing.
 - `task_issue_validate` dry-runs the Issue write gate for a create or an edit — the same gates, nothing written. Run it on a draft before you write.
 - `task_objectives_edit` adds, drops or replaces one objective.
 - `brief_render` renders a task's brief.
+- `plan_draft_submit` stores the whole plan as one draft on this machine, replacing the tranche's earlier draft, and returns the one fingerprint covering it; `plan_draft_read` reads it back. Neither writes an Issue or touches the repository.
 
 A refusal comes back as a `validation` error: its `message` is the first finding, its `detail` the JSON text of every finding as `{check, message, recovery}` — read all of them, each names its check and the fix. Use the role's tool server for these operations.
 

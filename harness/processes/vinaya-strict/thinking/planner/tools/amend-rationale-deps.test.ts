@@ -126,3 +126,11 @@ describe('amendRationaleDeps — invariants', () => {
     ).toThrow(/no "\*\*Dependency rationale\*\*" section/)
   })
 })
+
+describe("amendRationaleDeps — a draft's task numbers", () => {
+  it('keeps bare task numbers and #n apart through an amendment', () => {
+    const body = '**Dependency rationale** — `Depends-on: 1` `Conflicts-with: —`\n\n**Next** — x'
+    const out = amendRationaleDeps(body, { dependsOn: ['1', '2', '#2291'], note: 'Added.', date: DATE })
+    expect(parseRationaleDeps(out)).toEqual({ dependsOn: ['1', '2', '#2291'], conflictsWith: [] })
+  })
+})

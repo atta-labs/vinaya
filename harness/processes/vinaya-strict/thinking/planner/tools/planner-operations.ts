@@ -6,6 +6,9 @@
  * operation (however deep) is captured as a finding, not an exit.
  */
 
+import { runtimeDirForThisRepo } from '../../../../../kernel/run-paths'
+import { draftFingerprint, type PlanDraft, parsePlanDraft } from '../../../tools/plan-draft/draft'
+import { readPlanDraft, writePlanDraft } from '../../../tools/plan-draft/store'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -820,4 +823,37 @@ async function editObjectivesOrRefuse(args: string[], io: PlannerIo, deps: Objec
   const url = deps.postComment('issue', issueRef, marker, commentBody)
 
   return { ok: true, version: newVersion, url, supersedeUrl }
+}
+
+// --- the plan draft --------------------------------------------------------------
+
+/** What storing a draft returns: the one fingerprint covering all of it, or why it was refused. */
+export type DraftSubmitOutcome =
+  | { ok: true; tranche: string; fingerprint: string; tasks: number }
+  | { ok: false; errors: string[] }
+
+/** What reading a draft back returns. */
+export type DraftReadOutcome = { ok: true; draft: PlanDraft; fingerprint: string } | { ok: false; message: string }
+
+/** Validates `input` as a whole draft and stores it on this machine, replacing any earlier draft of the same tranche. */
+export function submitPlanDraft(input: unknown, runtimeDir: string = runtimeDirForThisRepo()): DraftSubmitOutcome {
+  const parsed = parsePlanDraft(input)
+  if (!parsed.ok) return { ok: false, errors: parsed.errors }
+  writePlanDraft(runtimeDir, parsed.draft)
+  return {
+    ok: true,
+    tranche: parsed.draft.tranche,
+    fingerprint: draftFingerprint(parsed.draft),
+    tasks: parsed.draft.tasks.length
+  }
+}
+
+/** The stored draft of `tranche`, with its fingerprint. */
+export function readStoredPlanDraft(tranche: string, runtimeDir: string = runtimeDirForThisRepo()): DraftReadOutcome {
+  if (!/^[a-z0-9][a-z0-9-]*$/i.test(tranche)) {
+    return { ok: false, message: `"${tranche}" is not a tranche slug (letters, digits and hyphens)` }
+  }
+  const draft = readPlanDraft(runtimeDir, tranche)
+  if (draft === null) return { ok: false, message: `no draft is stored for tranche "${tranche}" on this machine` }
+  return { ok: true, draft, fingerprint: draftFingerprint(draft) }
 }
