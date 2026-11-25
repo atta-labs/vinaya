@@ -11,6 +11,7 @@ import {
   SPAN_NAMES as S,
   spanIdFor
 } from '@attalabs/vinaya-log-sdk'
+import { isProgressLine } from '../../../kernel/gates/ring0-hooks/pre-push/push-progress.js'
 import { type AgentLineMark, renderNarratedUpdate } from '../../../kernel/adapters/agents/agent-line.js'
 import type { ActionKind } from '../../../kernel/adapters/agents/claude-code/loop-narration-claude.js'
 import { lookupRole, registeredRoles } from '../../../kernel/log/roles.js'
@@ -446,6 +447,17 @@ export function createRecordFollow(options: FollowViewOptions) {
         )
       )
       lines.unshift(...attachDetails(rawDetails, steps, through))
+      // The push progress reader writes to the driver log only: print those lines once, in time order.
+      const progress: DriverLogLine[] = []
+      for (const text of rawDetails) {
+        const line = parseDriverLogLine(text)
+        if (line.kind === 'runner' && line.at > through && isProgressLine(line.text)) progress.push(line)
+      }
+      if (progress.length > 0) {
+        const trailing = lines.filter((line) => line.kind === 'step-detail')
+        const timed = lines.filter((line) => line.kind !== 'step-detail')
+        lines.splice(0, lines.length, ...trailing, ...inTimeOrder(timed, progress))
+      }
       return renderer.render(lines.map(escapeRecordLine), now, backlog)
     },
     tick: renderer.tick
