@@ -7,6 +7,13 @@ import {
   appendProgressRecord,
   BunProgressParser,
   checkLine,
+  ciJobLine,
+  ciStateLine,
+  ciSummaryLine,
+  commandLine,
+  commandsStartLine,
+  isProgressLine,
+  PROGRESS_LINE_PREFIXES,
   plainText,
   containedProgressDir,
   copyCaptureTail,
@@ -146,6 +153,31 @@ describe('the wording', () => {
     tally.add(pass)
     expect(testFileLine(pass, tally.position)).toBe('test progress: 1 tests/a.test.ts ✓, 1.5 s')
     expect(testSummaryLine(tally)).toBe('test progress: 1 files done, 0 failing, 1.5 s per file')
+  })
+
+  it('each formatter line starts with a prefix in the exported list', () => {
+    const tally = new TestRunTally(2)
+    tally.add(pass)
+    const lines = [
+      checkLine('lint', 'pass', 10),
+      testFileLine(pass, tally.position),
+      testFileLine({ ...pass, outcome: 'interrupted' }, null),
+      testSummaryLine(tally),
+      commandsStartLine(2),
+      commandLine('bun test', 'pass', 10),
+      ciJobLine({ name: 'build', ok: true, ms: 5 }),
+      ciSummaryLine({ done: 1, total: 2, failed: 0, elapsedMs: 10 }),
+      ciStateLine({ kind: 'first-red', job: 'build' }),
+      ciStateLine({ kind: 'queued-without-runner', job: 'build', minutes: 3 }),
+      ciStateLine({ kind: 'infrastructure-pause', detail: 'x' }),
+      ciStateLine({ kind: 'poll-budget', detail: 'x' }),
+      ciStateLine({ kind: 'execution-ceiling', detail: 'x' })
+    ]
+    for (const line of lines) {
+      expect(PROGRESS_LINE_PREFIXES.some((prefix) => line.startsWith(prefix))).toBe(true)
+      expect(isProgressLine(line)).toBe(true)
+    }
+    expect(isProgressLine('driver exited with code 0')).toBe(false)
   })
 })
 

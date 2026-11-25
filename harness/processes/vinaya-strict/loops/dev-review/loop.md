@@ -700,6 +700,10 @@ An action's start and its finish are paired by its call identifier, never by its
 In the driver-log fallback, an unrecognised loop or runner line is printed with its time and the loop's grey, its words as written.
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tools/follow-view.ts contains:return [loopLine(line.at, line.text)] -->
 
+When the view narrates from the local copy of the Log, it prints the push progress reader's lines too, because they are written to the driver log only: the `push progress:`, `test progress:`, `ready push:`, `command progress:` and `CI progress:` lines, each once, in time order with the narrated records, in the loop's grey. They are selected by the prefix list kept beside the formatters that write them, so no other runner line (the driver's exit, for one) prints twice. `--quiet` hides detail lines only, never these lines.
+<!-- VINAYA:CLAIM: harness/processes/vinaya-strict/tools/follow-records.ts contains:line.kind === 'runner' && line.at > through && isProgressLine(line.text) -->
+<!-- VINAYA:CLAIM: harness/kernel/gates/ring0-hooks/pre-push/push-progress.ts contains:export const PROGRESS_LINE_PREFIXES: readonly string[] = [ -->
+
 ### Stage-change lines
 
 <!-- VINAYA:CLAIM: harness/processes/vinaya-strict/bin/run-engine.ts contains:record?.(change) -->
