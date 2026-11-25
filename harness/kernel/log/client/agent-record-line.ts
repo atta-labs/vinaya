@@ -4,11 +4,7 @@
  * the SDK there slows the observer's start-up.
  */
 
-import {
-  type NarratableRecord,
-  narrate as narrateRecord,
-  type SeatNames
-} from '../../../../packages/log-sdk/src/index.js'
+import { type NarratableRecord, narrate as narrateRecord, type SeatNames } from '@attalabs/vinaya-log-sdk'
 import { appendDriverLine, marksByKind } from './loop-log.js'
 
 /**

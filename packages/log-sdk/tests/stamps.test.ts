@@ -1,5 +1,59 @@
 import { expect, test } from 'bun:test'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { harness } from './helpers.js'
+
+const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
+
+test("every record carries the package's own version, as its resource's SDK version and its scope's version", () => {
+  const h = harness()
+  h.handle.run.started()
+  h.handle.round.started({ number: 1 })
+  h.handle.round.ended()
+  h.handle.run.ended()
+  const spans = h.spans.getFinishedSpans()
+  const events = h.logs.getFinishedLogRecords()
+  expect(spans.length).toBeGreaterThan(0)
+  expect(events.length).toBeGreaterThan(0)
+  for (const span of spans) {
+    expect(span.resource.attributes['vinaya.sdk.version']).toBe(manifest.version)
+    expect(span.instrumentationScope.version).toBe(manifest.version)
+  }
+  for (const event of events) {
+    expect(event.resource.attributes['vinaya.sdk.version']).toBe(manifest.version)
+    expect(event.instrumentationScope.version).toBe(manifest.version)
+  }
+})
+
+test('the built package reads its version from the manifest beside its dist folder, not from a constant', () => {
+  const root = mkdtempSync(join(tmpdir(), 'log-sdk-built-version-'))
+  try {
+    const out = join(root, 'dist')
+    const packageRoot = join(import.meta.dir, '..')
+    const build = Bun.spawnSync(['bunx', 'tsc', '-p', 'tsconfig.build.json', '--outDir', out], {
+      cwd: packageRoot,
+      stderr: 'pipe',
+      stdout: 'pipe'
+    })
+    expect(build.stdout.toString() + build.stderr.toString()).toBe('')
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'copy', type: 'module', version: '7.8.9-built' }))
+    const built = join(out, 'contract', 'version.js')
+    const read = Bun.spawnSync(
+      [
+        'node',
+        '--input-type=module',
+        '-e',
+        `import { SDK_VERSION } from ${JSON.stringify(built)}; process.stdout.write(SDK_VERSION)`
+      ],
+      { stderr: 'pipe', stdout: 'pipe' }
+    )
+    expect(read.stderr.toString()).toBe('')
+    expect(read.stdout.toString()).toBe('7.8.9-built')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 120_000)
 
 function drive(h: ReturnType<typeof harness>) {
   h.handle.run.started()

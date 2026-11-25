@@ -46,7 +46,7 @@ import {
   reconcileGhComment
 } from '../../../../tools/task-contract/forge/forge-write.js'
 import { writePersonAnswered, writePersonAsked } from '../../../../../../kernel/log/outside-log.js'
-import { spanIdFor } from '../../../../../../../packages/log-sdk/src/index.js'
+import { spanIdFor } from '@attalabs/vinaya-log-sdk'
 import {
   isRateLimitPauseDetail,
   isUsageLimitPauseDetail,

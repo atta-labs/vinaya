@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { traceIdFor } from '../../../packages/log-sdk/src/index.js'
+import { traceIdFor } from '@attalabs/vinaya-log-sdk'
 import { createRunRecorder } from './run-recorder.js'
 
 const RUN = 'run-recorder'

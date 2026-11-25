@@ -7,7 +7,7 @@ import type { CustomEventDeclarations } from '../../../../kernel/log/custom'
 import { emitCustomEvent } from '../../../../kernel/log/client/log-custom.js'
 import { createLocalCopySender } from '../../../../kernel/log/local-copy-writer.js'
 import { createRunRecorder } from '../../../../kernel/log/run-recorder.js'
-import { connect } from '../../../../../packages/log-sdk/src/index.js'
+import { connect } from '@attalabs/vinaya-log-sdk'
 import { type LogEmitDeps, logEmitCommand } from './log-emit.js'
 
 // The command is proved against injected seams — never a real destination —

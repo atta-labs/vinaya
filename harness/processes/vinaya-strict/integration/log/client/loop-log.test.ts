@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { narrate } from '../../../../../../packages/log-sdk/src/index.js'
+import { narrate } from '@attalabs/vinaya-log-sdk'
 import { narrateAgentRecord } from '../../../../../kernel/log/client/agent-record-line'
 import type { NarrationKind } from '../../../../../kernel/log/client/narration'
 import {
@@ -113,12 +113,12 @@ describe('the driver-log module and the Log SDK', () => {
     expect(source).not.toContain('log-sdk')
   })
 
-  it('names the Log SDK index in no file of the client directory but the agent-record module', () => {
+  it('names the Log SDK in no file of the client directory but the agent-record and narration modules', () => {
     const clientDir = join(import.meta.dir, '../../../../../kernel/log/client')
     const naming = readdirSync(clientDir)
       .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
-      .filter((file) => readFileSync(join(clientDir, file), 'utf8').includes('packages/log-sdk/src/index'))
-    expect(naming).toEqual(['agent-record-line.ts'])
+      .filter((file) => readFileSync(join(clientDir, file), 'utf8').includes('@attalabs/vinaya-log-sdk'))
+    expect([...naming].sort()).toEqual(['agent-record-line.ts', 'narration.ts'])
   })
 })
 
@@ -392,6 +392,7 @@ describe('narrateDriverEvent', () => {
     loop_id: loopId,
     event: 'gate_result_read',
     round: 2,
+    head: 'abc',
     green: true,
     confidence_value: 80,
     extra_turn_spent: true
@@ -401,6 +402,11 @@ describe('narrateDriverEvent', () => {
     loop_id: loopId,
     event: 'round_ended',
     round: 2,
+    base_head: 'abc',
+    head: 'abd',
+    files_changed: 0,
+    insertions: 0,
+    deletions: 0,
     wall_ms: 61000,
     outcome: 'green'
   }
@@ -441,7 +447,14 @@ describe('narrateDriverEvent', () => {
     try {
       narrateDriverEvent(
         path,
-        { kind: 'dev_review_loop', loop_id: loopId, event: 'paused', round: 3, reason_code: 'max_rounds' },
+        {
+          kind: 'dev_review_loop',
+          loop_id: loopId,
+          event: 'paused',
+          round: 3,
+          reason: 'escalation',
+          reason_code: 'max_rounds'
+        },
         [],
         521
       )

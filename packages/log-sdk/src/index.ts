@@ -64,7 +64,16 @@ export {
   type ReadableLogRecord,
   type ReadableSpan
 } from './writer/connect.js'
-export type { LogsSetting } from './writer/settings.js'
+export { EMIT_USAGE, readFields } from './bin/args.js'
+export {
+  defaultRuntimeDir,
+  type LogsSetting,
+  type PassedSettings,
+  type ResolvedSettings,
+  repoSegment,
+  resolveSettings,
+  type SettingsResult
+} from './writer/settings.js'
 export { writeWholeSpan } from './writer/whole-span.js'
 export type {
   ActionVerified,

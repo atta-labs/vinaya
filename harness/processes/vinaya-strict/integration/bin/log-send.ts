@@ -27,8 +27,9 @@ import { loadConfig, loadTrustAnchorConfigAsync, resolveCiTrustAnchorProbeRef } 
 import {
   defaultRuntimeDir,
   repoSegment as sdkRepoSegment,
-  resolveSettings
-} from '../../../../../packages/log-sdk/src/writer/settings.js'
+  resolveSettings,
+  sendLocalCopy
+} from '@attalabs/vinaya-log-sdk'
 import { printJson } from '../../../../kernel/effects/envelope.js'
 import {
   appendHardenedLine,
@@ -48,7 +49,6 @@ import {
   runtimeDirForRepoAsync
 } from '../../../../kernel/run-paths.js'
 import { resolveOtlpAddress } from '../../../../kernel/log/otlp-address.js'
-import { sendLocalCopy } from '../../../../../packages/log-sdk/src/sender/send.js'
 
 type RepoRef = { owner: string; repo: string } | null
 
@@ -125,7 +125,15 @@ function localCopyFolder(configured: string | undefined, fallback: string, root:
   return configured
 }
 
+export const SEND_USAGE =
+  'Usage: vinaya-log-send [--json]\n' +
+  "Delivers this repository's undelivered Log events, from its local folder and its retry queue, to its configured Log server.\n"
+
 export async function logSendCommand(args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) {
+    process.stdout.write(SEND_USAGE)
+    return
+  }
   const jsonOutput = args.includes('--json')
   const repo = await resolveRepo()
 

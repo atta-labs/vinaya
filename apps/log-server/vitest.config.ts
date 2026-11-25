@@ -9,9 +9,13 @@
  * way to read.
  */
 
+import { resolve } from 'node:path'
 import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config'
 
 export default defineWorkersConfig({
+  // The harness reaches the Log SDK by its package name; the Worker reads only its stored-event contract
+  // (`src/log-sdk-contract.ts`), so the name resolves there, as in the Worker's bundle.
+  resolve: { alias: { '@attalabs/vinaya-log-sdk': resolve('src/log-sdk-contract.ts') } },
   test: {
     include: ['src/**/*.test.ts'],
     poolOptions: {

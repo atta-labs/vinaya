@@ -163,6 +163,52 @@ describe('the harness writes no earlier-format Log event', () => {
   })
 })
 
+// The Log SDK is a package: the harness and the command line reach it by its name and its public entry only,
+// never by a relative path into its folder and never by a deep subpath of the package.
+const LOG_SDK_NAME = '@attalabs/vinaya-log-sdk'
+
+export function logSdkImportsOffPublicEntry(source: string): string[] {
+  const offending: string[] = []
+  for (const match of source.matchAll(SPECIFIER)) {
+    const specifier = match[2] ?? ''
+    const relativeIntoPackage = specifier.startsWith('.') && /(^|\/)packages\/log-sdk(\/|$)/.test(specifier)
+    const deepSubpath = specifier.startsWith(`${LOG_SDK_NAME}/`)
+    if (relativeIntoPackage || deepSubpath) offending.push(specifier)
+  }
+  return offending
+}
+
+describe('the harness and the command line import the Log SDK by name only', () => {
+  test('no source or test of the harness or the command line imports the Log SDK by a relative path or a deep subpath', () => {
+    const violations: string[] = []
+    for (const root of ['harness', 'apps/cli']) {
+      for (const file of sourceFiles(join(REPOSITORY_ROOT, root))) {
+        if (file === import.meta.path) continue
+        const path = relative(REPOSITORY_ROOT, file).split(sep).join('/')
+        for (const specifier of logSdkImportsOffPublicEntry(readFileSync(file, 'utf8')))
+          violations.push(`${path} imports ${specifier}`)
+      }
+    }
+    expect(violations).toEqual([])
+  })
+
+  test('the scan names a planted relative or deep import and accepts the package name', () => {
+    expect(logSdkImportsOffPublicEntry("import { a } from '../../../packages/log-sdk/src/index.js'")).toEqual([
+      '../../../packages/log-sdk/src/index.js'
+    ])
+    expect(logSdkImportsOffPublicEntry("export * from '../../packages/log-sdk/src/contract/store'")).toEqual([
+      '../../packages/log-sdk/src/contract/store'
+    ])
+    expect(
+      logSdkImportsOffPublicEntry("const m = await import('@attalabs/vinaya-log-sdk/src/writer/connect.js')")
+    ).toEqual(['@attalabs/vinaya-log-sdk/src/writer/connect.js'])
+    expect(logSdkImportsOffPublicEntry("import { connect } from '@attalabs/vinaya-log-sdk'")).toEqual([])
+    expect(logSdkImportsOffPublicEntry("import pkg from '@attalabs/vinaya-log-sdk/package.json'")).toEqual([
+      '@attalabs/vinaya-log-sdk/package.json'
+    ])
+  })
+})
+
 // ── Planted repositories ────────────────────────────────────────────────────
 
 const scratch = mkdtempSync(join(tmpdir(), 'architecture-ratchet-'))

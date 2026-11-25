@@ -384,6 +384,7 @@
             "DispatchOutcome",
             "EARLIER_EVENT_PREFIX",
             "EARLIER_WRITER_PREFIX",
+            "EMIT_USAGE",
             "EVENT_NAMES",
             "EarlierOpenStart",
             "EarlierOtlpDocuments",
@@ -454,6 +455,7 @@
             "OtlpSourceOptions",
             "OtlpSupplier",
             "OverflowDiagnostic",
+            "PassedSettings",
             "Pause",
             "PersonAnswered",
             "PersonAsked",
@@ -477,6 +479,7 @@
             "RecordProvenance",
             "RecordSource",
             "RecordTrust",
+            "ResolvedSettings",
             "Resume",
             "ReviewFinding",
             "ReviewVerdicts",
@@ -488,10 +491,10 @@
             "RoleAttemptOutcomeSchema",
             "RoleSchema",
             "RunIdGenerator",
-            "SDK_VERSION",
             "SPAN_NAMES",
             "SeatNames",
             "SendLocalCopyOptions",
+            "SettingsResult",
             "SourceBatch",
             "SourceProblem",
             "SpanName",
@@ -526,16 +529,20 @@
             "createOtlpSource",
             "createReader",
             "createRunIdGenerator",
+            "defaultRuntimeDir",
             "describeContractFailure",
             "identityOf",
             "isSpanName",
             "narrate",
             "processAndRunnerOf",
+            "readFields",
             "readOtlpDocument",
             "readPageFrom",
             "reasonWaitsOn",
             "recordIdentity",
             "redact",
+            "repoSegment",
+            "resolveSettings",
             "sendLocalCopy",
             "spanIdFor",
             "spanName",
@@ -565,6 +572,7 @@
             "DispatchEventSchema",
             "EARLIER_EVENT_PREFIX",
             "EARLIER_WRITER_PREFIX",
+            "EMIT_USAGE",
             "EVENT_NAMES",
             "EffectEventSchema",
             "FORBIDDEN_CONTENT_ATTRIBUTES",
@@ -596,7 +604,6 @@
             "RoleAttemptEventSchema",
             "RoleAttemptOutcomeSchema",
             "RoleSchema",
-            "SDK_VERSION",
             "SPAN_NAMES",
             "UNRECORDABLE_FIELD_NAME",
             "UsageEventSchema",
@@ -616,16 +623,20 @@
             "createOtlpSource",
             "createReader",
             "createRunIdGenerator",
+            "defaultRuntimeDir",
             "describeContractFailure",
             "identityOf",
             "isSpanName",
             "narrate",
             "processAndRunnerOf",
+            "readFields",
             "readOtlpDocument",
             "readPageFrom",
             "reasonWaitsOn",
             "recordIdentity",
             "redact",
+            "repoSegment",
+            "resolveSettings",
             "sendLocalCopy",
             "spanIdFor",
             "spanName",
@@ -722,10 +733,11 @@
             "DevReviewLoopEvent": ["type DevReviewLoopEvent = z.infer<typeof DevReviewLoopEventSchema>;"],
             "DevReviewLoopEventSchema": ["sha256:06a5a060f2e0d5ffb26beb50aa0fa8af8e160884c4be04e47e0fc7d0c1ebc7b7"],
             "DispatchEvent": ["type DispatchEvent = z.infer<typeof DispatchEventSchema>;"],
-            "DispatchEventSchema": ["sha256:5a492cd0496d57a4f5d377336fd6289a7d1faff2ceb84a34c6ffd25b21080069"],
+            "DispatchEventSchema": ["sha256:b8c3d9d4b0da3778b14a28e26e0d9ca59f0a9637a632c963c65b388758628e61"],
             "DispatchOutcome": ["type DispatchOutcome = z.infer<typeof DispatchOutcomeSchema>;"],
             "EARLIER_EVENT_PREFIX": ["const EARLIER_EVENT_PREFIX = \"vinaya.earlier.\""],
             "EARLIER_WRITER_PREFIX": ["const EARLIER_WRITER_PREFIX = \"earlier:\""],
+            "EMIT_USAGE": ["const EMIT_USAGE: string"],
             "EVENT_NAMES": ["sha256:59ed106c963c85b813207f6c662037df4ff31d7a70cc6b3a642d9dc753d031bb"],
             "EarlierOpenStart": ["type EarlierOpenStart = { spanKey: string; startTimeUnixNano: string; };"],
             "EarlierOtlpDocuments": [
@@ -810,7 +822,7 @@
               "type LocalCopyReport = { sent: number; setAside: Array<{ file: string; offset: number; reason: string; }>; failures: Array<{ file?: string; offset?: number; reason: string; }>; };"
             ],
             "LogEvent": ["type LogEvent = z.infer<typeof LogEventSchema>;"],
-            "LogEventSchema": ["sha256:15328999a87f372ee816cf388d55c70f1231f2a9944d56b3bc28d355522d7e08"],
+            "LogEventSchema": ["sha256:468f27c7e783e5792adea5d699589d3691d3c905e3436b7538d6d0911bb9b9ae"],
             "LogHandle": ["sha256:478b48f5db6585e4755d6024cd72bf1f01215761f859f1a59471f85f4f605c3d"],
             "LogStore": [
               "interface LogStore { /** Idempotently append records (raw ndjson strings or event objects). Redacts at this write (sink) boundary. */ append(records: readonly (string | object)[]): AppendOutcome; /** Read one page from `cursor` (validation + provenance + unknown-version preservation + transport-boundary redaction). */ readPage(cursor: number | null, limit: number): ReadPage; /** Remove exactly the named identities. Returns how many were present and removed. */ acknowledge(identities: readonly RecordIdentity[]): number; /** How many records are currently held. */ size(): number; }"
@@ -841,6 +853,9 @@
             "OtlpSupplier": ["type OtlpSupplier = (cursor: string | undefined) => Promise<OtlpPage>;"],
             "OverflowDiagnostic": [
               "type OverflowDiagnostic = { reason: 'capacity'; dropped: number; droppedIdentities: RecordIdentity[]; };"
+            ],
+            "PassedSettings": [
+              "type PassedSettings = { destination?: LogsSetting; headers?: Record<string, string>; runtimeDir?: string; };"
             ],
             "Pause": ["type Pause = { key?: string; round?: number; why?: string; startTime?: TimeInput; };"],
             "PersonAnswered": [
@@ -891,6 +906,9 @@
             "RecordTrust": [
               "type RecordTrust = 'parent_attributed' | 'env_correlated' | 'self_reported' | 'unavailable';"
             ],
+            "ResolvedSettings": [
+              "type ResolvedSettings = { /** `false` when the repository turned the Log off; `undefined` when nothing is configured. */ logs: LogsSetting | undefined; runtimeDir: string; };"
+            ],
             "Resume": [
               "type Resume = { /** The pause span `paused` returned; with none, the handle's latest open pause. */ pause?: SpanParent; by: 'person' | 'run'; /** What a later process knows of the pause it resumes: when it began, its round and why. */ startTime?: TimeInput; round?: number; why?: string; endTime?: TimeInput; };"
             ],
@@ -908,7 +926,6 @@
             ],
             "RoleSchema": ["const RoleSchema: z.ZodString"],
             "RunIdGenerator": ["type RunIdGenerator = ReturnType<typeof createRunIdGenerator>;"],
-            "SDK_VERSION": ["const SDK_VERSION = \"0.0.0\""],
             "SPAN_NAMES": [
               "const SPAN_NAMES: { readonly run: \"invoke_workflow\"; readonly round: \"vinaya.round\"; readonly phase: \"vinaya.phase\"; readonly agent: \"invoke_agent\"; readonly step: \"execute_tool\"; readonly checks: \"vinaya.checks\"; readonly person: \"vinaya.person\"; readonly pause: \"vinaya.pause\"; }"
             ],
@@ -917,6 +934,9 @@
             ],
             "SendLocalCopyOptions": [
               "type SendLocalCopyOptions = { folder: string; repository?: string; url: string; headers?: Record<string, string>; fetch?: (url: string, init: RequestInit) => Promise<Response>; /** Absolute deadline in Unix milliseconds. */ deadline?: number; };"
+            ],
+            "SettingsResult": [
+              "type SettingsResult = { ok: true; settings: ResolvedSettings; declarations: CustomEventDeclarations; } | { ok: false; error: Error; };"
             ],
             "SourceBatch": [
               "type SourceBatch = { records: OtelRecord[]; problems: SourceProblem[]; /** Opaque. The caller keeps it and passes it to the next `read`, also after a restart. */ position: string | undefined; };"
@@ -988,6 +1008,9 @@
             "createRunIdGenerator": [
               "function createRunIdGenerator(runId: string): { generateTraceId(): string; generateSpanId(): string; useNextSpanId(id: string | undefined): void; };"
             ],
+            "defaultRuntimeDir": [
+              "function defaultRuntimeDir(repository: string | undefined, vinayaHome?: string): string;"
+            ],
             "describeContractFailure": ["function describeContractFailure(failure: ContractFailure): string;"],
             "identityOf": ["function identityOf(record: OtelRecord): string;"],
             "isSpanName": ["function isSpanName(name: string): boolean;"],
@@ -996,6 +1019,9 @@
             ],
             "processAndRunnerOf": [
               "function processAndRunnerOf(meta: z.infer<typeof HeaderMetaSchema>): Pick<HeaderMetaV4, 'process' | 'runner'>;"
+            ],
+            "readFields": [
+              "function readFields(args: readonly string[], readStdin: () => Promise<string>): Promise<FieldsResult>;"
             ],
             "readOtlpDocument": ["function readOtlpDocument(document: unknown, source: string): OtelRecord[] | null;"],
             "readPageFrom": [
@@ -1006,6 +1032,10 @@
             ],
             "recordIdentity": ["function recordIdentity(obj: unknown): RecordIdentity | null;"],
             "redact": ["function redact<T>(value: T, home: string): T;"],
+            "repoSegment": ["function repoSegment(repository: string | undefined): string;"],
+            "resolveSettings": [
+              "function resolveSettings(input: { repoRoot: string; repository?: string; vinayaHome?: string; passed?: PassedSettings; }): SettingsResult;"
+            ],
             "sendLocalCopy": ["function sendLocalCopy(options: SendLocalCopyOptions): Promise<LocalCopyReport>;"],
             "spanIdFor": ["function spanIdFor(runId: string, key: string): string;"],
             "spanName": [
@@ -1073,6 +1103,8 @@
         "dist/contract/schema.js",
         "dist/contract/store.d.ts",
         "dist/contract/store.js",
+        "dist/contract/version.d.ts",
+        "dist/contract/version.js",
         "dist/index.d.ts",
         "dist/index.js",
         "dist/local-copy/converted-copy.d.ts",
@@ -1144,6 +1176,7 @@
         "src/contract/redact.ts",
         "src/contract/schema.ts",
         "src/contract/store.ts",
+        "src/contract/version.ts",
         "src/index.ts",
         "src/local-copy/converted-copy.ts",
         "src/local-copy/file-exporters.ts",

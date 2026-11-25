@@ -27,6 +27,9 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@attalabs/vinaya-log-sdk": [
+        "../../packages/log-sdk/src/index.ts"
       ]
     }
   },

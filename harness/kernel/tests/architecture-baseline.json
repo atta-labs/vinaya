@@ -51,7 +51,6 @@
   "harness/kernel/log/client/log-sync-folder-source.ts": 1,
   "harness/kernel/log/client/log-webhook-drain.ts": 4,
   "harness/kernel/log/client/loop-log.ts": 2,
-  "harness/kernel/log/client/narration.ts": 5,
   "harness/kernel/log/log-sink.ts": 7,
   "harness/kernel/loops/runtimes/atta-engine/run-process.ts": 1,
   "harness/kernel/run-paths.ts": 20,

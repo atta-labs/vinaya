@@ -1,4 +1,4 @@
-import { SDK_VERSION } from './catalogue.js'
+import { SDK_VERSION } from './version.js'
 import { type ConvertedEarlierRecord, createEarlierConversionState } from './convert-live.js'
 import type { LogEvent } from './schema.js'
 

@@ -1,9 +1,9 @@
 import { join } from 'node:path'
-import { sendLocalCopy } from '../../../packages/log-sdk/src/index.js'
 import {
   defaultRuntimeDir as sdkDefaultRuntimeDir,
-  resolveSettings as sdkResolveSettings
-} from '../../../packages/log-sdk/src/writer/settings.js'
+  resolveSettings as sdkResolveSettings,
+  sendLocalCopy
+} from '@attalabs/vinaya-log-sdk'
 import { isInsideRepo } from '../run-paths.js'
 
 /** The longest a drain waits on sending the local copy, whatever the OpenTelemetry address does. */

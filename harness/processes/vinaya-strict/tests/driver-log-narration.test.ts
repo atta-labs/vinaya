@@ -405,7 +405,7 @@ describe('the narrating Log sink', () => {
         contexts.push(earlier.length)
       }
     )
-    log({ event: 'round_started' })
+    log({ event: 'round_started', base_head: 'abc' })
     log({ event: 'round_ended' })
     expect(calls).toEqual(['log:round_started', 'narrate:round_started', 'log:round_ended', 'narrate:round_ended'])
     expect(contexts).toEqual([0, 1])
@@ -419,24 +419,44 @@ describe('the narrating Log sink', () => {
       TASK,
       (_path, _event, earlier) => void contexts.push(earlier.length)
     )
-    log({ event: 'round_started' })
+    log({ event: 'round_started', base_head: 'abc' })
     log({ event: 'conflict_reentry' })
-    log({ event: 'round_started' })
+    log({ event: 'round_started', base_head: 'abc' })
     expect(contexts).toEqual([0, 0, 2])
   })
 
   test("a round's end states the confidence its gate read recorded, as the standalone's narration does", () => {
     const path = join(fixtureDir('narration-sink-'), 'driver.log')
     const log = narratingLog(() => {}, path, TASK)
-    const base = { kind: 'dev_review_loop', payload: {}, loop_id: 'l', task: TASK, round: 1 }
-    log({ ...base, event: 'round_started' })
-    log({ ...base, event: 'gate_result_read', green: true, confidence_value: 90 })
-    log({ ...base, event: 'round_ended', outcome: 'green' })
+    const base = { kind: 'dev_review_loop', payload: {}, loop_id: 'l', round: 1 }
+    log({ ...base, event: 'round_started', base_head: 'abc' })
+    log({ ...base, event: 'gate_result_read', head: 'abc', green: true, confidence_value: 90 })
+    log({
+      ...base,
+      event: 'round_ended',
+      base_head: 'abc',
+      head: 'abd',
+      files_changed: 0,
+      insertions: 0,
+      deletions: 0,
+      wall_ms: 0,
+      outcome: 'green'
+    })
     const expectedPath = join(fixtureDir('narration-expected-'), 'driver.log')
     const events = [
-      { ...base, event: 'round_started' },
-      { ...base, event: 'gate_result_read', green: true, confidence_value: 90 },
-      { ...base, event: 'round_ended', outcome: 'green' }
+      { ...base, event: 'round_started', base_head: 'abc' },
+      { ...base, event: 'gate_result_read', head: 'abc', green: true, confidence_value: 90 },
+      {
+        ...base,
+        event: 'round_ended',
+        base_head: 'abc',
+        head: 'abd',
+        files_changed: 0,
+        insertions: 0,
+        deletions: 0,
+        wall_ms: 0,
+        outcome: 'green'
+      }
     ]
     for (const [i, event] of events.entries()) narrateDriverEvent(expectedPath, event, events.slice(0, i), TASK)
     expect(linesOf(path)).toEqual(linesOf(expectedPath))
@@ -454,7 +474,7 @@ describe('the narrating Log sink', () => {
         throw new Error('narration broke')
       }
     )
-    expect(() => log({ event: 'round_started' })).not.toThrow()
-    expect(emitted).toEqual([{ event: 'round_started' }])
+    expect(() => log({ event: 'round_started', base_head: 'abc' })).not.toThrow()
+    expect(emitted).toEqual([{ event: 'round_started', base_head: 'abc' }])
   })
 })

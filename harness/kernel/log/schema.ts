@@ -1,1 +1,39 @@
-export * from '../../../packages/log-sdk/src/contract/schema'
+// The schema's types come through the package's public entry whole (a type-only re-export leaves no import behind);
+// its values are named, so a bundle that keeps the package external still binds each one.
+export type * from '@attalabs/vinaya-log-sdk'
+export {
+  CODE_TOKEN_PATTERN,
+  CONFIDENCE_REASON_MAX_LENGTH,
+  CustomEventSchema,
+  DevReviewLoopEventSchema,
+  DispatchEventSchema,
+  EffectEventSchema,
+  FlowSchema,
+  ForgeOpSchema,
+  ForgeWriteEventSchema,
+  GateEventSchema,
+  GateOutcomeSchema,
+  HandoffEventSchema,
+  HeaderMetaSchema,
+  HeaderMetaV1Schema,
+  HeaderMetaV2Schema,
+  HeaderMetaV3Schema,
+  HeaderMetaV4Schema,
+  HeaderSchema,
+  HOST_VALUES,
+  HostSchema,
+  InputVersionsSchema,
+  LineageSchema,
+  LogEventSchema,
+  OperationEventSchema,
+  OperationResultSchema,
+  ProvenanceSchema,
+  processAndRunnerOf,
+  REVIEW_FINDING_DESCRIPTION_MAX_LENGTH,
+  ROLE_NAME_PATTERN,
+  RoleAttemptEventSchema,
+  RoleAttemptOutcomeSchema,
+  RoleSchema,
+  UsageEventSchema,
+  WorkSchema
+} from '@attalabs/vinaya-log-sdk'

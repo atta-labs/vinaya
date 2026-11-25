@@ -55,6 +55,22 @@ const pkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf-8')) as 
 const external = Object.entries(pkg.dependencies ?? {})
   .filter(([, spec]) => !spec.startsWith('workspace:'))
   .map(([name]) => name)
+// The Log SDK is a real package, published with the CLI at its own version: it is a dependency, never bundled.
+if (!external.includes('@attalabs/vinaya-log-sdk')) {
+  console.error('build: @attalabs/vinaya-log-sdk must be a declared dependency, so it stays external')
+  process.exit(1)
+}
+// The built CLI imports the Log SDK by name, and Node resolves that name to the package's built `dist/`, so the
+// package is built first: whatever runs the built CLI (the published install, CI, a test) finds it there.
+// A built package is left as it is: its build empties `dist/`, which a build running beside this one may be loading.
+const sdkRoot = join(pkgRoot, '..', '..', 'packages', 'log-sdk')
+if (!existsSync(join(sdkRoot, 'dist', 'index.js'))) {
+  const sdkBuild = Bun.spawnSync(['bun', 'run', 'build'], { cwd: sdkRoot, stdout: 'inherit', stderr: 'inherit' })
+  if (sdkBuild.exitCode !== 0) {
+    console.error('build: the Log SDK build failed')
+    process.exit(1)
+  }
+}
 
 /** The bin contract every emitted entrypoint carries: a Node shebang, executable. Bun preserves the source file's own shebang, but normalize anyway so the artifact never depends on bundler behavior. */
 function normalizeExecutable(outFile: string): void {

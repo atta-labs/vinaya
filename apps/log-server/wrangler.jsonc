@@ -11,6 +11,8 @@
   // The kernel's Log schema module reaches `node:crypto` for the header
   // builder it also exports; without this flag the bundle does not build.
   "compatibility_flags": ["nodejs_compat"],
+  // The harness reaches the Log SDK by its package name; the Worker reads only the stored-event contract.
+  "alias": { "@attalabs/vinaya-log-sdk": "./src/log-sdk-contract.ts" },
   "durable_objects": {
     "bindings": [{ "name": "REPO_LOG", "class_name": "RepoLog" }]
   },

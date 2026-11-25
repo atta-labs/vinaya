@@ -339,14 +339,8 @@ function readLoopRecord(task: TaskPicture, record: Fields, row: DatasetRow, even
           ...next,
           gateReads: {
             ...next.gateReads,
-            [String(round)]: {
-              event: 'gate_result_read',
-              loop_id: record.loop_id,
-              round,
-              confidence_value: record.confidence_value,
-              confidence_unavailable: record.confidence_unavailable,
-              extra_turn_spent: record.extra_turn_spent
-            }
+            // The whole stored record bar its free-text reason, so the narration reads it as the stored record it is.
+            [String(round)]: { ...record, confidence_reason: undefined }
           }
         }
         const value = whole(record.confidence_value)

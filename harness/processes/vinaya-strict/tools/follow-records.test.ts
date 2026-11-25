@@ -1,7 +1,5 @@
 import { expect, test } from 'bun:test'
-import { ATTRIBUTE_NAMES as A, EVENT_NAMES as E } from '../../../../packages/log-sdk/src/contract/catalogue.js'
-import { spanIdFor } from '../../../../packages/log-sdk/src/contract/ids.js'
-import type { OtelRecord } from '../../../../packages/log-sdk/src/reader/records.js'
+import { ATTRIBUTE_NAMES as A, EVENT_NAMES as E, type OtelRecord, spanIdFor } from '@attalabs/vinaya-log-sdk'
 import { registerVinayaLogRoles } from '../integration/log/log-roles.js'
 import { createRecordFollow } from './follow-records.js'
 
@@ -269,7 +267,7 @@ test('a run whose Log SDK writer numbers from 1 reports no gap', async () => {
   const { mkdtempSync, readdirSync, rmSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
-  const { connect } = await import('../../../../packages/log-sdk/src/writer/connect.js')
+  const { connect } = await import('@attalabs/vinaya-log-sdk')
   const { readTaskRuns } = await import('./follow-records.js')
   const dir = mkdtempSync(join(tmpdir(), 'follow-first-sequence-'))
   try {

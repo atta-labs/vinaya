@@ -1,10 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import {
-  createLineReader,
-  narrate as packageNarrate,
-  type OtelRecord,
-  type SeatNames
-} from '../../../../packages/log-sdk/src/index'
+import { createLineReader, narrate as packageNarrate, type OtelRecord, type SeatNames } from '@attalabs/vinaya-log-sdk'
 import { EXECUTION_NAMES, buildExecution } from '../fixtures/executions'
 import { registerRole, restoreRoleRegistry, saveRoleRegistry, type RoleRegistrySnapshot } from '../roles'
 import { narrate as harnessNarrate } from './narration'

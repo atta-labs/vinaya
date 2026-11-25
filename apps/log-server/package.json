@@ -17,7 +17,8 @@
     "clean": "rm -rf .turbo"
   },
   "dependencies": {
-    "@attalabs/harness": "workspace:*"
+    "@attalabs/harness": "workspace:*",
+    "@attalabs/vinaya-log-sdk": "workspace:*"
   },
   "devDependencies": {
     "@atta/typescript-config": "workspace:*",

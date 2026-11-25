@@ -348,6 +348,8 @@ This exits `0` and prints the event name and the kind of destination it was reco
 
 ## The storage contract
 
+**The harness reaches the Log SDK as a package.** Every harness and command-line source and test imports `@attalabs/vinaya-log-sdk` by that name, from its public entry, never by a relative path into `packages/log-sdk/` or a deep subpath of the package (`harness/kernel/tests/architecture.test.ts` fails, naming the file, on either). `harness/kernel/package.json` and the command line depend on it as a workspace package inside the repository; the published command line depends on it as an external npm package at its own version, so its built files import the package by name and hold none of its source. The earlier-format narration (`harness/kernel/log/client/narration.ts`) converts a stored earlier-format event with the package's public line reader and words it with the package's public `narrate`. The files `store.ts`, `schema.ts`, `redact.ts` and `custom.ts` beside it re-export the package's entry.
+
 `packages/log-sdk/src/contract/store.ts` (re-exported at `harness/kernel/log/store.ts`) is the typed storage contract the sink's append, the sender's drain and the sync sources share: one `LogStore` interface — `append`, `readPage`, `acknowledge`, `size` — plus the pure helpers both backends build on (`recordIdentity`, `classifyStoredLine`, `readPageFrom`) and a deterministic in-memory fixture backend (`createFixtureStore`). It is policy-layer pure — no filesystem, no network, no process (`apps/cli/specs/surface.md` "The rule") — so the adversarial fault cases below are provable against the fixture with no I/O.
 
 <!-- VINAYA:CLAIM: packages/log-sdk/src/contract/store.ts contains:export interface LogStore -->
