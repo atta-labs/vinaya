@@ -31,8 +31,8 @@ const PROBE_OUTPUT = { kernel: 'pull.json', workflow: 6 }
 const scratch = join(repoRoot, 'out', `alias-resolution-${process.pid}-${Date.now()}`)
 
 type Run = { exitCode: number; stdout: string; stderr: string }
-async function run(cmd: string[], cwd: string): Promise<Run> {
-  const child = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'pipe', env: process.env })
+async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = process.env): Promise<Run> {
+  const child = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'pipe', env })
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
@@ -311,7 +311,14 @@ describe('the CLI build with an aliased module (O3)', () => {
       const version = await run(['node', cli, 'version'], repoRoot)
       expect(version.exitCode).toBe(0)
       // `doctor` exits 1 when `gh` is not signed in; it must still print its report with no missing module.
-      const doctor = await run(['node', cli, 'doctor', '--json'], repoRoot)
+      // A fake `gh` that exits 1 comes first on `PATH`, so the real GitHub CLI is never reached.
+      const fakeBin = join(scratch, 'fake-gh-bin')
+      mkdirSync(fakeBin, { recursive: true })
+      writeFileSync(join(fakeBin, 'gh'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+      const doctor = await run(['node', cli, 'doctor', '--json'], repoRoot, {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`
+      })
       expect([0, 1]).toContain(doctor.exitCode)
       expect(doctor.stderr).not.toMatch(/ERR_MODULE_NOT_FOUND|Cannot find (module|package)/)
       expect(JSON.parse(doctor.stdout)).toHaveProperty('schema')

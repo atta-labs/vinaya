@@ -13,7 +13,6 @@
     "apps/cli/tests/new-check.test.ts": "runs gh issue list against the real GitHub CLI",
     "apps/cli/tests/new-noop-check.test.ts": "runs gh issue list against the real GitHub CLI",
     "apps/cli/tests/quickstart.test.ts": "runs gh pr list against the real GitHub CLI",
-    "harness/kernel/tests/alias-resolution.test.ts": "runs the built CLI's doctor, which runs gh auth status and gh api against the real GitHub CLI",
     "harness/processes/vinaya-strict/checks/bin-permissions.test.ts": "runs gh api, gh auth status, gh issue list, gh pr list against the real GitHub CLI",
     "harness/processes/vinaya-strict/checks/check-dispatch-readiness-premise.test.ts": "runs gh api against the real GitHub CLI",
     "harness/processes/vinaya-strict/checks/check-flip.test.ts": "runs gh pr list against the real GitHub CLI",
