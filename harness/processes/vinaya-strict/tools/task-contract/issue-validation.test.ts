@@ -3605,12 +3605,14 @@ describe('parseIssuePremises', () => {
         path: 'packages/core/src/cancel.ts',
         text: 'AbortController',
         afterIssue: null,
+        afterTask: null,
         line: '- `packages/core/src/cancel.ts` contains `AbortController`'
       },
       {
         path: 'apps/cli/src/index.ts',
         text: 'main(',
         afterIssue: null,
+        afterTask: null,
         line: '`apps/cli/src/index.ts` contains `main(`'
       }
     ])
@@ -3717,6 +3719,42 @@ describe('checkPremiseDependencyDeclared (O2)', () => {
   it('refuses when the declared edge names a different Issue', () => {
     const body = bodyWithPremises(deferred).replace('`Depends-on: —`', '`Depends-on: #842`')
     expect(checkPremiseDependencyDeclared(body).status).toBe('fail')
+  })
+
+  describe('`after task <n>:`', () => {
+    const afterTask = 'after task 2: `packages/core/src/cancel.ts` contains `drainOutbox`'
+
+    it('is read as a deferral naming task 2, and `after #<n>:` is read as before', () => {
+      const t = parseIssuePremises(bodyWithPremises(afterTask))
+      expect(t.ok && t.value[0]).toMatchObject({ afterTask: 2, afterIssue: null, text: 'drainOutbox' })
+      const i = parseIssuePremises(bodyWithPremises(deferred))
+      expect(i.ok && i.value[0]).toMatchObject({ afterTask: null, afterIssue: 841 })
+    })
+
+    it('is satisfied by the bare number `Depends-on: 2`', () => {
+      const body = bodyWithPremises(afterTask).replace('`Depends-on: —`', '`Depends-on: 2`')
+      expect(checkPremiseDependencyDeclared(body).status).toBe('pass')
+    })
+
+    it('is not satisfied by `Depends-on: #2` — an Issue number is not a task number', () => {
+      const body = bodyWithPremises(afterTask).replace('`Depends-on: —`', '`Depends-on: #2`')
+      const r = checkPremiseDependencyDeclared(body)
+      expect(r.status).toBe('fail')
+      expect(r.errors.join(' ')).toMatch(/defers to task 2, but the Dependency rationale declares no `Depends-on: 2`/)
+    })
+
+    it('is refused with no `Depends-on` edge, and is not asserted against the tree when the Issue is cut', () => {
+      expect(checkPremiseDependencyDeclared(bodyWithPremises(afterTask)).status).toBe('fail')
+      expect(checkIssuePremises(bodyWithPremises(afterTask), readerOf(PREMISE_SOURCES)).status).toBe('pass')
+    })
+
+    it('does not make `after #2:` out of `after task 2:`: an `after #2:` premise is still met only by the Issue-2 edges', () => {
+      const body = bodyWithPremises('after #2: `packages/core/src/cancel.ts` contains `drainOutbox`').replace(
+        '`Depends-on: —`',
+        '`Depends-on: #2`'
+      )
+      expect(checkPremiseDependencyDeclared(body).status).toBe('pass')
+    })
   })
 
   it('ignores an unprefixed premise — nothing is deferred', () => {

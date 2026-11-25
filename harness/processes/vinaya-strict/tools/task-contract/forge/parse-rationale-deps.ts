@@ -63,6 +63,36 @@ export function splitSlugQualifiedEdge(edge: string): SlugQualifiedEdge | null {
   return { slug: m[1] as string, bareId: m[2] as string }
 }
 
+/**
+ * What one edge id names, read off its written form alone:
+ *
+ *   - `task` — a bare whole number (`3`): a task of the tranche the Issue
+ *     belongs to, by its number in the tranche's task list.
+ *   - `issue` — `#NNN`: a published forge Issue.
+ *   - `other-tranche` — `<slug> 3` or `<slug> #NNN`: a task or Issue of
+ *     another tranche, `viaIssue` telling which.
+ *
+ * The id-normalizing helpers elsewhere strip both the slug and the `#`, so
+ * task 5 and Issue #5 normalize identically; this is the one place that keeps
+ * them apart. Reads only the grammar — it never decides whether the named
+ * task or Issue exists. `null` for a token that is no edge id at all.
+ */
+export type EdgeRef =
+  | { kind: 'task'; number: number }
+  | { kind: 'issue'; number: number }
+  | { kind: 'other-tranche'; slug: string; number: number; viaIssue: boolean }
+
+export function classifyEdge(edge: string): EdgeRef | null {
+  const token = edge.trim()
+  if (!ID_TOKEN.test(token)) return null
+  const qualified = splitSlugQualifiedEdge(token)
+  const bare = qualified?.bareId ?? token
+  const viaIssue = bare.startsWith('#')
+  const number = Number.parseInt(viaIssue ? bare.slice(1) : bare, 10)
+  if (qualified) return { kind: 'other-tranche', slug: qualified.slug, number, viaIssue }
+  return viaIssue ? { kind: 'issue', number } : { kind: 'task', number }
+}
+
 function isEmptyMarker(s: string): boolean {
   const t = s.trim()
   return t === '' || t === '—' || t === '-' || t === '–'

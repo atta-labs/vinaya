@@ -1226,6 +1226,7 @@ describe('renderBrief — the `## Premises` section', () => {
             path: 'packages/core/src/fixture.ts',
             text: 'export function fixture(',
             afterIssue: null,
+            afterTask: null,
             line: '`packages/core/src/fixture.ts` contains `export function fixture(`'
           }
         ]
@@ -1247,6 +1248,7 @@ describe('renderBrief — the `## Premises` section', () => {
             path: 'packages/core/src/fixture.ts',
             text: 'drainOutbox',
             afterIssue: 841,
+            afterTask: null,
             line: 'after #841: `packages/core/src/fixture.ts` contains `drainOutbox`'
           }
         ]
@@ -1263,7 +1265,13 @@ describe('renderBrief — the `## Premises` section', () => {
     const result = renderBrief(
       baseFacts({
         premises: [
-          { path: 'packages/core/src/fixture.ts', text: 'fixture', afterIssue: null, line: '`x` contains `y`' }
+          {
+            path: 'packages/core/src/fixture.ts',
+            text: 'fixture',
+            afterIssue: null,
+            afterTask: null,
+            line: '`x` contains `y`'
+          }
         ]
       }),
       TEMPLATE
@@ -1444,6 +1452,7 @@ describe('renderBrief — every carried Issue section reaches the brief (the sha
             path: 'a.ts',
             text: marker('premise'),
             afterIssue: null,
+            afterTask: null,
             line: `\`a.ts\` contains \`${marker('premise')}\``
           }
         ],

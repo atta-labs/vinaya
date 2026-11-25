@@ -19,6 +19,7 @@ import type { GeneratedArtifactSources } from './generated-artifacts'
  */
 
 import {
+  classifyEdge,
   findLetteredEdgeIds,
   findPlainTextEdgeLabels,
   parseRationaleDeps,
@@ -977,18 +978,29 @@ export type IssuePremise = {
   text: string
   /** The Issue number of an `after #<n>:` prefix — `null` for a premise that must hold now. */
   afterIssue: number | null
+  /**
+   * The tranche task number of an `after task <n>:` prefix — `null` for any
+   * other premise. The same deferral as `afterIssue`, for a plan not yet
+   * published: the task that makes the fact true has no Issue number yet, only
+   * its place in the tranche. A premise carries one prefix or none, so
+   * `afterIssue` and `afterTask` are never both set.
+   */
+  afterTask: number | null
   /** The premise's own line, verbatim, so a refusal quotes what the Planner wrote. */
   line: string
 }
 
 /**
  * One premise line: `` `<path>` contains `<text>` ``, optionally prefixed
- * `after #<n>:`, optionally bulleted. The text capture is greedy to the LAST
+ * `after #<n>:` (a published Issue) or `after task <n>:` (a task of the
+ * tranche), optionally bulleted. The text capture is greedy to the LAST
  * backtick on the line, so a literal containing backticks survives — the same
  * reason `doc-claim.ts` reads its value off the original line rather than a
- * masked one.
+ * masked one. The `#` form reads exactly as it always did; `task <n>` is a
+ * different prefix, never a spelling of it.
  */
-const ISSUE_PREMISE_LINE_RE = /^[-*]?[ \t]*(?:after[ \t]+#(\d+)[ \t]*:[ \t]*)?`([^`\n]+)`[ \t]+contains[ \t]+`(.+)`$/i
+const ISSUE_PREMISE_LINE_RE =
+  /^[-*]?[ \t]*(?:after[ \t]+(?:#(\d+)|task[ \t]+(\d+))[ \t]*:[ \t]*)?`([^`\n]+)`[ \t]+contains[ \t]+`(.+)`$/i
 
 /**
  * Parses the optional `## Premises` section. An Issue without the heading has
@@ -1013,11 +1025,11 @@ export function parseIssuePremises(body: string): ParsedIssueSection<IssuePremis
     const m = ISSUE_PREMISE_LINE_RE.exec(line)
     if (!m) {
       errors.push(
-        `\`${line}\` is not a premise — write one premise per line as \`<path>\` contains \`<text>\`, optionally prefixed \`after #<n>:\` when a task that has not merged yet is what makes it true.`
+        `\`${line}\` is not a premise — write one premise per line as \`<path>\` contains \`<text>\`, optionally prefixed \`after #<n>:\` (or \`after task <n>:\` in a plan not yet published) when a task that has not merged yet is what makes it true.`
       )
       continue
     }
-    const [, afterRaw, path, text] = m
+    const [, afterRaw, afterTaskRaw, path, text] = m
     if (!isValidCitedFilePath(path as string)) {
       errors.push(
         `\`${line}\` names \`${path}\`, which is not a repository-relative path inside the repository (absolute paths and \`..\` traversal are refused).`
@@ -1028,6 +1040,7 @@ export function parseIssuePremises(body: string): ParsedIssueSection<IssuePremis
       path: path as string,
       text: text as string,
       afterIssue: afterRaw === undefined ? null : Number.parseInt(afterRaw, 10),
+      afterTask: afterTaskRaw === undefined ? null : Number.parseInt(afterTaskRaw, 10),
       line
     })
   }
@@ -1099,7 +1112,7 @@ export function checkIssuePremises(body: string, fileReader: (path: string) => s
 
   const dueNow = parsed.value
     .map((premise, index) => ({ premise, index }))
-    .filter(({ premise }) => premise.afterIssue === null)
+    .filter(({ premise }) => premise.afterIssue === null && premise.afterTask === null)
 
   const errors = checkPremisesHold(dueNow, fileReader).map((m) => `issue-validation Premises: ${m}`)
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
@@ -1121,12 +1134,28 @@ export function checkPremiseDependencyDeclared(body: string): IssueSectionResult
     parseRationaleDeps(body).dependsOn.map((edge) => (splitSlugQualifiedEdge(edge)?.bareId ?? edge).replace(/^#/, ''))
   )
 
-  const errors = parsed.value
-    .filter((premise) => premise.afterIssue !== null && !declared.has(String(premise.afterIssue)))
-    .map(
-      (premise) =>
-        `issue-validation Premises: \`${premise.line}\` defers to #${premise.afterIssue}, but the Dependency rationale declares no \`Depends-on\` on it — a premise another task has to make true is a dependency, not a note.`
-    )
+  // `after task <n>:` is satisfied only by a bare task number: `#<n>` names an
+  // Issue, and an Issue number is never a task number.
+  const declaredTasks = new Set(
+    parseRationaleDeps(body)
+      .dependsOn.map(classifyEdge)
+      .flatMap((ref) => (ref?.kind === 'task' ? [ref.number] : []))
+  )
+
+  const errors = [
+    ...parsed.value
+      .filter((premise) => premise.afterIssue !== null && !declared.has(String(premise.afterIssue)))
+      .map(
+        (premise) =>
+          `issue-validation Premises: \`${premise.line}\` defers to #${premise.afterIssue}, but the Dependency rationale declares no \`Depends-on\` on it — a premise another task has to make true is a dependency, not a note.`
+      ),
+    ...parsed.value
+      .filter((premise) => premise.afterTask !== null && !declaredTasks.has(premise.afterTask))
+      .map(
+        (premise) =>
+          `issue-validation Premises: \`${premise.line}\` defers to task ${premise.afterTask}, but the Dependency rationale declares no \`Depends-on: ${premise.afterTask}\` — a premise another task has to make true is a dependency, not a note.`
+      )
+  ]
 
   return { status: errors.length > 0 ? 'fail' : 'pass', errors }
 }
@@ -2760,8 +2789,11 @@ export function checkCrossTaskValuesPinned(body: string, existsInTree: (token: s
   if (dependsOn.length === 0) return { status: 'pass', errors: [] }
   const declared = new Set(dependsOn.map((edge) => (splitSlugQualifiedEdge(edge)?.bareId ?? edge).replace(/^#/, '')))
   const premises = parseIssuePremises(body)
+  const declaredTasks = new Set(dependsOn.flatMap((edge) => (classifyEdge(edge)?.kind === 'task' ? [edge.trim()] : [])))
   const pinned = (premises.ok ? premises.value : []).filter(
-    (p) => p.afterIssue !== null && declared.has(String(p.afterIssue))
+    (p) =>
+      (p.afterIssue !== null && declared.has(String(p.afterIssue))) ||
+      (p.afterTask !== null && declaredTasks.has(String(p.afterTask)))
   )
 
   const sources: Array<{ where: string; text: string }> = []

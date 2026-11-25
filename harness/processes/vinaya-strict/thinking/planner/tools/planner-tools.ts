@@ -29,24 +29,31 @@ import {
   editIssue,
   editObjectives,
   printIssueSurface,
+  readStoredPlanDraft,
   renderBrief,
+  submitPlanDraft,
   type BriefInput as BriefAddress,
   type BriefOutcome,
+  type DraftReadOutcome,
+  type DraftSubmitOutcome,
   type IssueWriteOutcome,
   type ObjectivesOutcome,
   type SurfaceOutcome
 } from './planner-operations'
+import { PlanDraftSchema } from '../../../tools/plan-draft/draft'
 
 // --- names ------------------------------------------------------------------
 
-/** The six tools the Planner's seat is granted, in the order the seat lists them. */
+/** The tools the Planner's seat is granted, in the order the seat lists them. */
 export const PLANNER_TOOL_NAMES = [
   'task_issue_create',
   'task_issue_edit',
   'task_issue_surface',
   'task_objectives_edit',
   'brief_render',
-  'task_issue_validate'
+  'task_issue_validate',
+  'plan_draft_submit',
+  'plan_draft_read'
 ] as const
 
 export type PlannerToolName = (typeof PLANNER_TOOL_NAMES)[number]
@@ -162,6 +169,8 @@ const BriefInput = z
     { message: 'give either an Issue number alone, or a tranche with a task id — one address per call' }
   )
 
+const DraftReadInput = z.object({ tranche: z.string().min(1) }).strict()
+
 // --- JSON Schemas (the wire needs them; Zod 3 ships no exporter) ---------------
 
 const str = { type: 'string', minLength: 1 } as const
@@ -185,6 +194,61 @@ const WRITTEN_OUTPUT = {
     warnings: FINDINGS_ARRAY
   },
   required: ['written', 'url', 'renderSkipped', 'warnings'],
+  additionalProperties: false
+} as const
+
+const DRAFT_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    schemaVersion: { const: 1 },
+    tranche: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9-]*$' },
+    revision: { type: 'string', pattern: '^[0-9a-f]{40}$', description: 'A commit of the default branch.' },
+    reviewQuestionVersion: str,
+    tasks: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        properties: {
+          number: { ...issueSchema, description: 'The tranche task number, stable before and after publication.' },
+          issue: { type: ['integer', 'null'], minimum: 1, description: "The published Issue's number; null before." },
+          title: str,
+          body: str,
+          labels: labelsSchema
+        },
+        required: ['number', 'issue', 'title', 'body', 'labels'],
+        additionalProperties: false
+      }
+    },
+    scope: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          item: str,
+          disposition: {
+            oneOf: [
+              {
+                type: 'object',
+                properties: { kind: { const: 'delivered' }, task: issueSchema },
+                required: ['kind', 'task'],
+                additionalProperties: false
+              },
+              {
+                type: 'object',
+                properties: { kind: { const: 'left-out' }, reason: str },
+                required: ['kind', 'reason'],
+                additionalProperties: false
+              }
+            ]
+          }
+        },
+        required: ['item', 'disposition'],
+        additionalProperties: false
+      }
+    }
+  },
+  required: ['schemaVersion', 'tranche', 'revision', 'reviewQuestionVersion', 'tasks', 'scope'],
   additionalProperties: false
 } as const
 
@@ -245,6 +309,13 @@ export const PLANNER_TOOL_INPUT_JSON_SCHEMAS: Record<PlannerToolName, Record<str
     },
     required: ['mode', 'body'],
     additionalProperties: false
+  },
+  plan_draft_submit: DRAFT_JSON_SCHEMA,
+  plan_draft_read: {
+    type: 'object',
+    properties: { tranche: { ...str, description: 'The tranche slug of the draft to read.' } },
+    required: ['tranche'],
+    additionalProperties: false
   }
 }
 
@@ -277,6 +348,22 @@ export const PLANNER_TOOL_OUTPUT_JSON_SCHEMAS: Record<PlannerToolName, Record<st
     },
     required: ['brief', 'waiting'],
     additionalProperties: false
+  },
+  plan_draft_submit: {
+    type: 'object',
+    properties: {
+      tranche: { type: 'string' },
+      fingerprint: { type: 'string', description: 'One fingerprint covering the whole draft.' },
+      tasks: { type: 'integer' }
+    },
+    required: ['tranche', 'fingerprint', 'tasks'],
+    additionalProperties: false
+  },
+  plan_draft_read: {
+    type: 'object',
+    properties: { draft: DRAFT_JSON_SCHEMA, fingerprint: { type: 'string' } },
+    required: ['draft', 'fingerprint'],
+    additionalProperties: false
   }
 }
 
@@ -289,7 +376,9 @@ const DESCRIPTIONS: Record<PlannerToolName, string> = {
   task_issue_surface: `Report what a draft Issue body's Boundary pins force on its Surface. Writes nothing. ${REFUSAL_NOTE}`,
   task_objectives_edit: `Add, drop or replace one objective of an Issue's \`## Objectives\` (Principal only); supersedes a frozen brief when one exists. Returns the new objectives version. ${REFUSAL_NOTE}`,
   brief_render: `Preview a task's brief from its Issue, addressed by a tranche with a task id or by an Issue number alone. A task waiting on an unmerged dependency or an open conflicting task still renders in full, with each reason it cannot start yet in \`waiting\`; a refusal lists the facts it could not find. Writes nothing. ${REFUSAL_NOTE}`,
-  task_issue_validate: `Dry-run the Issue write gate for a create or an edit: runs exactly the gates create and edit run, writes nothing, and returns the findings in the same encoding as the other tools. ${REFUSAL_NOTE}`
+  task_issue_validate: `Dry-run the Issue write gate for a create or an edit: runs exactly the gates create and edit run, writes nothing, and returns the findings in the same encoding as the other tools. ${REFUSAL_NOTE}`,
+  plan_draft_submit: `Store a whole plan draft — every task's title, body and labels, the task list, the agreed scope and the captured revision — on this machine, replacing any earlier draft of the same tranche. Writes no Issue and nothing to the repository. Returns the one fingerprint covering all of it. ${REFUSAL_NOTE}`,
+  plan_draft_read: `Read back the stored draft of a tranche, with its fingerprint. Writes nothing. ${REFUSAL_NOTE}`
 }
 
 /** The Planner seat's catalog entries, in the order the seat lists them. */
@@ -309,6 +398,8 @@ export type PlannerOperations = {
   editObjectives: (args: string[]) => Promise<ObjectivesOutcome>
   printIssueSurface: (args: string[]) => SurfaceOutcome
   renderBrief: (input: BriefAddress) => Promise<BriefOutcome>
+  submitPlanDraft: (input: unknown) => DraftSubmitOutcome
+  readPlanDraft: (tranche: string) => DraftReadOutcome
 }
 
 export const realPlannerOperations: PlannerOperations = {
@@ -316,7 +407,9 @@ export const realPlannerOperations: PlannerOperations = {
   editIssue: (input) => editIssue(input),
   editObjectives: (args) => editObjectives(args),
   printIssueSurface,
-  renderBrief: (input) => renderBrief(input)
+  renderBrief: (input) => renderBrief(input),
+  submitPlanDraft: (input) => submitPlanDraft(input),
+  readPlanDraft: (tranche) => readStoredPlanDraft(tranche)
 }
 
 /** Writes a body to a scratch file the library reads (`--body-file`), and removes it when the operation is over. */
@@ -481,6 +574,22 @@ export function plannerToolHandlers(
         )
       }
       return succeeded({ brief: outcome.brief, waiting: outcome.waiting })
+    }),
+    plan_draft_submit: guarded(PlanDraftSchema, (v) => {
+      const outcome = ops.submitPlanDraft(v)
+      if (!outcome.ok) {
+        return refused(
+          outcome.errors.map((e) => finding('plan-draft', e, 'Correct the draft, then submit the whole draft again.'))
+        )
+      }
+      return succeeded({ tranche: outcome.tranche, fingerprint: outcome.fingerprint, tasks: outcome.tasks })
+    }),
+    plan_draft_read: guarded(DraftReadInput, (v) => {
+      const outcome = ops.readPlanDraft(v.tranche)
+      if (!outcome.ok) {
+        return refused([finding('plan-draft', outcome.message, 'Submit the draft with `plan_draft_submit` first.')])
+      }
+      return succeeded({ draft: outcome.draft, fingerprint: outcome.fingerprint })
     })
   }
 }
