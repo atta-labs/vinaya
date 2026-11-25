@@ -540,7 +540,7 @@ export function createCiProgress(write: (line: string) => void, now: () => numbe
         if (job.status !== 'completed' || emitted.has(job.id)) continue
         emitted.add(job.id)
         if (failed(job)) held.set(job.id, job)
-        else emit(ciJobLine({ name: job.name, ok: true, ms: duration(job) }))
+        else emit(ciJobLine({ name: job.name, ok: true, ms: duration(job), conclusion: job.conclusion }))
       }
     }),
     result: safe((read: RequiredCiRead) => {

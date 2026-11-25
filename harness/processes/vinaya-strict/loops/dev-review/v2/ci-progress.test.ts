@@ -149,6 +149,17 @@ describe('the CI wait’s lines', () => {
     }
   }
 
+  test('a skipped job is named as skipped, never as passed or as the first red job', () => {
+    const { lines, progress } = capture()
+    const skipped = job(5, 'Record test reads (Linux)', { status: 'completed', conclusion: 'skipped', runner_id: null })
+    progress.observe({ run, jobs: [build, skipped] })
+    expect(lines).toEqual([
+      'CI progress: Build, lint & typecheck ✓, 1 min 35 s',
+      'CI progress: Record test reads (Linux) skipped'
+    ])
+    expect(lines.some((line) => line.includes('first red job'))).toBe(false)
+  })
+
   test('one line per job as it completes, the first red job, and a failed test job’s first failing test from the send-back excerpt', () => {
     const { lines, progress } = capture()
     progress.observe({ run, jobs: [build, job(3, 'Test (cli 1)', { status: 'in_progress', runner_id: 3 })] })

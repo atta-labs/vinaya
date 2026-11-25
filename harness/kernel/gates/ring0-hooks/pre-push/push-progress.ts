@@ -806,13 +806,20 @@ export function commandLine(command: string, outcome: CommandProgressOutcome, ms
   return `command progress: ${COMMAND_MARK[outcome] ?? plainText(outcome)}, ${formatDuration(ms)}: ${plainText(command)}`
 }
 
-/** One CI job completed. */
+/**
+ * One CI job completed. A job that completed with a conclusion that is neither a success nor a failure (`skipped`,
+ * `neutral`) is named by that conclusion, with no mark and no duration: it never reads as a pass.
+ */
 export function ciJobLine(job: {
   name: string
   ok: boolean
   ms: number | null
+  /** The job's conclusion, when known. Absent or `success` leaves the pass and fail forms unchanged. */
+  conclusion?: string | null
   firstFailure?: { file: string | null; test: string } | null
 }): string {
+  if (job.ok && job.conclusion && job.conclusion !== 'success')
+    return `CI progress: ${plainText(job.name)} ${plainText(job.conclusion)}`
   const failure =
     !job.ok && job.firstFailure
       ? ` — first failing test: ${job.firstFailure.file ? `${plainText(job.firstFailure.file)}: ` : ''}${plainText(job.firstFailure.test)}`
