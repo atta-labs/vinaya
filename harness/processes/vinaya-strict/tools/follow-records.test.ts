@@ -44,6 +44,42 @@ function view(details: boolean, colour = false) {
   })
 }
 
+const progressDriver = [
+  '2026-11-19T10:00:01Z  push progress: check lint ✓, 1.0 s',
+  '2026-11-19T10:00:02Z  test progress: 1/2 a.test.ts ✓, 1.0 s',
+  '2026-11-19T10:00:03Z  ready push: running 1 explicit Test Plan command',
+  '2026-11-19T10:00:04Z  command progress: ✓, 1.0 s: bun test',
+  '2026-11-19T10:00:05Z  CI progress: build ✓, 1.0 s',
+  '2026-11-19T10:00:06Z  driver exited with code 0'
+]
+
+test('progress lines print once, in time order, beside the records, and the driver exit does not print', () => {
+  const follow = view(false)
+  const records = [record(E.stepStarted, 2500, step('a', 'first'), 'started', 'a')]
+  const first = follow.render({ records, gaps: [] }, progressDriver, now, true)
+  expect(first.filter((line) => line.includes('progress:') || line.includes('ready push:'))).toHaveLength(5)
+  expect(first.join('\n')).not.toContain('driver exited')
+  const order = first.map((line) => line.slice(0, 8))
+  expect(order).toEqual([...order].sort())
+  expect(follow.render({ records: [], gaps: [] }, [], now, false)).toEqual([])
+})
+
+test('a progress line at or before the driver-log time already printed is not printed again', () => {
+  const through = Date.parse('2026-11-19T10:00:03Z')
+  const lines = view(false).render({ records: [], gaps: [] }, progressDriver, now, true, through)
+  expect(lines).toHaveLength(2)
+  expect(lines.join('\n')).toContain('command progress:')
+  expect(lines.join('\n')).toContain('CI progress:')
+})
+
+test('--quiet keeps the progress lines and hides the details', () => {
+  const records = [record(E.stepStarted, 1000, step('a', 'first'), 'started', 'a')]
+  const driver = ['2026-11-19T10:00:01Z  · a detail', progressDriver[0] as string]
+  const lines = view(false).render({ records, gaps: [] }, driver, now, true)
+  expect(lines.join('\n')).toContain('push progress:')
+  expect(lines.join('\n')).not.toContain('a detail')
+})
+
 test('a stage uses the shared banner and clock, and loop records use SDK narration', () => {
   const follow = view(false)
   expect(

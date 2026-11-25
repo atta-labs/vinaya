@@ -738,6 +738,23 @@ const CHECK_MARK: Record<CheckProgressOutcome, string> = {
   timeout: '✗ timed out'
 }
 
+/**
+ * The fixed forms every progress line below starts with. A reader that must tell these lines from the driver's other
+ * runner lines selects by this list, so a new form is added here and nowhere else.
+ */
+export const PROGRESS_LINE_PREFIXES: readonly string[] = [
+  'push progress: ',
+  'test progress: ',
+  'ready push: ',
+  'command progress: ',
+  'CI progress: '
+]
+
+/** Whether a driver-log line's words are one of the progress lines this module writes. */
+export function isProgressLine(text: string): boolean {
+  return PROGRESS_LINE_PREFIXES.some((prefix) => text.startsWith(prefix))
+}
+
 /** One local check finished. */
 export function checkLine(name: string, outcome: CheckProgressOutcome, ms: number): string {
   return `push progress: check ${plainText(name)} ${CHECK_MARK[outcome] ?? plainText(outcome)}, ${formatDuration(ms)}`
