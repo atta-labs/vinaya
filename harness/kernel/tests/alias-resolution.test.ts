@@ -7,7 +7,7 @@
  * relative path; these tests prove it by running Bun, not by the type check alone.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 
 const repoRoot = resolve(import.meta.dir, '..', '..', '..')
@@ -190,11 +190,11 @@ describe.each(FOLDERS)('the $name folder', (folder) => {
   )
 })
 
-function filesUnder(dir: string): string[] {
-  return readdirSync(dir).flatMap((entry) => {
-    const path = join(dir, entry)
-    return statSync(path).isDirectory() ? filesUnder(path) : [path]
-  })
+/** The files under `dir` holding `needle`: `grep` exits 1 with no output when none does. */
+async function filesHolding(dir: string, needle: string): Promise<string[]> {
+  const found = await run(['grep', '-rlF', needle, dir], repoRoot)
+  expect([0, 1]).toContain(found.exitCode)
+  return found.stdout.split('\n').filter(Boolean)
 }
 
 describe('the CLI build with an aliased module (O3)', () => {
@@ -224,13 +224,12 @@ describe('the CLI build with an aliased module (O3)', () => {
 
   test(
     'writes bundles, check bins and declarations that hold no alias specifier, the probe declaration among them',
-    () => {
+    async () => {
       const probeDeclaration = join(out, 'dist', 'types', relative(repoRoot, cliProbe).replace(/\.ts$/, '.d.ts'))
       expect(existsSync(probeDeclaration)).toBe(true)
       expect(existsSync(join(out, 'dist', 'probe', 'alias-probe.js'))).toBe(true)
       expect(existsSync(join(out, 'dist', 'checks', 'bin'))).toBe(true)
-      const holders = filesUnder(out).filter((file) => readFileSync(file, 'utf-8').includes('@harness/'))
-      expect(holders).toEqual([])
+      expect(await filesHolding(out, '@harness/')).toEqual([])
 
       // The declaration re-exports a value and a type from each alias, and each re-export resolves from the package.
       const declaration = readFileSync(probeDeclaration, 'utf-8')
