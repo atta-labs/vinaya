@@ -19,7 +19,9 @@
     "target": "ES2022",
     "paths": {
       "@attalabs/test-selection": ["../test-selection/src/index.ts"],
-      "@attalabs/vinaya-log-sdk": ["../log-sdk/src/index.ts"]
+      "@attalabs/vinaya-log-sdk": ["../log-sdk/src/index.ts"],
+      "@harness/kernel/*": ["../../harness/kernel/*"],
+      "@harness/workflow/*": ["../../harness/processes/vinaya-strict/*"]
     }
   }
 }

@@ -1,5 +1,5 @@
 {
-  "extends": "@atta/typescript-config/base.json",
+  "extends": "../../packages/typescript-config/base.json",
   "compilerOptions": {
     "outDir": "./dist"
   },
