@@ -2,4 +2,4 @@
 import { PULL_FILE } from '@harness/kernel/adapters/code-host/github/forge-snapshot'
 import { CI_SHARD_COUNT } from '@harness/workflow/checks/ci-shard-membership'
 
-console.log(JSON.stringify({ kernel: PULL_FILE, workflow: CI_SHARD_COUNT }))
+process.stdout.write(`${JSON.stringify({ kernel: PULL_FILE, workflow: CI_SHARD_COUNT })}\n`)

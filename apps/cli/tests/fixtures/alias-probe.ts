@@ -7,4 +7,4 @@ export type { GhAuthor } from '@harness/kernel/adapters/code-host/github/forge-s
 export { CI_SHARD_COUNT } from '@harness/workflow/checks/ci-shard-membership'
 export type { Task } from '@harness/workflow/tools/task-contract/types'
 
-console.log(JSON.stringify({ kernel: PULL_FILE, workflow: CI_SHARD_COUNT }))
+process.stdout.write(`${JSON.stringify({ kernel: PULL_FILE, workflow: CI_SHARD_COUNT })}\n`)
