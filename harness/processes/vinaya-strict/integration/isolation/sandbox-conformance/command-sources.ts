@@ -52,6 +52,9 @@ export const SUITE_INPUTS: readonly string[] = [
   // The command data file, the known-failures list and the suite's own code.
   'harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/',
   'harness/kernel/conformance/unit/process-fixture.ts',
+  // The alias table the suite's import walk reads, and the config it is read from: either changes what the walk lists.
+  'harness/kernel/imports/alias-table.ts',
+  'packages/typescript-config/base.json',
   // The program table the suite reads each program's source and bin from.
   'harness/processes/vinaya-strict/tools/programs.ts',
   'harness/processes/vinaya-strict/integration/isolation/sandbox-conformance/driver-socket-reach.ts',

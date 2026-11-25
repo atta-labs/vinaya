@@ -164,6 +164,83 @@ describe('issue surface — the report and the gate agree on every importer', ()
   })
 })
 
+describe('issue surface — a pinned module imported through an alias', () => {
+  let fixture: string
+
+  const write = (path: string, content: string) => {
+    const full = join(fixture, path)
+    mkdirSync(join(full, '..'), { recursive: true })
+    writeFileSync(full, content)
+  }
+
+  const commit = () => {
+    execFileSync('git', ['add', '-A'], { cwd: fixture })
+    execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'fixture'], { cwd: fixture })
+  }
+
+  beforeEach(() => {
+    fixture = mkdtempSync(join(tmpdir(), 'vinaya-issue-surface-alias-'))
+    execFileSync('git', ['init', '-q'], { cwd: fixture })
+    write('packages/core/src/gate.ts', 'export const gate = 1\n')
+    write('apps/cli/src/direct.ts', "import { gate } from '@al/gate.js'\n")
+    write('packages/lib/package.json', JSON.stringify({ name: '@fx/lib', main: './src/index.ts' }))
+    write('packages/lib/src/index.ts', "export { gate } from '@al/gate.js'\n")
+    write('apps/cli/src/via-index.ts', "import { gate } from '@fx/lib'\n")
+    write('packages/lib2/package.json', JSON.stringify({ name: '@fx/lib2', main: './src/index.ts' }))
+    write('packages/lib2/src/index.ts', "export * from '@al/gate.js'\n")
+    write('apps/cli/src/via-star.ts', "import { gate } from '@fx/lib2'\n")
+    write('apps/cli/src/unrelated.ts', "import { other } from '@al/other.js'\n")
+  })
+
+  afterEach(() => {
+    rmSync(fixture, { recursive: true, force: true })
+  })
+
+  const BODY = [
+    "## Planner's rationale",
+    '',
+    '**Boundary** — In: the gate. Pinned files: `packages/core/src/gate.ts`. Out: nothing else.',
+    '',
+    '## Objectives',
+    '',
+    'O1. The gate refuses the body.',
+    '',
+    '## Surface',
+    '',
+    'in: packages/core/src',
+    'out: apps/log-server',
+    '',
+    '## Parts',
+    '',
+    'Part 1 (O1) — the gate refuses the body.'
+  ].join('\n')
+
+  it('lists every aliased importer, an aliased re-export in an index file included', () => {
+    write(
+      'packages/typescript-config/base.json',
+      JSON.stringify({ compilerOptions: { paths: { '@al/*': ['../../packages/core/src/*'] } } })
+    )
+    commit()
+    expect(readPinnedFileImporters(BODY, fixture)).toEqual([
+      {
+        file: 'packages/core/src/gate.ts',
+        importers: [
+          'apps/cli/src/direct.ts',
+          'apps/cli/src/via-index.ts',
+          'apps/cli/src/via-star.ts',
+          'packages/lib/src/index.ts',
+          'packages/lib2/src/index.ts'
+        ]
+      }
+    ])
+  })
+
+  it('lists none of them in a repository with no base config, as before aliases', () => {
+    commit()
+    expect(readPinnedFileImporters(BODY, fixture)).toEqual([{ file: 'packages/core/src/gate.ts', importers: [] }])
+  })
+})
+
 describe('issue surface — a pinned module imported only through a package name', () => {
   let fixture: string
 

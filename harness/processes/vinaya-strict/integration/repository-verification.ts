@@ -22,6 +22,7 @@
  * calls the library's public `selectTests` instead; this adapter's callers keep
  * their contracts until their integrations opt into it.
  */
+import { readAliasTable } from '@harness/kernel/imports/alias-table.js'
 import { CLI_SPAWN_BINARY } from '../../../kernel/gates/ring0-hooks/pre-push/cli-spawn-tests.js'
 import { SCANNER_DECLARATIONS, type ScannerDeclaration } from './verification-scanner-policy.js'
 import {
@@ -42,6 +43,7 @@ export {
   extractOwnImportRecords,
   type ImportRecord,
   isTestFile,
+  resolveAliasedImport,
   resolveRelativeImport,
   type SelectionExplanation,
   type SelectionReasonKind,
@@ -254,7 +256,9 @@ export function selectAffectedTestFiles(
   options: SelectionOptions = {}
 ): SelectionResult {
   const cliEntrypoint = options.cliEntrypoint ?? DEFAULT_CLI_ENTRYPOINT
+  const pathAliases = readAliasTable(repoRoot)
   return selectAffectedFiles(diskTree(repoRoot), changedFiles, {
+    ...(pathAliases.length > 0 ? { pathAliases } : {}),
     ...(options.alwaysRun ? { alwaysRun: options.alwaysRun } : {}),
     ...(options.addedOrRenamed ? { addedOrRenamed: options.addedOrRenamed } : {}),
     ...(options.removed ? { removed: options.removed } : {}),

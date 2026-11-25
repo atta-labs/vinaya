@@ -4,6 +4,7 @@
  * it returns. Every path is repository-relative and `/`-separated.
  */
 import type { TypeScriptApi } from './compiler-graph.js'
+import type { PathAliasTable } from './path-aliases.js'
 import type { ReadRecord } from './recorded-reads.js'
 import type { ScannerDeclaration } from './scanner-inputs.js'
 import type { SpawnProgram } from './spawn-inputs.js'
@@ -194,6 +195,8 @@ export type SelectionObligation = {
 
 /** Everything a selection decides by, stated by the caller — the library holds no default of a repository's own. */
 export type SelectionPolicy = {
+  /** Specifier prefixes that name repository folders, from the caller; absent, no specifier is an alias. The library never reads a configuration file for them. */
+  pathAliases?: PathAliasTable
   /**
    * `'transitive'` walks however many files it takes to reach the change;
    * `'one'` stops after a test's own direct edges, withholds tree-scan and

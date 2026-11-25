@@ -58,9 +58,11 @@ import { join, posix } from 'node:path'
 import ts from 'typescript'
 import {
   extractImportSpecifiers,
+  resolveAliasedImport,
   resolveRelativeImport,
   testRunnerOf
 } from '../../harness/processes/vinaya-strict/integration/repository-verification.js'
+import { BASE_CONFIG_PATH, parseAliasTable } from '@harness/kernel/imports/alias-table.js'
 import {
   bunLockIdentity,
   declarationListProblems,
@@ -1207,9 +1209,10 @@ function importEdges(
 }
 
 /** A file's relative import closure, repository-relative, through the selector's text reader and resolver. */
-function importClosure(tree: TreeReader, files: readonly string[]): (start: string) => string[] {
+export function importClosure(tree: TreeReader, files: readonly string[]): (start: string) => string[] {
   const ROOT = '/tree'
   const known = new Set(files.filter((f) => /\.(c|m)?[jt]sx?$/.test(f)).map((f) => `${ROOT}/${f}`))
+  const aliases = parseAliasTable(tree.read(BASE_CONFIG_PATH) ?? '')
   const direct = new Map<string, string[]>()
   const depsOf = (file: string): string[] => {
     let deps = direct.get(file)
@@ -1217,8 +1220,9 @@ function importClosure(tree: TreeReader, files: readonly string[]): (start: stri
       deps = []
       const text = tree.read(file.slice(ROOT.length + 1)) ?? ''
       for (const specifier of extractImportSpecifiers(text)) {
-        if (!specifier.startsWith('.')) continue
-        const resolved = resolveRelativeImport(file, specifier, known)
+        const resolved = specifier.startsWith('.')
+          ? resolveRelativeImport(file, specifier, known)
+          : resolveAliasedImport(ROOT, specifier, aliases, known)
         if (resolved) deps.push(resolved)
       }
       direct.set(file, deps)

@@ -53,7 +53,10 @@ type Problems = { problems: { code: string }[] }
 const { guardedClosure, guardRepository, guardVerdict, relativeSpecifiers } = (await load(
   'scripts/ci/base-guard.ts'
 )) as {
-  guardedClosure: (read: (path: string) => string | null) => { files: string[]; unresolved: string[] }
+  guardedClosure: (
+    read: (path: string) => string | null,
+    entrypoints?: readonly string[]
+  ) => { files: string[]; unresolved: string[] }
   guardRepository: (root: string, base: string, head: string) => Guard
   guardVerdict: (changed: string[], read: (path: string) => string | null) => Guard
   relativeSpecifiers: (text: string) => string[]
@@ -108,6 +111,34 @@ describe('the base guard', () => {
     expect(specifiers.length).toBeGreaterThan(0)
     for (const specifier of specifiers) expect(specifier.startsWith('node:')).toBe(true)
     expect(relativeSpecifiers(text)).toEqual([])
+  })
+
+  it('keeps the exports the test reads and reads an aliased specifier from a base commit that declares the table', () => {
+    for (const name of [relativeSpecifiers, guardedClosure, guardVerdict, guardRepository])
+      expect(typeof name).toBe('function')
+    const config = JSON.stringify({ compilerOptions: { paths: { '@k/*': ['../../kernel/*'], '@x': ['../x.ts'] } } })
+    const tree: Record<string, string> = {
+      'scripts/ci/base-guard.ts': "import { a } from '@k/a.js'\n// import { z } from '@k/commented.js'\n",
+      'kernel/a.ts': "export { b } from '@k/b.js'\n"
+    }
+    const reader = (declared: boolean, files: Record<string, string>) => (path: string) =>
+      path === 'packages/typescript-config/base.json' ? (declared ? config : null) : (files[path] ?? null)
+    const entry = ['scripts/ci/base-guard.ts']
+    // The alias reaches a file only an alias names, and what that file re-exports through an alias too.
+    const withB = { ...tree, 'kernel/b.ts': 'export const b = 1\n' }
+    expect(guardedClosure(reader(true, withB), entry).files).toEqual([
+      'kernel/a.ts',
+      'kernel/b.ts',
+      'scripts/ci/base-guard.ts'
+    ])
+    expect(guardVerdict(['kernel/b.ts'], reader(true, withB)).verdict).toBe('full')
+    // An alias that names no file the base holds is reported, never dropped.
+    expect(guardedClosure(reader(true, tree), entry).unresolved).toEqual(['kernel/a.ts → kernel/b.js'])
+    // A base with no table, or one that does not parse, reads exactly as before.
+    expect(guardedClosure(reader(false, withB), entry)).toEqual({ files: ['scripts/ci/base-guard.ts'], unresolved: [] })
+    expect(
+      guardedClosure((p) => (p === 'packages/typescript-config/base.json' ? '{ nope' : (withB[p] ?? null)), entry).files
+    ).toEqual(['scripts/ci/base-guard.ts'])
   })
 
   it('runs as a copy outside the checkout and answers for the change it is given', () => {

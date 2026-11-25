@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
 import ts from 'typescript'
+import { type PathAliasTable, resolveAliasedSpecifier } from '@attalabs/test-selection'
+import { readAliasTable } from '@harness/kernel/imports/alias-table.js'
 import { parse } from 'yaml'
 import {
   BASELINE_PATH,
@@ -39,11 +41,13 @@ const SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)(['"`])([^'"
 
 // Nor does it reach into an application: a file under `harness/` that imports
 // from `apps/` would make the generic machinery depend on one product's code.
-export function importsOfAnApp(source: string): string[] {
+export function importsOfAnApp(source: string, aliases: PathAliasTable = []): string[] {
   const offending: string[] = []
   for (const match of source.matchAll(SPECIFIER)) {
     const specifier = match[2] ?? ''
-    if (specifier.startsWith('.') && specifier.split('/').includes('apps')) offending.push(specifier)
+    const aliased = resolveAliasedSpecifier(specifier, aliases)
+    const path = aliased ?? specifier
+    if ((specifier.startsWith('.') || aliased !== null) && path.split('/').includes('apps')) offending.push(specifier)
   }
   return offending
 }
@@ -53,7 +57,7 @@ describe('harness never imports an app', () => {
     const violations: string[] = []
     for (const file of sourceFiles(harnessRoot)) {
       if (file === import.meta.path) continue
-      for (const specifier of importsOfAnApp(readFileSync(file, 'utf8'))) {
+      for (const specifier of importsOfAnApp(readFileSync(file, 'utf8'), readAliasTable(REPOSITORY_ROOT))) {
         violations.push(`${file.slice(harnessRoot.length + 1)} imports ${specifier}`)
       }
     }
@@ -73,7 +77,7 @@ describe('harness never imports a process', () => {
     for (const file of sourceFiles(harnessRoot)) {
       // This file names the forbidden specifiers as data, so it is not scanned.
       if (file === import.meta.path) continue
-      for (const specifier of importsOfAProcess(readFileSync(file, 'utf8'))) {
+      for (const specifier of importsOfAProcess(readFileSync(file, 'utf8'), readAliasTable(REPOSITORY_ROOT))) {
         violations.push(`${file.slice(harnessRoot.length + 1)} imports ${specifier}`)
       }
     }
@@ -87,6 +91,45 @@ describe('harness never imports a process', () => {
     expect(importsOfAProcess("import { x } from '@attalabs/process-vinaya'")).toEqual(['@attalabs/process-vinaya'])
     expect(importsOfAProcess("const m = await import('../processes/other')")).toEqual(['../processes/other'])
     expect(importsOfAProcess("import { x } from './local'\nimport y from 'node:fs'")).toEqual([])
+  })
+
+  test('the scan counts an aliased process import exactly as the relative one', () => {
+    const aliases = readAliasTable(REPOSITORY_ROOT)
+    expect(importsOfAProcess("import { x } from '@harness/workflow/checks/gate.js'", aliases)).toEqual([
+      '@harness/workflow/checks/gate.js'
+    ])
+    expect(importsOfAProcess("const m = await import('@harness/workflow/loops/a.js')", aliases)).toEqual([
+      '@harness/workflow/loops/a.js'
+    ])
+    expect(importsOfAProcess("import { x } from '@harness/kernel/gates/gate.js'", aliases)).toEqual([])
+    expect(importsOfAnApp("import { x } from '@harness/kernel/gates/gate.js'", aliases)).toEqual([])
+    // With no table an aliased specifier is just a package-shaped name, as before.
+    expect(importsOfAProcess("import { x } from '@harness/workflow/checks/gate.js'")).toEqual([])
+    const apps: PathAliasTable = [{ prefix: '@app/', directory: 'apps/cli/src/' }]
+    expect(importsOfAnApp("import { x } from '@app/lib/thing.js'", apps)).toEqual(['@app/lib/thing.js'])
+    expect(countSource("import { x } from '@harness/workflow/checks/gate.js'", [], aliases)).toBe(1)
+    expect(countSource("import { x } from '../../harness/processes/vinaya-strict/checks/gate.js'", [], aliases)).toBe(1)
+  })
+
+  test('a CLI source whose process import is rewritten to the alias keeps its count; a kernel file importing it is counted', () => {
+    const files = {
+      'packages/typescript-config/base.json': JSON.stringify({
+        compilerOptions: { paths: { '@harness/workflow/*': ['../../harness/processes/vinaya-strict/*'] } }
+      }),
+      'apps/cli/src/lib/relative.ts':
+        "import { gate } from '../../../../harness/processes/vinaya-strict/checks/gate.js'\n",
+      'apps/cli/src/lib/aliased.ts': "import { gate } from '@harness/workflow/checks/gate.js'\n",
+      'harness/kernel/gates/kernel.ts': "import { gate } from '@harness/workflow/checks/gate.js'\n"
+    }
+    const { root } = plantedRepository(files, false)
+    expect(countTree(root)).toEqual({
+      'apps/cli/src/lib/relative.ts': 1,
+      'apps/cli/src/lib/aliased.ts': 1,
+      'harness/kernel/gates/kernel.ts': 1
+    })
+    // Without the table, the aliased specifiers are not counted: the reading is the table's.
+    const bare = plantedRepository({ ...files, 'packages/typescript-config/base.json': '{}' }, false)
+    expect(countTree(bare.root)).toEqual({ 'apps/cli/src/lib/relative.ts': 1 })
   })
 
   test('no file under harness/ reaches a process through a forwarding entry of the ownership map', () => {

@@ -1,5 +1,5 @@
-// Imports one real module through each alias; the alias-resolution test type-checks, runs and bundles this file.
+// Imports one real module through the kernel alias; the alias-resolution test type-checks, runs and bundles this file.
+// Kernel code never imports a process, so the workflow alias is proved from the workflow and CLI folders' own probes.
 import { PULL_FILE } from '@harness/kernel/adapters/code-host/github/forge-snapshot'
-import { CI_SHARD_COUNT } from '@harness/workflow/checks/ci-shard-membership'
 
-process.stdout.write(`${JSON.stringify({ kernel: PULL_FILE, workflow: CI_SHARD_COUNT })}\n`)
+process.stdout.write(`${JSON.stringify({ kernel: PULL_FILE })}\n`)

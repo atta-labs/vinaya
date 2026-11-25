@@ -1,5 +1,6 @@
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
+import { resolveAliasedPath } from '@harness/kernel/imports/alias-table.js'
 
 /** The roles the installer writes a skill for. */
 const SKILL_ROLES = [
@@ -108,6 +109,18 @@ export function repositoryImportTree(root: string): ImportTree {
     read: (path) => readFileSync(resolve(root, path), 'utf8'),
     resolve: (specifier, importer) => {
       if (specifier.startsWith('node:') || specifier.startsWith('bun:')) return null
+      // An aliased specifier names a repository path through the repository's own alias table; one that names no
+      // file is refused like a relative one, never dropped as if it were a package.
+      const aliased = resolveAliasedPath(root, specifier)
+      if (aliased !== null) {
+        const stem = aliased.replace(/\.[cm]?[jt]sx?$/, '')
+        const hit = [aliased, `${stem}.ts`, `${stem}.tsx`, `${stem}/index.ts`, `${aliased}.ts`].find((candidate) => {
+          const file = resolve(root, candidate)
+          return existsSync(file) && statSync(file).isFile()
+        })
+        if (hit === undefined) throw new Error(`cannot resolve ${specifier} from ${importer}`)
+        return hit
+      }
       let absolute: string
       try {
         absolute = Bun.resolveSync(specifier, dirname(resolve(root, importer)))

@@ -4,6 +4,7 @@
 // translation, never defaulting a missing fact to a passing value.
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
+import { runtimeImportPaths } from './renderer-imports.js'
 import { parseIssueSurface } from '../../tools/task-contract/issue-validation'
 import { KIND_FIELDS, type NeutralCase, NEUTRAL_CASE_KINDS } from '../../../../kernel/evals/neutral-case'
 import { CLAUDE_CAPABILITY_TOOLS } from '../../../../kernel/adapters/agents/claude-code/capabilities'
@@ -728,9 +729,10 @@ describe('the renderer version', () => {
 
   it('digests the source of every repository module the renderer imports at run time', () => {
     const source = MAPPING_SOURCES['harness/processes/vinaya-strict/evals/vinaya-renderer.ts'] as string
-    const imports = [...source.matchAll(/^import (?!type )[^;]*? from '(\.{1,2}\/[^']+)'/gm)].map((m) => m[1] as string)
-    const resolved = imports.map((spec) =>
-      join('harness/processes/vinaya-strict/evals', `${spec.replace(/\.js$/, '')}.ts`).replace(/\\/g, '/')
+    const resolved = runtimeImportPaths(
+      source,
+      'harness/processes/vinaya-strict/evals/vinaya-renderer.ts',
+      join(import.meta.dir, '..', '..', '..', '..', '..')
     )
     // The tool catalog is read only for its tool names, which the tables carry.
     const covered = resolved.filter((path) => path !== 'harness/kernel/tools/tool-catalog.ts')

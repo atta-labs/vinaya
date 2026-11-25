@@ -31,18 +31,9 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { execFileSync, spawn } from 'node:child_process'
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, resolve } from 'node:path'
+import { join } from 'node:path'
 import { sourceManifestPath, sourceReceiptsPath } from '../../../../../kernel/source-manifest.js'
 import {
   createDispatchCapabilityTable,
@@ -57,6 +48,7 @@ import {
 } from '../../../../../kernel/tools/dev-tools-server.js'
 import { expectGradingSandboxDenies, proveGradingSandbox } from '../../../evals/suites/grading-sandbox-proof.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from './driver-socket-reach.js'
+import { suiteImports as walkSuiteImports } from './suite-imports.js'
 import {
   spawnBudgetedAsync,
   spawnSyncBudgeted,
@@ -929,24 +921,12 @@ describe('Engine containment probes — the command, canary, deny-rule and launc
 
 /** The suite's helper modules under `apps/cli/tests/` are followed, `src/` and package modules are not. */
 function suiteImports(): { modules: Set<string>; packages: Set<string> } {
-  const modules = new Set<string>()
-  const packages = new Set<string>()
-  const queue = ['command-sources.ts', 'sandbox-conformance.test.ts', 'sandbox-launch.ts'].map((f) =>
-    join(import.meta.dir, f)
+  return walkSuiteImports(
+    ['command-sources.ts', 'sandbox-conformance.test.ts', 'sandbox-launch.ts', 'suite-imports.ts'].map((f) =>
+      join(import.meta.dir, f)
+    ),
+    REPO_ROOT
   )
-  for (const file of queue) {
-    const source = readFileSync(file, 'utf8')
-    for (const m of source.matchAll(/^(?:import|export)\b[^'"]*?from\s+'([^']+)'/gms)) {
-      const specifier = m[1] ?? ''
-      if (specifier.startsWith('@attalabs/')) packages.add(specifier)
-      if (!specifier.startsWith('.')) continue
-      const ts = resolve(dirname(file), specifier.replace(/\.js$/, '.ts'))
-      const rel = relative(REPO_ROOT, ts)
-      modules.add(rel)
-      if (rel.startsWith('apps/cli/tests/') && !queue.includes(ts) && existsSync(ts)) queue.push(ts)
-    }
-  }
-  return { modules, packages }
 }
 
 describe('sandbox conformance — the inputs the skip decision watches', () => {
@@ -967,6 +947,30 @@ describe('sandbox conformance — the inputs the skip decision watches', () => {
       (p) => !isSuiteInput(`packages/${p.slice('@attalabs/'.length)}/src/index.ts`)
     )
     expect(uncovered).toEqual([])
+  })
+
+  it('lists the file an aliased import names, as it lists the file a relative import names', () => {
+    const root = mkdtempSync(join(tmpdir(), 'suite-imports-alias-'))
+    try {
+      mkdirSync(join(root, 'packages/typescript-config'), { recursive: true })
+      writeFileSync(
+        join(root, 'packages/typescript-config/base.json'),
+        JSON.stringify({ compilerOptions: { paths: { '@harness/kernel/*': ['../../harness/kernel/*'] } } })
+      )
+      mkdirSync(join(root, 'apps/cli/tests/lib'), { recursive: true })
+      const start = join(root, 'apps/cli/tests/lib/start.ts')
+      writeFileSync(
+        start,
+        "import { a } from '@harness/kernel/conformance/unit/process-fixture.js'\nexport const x = a\n"
+      )
+      expect([...walkSuiteImports([start], root).modules]).toEqual([
+        'harness/kernel/conformance/unit/process-fixture.ts'
+      ])
+      rmSync(join(root, 'packages'), { recursive: true })
+      expect([...walkSuiteImports([start], root).modules]).toEqual([])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('covers the lockfile, the repository config and the CI workflow file', () => {
