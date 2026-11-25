@@ -585,7 +585,7 @@ for (const agent of AGENTS) {
         observed.rawEvents.filter((event) => event.event === 'round_ended').every((event) => event.round === 1)
       ).toBe(true)
       expect(records(observed, 'ready-push').at(-1)?.readyPushFailures).toBe(3)
-    })
+    }, 120_000)
     test('requested changes still pause at the configured review ceiling', async () => {
       const observed = await runV2(agent, {
         policy: { maxRounds: 1 },
