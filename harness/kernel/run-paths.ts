@@ -85,6 +85,16 @@ export const DRIVER_LOCK_FILENAME = 'driver.pid.json'
  */
 export type RunScope = number | { pr: number } | 'unscoped'
 
+/** The folder, beside `tasks-execution`, holding one folder per plan being drafted. It is not under `tasks-execution` on purpose: that directory is swept as finished or abandoned tasks, and a draft is neither. */
+export const PLAN_DRAFTS_DIRNAME = 'plan-drafts'
+
+/**
+ * A plan being drafted, addressed by its tranche slug. One folder per slug, so
+ * a second draft of the same tranche replaces the first. The slug must be a
+ * safe path segment; any other value is refused rather than spliced in.
+ */
+export type PlanScope = { plan: string }
+
 /** A location inside a task folder. Every run file this repository writes is one of these. */
 export type RunFileLocation =
   /** The task folder itself, or a file sitting at its root (today, only the driver lock). */
@@ -211,8 +221,8 @@ export function tasksExecutionRoot(runtimeDir: string): string {
  * else in this repository joins a run-file path — `run-paths-only.test.ts`
  * fails the build if anything does.
  */
-export function runPath(runtimeDir: string, scope: RunScope, location: RunFileLocation): string {
-  const dir = join(runtimeDir, TASKS_EXECUTION_DIRNAME, scopeSegment(scope))
+export function runPath(runtimeDir: string, scope: RunScope | PlanScope, location: RunFileLocation): string {
+  const dir = scopeDir(runtimeDir, scope)
   switch (location.area) {
     case 'task':
       return location.file ? join(dir, location.file) : dir
@@ -235,6 +245,18 @@ export function runPath(runtimeDir: string, scope: RunScope, location: RunFileLo
       return location.file ? join(areaDir, location.file) : areaDir
     }
   }
+}
+
+function scopeDir(runtimeDir: string, scope: RunScope | PlanScope): string {
+  if (typeof scope === 'object' && 'plan' in scope) {
+    if (!isSafeRepoSegment(scope.plan)) {
+      throw new Error(
+        `a plan scope names a tranche slug that is not a safe path segment: ${JSON.stringify(scope.plan)}`
+      )
+    }
+    return join(runtimeDir, PLAN_DRAFTS_DIRNAME, scope.plan)
+  }
+  return join(runtimeDir, TASKS_EXECUTION_DIRNAME, scopeSegment(scope))
 }
 
 /**

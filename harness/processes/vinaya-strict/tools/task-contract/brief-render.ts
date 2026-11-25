@@ -81,7 +81,8 @@ function renderPremises(premises: readonly IssuePremise[]): string {
     'Checked against the code when this task Issue was cut, and again against the default branch at dispatch — facts, not claims.',
     '',
     ...premises.map((p) => {
-      const prefix = p.afterIssue === null ? '' : `after #${p.afterIssue}: `
+      const prefix =
+        p.afterIssue !== null ? `after #${p.afterIssue}: ` : p.afterTask !== null ? `after task ${p.afterTask}: ` : ''
       return `- ${prefix}\`${p.path}\` contains \`${p.text}\``
     })
   ].join('\n')

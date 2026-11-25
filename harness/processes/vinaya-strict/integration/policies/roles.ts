@@ -110,8 +110,8 @@ export function isOperatorGranted(tool: string): tool is OperatorGrantedTool {
 // --- the Planner's tool grant, the boundary its seat enforces -----------------
 
 /**
- * The complete, closed set of tools the Planner seat is granted — the six
- * Planner tools (`thinking/planner/tools/planner-tools.ts`), and nothing else.
+ * The complete, closed set of tools the Planner seat is granted — the Planner
+ * tools (`thinking/planner/tools/planner-tools.ts`), and nothing else.
  * The Planner is granted no task tool and the Operator no Planner tool: each
  * seat serves only its own catalog entries, and a test binds the two grants
  * in both directions.
@@ -122,7 +122,9 @@ export const PLANNER_TOOL_GRANT = [
   'task_issue_surface',
   'task_objectives_edit',
   'brief_render',
-  'task_issue_validate'
+  'task_issue_validate',
+  'plan_draft_submit',
+  'plan_draft_read'
 ] as const
 
 export type PlannerGrantedTool = (typeof PLANNER_TOOL_GRANT)[number]

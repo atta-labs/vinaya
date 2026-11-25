@@ -48,6 +48,14 @@ function stubOps(
       calls.push({ op: 'brief', arg: input })
       return { ok: true, brief: '# brief', waiting: [] }
     },
+    submitPlanDraft: (input) => {
+      calls.push({ op: 'draft-submit', arg: input })
+      return { ok: true, tranche: 'sample-plan', fingerprint: 'sha256:abc', tasks: 1 }
+    },
+    readPlanDraft: (tranche) => {
+      calls.push({ op: 'draft-read', arg: tranche })
+      return { ok: false, message: `no draft is stored for tranche "${tranche}" on this machine` }
+    },
     ...over
   }
   return Object.assign(ops, { calls })
@@ -63,8 +71,56 @@ const refusalFindings = (r: Awaited<ReturnType<typeof call>>) => {
   return JSON.parse(r.error.detail as string) as { check: string; message: string; recovery: string }[]
 }
 
+const DRAFT = {
+  schemaVersion: 1,
+  tranche: 'sample-plan',
+  revision: 'a'.repeat(40),
+  reviewQuestionVersion: 'q1',
+  tasks: [{ number: 1, issue: null, title: 'First', body: 'Body', labels: ['vinaya/tranche:sample-plan'] }],
+  scope: [{ item: 'Everything', disposition: { kind: 'delivered', task: 1 } }]
+}
+
+describe('the plan draft tools', () => {
+  it('plan_draft_submit hands a whole draft to the store and returns its fingerprint', async () => {
+    const ops = stubOps()
+    const r = await call(ops, 'plan_draft_submit', DRAFT)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.result).toEqual({ tranche: 'sample-plan', fingerprint: 'sha256:abc', tasks: 1 })
+    expect(ops.calls.map((c) => c.op)).toEqual(['draft-submit'])
+  })
+
+  it('plan_draft_submit refuses a malformed draft before it reaches the store', async () => {
+    const ops = stubOps()
+    const r = await call(ops, 'plan_draft_submit', { ...DRAFT, revision: 'main' })
+    expect(r.ok).toBe(false)
+    expect(refusalFindings(r)[0]?.check).toBe('tool-input')
+    expect(ops.calls).toEqual([])
+  })
+
+  it('plan_draft_submit refuses a scope item delivered by a task the draft lacks', async () => {
+    const r = await call(stubOps(), 'plan_draft_submit', {
+      ...DRAFT,
+      scope: [{ item: 'X', disposition: { kind: 'delivered', task: 9 } }]
+    })
+    expect(r.ok).toBe(false)
+  })
+
+  it('plan_draft_read returns the stored draft and its fingerprint, and refuses an absent one', async () => {
+    const present = await call(
+      stubOps({ readPlanDraft: () => ({ ok: true, draft: DRAFT as never, fingerprint: 'sha256:abc' }) }),
+      'plan_draft_read',
+      { tranche: 'sample-plan' }
+    )
+    expect(present.ok).toBe(true)
+    if (present.ok) expect(present.result).toEqual({ draft: DRAFT, fingerprint: 'sha256:abc' })
+    const absent = await call(stubOps(), 'plan_draft_read', { tranche: 'sample-plan' })
+    expect(absent.ok).toBe(false)
+    expect(refusalFindings(absent)[0]?.check).toBe('plan-draft')
+  })
+})
+
 describe('the Planner tool entries', () => {
-  it('are the six tools, each with an input and an output schema', () => {
+  it('are each tool of the seat, each with an input and an output schema', () => {
     expect(PLANNER_TOOL_ENTRIES.map((e) => e.name)).toEqual([...PLANNER_TOOL_NAMES])
     for (const entry of PLANNER_TOOL_ENTRIES) {
       expect(entry.inputSchema.type).toBe('object')

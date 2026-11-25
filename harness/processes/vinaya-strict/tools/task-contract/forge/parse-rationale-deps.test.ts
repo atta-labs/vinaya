@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   AmbiguousBareEdgeError,
+  classifyEdge,
   findLetteredEdgeIds,
   findPlainTextEdgeLabels,
   parseRationaleDeps,
@@ -236,5 +237,37 @@ describe('requireTrancheQualifiedEdges', () => {
     } catch (e) {
       expect((e as AmbiguousBareEdgeError).token).toBe('9')
     }
+  })
+})
+
+describe('classifyEdge', () => {
+  it('reads a bare number as a task, #n as an Issue, and a slug-qualified id as another tranche', () => {
+    expect(classifyEdge('3')).toEqual({ kind: 'task', number: 3 })
+    expect(classifyEdge('#3')).toEqual({ kind: 'issue', number: 3 })
+    expect(classifyEdge('other-plan 3')).toEqual({
+      kind: 'other-tranche',
+      slug: 'other-plan',
+      number: 3,
+      viaIssue: false
+    })
+    expect(classifyEdge('other-plan #3')).toEqual({
+      kind: 'other-tranche',
+      slug: 'other-plan',
+      number: 3,
+      viaIssue: true
+    })
+  })
+
+  it('never names task 5 and Issue #5 as one thing', () => {
+    expect(classifyEdge('5')).not.toEqual(classifyEdge('#5'))
+  })
+
+  it('is null for a token that is no edge id, so a lettered id still never resolves', () => {
+    for (const t of ['7a', '—', '', 'after task 2']) expect(classifyEdge(t)).toBeNull()
+  })
+
+  it('leaves what the parser reads from a body unchanged: bare numbers and #n both parse, in order', () => {
+    const body = '**Dependency rationale** — `Depends-on: 1, 2, #2291` `Conflicts-with: 3`\n\n**Next** — x'
+    expect(parseRationaleDeps(body)).toEqual({ dependsOn: ['1', '2', '#2291'], conflictsWith: ['3'] })
   })
 })

@@ -117,7 +117,9 @@ describe("the Planner seat's grant", () => {
     'task_issue_surface',
     'task_objectives_edit',
     'brief_render',
-    'task_issue_validate'
+    'task_issue_validate',
+    'plan_draft_submit',
+    'plan_draft_read'
   ]
   const list = async (seat: string | null) => {
     const server = createTaskToolsMcpServer({ serverVersion: '0.0.0-test', seat })
@@ -132,13 +134,20 @@ describe("the Planner seat's grant", () => {
     return JSON.parse(line ?? '{}').result
   }
 
-  it('is exactly the six Planner tools, the catalog tool names bound to the grant', () => {
+  it('is exactly the Planner tools, the catalog tool names bound to the grant', () => {
     expect([...PLANNER_TOOL_GRANT] as string[]).toEqual(PLANNER_TOOLS)
     expect([...PLANNER_TOOL_NAMES] as string[]).toEqual(PLANNER_TOOLS)
     expect(VINAYA_PLANNER_ROUTER_ROLES.seat).toBe('the Planner')
   })
-  it('serves exactly the six on the Planner seat', async () => {
+  it('serves exactly the granted tools on the Planner seat', async () => {
     expect(await list(PLANNER_SEAT)).toEqual(PLANNER_TOOLS)
+  })
+  it('lists the two plan-draft tools on no seat but the Planner', async () => {
+    for (const seat of [OPERATOR_SEAT, null]) {
+      const tools = await list(seat)
+      expect(tools).not.toContain('plan_draft_submit')
+      expect(tools).not.toContain('plan_draft_read')
+    }
   })
   it('leaves the Operator seat serving exactly its six task tools', async () => {
     expect(await list(OPERATOR_SEAT)).toEqual([...OPERATOR_TOOL_GRANT])
