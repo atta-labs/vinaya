@@ -181,6 +181,21 @@ describe('the wording', () => {
   })
 })
 
+describe('the CI job line', () => {
+  it('names a skipped or neutral job by its conclusion, with no mark and no duration', () => {
+    expect(ciJobLine({ name: 'Record', ok: true, ms: 0, conclusion: 'skipped' })).toBe('CI progress: Record skipped')
+    expect(ciJobLine({ name: 'Record', ok: true, ms: null, conclusion: 'neutral' })).toBe('CI progress: Record neutral')
+  })
+
+  it('keeps the pass and fail forms', () => {
+    expect(ciJobLine({ name: 'b', ok: true, ms: 5, conclusion: 'success' })).toBe('CI progress: b ✓, 5 ms')
+    expect(ciJobLine({ name: 'b', ok: true, ms: 5 })).toBe('CI progress: b ✓, 5 ms')
+    expect(
+      ciJobLine({ name: 'b', ok: false, ms: 5, conclusion: 'failure', firstFailure: { file: 'a.test.ts', test: 't' } })
+    ).toBe('CI progress: b ✗, 5 ms — first failing test: a.test.ts: t')
+  })
+})
+
 describe('the reader', () => {
   it('writes each closed file as it appears, and the 60-second line only while the run is open', () => {
     const { dir } = runtimeWithProgress()
