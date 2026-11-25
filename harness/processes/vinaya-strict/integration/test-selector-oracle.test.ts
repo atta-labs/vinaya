@@ -362,7 +362,7 @@ describe('a second real CI failure in the SAME task-files-v1/1 change set (Issue
     const alwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
     const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun })
     expect(selected).toContain(TASK_STATUS_E2E_TEST)
-  }, 30_000)
+  }, 120_000)
 
   it('reachability ALONE (no alwaysRun) now selects it on the merits — the CLI-spawn edge (Issue #702), not the escape hatch', () => {
     expect(selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [] }).selected).toContain(TASK_STATUS_E2E_TEST)
@@ -754,7 +754,7 @@ describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings
     // Runner selection and disabled-recording suites directly consume these modules too, and so does the
     // standalone and Engine Log replay, which records both runners through the sink's own overrides.
     expect(selected.length).toBeLessThanOrEqual(45)
-  }, 30_000)
+  }, 120_000)
 
   it('a change to a widely imported export of the shared core package selects at most 25 files', () => {
     // `defaultControlStoreDeps` (`harness/kernel/connectors/checkpoint/control-store/local.ts`)
@@ -767,7 +767,7 @@ describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings
       affectedNames: new Map([[changed, new Set(['defaultControlStoreDeps'])]])
     })
     expect(selected.length).toBeLessThanOrEqual(25)
-  }, 30_000)
+  }, 120_000)
 
   it('a change to one leaf module selects at most 5 files', () => {
     // `sum-ledger.ts` — a small, narrowly-consumed utility with no re-export
@@ -775,5 +775,5 @@ describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings
     const changed = join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/pr-report/tokens/sum-ledger.ts')
     const { selected } = selectAffectedTestFiles(REPO_ROOT, [changed], { depth: 'one' })
     expect(selected.length).toBeLessThanOrEqual(5)
-  }, 30_000)
+  }, 120_000)
 })

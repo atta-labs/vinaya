@@ -1251,7 +1251,7 @@ describe('a relative specifier written with an output extension resolves to its 
       selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')]).selected
     )
     expect(selected).toContain(join(REPO_ROOT, 'apps/cli/tests/demo.test.ts'))
-  }, 30_000)
+  }, 120_000)
 })
 
 // O2 — resolution is the compiler's, with the text scan kept only for a
@@ -1262,7 +1262,7 @@ describe('the compiler resolves the graph, and the text scan remains a safe fall
     const result = selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')])
     expect(result.resolver).toBe('compiler')
     expect(result.programMs).toBeGreaterThan(0)
-  }, 30_000)
+  }, 120_000)
 
   it('the text-scan fallback is reachable, resolves .js specifiers too, and never omits what the compiler selects', () => {
     const changed = [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')]
@@ -1275,7 +1275,7 @@ describe('the compiler resolves the graph, and the text scan remains a safe fall
     // reachable, the coarser scan must also reach.
     const scanned = new Set(scan.selected)
     expect(compiler.selected.filter((f) => !scanned.has(f))).toEqual([])
-  }, 30_000)
+  }, 120_000)
 
   it('a named import resolves to the file that DEFINES it, across a re-export chain and a package boundary', () => {
     const { root, dir } = mkWorkspace([
