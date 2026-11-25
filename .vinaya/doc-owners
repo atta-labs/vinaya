@@ -52,3 +52,4 @@ apps/log-server/src/**  apps/log-server/specs/server.md
 harness/kernel/log/sync/**  harness/kernel/log/log-sync.md
 harness/kernel/evals/**  harness/kernel/evals/evals.md
 harness/processes/vinaya-strict/evals/**  harness/kernel/evals/evals.md
+packages/log-sdk/src/**  packages/log-sdk/specs/log-sdk.md

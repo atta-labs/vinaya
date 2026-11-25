@@ -1,6 +1,6 @@
 # @attalabs/vinaya-log-sdk
 
-Record workflow events as OpenTelemetry traces and logs, keep a local copy, and read or send that copy from your own application or shell. The SDK and its command run without a Vinaya installation.
+Record workflow events as OpenTelemetry traces and logs, keep a local copy, and read or send that copy from your own application or shell. The SDK and its command run without a Vinaya installation. The full description of the package (its model, every function, the local copy, sending and the rules a handle keeps) is in the [Log SDK spec](./specs/log-sdk.md).
 
 ## Install and record
 

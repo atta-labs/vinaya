@@ -39,7 +39,7 @@ package, so this is the intent rather than a universal.
 > read, so a remap-only pass would leave it resolving to nothing.
 
 > **Most `Specs` paths are declared, not yet real** — only `apps/cli/specs/`,
-> `apps/log-server/specs/` and `apps/vinaya-studio/specs/` exist. Where a package's specs belong is unsettled: `isSpecFile`
+> `apps/log-server/specs/`, `apps/vinaya-studio/specs/` and `packages/log-sdk/specs/` exist. Where a package's specs belong is unsettled: `isSpecFile`
 > (`harness/processes/vinaya-strict/tools/file-classify.ts:50`) and `isDocFile` (`:35`) both
 > match `apps/**/specs/**` only, so a spec at `packages/<name>/specs/` is
 > invisible to `verify-docs` and to tier derivation
