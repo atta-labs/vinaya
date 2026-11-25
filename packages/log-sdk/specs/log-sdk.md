@@ -97,13 +97,14 @@ A run id that is not safe as a file-name part is written as `unresolved`.
 
 ## 4. Sending
 
-`sendLocalCopy({ folder, repository, url, headers? })` posts each line of the local copy to the collector's `/v1/traces` or `/v1/logs`, as OTLP/HTTP with a JSON body (`Content-Type: application/json`, as the OTLP specification requires for JSON). A response the OTLP specification marks retryable (429, 502, 503, 504) or a failed connection leaves the line for the next call; any other refusal is reported in `failures`.
+`sendLocalCopy({ folder, repository, url, headers? })` posts each line of the local copy to the collector's `/v1/traces` or `/v1/logs`, as OTLP/HTTP with a JSON body (`Content-Type: application/json`, as the OTLP specification requires for JSON). A `2xx` response marks the line sent. A response below `400`, at `500` or above, or one of `401`, `403`, `404`, `408` and `429`, or a failed connection or timeout, leaves the line to be tried again by the next call and is reported in `failures`. Any other `4xx` response sets the line aside (below).
 
-Delivery state is kept in `.otlp-delivery` inside the repository's folder, with a receipt per line: a line sent once is not sent again, and a line the collector rejected is not retried. A segment missing from the middle of a writer's numbering is reported as lost. The report holds `sent`, `setAside` and `failures`.
+Delivery state is kept in `.otlp-delivery` inside the repository's folder, with a receipt per line: a line sent once is not sent again, and a line set aside has a rejected receipt and is never posted by a later call. A segment missing from the middle of a writer's numbering is reported as lost. The report holds `sent`, `setAside` and `failures`.
 
 <!-- VINAYA:CLAIM: packages/log-sdk/src/sender/send.ts contains:const state = join(directory, '.otlp-delivery') -->
+<!-- VINAYA:CLAIM: packages/log-sdk/src/sender/send.ts contains:const retryableClientStatuses = new Set([401, 403, 404, 408, 429]) -->
 
-A line whose record fails the contract (a `vinaya.*` span, event or attribute name outside the catalogue) is not posted: it is set aside with a rejected receipt naming the first failing name. A line that is valid JSON but holds no OTLP record is posted as it is.
+A line is set aside, with a rejected receipt and an entry in `setAside` (not in `failures`), when it is not valid JSON, when its record fails the contract (a `vinaya.*` span, event or attribute name outside the catalogue; the entry names the first failing name), or when the collector answers with a `4xx` status that is not in the retried set above. A line that is valid JSON but holds no `vinaya.*` name is posted as it is.
 
 ## 5. Settings
 
