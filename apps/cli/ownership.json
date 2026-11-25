@@ -77,6 +77,7 @@
       "tests/doctrine.test.ts",
       "tests/engine-runner-install.test.ts",
       "tests/fixture-env.ts",
+      "tests/fixtures/alias-probe.ts",
       "tests/fixtures/forge/",
       "tests/import-boundary.test.ts",
       "tests/init.test.ts",

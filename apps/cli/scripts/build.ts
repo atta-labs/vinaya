@@ -35,8 +35,8 @@
  * - `--out <dir>` writes the `dist/` tree under `<dir>` instead of the package
  *   folder, so a test can build without rewriting the package's own `dist/`.
  */
-import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join, relative, resolve } from 'node:path'
 import ts from 'typescript'
 import { PROGRAMS } from '../../../harness/processes/vinaya-strict/tools/programs.js'
 
@@ -46,6 +46,13 @@ const outFlag = process.argv.indexOf('--out')
 const outRoot = outFlag === -1 ? pkgRoot : resolve(process.argv[outFlag + 1] ?? '')
 if (outFlag !== -1 && !process.argv[outFlag + 1]) {
   console.error('build: --out needs a folder')
+  process.exit(2)
+}
+/** `--probe <file>` adds one extra module (a test's alias probe) as a bundle entry and a root of the declaration program. */
+const probeFlag = process.argv.indexOf('--probe')
+const probeFile = probeFlag === -1 ? undefined : resolve(process.argv[probeFlag + 1] ?? '')
+if (probeFlag !== -1 && !process.argv[probeFlag + 1]) {
+  console.error('build: --probe needs a file')
   process.exit(2)
 }
 const pkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf-8')) as {
@@ -203,10 +210,41 @@ const LIBRARY_ENTRIES = [
 for (const entry of LIBRARY_ENTRIES) {
   await build([join(repoRoot, entry.source)], join(outRoot, 'dist'), `${entry.name}.[ext]`)
 }
+if (probeFile) await build([probeFile], join(outRoot, 'dist', 'probe'))
 const typesOutdir = join(outRoot, 'dist', 'types')
+// The `@harness/*` aliases come from the shared base config, the table every folder's type check reads. Its targets are
+// relative to that file (it sets no `baseUrl`), so they are made absolute here.
+const baseConfigPath = join(repoRoot, 'packages', 'typescript-config', 'base.json')
+const baseConfig = ts.readConfigFile(baseConfigPath, ts.sys.readFile)
+if (baseConfig.error) {
+  console.error(ts.formatDiagnostics([baseConfig.error], ts.createCompilerHost({})))
+  process.exit(1)
+}
+const aliasPaths: Record<string, string[]> = {}
+const baseConfigPaths = (baseConfig.config?.compilerOptions?.paths ?? {}) as Record<string, string[]>
+for (const [alias, targets] of Object.entries(baseConfigPaths)) {
+  if (!alias.startsWith('@harness/')) continue
+  aliasPaths[alias] = targets.map((target) => resolve(dirname(baseConfigPath), target))
+}
+/** Rewrites each `@harness/...` specifier in an emitted declaration to the relative path of the declaration the program emitted for that module, so the published package resolves it. */
+function rewriteAliasSpecifiers(declarationFile: string, text: string): string {
+  return text.replace(/(['"])(@harness\/[^'"]+)\1/g, (whole, quote: string, specifier: string) => {
+    for (const [alias, targets] of Object.entries(aliasPaths)) {
+      const prefix = alias.slice(0, -1)
+      const target = targets[0]
+      if (!specifier.startsWith(prefix) || target === undefined) continue
+      const sourceModule = join(target.slice(0, -1), specifier.slice(prefix.length))
+      const emittedModule = join(typesOutdir, sourceModule.slice(repoRoot.length + 1))
+      const relativePath = relative(dirname(declarationFile), emittedModule)
+      return `${quote}${relativePath.startsWith('.') ? relativePath : `./${relativePath}`}${quote}`
+    }
+    return whole
+  })
+}
 const declarationProgram = ts.createProgram(
-  LIBRARY_ENTRIES.map((entry) => join(repoRoot, entry.source)),
+  [...LIBRARY_ENTRIES.map((entry) => join(repoRoot, entry.source)), ...(probeFile ? [probeFile] : [])],
   {
+    paths: aliasPaths,
     strict: true,
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
@@ -223,7 +261,10 @@ const declarationProgram = ts.createProgram(
     outDir: typesOutdir
   }
 )
-const emitted = declarationProgram.emit()
+const emitted = declarationProgram.emit(undefined, (fileName, text) => {
+  mkdirSync(dirname(fileName), { recursive: true })
+  writeFileSync(fileName, fileName.endsWith('.d.ts') ? rewriteAliasSpecifiers(fileName, text) : text)
+})
 const emitProblems = [...ts.getPreEmitDiagnostics(declarationProgram), ...emitted.diagnostics]
 if (emitProblems.length > 0 || emitted.emitSkipped) {
   console.error(ts.formatDiagnostics(emitProblems, ts.createCompilerHost({})))

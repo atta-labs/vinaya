@@ -22,7 +22,9 @@
     "baseUrl": ".",
     "paths": {
       "@attalabs/test-selection": ["packages/test-selection/src/index.ts"],
-      "@attalabs/vinaya-log-sdk": ["packages/log-sdk/src/index.ts"]
+      "@attalabs/vinaya-log-sdk": ["packages/log-sdk/src/index.ts"],
+      "@harness/kernel/*": ["harness/kernel/*"],
+      "@harness/workflow/*": ["harness/processes/vinaya-strict/*"]
     }
   }
 }
