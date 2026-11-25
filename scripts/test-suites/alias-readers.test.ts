@@ -21,7 +21,15 @@ import { type Revision, resolveModule } from '@harness/workflow/evals/suites/rec
 import { suiteImports } from '@harness/workflow/integration/isolation/sandbox-conformance/suite-imports.js'
 import { readPinnedFileImporters } from '@harness/workflow/tools/task-contract/forge/forge-write.js'
 import { repositoryImportTree } from '@harness/workflow/tools/task-contract/generated-artifacts.js'
-import { countSource } from '@harness/kernel/tests/architecture-ratchet.js'
+import {
+  BASELINE_PATH,
+  compareBase,
+  countSource,
+  importsOfAnApp,
+  importsOfAProcess,
+  importsThroughForwarding
+} from '@harness/kernel/tests/architecture-ratchet.js'
+import { repositoryPolicy } from './repository-selection.ts'
 import { readAliasTable } from '@harness/kernel/imports/alias-table.js'
 import { staticClosure } from '../../apps/cli/tests/lib/static-closure.js'
 import { guardedClosure } from '../ci/base-guard.ts'
@@ -122,6 +130,70 @@ const READERS: readonly Reader[] = [
     reports: (fx) => countSource(fx.read(IMPORTER) ?? '', [], readAliasTable(fx.root)) >= 1
   },
   {
+    name: 'kernel boundary guard (process import refusal)',
+    aliases: ['workflow'],
+    reports: (fx) => importsOfAProcess(fx.read(IMPORTER) ?? '', readAliasTable(fx.root)).length > 0
+  },
+  {
+    name: 'kernel boundary guard (app import refusal)',
+    // The fixture's third alias names an app; the process and kernel aliases name none.
+    aliases: ['kernel'],
+    reports: (fx) =>
+      importsOfAnApp(fx.read('harness/kernel/fx/app-importer.ts') ?? '', readAliasTable(fx.root)).length > 0
+  },
+  {
+    name: 'kernel boundary guard (import through an ownership-map forwarder)',
+    aliases: ['kernel'],
+    reports: (fx) =>
+      importsThroughForwarding(fx.root, { 'harness/kernel/fx/forward.ts': ALIASES.workflow.target }).some((line) =>
+        line.startsWith('harness/kernel/fx/forward-importer.ts imports @harness/kernel/fx/forward.js')
+      )
+  },
+  {
+    name: 'kernel boundary guard (comparison with the base commit, each side read with its own table)',
+    aliases: ['workflow'],
+    reports: () => {
+      // The base commit imports the process by a relative path and holds its baseline; the head rewrites the import to
+      // the alias. A reader blind to the alias counts the head's import as zero and the total as unchanged-below.
+      const dir = mkdtempSync(join(tmpdir(), 'alias-readers-compare-'))
+      try {
+        const sh = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+        const put = (path: string, text: string) => {
+          mkdirSync(dirname(join(dir, path)), { recursive: true })
+          writeFileSync(join(dir, path), text)
+        }
+        const config = FILES['packages/typescript-config/base.json'] as string
+        const file = 'apps/cli/src/fx/counted.ts'
+        put('packages/typescript-config/base.json', config)
+        put(
+          file,
+          "import { x } from '../../../../harness/processes/vinaya-strict/fx/workflow-target.js'\nexport const y = x\n"
+        )
+        put('harness/processes/vinaya-strict/fx/workflow-target.ts', 'export const x = 1\n')
+        put(BASELINE_PATH, `${JSON.stringify({ [file]: 1 }, null, 2)}\n`)
+        sh('init', '-q')
+        sh('add', '-A')
+        sh('-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-qm', 'base')
+        const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
+        put(file, `import { x } from '${ALIASES.workflow.specifier}'\nexport const y = x\n`)
+        const result = compareBase(dir, base)
+        return result.failures.length === 0 && result.headTotal === 1
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  },
+  {
+    name: 'selection policy of the planner (repositoryPolicy)',
+    reports: (fx, alias) => {
+      const view = { tests: [], suites: [], edges: [], policies: [], unknowns: [] } as unknown as Parameters<
+        typeof repositoryPolicy
+      >[2]
+      const aliases = repositoryPolicy(fx.root, 'HEAD', view).pathAliases ?? []
+      return aliases.some((entry) => ALIASES[alias].specifier.startsWith(entry.prefix))
+    }
+  },
+  {
     name: 'log-producer graph',
     reports: (fx, alias) =>
       (gatherLogProducerGraph(fx.root).imports.get(IMPORTER) ?? []).some((file) =>
@@ -188,7 +260,8 @@ const FILES: Record<string, string> = {
     compilerOptions: {
       paths: {
         '@harness/kernel/*': ['../../harness/kernel/*'],
-        '@harness/workflow/*': ['../../harness/processes/vinaya-strict/*']
+        '@harness/workflow/*': ['../../harness/processes/vinaya-strict/*'],
+        '@harness/app/*': ['../../apps/cli/src/*']
       }
     }
   }),
@@ -208,6 +281,12 @@ const FILES: Record<string, string> = {
     scripts: { typecheck: 'tsc --noEmit' }
   }),
   'harness/kernel/fx/kernel-target.ts': 'export const kernelTarget = 1\n',
+  // A kernel file that forwards to a process, a kernel file that imports the forwarder, and one that imports an app.
+  'harness/kernel/fx/forward.ts':
+    "export { workflowTarget } from '../../processes/vinaya-strict/fx/workflow-target.js'\n",
+  'harness/kernel/fx/forward-importer.ts':
+    "import { workflowTarget } from '@harness/kernel/fx/forward.js'\nexport const x = workflowTarget\n",
+  'harness/kernel/fx/app-importer.ts': "import { thing } from '@harness/app/fx/thing.js'\nexport const x = thing\n",
   'harness/processes/vinaya-strict/fx/workflow-target.ts': 'export const workflowTarget = 2\n',
   [IMPORTER]: [
     `import { kernelTarget } from '${ALIASES.kernel.specifier}'`,

@@ -244,6 +244,7 @@ describe('the package agrees with this repository', () => {
       'packages/test-selection/tests/hunk-classes.test.ts test-selection',
       'packages/test-selection/tests/isolation.test.ts test-selection',
       'packages/test-selection/tests/native.test.ts test-selection',
+      'packages/test-selection/tests/path-aliases.test.ts test-selection',
       'packages/test-selection/tests/recorded-reads.test.ts test-selection',
       'packages/test-selection/tests/refined-selection.test.ts test-selection',
       'packages/test-selection/tests/selection.test.ts test-selection'

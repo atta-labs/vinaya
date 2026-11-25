@@ -130,6 +130,21 @@ export function importsOfAProcess(source: string, aliases: PathAliasTable = []):
   return offending
 }
 
+/**
+ * The specifiers of `source` that reach into an application (`apps/`), by a relative path or an alias whose target
+ * resolves into one — the harness is generic machinery and depends on no product's code.
+ */
+export function importsOfAnApp(source: string, aliases: PathAliasTable = []): string[] {
+  const offending: string[] = []
+  for (const match of source.matchAll(SPECIFIER)) {
+    const specifier = match[2] ?? ''
+    const aliased = resolveAliasedSpecifier(specifier, aliases)
+    const path = aliased ?? specifier
+    if ((specifier.startsWith('.') || aliased !== null) && path.split('/').includes('apps')) offending.push(specifier)
+  }
+  return offending
+}
+
 const isCountedImport = (specifier: string, aliases: PathAliasTable = []): boolean => namesAProcess(specifier, aliases)
 
 type Span = { start: number; end: number }

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
 import ts from 'typescript'
-import { type PathAliasTable, resolveAliasedSpecifier } from '@attalabs/test-selection'
+import type { PathAliasTable } from '@attalabs/test-selection'
 import { readAliasTable } from '@harness/kernel/imports/alias-table.js'
 import { parse } from 'yaml'
 import {
@@ -14,6 +14,7 @@ import {
   compareWithBaseline,
   countSource,
   countTree,
+  importsOfAnApp,
   importsOfAProcess,
   importsThroughForwarding,
   OWNERSHIP_MAP_PATH,
@@ -28,7 +29,7 @@ import {
   workingTree
 } from './architecture-ratchet'
 
-export { importsOfAProcess, sourceFiles }
+export { importsOfAnApp, importsOfAProcess, sourceFiles }
 
 // The harness is generic machinery: it knows no process. A file under
 // `harness/` that imports from `processes/`, by relative path or by the
@@ -41,16 +42,7 @@ const SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)(['"`])([^'"
 
 // Nor does it reach into an application: a file under `harness/` that imports
 // from `apps/` would make the generic machinery depend on one product's code.
-export function importsOfAnApp(source: string, aliases: PathAliasTable = []): string[] {
-  const offending: string[] = []
-  for (const match of source.matchAll(SPECIFIER)) {
-    const specifier = match[2] ?? ''
-    const aliased = resolveAliasedSpecifier(specifier, aliases)
-    const path = aliased ?? specifier
-    if ((specifier.startsWith('.') || aliased !== null) && path.split('/').includes('apps')) offending.push(specifier)
-  }
-  return offending
-}
+// The scan itself (`importsOfAnApp`) lives beside the ratchet's other specifier reading.
 
 describe('harness never imports an app', () => {
   test('no file under harness/ imports from apps/', () => {

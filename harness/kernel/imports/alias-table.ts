@@ -14,7 +14,7 @@
  * empty table, never an exception, and an empty table makes every reader give
  * the result it gave before aliases existed.
  */
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, posix } from 'node:path'
 import { type PathAlias, type PathAliasTable, resolveAliasedSpecifier } from '@attalabs/test-selection'
 
@@ -47,19 +47,19 @@ export function parseAliasTable(configText: string, configPath: string = BASE_CO
   return out
 }
 
-const cache = new Map<string, { stamp: string; table: PathAliasTable }>()
+/** The parse of the last text read from each config, so an unchanged file is parsed once; the text itself is the key. */
+const cache = new Map<string, { text: string; table: PathAliasTable }>()
 
 /** The alias table of the repository at `repoRoot`; empty when it has no readable base config. */
 export function readAliasTable(repoRoot: string): PathAliasTable {
   const file = join(repoRoot, BASE_CONFIG_PATH)
   try {
     if (!existsSync(file)) return []
-    const stat = statSync(file)
-    const stamp = `${stat.mtimeMs}:${stat.size}`
+    const text = readFileSync(file, 'utf8')
     const held = cache.get(file)
-    if (held && held.stamp === stamp) return held.table
-    const table = parseAliasTable(readFileSync(file, 'utf8'), BASE_CONFIG_PATH)
-    cache.set(file, { stamp, table })
+    if (held && held.text === text) return held.table
+    const table = parseAliasTable(text, BASE_CONFIG_PATH)
+    cache.set(file, { text, table })
     return table
   } catch {
     return []

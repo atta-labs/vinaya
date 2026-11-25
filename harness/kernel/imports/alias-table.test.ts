@@ -63,9 +63,9 @@ describe('readAliasTable', () => {
     expect(readAliasTable(root)).toEqual([{ prefix: '@a/', directory: 'a/' }])
     writeFileSync(
       join(root, BASE_CONFIG_PATH),
-      JSON.stringify({ compilerOptions: { paths: { '@bb/*': ['../../bb/*'] } } })
+      JSON.stringify({ compilerOptions: { paths: { '@b/*': ['../../b/*'] } } })
     )
-    expect(readAliasTable(root)).toEqual([{ prefix: '@bb/', directory: 'bb/' }])
+    expect(readAliasTable(root)).toEqual([{ prefix: '@b/', directory: 'b/' }])
   })
 })
 
