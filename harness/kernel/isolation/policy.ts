@@ -197,9 +197,8 @@ const UNSAFE_CONFIG = /^(alias\.|core\.hookspath|include|core\.fsmonitor|core\.p
 const base = (word) => word.split('/').pop()
 const starts = (argv, prefix) => prefix.every((word, index) => argv[index] === word)
 // A rule 'prefix ... -flag' matches the prefix and then the flag anywhere after it ('--flag=value', and a short
-// flag with its value attached, included). A trailing '*' on the flag matches any longer word with that start,
-// which is how a rule refuses a long option's unambiguous abbreviations.
-const hasFlag = (words, flag) => words.some((word) => word === flag || (flag.endsWith('*') && word.startsWith(flag.slice(0, -1))) ||word.startsWith(flag + '=') || (/^-[^-]$/.test(flag) && word.startsWith(flag)))
+// flag with its value attached, included).
+const hasFlag = (words, flag) => words.some((word) => word === flag || word.startsWith(flag + '=') || (/^-[^-]$/.test(flag) && word.startsWith(flag)))
 const matches = (argv, rule) => {
   const gap = rule.indexOf('...')
   if (gap < 0) return starts(argv, rule)

@@ -12,10 +12,10 @@
  * Nothing the seat writes decides what it judged. The draft's fingerprint, the
  * question version and the captured revision it names are claims, checked against
  * the draft the controller held (`PlanReviewBinding`). Every piece of evidence is
- * checked too: a location must exist at the captured revision, a command must begin
- * with an allowed read-only prefix (it is never run: its output is what the seat
- * saw), a scope passage must be a passage of the draft's agreed scope. An answer
- * that fails any check is not a review.
+ * checked too: a location (a file, the captured revision and a line range) must
+ * exist at the captured revision, a scope passage must be a passage of the draft's
+ * agreed scope. The seat runs no command, so there is no command evidence. An
+ * answer that fails any check is not a review.
  *
  * One schema serves both vendors, so it is written to the strictest common shape:
  * one root key, every optional field a required, nullable one. The same zod value
@@ -45,25 +45,7 @@ export const PLAN_REVIEW_QUESTION_NAMES = {
   6: 'Coverage'
 } as const
 
-/**
- * The read-only command prefixes the seat may cite as evidence, and the list its grants allow:
- * reading a file at a revision, searching, listing and reading history. A test binds this list
- * to `thinking/plan-reviewer/grants.yaml`.
- */
-export const PLAN_REVIEW_EVIDENCE_COMMANDS: readonly string[] = [
-  'git show',
-  'git cat-file',
-  'git ls-tree',
-  'git ls-files',
-  'git grep',
-  'git log',
-  'git diff',
-  'rg',
-  'grep',
-  'ls'
-]
-
-export const EVIDENCE_KINDS = ['code', 'command', 'scope'] as const
+export const EVIDENCE_KINDS = ['code', 'scope'] as const
 export const FINDING_KINDS = ['blocking', 'note'] as const
 
 const schemaVersion = z.literal(PLAN_REVIEW_SCHEMA_VERSION)
@@ -76,14 +58,14 @@ const question = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)
 const EvidenceSchema = z
   .object({
     kind: z.enum(EVIDENCE_KINDS),
-    /** `code`: the file at the captured revision. */
+    /** `code`: the file. */
     path: z.string().min(1).nullable(),
-    /** `code`: a line inside that file. */
-    line: z.number().int().min(1).nullable(),
-    /** `command`: the read-only command the seat ran. */
-    command: z.string().min(1).nullable(),
-    /** `command`: what it printed. */
-    output: z.string().nullable(),
+    /** `code`: the revision the seat read it at; it must be the captured revision. */
+    revision: z.string().min(1).nullable(),
+    /** `code`: the first line of the range, inside the file. */
+    lineStart: z.number().int().min(1).nullable(),
+    /** `code`: the last line of the range, inside the file. */
+    lineEnd: z.number().int().min(1).nullable(),
     /** `scope`: a passage of the draft's agreed scope. */
     passage: z.string().min(1).nullable()
   })
@@ -223,82 +205,6 @@ export function completenessErrors(review: PlanReview, binding: PlanReviewBindin
   return errors
 }
 
-/**
- * The command forms the seat's shell refuses even though their prefix is allowed, as the grants list them:
- * `prefix ... -flag` refuses the flag anywhere after the prefix (a trailing `*` matches a longer flag), and a
- * rule without `...` refuses the prefix itself. A test binds this list to `thinking/plan-reviewer/grants.yaml`.
- */
-export const PLAN_REVIEW_EVIDENCE_DENIED: readonly string[] = [
-  'git push',
-  'git commit',
-  'git add',
-  'gh',
-  'bun install',
-  'bun test',
-  'bun run',
-  'npx',
-  'security',
-  'launchctl',
-  'defaults',
-  'systemsetup',
-  'networksetup',
-  'pmset',
-  'dscl',
-  'crontab',
-  'chsh',
-  'git config --global',
-  'git config --system',
-  'sudo',
-  'git -c',
-  'git diff ... --ou**',
-  'git diff ... --ex**',
-  'git diff ... --te**',
-  'git log ... --ou**',
-  'git log ... --ex**',
-  'git log ... --te**',
-  'git show ... --ou**',
-  'git show ... --ex**',
-  'git show ... --te**',
-  'git grep ... --op**',
-  'git grep ... -O*',
-  'rg ... --pre',
-  'rg ... --hostname-bin',
-  'rg ... --search-zip',
-  'rg ... -z'
-]
-
-/** Command substitution and backticks run code wherever they sit; a newline starts another command. */
-const SHELL_EXECUTION = /[`\n]|\$\(/
-/** Chaining, piping and redirection outside quotes; inside quotes they are arguments (`rg "a|b" src`). */
-const SHELL_CHAINING = /[;&|<>]/
-const QUOTED = /'[^']*'|"[^"]*"/g
-
-function tokenMatchesFlag(token: string, flag: string): boolean {
-  // A trailing `*` matches any longer word with that start. The grants write it doubled (`--ou**`) because the
-  // shell-rule syntax drops one trailing `*`; the validator reads both spellings the same way.
-  if (flag.endsWith('*')) return token.startsWith(flag.replace(/\*+$/, ''))
-  if (token === flag || token.startsWith(`${flag}=`)) return true
-  // A short flag may sit inside a cluster (`-nz`) or carry its value attached.
-  return /^-[A-Za-z]$/.test(flag) && /^-[A-Za-z]/.test(token) && token.includes(flag.slice(1))
-}
-
-function deniedByRule(command: string, rule: string): boolean {
-  const [prefix, flag] = rule.split(' ... ')
-  const words = command.split(/\s+/)
-  const head = (prefix as string).split(' ')
-  if (!head.every((word, i) => words[i] === word)) return false
-  if (flag === undefined) return true
-  return words.slice(head.length).some((token) => tokenMatchesFlag(token, flag))
-}
-
-/** Whether a command begins with an allowed read-only prefix, at a word boundary, uses no denied form and chains nothing. */
-export function isAllowedEvidenceCommand(command: string): boolean {
-  const trimmed = command.trim()
-  if (SHELL_EXECUTION.test(trimmed) || SHELL_CHAINING.test(trimmed.replace(QUOTED, ''))) return false
-  if (PLAN_REVIEW_EVIDENCE_DENIED.some((rule) => deniedByRule(trimmed, rule))) return false
-  return PLAN_REVIEW_EVIDENCE_COMMANDS.some((prefix) => trimmed === prefix || trimmed.startsWith(`${prefix} `))
-}
-
 /** A scope passage is a quotation, not a stray word: shorter than this it proves nothing. */
 const MIN_PASSAGE_LENGTH = 12
 
@@ -312,27 +218,31 @@ function scopeTexts(draft: PlanDraft): string[] {
   ])
 }
 
-/** Errors in one piece of evidence: a location that is not there, a command off the list, a foreign passage. */
+/** Errors in one piece of evidence: a location that is not there, a foreign passage. */
 export function evidenceErrors(evidence: PlanReviewEvidence, binding: PlanReviewBinding): string[] {
   switch (evidence.kind) {
     case 'code': {
-      if (evidence.path === null || evidence.line === null) return ['code evidence names a path and a line']
+      if (
+        evidence.path === null ||
+        evidence.revision === null ||
+        evidence.lineStart === null ||
+        evidence.lineEnd === null
+      ) {
+        return ['code evidence names a path, a revision and a line range']
+      }
+      if (evidence.revision !== binding.draft.revision) {
+        return [`${evidence.path} was read at ${evidence.revision}, the captured revision is ${binding.draft.revision}`]
+      }
+      if (evidence.lineEnd < evidence.lineStart) {
+        return [`${evidence.path}:${evidence.lineStart}-${evidence.lineEnd} is not a line range`]
+      }
       // A location is inside the captured revision's tree: never absolute, never climbing out of it.
       if (evidence.path.startsWith('/') || evidence.path.split('/').includes('..')) {
         return [`${evidence.path} is not a path inside the captured revision`]
       }
       const lines = binding.lineCount(evidence.path)
       if (lines === null) return [`${evidence.path} does not exist at revision ${binding.draft.revision}`]
-      if (evidence.line > lines) return [`${evidence.path}:${evidence.line} is past the file's ${lines} lines`]
-      return []
-    }
-    case 'command': {
-      if (evidence.command === null || evidence.output === null) {
-        return ['command evidence names a command and its output']
-      }
-      if (!isAllowedEvidenceCommand(evidence.command)) {
-        return [`command ${JSON.stringify(evidence.command)} is not on the seat's allowed list`]
-      }
+      if (evidence.lineEnd > lines) return [`${evidence.path}:${evidence.lineEnd} is past the file's ${lines} lines`]
       return []
     }
     case 'scope': {

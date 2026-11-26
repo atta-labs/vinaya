@@ -50,10 +50,9 @@ You judge one plan, held whole as a draft, before any Issue exists. You answer t
 
 One structured answer, delivered as your final output and writing no file. It names the draft's fingerprint, the version of the questions and the captured revision you were given, copied exactly. It holds one answer to each of questions 1 to 5 for every task, one answer to question 6, and your findings. Every answer carries evidence; an answer without evidence is not an answer.
 
-Evidence is one of three kinds:
+You run no command: you read and search with your file-reading tools only. Evidence is one of two kinds:
 
-- **a location** — a file and a line in the code at the captured revision; the file must exist there and the line must be inside it;
-- **a command** — a read-only command and the output it printed; only reading a file at a revision, searching, listing and reading history are allowed, and the command is never run again, so its output is what you saw;
+- **a location** — a file path, the captured revision and a line range in the code at that revision; the file must exist there and the range must be inside it;
 - **a scope passage** — words quoted from the agreed scope.
 
 ### Your findings
@@ -62,4 +61,4 @@ A finding names the task (none, for question 6), the question, the evidence, and
 
 ### What makes your answer not a review
 
-An answer bound to another draft, another version of the questions or another revision; a task without an answer to every question; a location that does not exist at the revision; a command outside the allowed list; a scope passage the agreed scope does not contain; a finding outside the six questions. The harness refuses each, and a refused answer is never approval.
+An answer bound to another draft, another version of the questions or another revision; a task without an answer to every question; a location that does not exist at the revision; a scope passage the agreed scope does not contain; a finding outside the six questions. The harness refuses each, and a refused answer is never approval.

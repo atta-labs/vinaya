@@ -1,17 +1,12 @@
 role: plan-reviewer
-# The seat reads and searches the code and its history and does nothing else: no write, no code execution,
-# no network, no install. Its shell is the evidence commands below, by prefix; any other command is refused.
+# The seat reads and searches the code with its file-reading tools and does nothing else: no write, no code
+# execution, no shell command of its own, no network, no install. Like the code reviewer, it holds no shell;
+# the Claude Read/Grep/Glob tools and Codex's reading commands under a read-only sandbox are its whole reach.
 # Per vendor only because a model id names one vendor's model; process-supplied leaves it to the run.
 models: { claude: process-supplied, codex: process-supplied }
 capabilities:
   read_files: allow
-  # Command rules are plain command prefixes; `prefix ... -flag` refuses the flag anywhere after the prefix.
-  # A flag ending in `**` refuses every word that starts so: git accepts unique abbreviations of long options
-  # (`--outp`), and the rule syntax drops one trailing `*`.
-  # No `default`: a command no allow rule names is refused.
-  run_commands:
-    allow: ["git show", "git cat-file", "git ls-tree", "git ls-files", "git grep", "git log", "git diff", "rg", "grep", "ls"]
-    deny: ["git push", "git commit", "git add", "gh", "bun install", "bun test", "bun run", "npx", "security", "launchctl", "defaults", "systemsetup", "networksetup", "pmset", "dscl", "crontab", "chsh", "git config --global", "git config --system", "sudo", "git -c", "git diff ... --ou**", "git diff ... --ex**", "git diff ... --te**", "git log ... --ou**", "git log ... --ex**", "git log ... --te**", "git show ... --ou**", "git show ... --ex**", "git show ... --te**", "git grep ... --op**", "git grep ... -O*", "rg ... --pre", "rg ... --hostname-bin", "rg ... --search-zip", "rg ... -z"]
+  run_commands: deny
   write_files: deny
   network: []
   web_fetch: deny

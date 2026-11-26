@@ -4,8 +4,6 @@ import { join } from 'node:path'
 import { parse } from 'yaml'
 import { type PlanDraft, draftFingerprint } from '../plan-draft/draft'
 import {
-  PLAN_REVIEW_EVIDENCE_COMMANDS,
-  PLAN_REVIEW_EVIDENCE_DENIED,
   PLAN_REVIEW_QUESTION_VERSION,
   type PlanReview,
   type PlanReviewAnswer,
@@ -13,7 +11,6 @@ import {
   type PlanReviewEvidence,
   type PlanReviewFinding,
   derivePlanVerdict,
-  isAllowedEvidenceCommand,
   planReviewJsonSchema,
   validatePlanReview
 } from './result'
@@ -38,36 +35,27 @@ const draft: PlanDraft = {
 const FILES: Record<string, number> = { 'src/a.ts': 40 }
 const binding: PlanReviewBinding = { draft, lineCount: (path) => FILES[path] ?? null }
 
-const code = (path = 'src/a.ts', line = 3): PlanReviewEvidence => ({
+const code = (path = 'src/a.ts', lineStart = 3, lineEnd = lineStart, revision = REVISION): PlanReviewEvidence => ({
   kind: 'code',
   path,
-  line,
-  command: null,
-  output: null,
-  passage: null
-})
-const command = (text = 'git show HEAD:src/a.ts'): PlanReviewEvidence => ({
-  kind: 'command',
-  path: null,
-  line: null,
-  command: text,
-  output: 'export const a = 1',
+  revision,
+  lineStart,
+  lineEnd,
   passage: null
 })
 const scope = (passage = 'A reader sees the plan whole'): PlanReviewEvidence => ({
   kind: 'scope',
   path: null,
-  line: null,
-  command: null,
-  output: null,
+  revision: null,
+  lineStart: null,
+  lineEnd: null,
   passage
 })
-
 function answers(): PlanReviewAnswer[] {
   const out: PlanReviewAnswer[] = []
   for (const task of [1, 2]) {
     for (const question of [1, 2, 3, 4, 5] as const) {
-      out.push({ question, task, answer: 'holds', evidence: [code(), command()] })
+      out.push({ question, task, answer: 'holds', evidence: [code(), code('src/a.ts', 1, 40)] })
     }
   }
   out.push({ question: 6, task: null, answer: 'covered', evidence: [scope()] })
@@ -140,44 +128,14 @@ describe('an answer that is not a review', () => {
   })
 
   test('a line past the end of the file is unverified', () => {
-    const past = answers().map((a, i) => (i === 0 ? { ...a, evidence: [code('src/a.ts', 41)] } : a))
+    const past = answers().map((a, i) => (i === 0 ? { ...a, evidence: [code('src/a.ts', 38, 41)] } : a))
     expect(refusal(wrap(review({ answers: past }))).reason).toBe('unverified')
   })
 
-  test('a command off the list is unverified', () => {
-    for (const text of ['rm -rf src', 'bun test', 'curl https://example.com', 'git push origin HEAD', 'git showx']) {
-      const off = answers().map((a, i) => (i === 0 ? { ...a, evidence: [command(text)] } : a))
-      expect(refusal(wrap(review({ answers: off }))).reason).toBe('unverified')
-    }
-  })
-
-  test('a listed command that uses a form the grants deny is refused, as the seat could not run it', () => {
-    for (const text of [
-      'git show HEAD --output=/tmp/x',
-      'git log --ext-diff',
-      'rg --pre sh x',
-      'rg --pre=sh x',
-      'rg -z x',
-      'rg -nz x',
-      'rg --search-zip x',
-      'rg --hostname-bin sh x',
-      'git grep -O sh x',
-      'git grep -Osh x',
-      'git -c core.pager=sh log',
-      'git log --ext-d',
-      'git show --outp=/tmp/x',
-      'git grep --open-files-in-p=sh x'
-    ]) {
-      expect(isAllowedEvidenceCommand(text), text).toBe(false)
-    }
-  })
-
-  test('a pipe or redirection inside quotes is an argument, not chaining', () => {
-    for (const text of ['rg "a|b" src', "git log --format='%h;%s' -3", 'git grep -n "a>b" HEAD']) {
-      expect(isAllowedEvidenceCommand(text), text).toBe(true)
-    }
-    for (const text of ['rg "a" src | sh', 'rg "$(rm x)" src', 'rg "a" `x`']) {
-      expect(isAllowedEvidenceCommand(text), text).toBe(false)
+  test('a code location read at another revision, or with an inverted range, is unverified', () => {
+    for (const evidence of [code('src/a.ts', 3, 3, 'b'.repeat(40)), code('src/a.ts', 9, 2)]) {
+      const bad = answers().map((a, i) => (i === 0 ? { ...a, evidence: [evidence] } : a))
+      expect(refusal(wrap(review({ answers: bad }))).reason).toBe('unverified')
     }
   })
 
@@ -187,12 +145,6 @@ describe('an answer that is not a review', () => {
       const result = refusal(wrap(review({ answers: bad })))
       expect(result.reason).toBe('unverified')
       expect(result.errors[0]).toContain('not a path inside the captured revision')
-    }
-  })
-
-  test('a listed command that chains another is unverified', () => {
-    for (const text of ['git log; rm x', 'rg a | sh', 'ls > out', 'git show $(rm x)', 'ls && rm x']) {
-      expect(isAllowedEvidenceCommand(text)).toBe(false)
     }
   })
 
@@ -214,7 +166,7 @@ describe('an answer that is not a review', () => {
   })
 
   test('evidence missing the fields of its kind is unverified', () => {
-    const bad = answers().map((a, i) => (i === 0 ? { ...a, evidence: [{ ...code(), line: null }] } : a))
+    const bad = answers().map((a, i) => (i === 0 ? { ...a, evidence: [{ ...code(), lineEnd: null }] } : a))
     expect(refusal(wrap(review({ answers: bad }))).reason).toBe('unverified')
   })
 
@@ -296,12 +248,8 @@ describe('the seat files', () => {
     walk(planReviewJsonSchema())
   })
 
-  test('the grants allow exactly the evidence commands, and deny every write, execution and network capability', () => {
+  test('the grants hold no shell, no write, no network and no tool', () => {
     const grants = parse(readFileSync(join(folder, 'grants.yaml'), 'utf8'))
-    expect(grants.capabilities.run_commands.allow).toEqual([...PLAN_REVIEW_EVIDENCE_COMMANDS])
-    // The validator refuses exactly the forms the grants refuse: one list, bound here.
-    expect(grants.capabilities.run_commands.deny).toEqual([...PLAN_REVIEW_EVIDENCE_DENIED])
-    expect(grants.capabilities.run_commands.default).toBeUndefined()
     expect(grants.capabilities.write_files).toBe('deny')
     expect(grants.capabilities.network).toEqual([])
     expect(grants.capabilities.web_fetch).toBe('deny')

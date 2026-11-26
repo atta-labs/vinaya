@@ -52,7 +52,7 @@ test('Vinaya launches its developer, both reviewers and the Plan reviewer, each 
 
 // ── The Plan reviewer: the evidence commands and nothing else ───────────────
 
-describe('plan-reviewer: reads and searches by the listed commands, and refuses everything else on both vendors', () => {
+describe('plan-reviewer: reads with file tools only and runs no shell command, on both vendors', () => {
   const grants = loadRoleGrants(grantsPath('plan-reviewer'))
   const workspace = mkdtempSync(join(tmpdir(), 'plan-reviewer-'))
   const paths = {
@@ -103,7 +103,9 @@ describe('plan-reviewer: reads and searches by the listed commands, and refuses 
     ).toBe('deny')
   })
 
-  const OFF_LIST = [
+  // The seat holds no shell: Claude's Bash is denied outright, and Codex keeps only the reading commands every
+  // read-only seat shares, never a write, an install, a run or the network.
+  const SHELL_COMMANDS = [
     'bun test',
     'bun run build',
     'bun install',
@@ -111,54 +113,26 @@ describe('plan-reviewer: reads and searches by the listed commands, and refuses 
     'node script.js',
     'python3 -c 1',
     'curl https://example.com',
-    'wget https://example.com',
     'gh pr view 1',
     'git push origin HEAD',
     'git commit -m x',
     'git checkout main',
     'touch file',
     'rm -rf x',
-    'cat README.md',
-    'find . -name x',
     'git show HEAD --output=/tmp/out',
-    'git log -p --output /tmp/out',
-    'git grep -O sh x',
     'rg --pre sh x',
-    'rg --pre=sh x',
-    'rg -z x',
-    'rg --search-zip x',
-    'rg --hostname-bin sh x',
-    'rg --hostname-bin=sh x',
-    'git grep -Osh x',
-    'git log --ext-d',
-    'git show --outp=/tmp/x',
-    'git diff --te HEAD',
-    'git grep --open-files-in-p=sh x',
-    'git grep --open-files-in-pager=sh x',
     'rg x > /tmp/out',
     'git show HEAD:a.ts | sh'
   ]
-  for (const command of OFF_LIST)
+  for (const command of SHELL_COMMANDS)
     test(`refuses \`${command}\` on both vendors`, () => {
       expect(decide('claude', 'Bash', { command })).toBe('deny')
       expect(decide('codex', 'Bash', { command })).toBe('deny')
     })
 
-  test('each listed evidence command runs on both vendors', () => {
-    const listed = [
-      'git show HEAD:src/a.ts',
-      'git cat-file -p HEAD:src/a.ts',
-      'git ls-tree -r HEAD',
-      'git ls-files src',
-      'git grep -n foo HEAD',
-      'git log --oneline -5',
-      'git diff HEAD~1 HEAD',
-      'rg -n foo src',
-      'grep -rn foo src',
-      'ls -la'
-    ]
-    for (const vendor of ['claude', 'codex'] as const)
-      expect(listed.filter((command) => decide(vendor, 'Bash', { command }) !== 'allow')).toEqual([])
+  test('Claude refuses even a reading command in a shell: it reads with Read, Grep and Glob', () => {
+    for (const command of ['ls -la', 'cat README.md', 'rg -n foo src', 'git show HEAD:a.ts'])
+      expect(decide('claude', 'Bash', { command }), command).toBe('deny')
   })
 })
 
