@@ -1788,6 +1788,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   const trace = createTraceRecorder({ task: args.task, agent: args.agent, loopId: options.loopId })
   // The run's Log handle: the id every record of the run carries, the repository, and the driver log each agent
   // record is narrated into as it is written.
+  runRecorder().launching()
   runRecorder().bind({
     effort: runEffort,
     ...(options.sink.runId === undefined ? {} : { runId: options.sink.runId }),
