@@ -2036,6 +2036,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   let error: string | undefined
   try {
     const storeDir = developerSourceStoreDir(options.runtimeDir, args.task)
+    const requiredSourceTexts = (): string[] =>
+      readRequiredSourceManifest(storeDir)?.sources.map((source) => source.requirementText) ?? []
     const reviewerContext = reviewerDevToolContext(async (readInput) => {
       const manifest = readRequiredSourceManifest(storeDir)
       if (manifest === null) return refusal('read_source', 'the required-source manifest is unavailable')
@@ -2383,12 +2385,15 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       // A checkpoint resume continues the round with the finding ids its handoff gave the Developer, read back from
       // the checkpointed results: the task input of a restarted process starts with none, and no action runs
       // between the handoff and the Developer's launch to set them.
+      // If the checkpoint already holds the Developer output, validation skips prompt preparation and needs
+      // the manifest saved for that turn. A new launch refreshes the list after preparing its own prompt.
       if (choice.kind === 'resume' && options.taskInput?.developerContext) {
         const resumed = await readEffectiveResumedStateFrom(saver, identity.threadId)
         if (resumed !== null)
           options.taskInput.developerContext = {
             ...options.taskInput.developerContext,
-            knownFindingIds: knownFindingIdsOf(resumed.results)
+            knownFindingIds: knownFindingIdsOf(resumed.results),
+            requiredSources: requiredSourceTexts()
           }
       }
       // What a re-run reads before it dispatches: the prior launch, the round journal and any held verdict.
@@ -2458,9 +2463,18 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
                     // Each Developer turn records the head it starts from and its launch, as the standalone loop does
                     // at each dispatch. `develop` is an agent step, so the action wrapper below never sees it.
                     const begun = await options.beginDeveloperTurn?.()
+                    const facts = await developerFacts()
+                    // Prompt preparation refreshes the manifest on every turn, including after a checkpoint resume.
+                    // Use it for both the launch schema and validation, even when the brief changed during the pause.
+                    if (options.taskInput?.developerContext) {
+                      options.taskInput.developerContext = {
+                        ...options.taskInput.developerContext,
+                        requiredSources: requiredSourceTexts()
+                      }
+                    }
                     // A conflict turn already leads with its recorded conflict: the pre-turn merge adds no second one.
                     return withDefaultMergeConflict(
-                      developerPrompt(rendered, await developerFacts(), results, context),
+                      developerPrompt(rendered, facts, results, context),
                       developerTurnKind(results) === 'conflict' ? null : (begun?.conflictFiles ?? null)
                     )
                   },
