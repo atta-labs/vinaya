@@ -47,6 +47,8 @@
  * it cannot resolve at all — becomes the coarse whole-module (relative) or
  * whole-package (bare) edge. Over-select, never omit.
  */
+import { createHash } from 'node:crypto'
+import { type Dirent, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { type PathAliasTable, resolveAliasedSpecifier } from './path-aliases.js'
@@ -136,12 +138,20 @@ export type GraphInput = {
   entrypoints: ReadonlyMap<string, string>
   /** Specifier prefixes that name repository folders; handed to the compiler as `paths`. Absent or empty, no specifier is an alias. */
   pathAliases?: PathAliasTable
+  /**
+   * What `packageOfFile` and `packageOfBareSpecifier` are built from — each
+   * workspace package's name, directory and manifest text, as one string. Those
+   * two are closures the graph cannot read, so this is what lets a repeated
+   * call prove it carries the same answers. Absent, the graph is never reused:
+   * every call builds the compiler program afresh.
+   */
+  workspaceKey?: string
 }
 
 export type CompilerGraph = {
-  /** Node key → the node keys it depends on. */
+  /** Node key → the node keys it depends on. A reused graph hands back the same map, so a caller never mutates it or its lists. */
   edges: Map<string, string[]>
-  /** Milliseconds spent building the compiler program, separate from graph construction — the dominant cost, and the one worth reporting on its own. */
+  /** Milliseconds spent building the compiler program, separate from graph construction — the dominant cost, and the one worth reporting on its own. `0` when the graph was reused. */
   programMs: number
 }
 
@@ -200,6 +210,141 @@ function viewCompilerHost(
   }
 }
 
+// ── Reusing a graph within one process ──────────────────────────────────────
+
+/** How many input sets one process keeps a graph for. */
+const REUSED_GRAPH_SLOTS = 2
+
+/** The most recently used graphs, newest first. Only the edge map is kept: never the program or its checker. */
+let reusedGraphs: { key: string; edges: Map<string, string[]> }[] = []
+
+/** Forgets every reused graph, so the next call builds the compiler program afresh. */
+export function resetCompilerGraphReuse(): void {
+  reusedGraphs = []
+}
+
+const compilerIdentities = new WeakMap<object, number>()
+let compilersSeen = 0
+
+/** A number that tells two loaded compilers apart; one process can hold both the repository's and the library's. */
+function compilerIdentity(ts: TypeScriptApi): number {
+  let id = compilerIdentities.get(ts)
+  if (id === undefined) {
+    id = ++compilersSeen
+    compilerIdentities.set(ts, id)
+  }
+  return id
+}
+
+/** A file's text as the compiler would read it, through the view when given, else from the disk; `undefined` when absent. */
+function readRootFile(view: SourceHost | undefined, file: string): string | undefined {
+  if (view) return view.readFile(file)
+  try {
+    return readFileSync(file, 'utf8')
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Every symbolic link in a `node_modules` folder the compiler may walk when it
+ * resolves a bare specifier from a root file — that file's folder and every
+ * folder above it — as link path and resolved target. A workspace package no
+ * manifest entrypoint names still resolves through such a link, so re-pointing
+ * one changes the graph.
+ */
+function nodeModulesLinks(files: readonly string[]): string[] {
+  const folders = new Set<string>()
+  for (const file of files) {
+    let folder = dirname(file)
+    while (!folders.has(folder)) {
+      folders.add(folder)
+      const parent = dirname(folder)
+      if (parent === folder) break
+      folder = parent
+    }
+  }
+  const links: string[] = []
+  const scan = (folder: string, scoped: boolean): void => {
+    let entries: Dirent[]
+    try {
+      entries = readdirSync(folder, { withFileTypes: true })
+    } catch {
+      return
+    }
+    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    for (const entry of entries) {
+      const path = join(folder, entry.name)
+      if (entry.isSymbolicLink()) {
+        let target: string
+        try {
+          target = realpathSync(path)
+        } catch {
+          target = '(dangling)'
+        }
+        links.push(`${path} -> ${target}`)
+      } else if (!scoped && entry.isDirectory() && entry.name.startsWith('@')) {
+        scan(path, true)
+      }
+    }
+  }
+  for (const folder of [...folders].sort()) {
+    if (folder.split('/').includes('node_modules')) continue
+    scan(join(folder, 'node_modules'), false)
+  }
+  return links
+}
+
+/**
+ * The identity of everything {@link buildCompilerGraph} reads, as one digest:
+ * the compiler, the root, whether a view was given, the workspace key, the
+ * entrypoints and aliases, the root file list in order, each root file's text,
+ * and — on the disk — the workspace links the compiler may follow. `null` when
+ * the caller gave no workspace key, which means no reuse.
+ */
+function reuseKey(ts: TypeScriptApi, input: GraphInput): string | null {
+  if (input.workspaceKey === undefined) return null
+  const hash = createHash('sha256')
+  const part = (text: string): void => {
+    hash.update(`${text.length}:${text}`)
+  }
+  part(String(compilerIdentity(ts)))
+  part(input.repoRoot)
+  part(input.host ? 'view' : 'disk')
+  part(input.workspaceKey)
+  part(JSON.stringify([...input.entrypoints]))
+  part(JSON.stringify(input.pathAliases ?? []))
+  part(String(input.files.length))
+  for (const file of input.files) {
+    part(file)
+    const text = readRootFile(input.host, file)
+    part(text === undefined ? '(absent)' : `=${text}`)
+  }
+  if (!input.host) for (const link of nodeModulesLinks(input.files)) part(link)
+  return hash.digest('hex')
+}
+
+/**
+ * The whole workspace's import/export graph through the compiler, reused when
+ * this process already built it for identical inputs.
+ *
+ * Reuse keeps only the edge map. A call that carries no `workspaceKey` is never
+ * reused, and the process keeps at most two input sets.
+ */
+export function buildCompilerGraph(ts: TypeScriptApi, input: GraphInput): CompilerGraph {
+  const key = reuseKey(ts, input)
+  if (key !== null) {
+    const hit = reusedGraphs.find((entry) => entry.key === key)
+    if (hit) {
+      reusedGraphs = [hit, ...reusedGraphs.filter((entry) => entry !== hit)]
+      return { edges: hit.edges, programMs: 0 }
+    }
+  }
+  const built = buildFreshCompilerGraph(ts, input)
+  if (key !== null) reusedGraphs = [{ key, edges: built.edges }, ...reusedGraphs].slice(0, REUSED_GRAPH_SLOTS)
+  return built
+}
+
 /**
  * Builds the whole workspace's import/export graph through the compiler.
  *
@@ -207,7 +352,7 @@ function viewCompilerHost(
  * per file emitting edges. The program build dominates; the AST pass is linear
  * and resolves each module specifier once per file.
  */
-export function buildCompilerGraph(ts: TypeScriptApi, input: GraphInput): CompilerGraph {
+function buildFreshCompilerGraph(ts: TypeScriptApi, input: GraphInput): CompilerGraph {
   const { files, packageOfFile, packageOfBareSpecifier } = input
   const fileSet = new Set(files)
   const options = graphCompilerOptions(ts, input)

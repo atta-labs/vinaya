@@ -6,11 +6,9 @@
 import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 import { ALL_NAMES, affectedNamesForFile, type LineRange, parseHunkRanges } from '@attalabs/test-selection'
 import { loadConfig } from './config/compose'
-import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 import {
   discoverWorkspaceDirs,
   discoverWorkspacePackages,
@@ -218,83 +216,17 @@ function selectSet(root: string, changed: string[]): Set<string> {
 
 const INDEX_MAIN = './src/index.ts'
 
-// The never-miss ORACLE, and the one rule that makes it worth anything: its
-// module graph comes from a DIFFERENT resolver than the selector's.
-//
-// The oracle this replaced read imports with its own regular expressions and
-// reused the selector's own file discovery, so it inherited the selector's
-// blind spots exactly — including the one that mattered: neither could resolve
-// a relative specifier written with a `.js` extension to its `.ts` source, so a
-// whole class of dropped edges looked like agreement. This one asks Bun to
-// BUNDLE each test file and reads the module list out of the bundle's own
-// source map: every file the bundler actually pulled in, resolved by the
-// bundler's resolver, sharing no code path with the selector at all.
-function bundlerOracle(root: string, testFiles: readonly string[]) {
-  const workdir = mkdtempSync(join(tmpdir(), 'vinaya-oracle-'))
-  try {
-    // The oracle runs in its own bundler process, one build per entrypoint.
-    //
-    // Both shortcuts were tried and both are wrong. Calling `Bun.build` from
-    // inside the test runner starts failing with "Unexpected reading file"
-    // after the first build, which silently EMPTIES the oracle instead of
-    // failing it. Passing every entrypoint to a single build is fast but merges
-    // the module registry across entrypoints, so each source map lists modules
-    // some OTHER entrypoint pulled in — measured here: one test file's map
-    // listed 98 modules built alone and 148 built alongside 172 siblings. A
-    // contaminated oracle reports violations that are not real, which is just a
-    // different way of proving nothing.
-    const script = join(workdir, 'oracle.ts')
-    writeFileSync(
-      script,
-      [
-        'const entries = JSON.parse(await Bun.file(Bun.argv[2] as string).text()) as string[]',
-        'const out: Record<string, string[]> = {}',
-        'for (const entry of entries) {',
-        "  const built = await Bun.build({ entrypoints: [entry], target: 'node', sourcemap: 'external', throw: false })",
-        '  const sources: string[] = []',
-        '  if (built.success) {',
-        '    for (const output of built.outputs) {',
-        "      if (!output.path.endsWith('.map')) continue",
-        '      sources.push(...(JSON.parse(await output.text()) as { sources: string[] }).sources)',
-        '    }',
-        '  }',
-        '  out[entry] = sources',
-        '}',
-        'await Bun.write(Bun.argv[3] as string, JSON.stringify(out))',
-        ''
-      ].join('\n')
-    )
-    const entriesFile = join(workdir, 'entries.json')
-    const resultFile = join(workdir, 'graph.json')
-    writeFileSync(entriesFile, JSON.stringify(testFiles))
-    const built = spawnSyncBudgeted(
-      'bun',
-      [script, entriesFile, resultFile],
-      {
-        cwd: root,
-        encoding: 'utf8',
-        env: { ...stripVinayaEnv(), HOME: process.env.HOME, PATH: process.env.PATH }
-      },
-      120_000,
-      'bun (never-miss oracle)'
-    )
-    if (built.status !== 0) {
-      throw new Error(`the oracle's bundler failed, so it proves nothing:\n${built.stderr}\n${built.stdout}`)
-    }
-    const raw = JSON.parse(readFileSync(resultFile, 'utf8')) as Record<string, string[]>
-    const sources = new Map<string, Set<string>>()
-    // Source-map paths are relative to the bundler process's own cwd, which is `root`.
-    for (const testFile of testFiles) {
-      sources.set(testFile, new Set((raw[testFile] ?? []).map((source) => resolve(root, source))))
-    }
-    return {
-      reaches: (changedFile: string, testFile: string): boolean => sources.get(testFile)?.has(changedFile) ?? false,
-      /** Entrypoints the bundler produced no module list for — never counted as evidence in either direction. */
-      unbuildable: testFiles.filter((t) => (sources.get(t)?.size ?? 0) === 0)
-    }
-  } finally {
-    rmSync(workdir, { recursive: true, force: true })
-  }
+/** The program time each selection over the real repository reported, in order. A reused compiler graph reports 0. */
+const realRepoProgramMs: number[] = []
+
+/** One selection over the real repository, its program time tallied for the last case of this file. */
+function selectOnRealRepo(
+  changed: string[],
+  options?: Parameters<typeof selectAffectedTestFiles>[2]
+): ReturnType<typeof selectAffectedTestFiles> {
+  const result = selectAffectedTestFiles(REPO_ROOT, changed, options)
+  realRepoProgramMs.push(result.programMs)
+  return result
 }
 
 /** Links each workspace package into `<root>/node_modules/<name>` so a bundler can resolve its bare specifiers with no install. */
@@ -1247,9 +1179,7 @@ describe('a relative specifier written with an output extension resolves to its 
   // this resolution existed a change to `demo.ts` selected nothing but the
   // always-run list.
   it('on the real repository, a change to apps/cli/src/commands/demo.ts selects apps/cli/tests/demo.test.ts', () => {
-    const selected = new Set(
-      selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')]).selected
-    )
+    const selected = new Set(selectOnRealRepo([join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')]).selected)
     expect(selected).toContain(join(REPO_ROOT, 'apps/cli/tests/demo.test.ts'))
   }, 120_000)
 })
@@ -1259,15 +1189,14 @@ describe('a relative specifier written with an output extension resolves to its 
 // line; the compiler is what makes the selection narrow as well as safe.
 describe('the compiler resolves the graph, and the text scan remains a safe fallback', () => {
   it('on the real repository the compiler answers, and reports its program build separately from selection', () => {
-    const result = selectAffectedTestFiles(REPO_ROOT, [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')])
+    const result = selectOnRealRepo([join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')])
     expect(result.resolver).toBe('compiler')
-    expect(result.programMs).toBeGreaterThan(0)
   }, 120_000)
 
   it('the text-scan fallback is reachable, resolves .js specifiers too, and never omits what the compiler selects', () => {
     const changed = [join(REPO_ROOT, 'apps/cli/src/commands/demo.ts')]
-    const scan = selectAffectedTestFiles(REPO_ROOT, changed, { resolver: 'text-scan' })
-    const compiler = selectAffectedTestFiles(REPO_ROOT, changed)
+    const scan = selectOnRealRepo(changed, { resolver: 'text-scan' })
+    const compiler = selectOnRealRepo(changed)
     expect(scan.resolver).toBe('text-scan')
     expect(scan.programMs).toBe(0)
     expect(scan.selected).toContain(join(REPO_ROOT, 'apps/cli/tests/demo.test.ts'))
@@ -1449,8 +1378,8 @@ describe('selection follows the changed names, and widens to file level when it 
   // on an untouched checkout, reporting nothing about the selector.
   it('on the real repository, a one-name change selects strictly fewer files than the file-level answer', () => {
     const changed = join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/task-contract/review-input-manifest.ts')
-    const fileLevel = selectAffectedTestFiles(REPO_ROOT, [changed]).selected.length
-    const oneName = selectAffectedTestFiles(REPO_ROOT, [changed], {
+    const fileLevel = selectOnRealRepo([changed]).selected.length
+    const oneName = selectOnRealRepo([changed], {
       affectedNames: new Map([[changed, new Set(['isBoundToPolicy'])]])
     }).selected.length
     expect(oneName).toBeLessThan(fileLevel)
@@ -1530,14 +1459,13 @@ describe('tests that read the repository tree are selected from what they scan (
       'harness/processes/vinaya-strict/integration/conformance/unit/process-fixture-coverage.test.ts'
     )
     const changedTest = join(REPO_ROOT, 'apps/cli/tests/demo.test.ts')
-    expect(selectAffectedTestFiles(REPO_ROOT, [changedTest]).selected).toContain(auditor)
+    expect(selectOnRealRepo([changedTest]).selected).toContain(auditor)
     // And it is reachability through the scan rule that does it, not an import
     // edge and not the configured always-run list. The declared triggers are
     // emptied too: the auditor's own `process-start` declaration would
     // otherwise select it here, by a different rule than the one under test.
     expect(
-      selectAffectedTestFiles(REPO_ROOT, [changedTest], { repoTreeScanners: 'ignore', scannerDeclarations: [] })
-        .selected
+      selectOnRealRepo([changedTest], { repoTreeScanners: 'ignore', scannerDeclarations: [] }).selected
     ).not.toContain(auditor)
   }, 60_000)
 
@@ -1857,5 +1785,38 @@ describe('Issue #702, O3 — a spawn shape the classifier cannot read falls back
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+// The compiler graph is built once per set of inputs in a process, so these two
+// cases close the file: they come after its last selection over the real
+// repository, which a further workspace here would otherwise push out of the
+// reused graphs.
+describe('the compiler graph is reused within a process', () => {
+  it('one constructed workspace, selected twice, builds its program once and reports the program time of the build only', () => {
+    const { root, dir } = mkWorkspace([
+      { name: '@reuse/lib', main: INDEX_MAIN, files: { 'src/index.ts': 'export const lib = 1\n' } },
+      {
+        name: '@reuse/app',
+        files: { 'src/uses.test.ts': "import { lib } from '@reuse/lib'\ntest('lib', () => lib)\n" }
+      }
+    ])
+    try {
+      const changed = [join(dir('@reuse/lib'), 'src/index.ts')]
+      const first = selectAffectedTestFiles(root, changed)
+      const second = selectAffectedTestFiles(root, changed)
+      expect(first.programMs).toBeGreaterThan(0)
+      expect(second.programMs).toBe(0)
+      expect(second.selected).toEqual(first.selected)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('the selections over the real repository built the compiler program at most twice', () => {
+    // Twice, not once: the constructed workspaces between the real-repository
+    // cases can push the real repository out of the two graphs a process keeps.
+    // More than twice means a change defeated the reuse.
+    expect(realRepoProgramMs.filter((ms) => ms > 0).length).toBeLessThanOrEqual(2)
   })
 })
