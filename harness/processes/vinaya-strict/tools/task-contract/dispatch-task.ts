@@ -809,7 +809,9 @@ export async function prepareTask(
     // before this version's comment body is built.
     if (supersede.surfaceIn && supersede.surfaceIn.length > 0) {
       await deps.widenSurface(issue, supersede.surfaceIn, retryCommand)
-      const reRendered = await deps.assembleAndRenderBrief(tranche, String(n))
+      // A preview, like the render above: the widened brief is posted while a
+      // dependency or conflicting task is still open.
+      const reRendered = await deps.assembleAndRenderBrief(tranche, String(n), undefined, undefined, { preview: true })
       if (!reRendered.ok) {
         throw new DispatchTaskError(
           `\`## Surface\` widened, but the task no longer renders a valid brief afterward:\n${reRendered.missing.map((m) => `  - ${m}`).join('\n')}`
@@ -950,7 +952,9 @@ export async function prepareIssueTask(
     }
     if (supersede.surfaceIn && supersede.surfaceIn.length > 0) {
       await deps.widenSurface(issue, supersede.surfaceIn, retryCommand)
-      const reRendered = await deps.assembleAndRenderBriefForIssue(n)
+      // A preview, like the render above: the widened brief is posted while a
+      // dependency or conflicting task is still open.
+      const reRendered = await deps.assembleAndRenderBriefForIssue(n, undefined, { preview: true })
       if (!reRendered.ok) {
         throw new DispatchTaskError(
           `\`## Surface\` widened, but the task no longer renders a valid brief afterward:\n${reRendered.missing.map((m) => `  - ${m}`).join('\n')}`
