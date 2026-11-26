@@ -493,6 +493,39 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
     expect(existingCheckCalled).toBe(false)
   })
 
+  it('a supersede renders once and refuses at once on an unmerged dependency, never waiting', async () => {
+    let now = 0
+    let renders = 0
+    await expect(
+      prepareTask(
+        { tranche: 'task-run-v1', n: 1, supersede: { reason: 'objectives reworded' } },
+        preparePostingDeps({
+          dependencyClock: {
+            now: () => now,
+            sleep: async (ms) => {
+              now += ms
+            }
+          },
+          assembleAndRenderBrief: async () => {
+            renders++
+            return {
+              ok: false,
+              missing: ['dispatch-gate depends-on: task 1 depends on #999, whose PR is not merged yet.'],
+              dispatchBlockerDetails: [
+                {
+                  class: 'depends-on-not-merged',
+                  message: 'dispatch-gate depends-on: task 1 depends on #999, whose PR is not merged yet.'
+                }
+              ]
+            }
+          }
+        })
+      )
+    ).rejects.toThrow(/depends on #999/)
+    expect(now).toBe(0)
+    expect(renders).toBe(1)
+  })
+
   it('refuses when a frozen brief already exists, naming the existing comment url — nothing posted', async () => {
     let postCalled = false
     await expect(

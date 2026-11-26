@@ -749,6 +749,10 @@ export async function prepareTask(
   const result = await waitForDependencies(
     () => deps.assembleAndRenderBrief(tranche, String(n), undefined, undefined, { beforeIssueRender }),
     (r) =>
+      // A supersede (an objectives or Surface edit on a task already in flight)
+      // renders once: it never waits on a dependency, which only gates a first
+      // dispatch, so the edit answers in seconds instead of polling for minutes.
+      !supersede &&
       !r.ok &&
       !!r.dispatchBlockerDetails?.length &&
       r.dispatchBlockerDetails.every((b) => b.class === 'depends-on-not-merged') &&
@@ -896,6 +900,10 @@ export async function prepareIssueTask(
   const result = await waitForDependencies(
     () => deps.assembleAndRenderBriefForIssue(n, undefined, { beforeIssueRender }),
     (r) =>
+      // A supersede (an objectives or Surface edit on a task already in flight)
+      // renders once: it never waits on a dependency, which only gates a first
+      // dispatch, so the edit answers in seconds instead of polling for minutes.
+      !supersede &&
       !r.ok &&
       !!r.dispatchBlockerDetails?.length &&
       r.dispatchBlockerDetails.every((b) => b.class === 'depends-on-not-merged') &&
