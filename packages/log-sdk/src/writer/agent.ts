@@ -74,6 +74,8 @@ export type UsageRecorded = {
   cost?: { amount: number; kind: 'exact' | 'estimated' }
   /** Why usage is unknown, as a short code; with it no figure is recorded. */
   unknownReason?: string
+  /** Why the cost is unknown, as a short code; the token figures are still recorded, and a cost wins over it. */
+  costUnknownReason?: string
   agent?: SpanParent
 }
 
@@ -136,7 +138,9 @@ function usageAttributes(usage: UsageRecorded): Attrs {
     [A.usageCacheReadInputTokens]: unknown ? undefined : usage.cacheReadInputTokens,
     [A.usageCost]: unknown ? undefined : usage.cost?.amount,
     [A.usageCostKind]: unknown ? undefined : usage.cost?.kind,
-    [A.usageUnknownReason]: usage.unknownReason
+    [A.usageUnknownReason]: usage.unknownReason,
+    // A cost and a reason for its absence never ride together: the cost wins. No figure at all drops the reason too.
+    [A.usageCostUnknownReason]: unknown || usage.cost !== undefined ? undefined : usage.costUnknownReason
   }
 }
 

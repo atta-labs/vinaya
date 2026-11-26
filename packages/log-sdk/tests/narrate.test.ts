@@ -57,6 +57,22 @@ test('a round starts, its checks pass or fail, and its verdicts read through the
   })
 })
 
+test('a usage line reads tokens with why the cost is unknown, or the cost and its kind', () => {
+  const unknown = record(E.usageRecorded, {
+    [A.usageInputTokens]: 5,
+    [A.usageOutputTokens]: 2,
+    [A.usageCostUnknownReason]: 'not_priced'
+  })
+  expect(narrate(unknown, names)?.text).toBe('Usage recorded: 5 tokens in, 2 out; cost unknown: not_priced.')
+  const priced = record(E.usageRecorded, {
+    [A.usageInputTokens]: 5,
+    [A.usageOutputTokens]: 2,
+    [A.usageCost]: 0.25,
+    [A.usageCostKind]: 'estimated'
+  })
+  expect(narrate(priced, names)?.text).toBe('Usage recorded: 5 tokens in, 2 out; cost 0.25 (estimated).')
+})
+
 test('seats read as recorded without seat names and by their reading names with them', () => {
   const started = record(E.agentStarted, { [A.agentName]: 'code-reviewer', [A.roundNumber]: 3 })
   expect(narrate(started)).toEqual({ kind: 'working', text: 'Code-reviewer is working on round 3.' })
