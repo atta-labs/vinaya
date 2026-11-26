@@ -811,7 +811,9 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
     ],
     example: `{
   "planning": {
-    "collisionThreshold": 3
+    "collisionThreshold": 3,
+    "reviewRoundLimit": 2,
+    "reviewAgent": "same"
   }
 }`
   },
@@ -824,6 +826,24 @@ export const CONFIG_REFERENCE: readonly ConfigField[] = [
       '`0` turns the refusal off entirely and leaves only the warning. Absent → `3`. The same comparison runs when a task is dispatched, scoped to open pull requests only; only the first fifty open pull requests are read, and the output says so when that bound was reached.'
     ],
     example: `{ "planning": { "collisionThreshold": 3 } }`
+  },
+  {
+    key: 'planning.reviewRoundLimit',
+    type: 'number (optional, positive integer)',
+    semantics: [
+      "How many independent review rounds a plan draft may spend before review stops and only the Principal decides. The count is kept with the stored draft of the tranche on this machine and is never reset: revising the draft, submitting it again or opening a new chat leaves the rounds spent as they were. After this many rounds without approval, `plan_review_start` is refused and `plan_review_status` shows the findings still open; `plan_review_decide` records the Principal's choice to allow one more round or to stop the plan.",
+      'Absent → `2`.'
+    ],
+    example: `{ "planning": { "reviewRoundLimit": 2 } }`
+  },
+  {
+    key: 'planning.reviewAgent',
+    type: '"same" | "different" (optional)',
+    semantics: [
+      'Which agent runs a plan review round. `same` reviews on the agent the Planner runs on; `different` reviews on the other agent (Claude Code when the Planner runs on Codex, Codex when it runs on Claude Code), so a plan is read by a second vendor. No model is chosen here: each agent runs its own default.',
+      'Absent → `same`.'
+    ],
+    example: `{ "planning": { "reviewAgent": "different" } }`
   },
   {
     key: 'prePush',

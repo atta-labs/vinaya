@@ -41,6 +41,7 @@ import {
   type PlanReview,
   type PlanReviewBinding,
   type PlanReviewRefusal,
+  type PlanReviewScope,
   planReviewJsonSchema,
   validatePlanReview
 } from './result'
@@ -69,12 +70,24 @@ export interface PlanReviewRoundRequest {
   draft: PlanDraft
   /** The repository the captured revision is read from. */
   repoRoot: string
+  /** A round after the first: what it judges and which open findings it confirms. Absent, the round judges the whole draft. */
+  scope?: PlanReviewScope
+  /** The findings still open, as `{ id, text }`, shown to the seat with their ids when `scope` names them. */
+  openFindings?: readonly OpenFindingBrief[]
   model?: string
   timeoutMs: number
   /** A session to continue. A review never continues one: a round that names one is refused. */
   resume?: string
   /** The parent of the round's scratch folder; the system's temporary folder when absent. */
   scratchParent?: string
+}
+
+/** One finding still open, as the seat reads it. */
+export interface OpenFindingBrief {
+  id: string
+  question: number
+  task: number | null
+  resolution: string
 }
 
 /** What the launcher is handed: everything one fresh session needs. */
@@ -179,7 +192,26 @@ function seatShortVersion(): string {
 }
 
 /** The prompt of a round: the seat's short version, the binding to copy, and the draft as data. */
-export function planReviewPrompt(draft: PlanDraft): string {
+export function planReviewPrompt(
+  draft: PlanDraft,
+  scope?: PlanReviewScope,
+  openFindings: readonly OpenFindingBrief[] = []
+): string {
+  const later =
+    scope === undefined
+      ? []
+      : [
+          '',
+          'This is a later round. Judge only this scope:',
+          `- Answer questions 1 to 5 for exactly these tasks, and no others: ${scope.tasks.length === 0 ? '(none)' : scope.tasks.join(', ')}.`,
+          '- Answer question 6 for the whole plan.',
+          '- Confirm each finding below, once each, in `confirmations`: `resolved` or `open`, with evidence either way.',
+          '  A finding is resolved only when your evidence shows it is. Put any new finding in `findings`.',
+          'Findings to confirm (JSON):',
+          '```json',
+          JSON.stringify(openFindings, null, 2),
+          '```'
+        ]
   return [
     seatShortVersion(),
     '',
@@ -190,6 +222,7 @@ export function planReviewPrompt(draft: PlanDraft): string {
     `draftFingerprint: ${draftFingerprint(draft)}`,
     `questionVersion: ${draft.reviewQuestionVersion}`,
     `revision: ${draft.revision}`,
+    ...later,
     '',
     'The draft (JSON), with its agreed scope:',
     '```json',
@@ -230,7 +263,7 @@ export async function runPlanReviewRound(
     try {
       facts = await launch({
         agent: request.agent,
-        prompt: planReviewPrompt(request.draft),
+        prompt: planReviewPrompt(request.draft, request.scope, request.openFindings),
         stagedDir: staged.dir,
         scratch: run,
         outputSchema: planReviewJsonSchema(),
@@ -240,7 +273,11 @@ export async function runPlanReviewRound(
     } catch (error) {
       return none('provider_error', error instanceof Error ? error.message : String(error))
     }
-    const classified = classifyPlanRound(facts, { draft: request.draft, lineCount: (p) => staged.lineCount(p) })
+    const classified = classifyPlanRound(facts, {
+      draft: request.draft,
+      lineCount: (p) => staged.lineCount(p),
+      ...(request.scope === undefined ? {} : { scope: request.scope })
+    })
     if ('review' in classified) {
       return { kind: 'review', review: classified.review, agent: request.agent, sessionId: facts.sessionId }
     }

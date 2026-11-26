@@ -71,6 +71,7 @@ function review(overrides: Partial<PlanReview> = {}): PlanReview {
     summary: 'Plan reviewed.',
     answers: answers(),
     findings: [],
+    confirmations: [],
     ...overrides
   }
 }

@@ -82,6 +82,7 @@ function answerFor(draft: PlanDraft, overrides: Partial<PlanReview> = {}): { pla
       summary: 'reviewed',
       answers,
       findings: [],
+      confirmations: [],
       ...overrides
     }
   }
