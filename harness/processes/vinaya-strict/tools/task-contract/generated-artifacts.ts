@@ -8,6 +8,7 @@ const SKILL_ROLES = [
   'archivist',
   'developer',
   'operator',
+  'plan-reviewer',
   'planner',
   'reviewer',
   'security',
