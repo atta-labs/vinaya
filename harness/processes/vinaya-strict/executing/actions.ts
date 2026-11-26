@@ -291,6 +291,11 @@ export interface TaskInput {
   prepareSources?: () => Promise<PrepareSourcesResult>
   /** The budget the forge-gate steps poll a pending CI read or an unresolved mergeability within; the standalone loop's own when absent. */
   gatePoll?: GatePoll
+  /**
+   * The intervals in which the run sat halted for a pause, on the clock a version 2 round is measured on. A round's
+   * duration leaves them out; absent, the round measures from its start to its end.
+   */
+  haltedIntervals?: () => readonly { startedAt: number; endedAt: number }[]
   /** The flow key the run chose (`v1`, `v2`); absent is version 1. */
   flow?: string
   /** Version 2: the pull request the Developer staged, which opens only once both reviewers approve. */
@@ -1618,7 +1623,7 @@ export function startReviewRound<T extends { exitCode: number; stderr?: string }
   }
 }
 
-/** The elapsed wall time of this round, including the Developer and both reviewers. */
+/** The elapsed wall time of this round, including the Developer and both reviewers, less the time the run was halted for a pause. */
 function roundWallMs(task: TaskInput, results: Results, fallback: number): number {
   if (task.flow !== 'v2') return fallback
   let startedAt: number | undefined
@@ -1628,7 +1633,13 @@ function roundWallMs(task: TaskInput, results: Results, fallback: number): numbe
     if (timing?.round === task.reviewRound() && Number.isFinite(timing.startedAt))
       startedAt = Math.max(startedAt ?? timing.startedAt, timing.startedAt)
   }
-  return startedAt === undefined ? fallback : Math.max(0, (task.v2?.now ?? Date.now)() - startedAt)
+  if (startedAt === undefined) return fallback
+  const now = (task.v2?.now ?? Date.now)()
+  // A halt counts only where it overlaps this round's own interval, so an earlier round's pause takes nothing off.
+  let halted = 0
+  for (const halt of task.haltedIntervals?.() ?? [])
+    halted += Math.max(0, Math.min(halt.endedAt, now) - Math.max(halt.startedAt, startedAt))
+  return Math.max(0, now - startedAt - halted)
 }
 
 /** The gate step's result, observed by the assessment: a red gate is a gate observation like a green one. */

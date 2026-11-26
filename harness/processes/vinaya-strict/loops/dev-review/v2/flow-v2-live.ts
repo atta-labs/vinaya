@@ -242,6 +242,56 @@ import { extractFailureExcerpt } from '../run-control/pr-facts'
 /** Where the run keeps the staged pull request: its run directory, never the repository. */
 export const stagedPullRequestPath = (runDir: string): string => join(runDir, 'staged-pull-request.json')
 
+/** One interval in which a run sat halted for a pause. */
+export type HaltRecord = { startedAt: number; endedAt?: number }
+
+/**
+ * The run's halt records, kept in its run directory so a driver process that resumes the run reads back what the
+ * process that paused it wrote. Run state, never a repository file.
+ */
+export function haltRecordStore(runDir: string): {
+  read: () => HaltRecord[]
+  open: (at: number) => void
+  close: (at: number) => void
+} {
+  const path = join(runDir, 'halts.json')
+  const validEnd = (end: unknown): boolean => end === undefined || (typeof end === 'number' && Number.isFinite(end))
+  const read = (): HaltRecord[] => {
+    try {
+      const value = JSON.parse(readFileSync(path, 'utf8')) as { halts?: unknown }
+      if (!Array.isArray(value.halts)) return []
+      return value.halts.filter(
+        (halt): halt is HaltRecord =>
+          typeof halt === 'object' &&
+          halt !== null &&
+          Number.isFinite((halt as HaltRecord).startedAt) &&
+          validEnd((halt as HaltRecord).endedAt)
+      )
+    } catch {
+      return []
+    }
+  }
+  const write = (halts: HaltRecord[]): void => {
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, `${JSON.stringify({ schemaVersion: 1, halts })}\n`, { mode: 0o600 })
+  }
+  return {
+    read,
+    open: (at) => {
+      const halts = read()
+      // A halt already open keeps its earlier start.
+      if (halts.length > 0 && halts[halts.length - 1]?.endedAt === undefined) return
+      write([...halts, { startedAt: at }])
+    },
+    close: (at) => {
+      const halts = read()
+      const last = halts[halts.length - 1]
+      if (last === undefined || last.endedAt !== undefined) return
+      write([...halts.slice(0, -1), { ...last, endedAt: Math.max(at, last.startedAt) }])
+    }
+  }
+}
+
 /** The staged pull request, read and written as one small file. */
 export function stagedPullRequestStore(runDir: string): {
   read: () => StagedPullRequest | null
