@@ -33,7 +33,15 @@ import { join, resolve } from 'node:path'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { failedCheckLogsOnHead } from '../loops/dev-review/standalone/dev-review-loop'
 import { gitObjectReader, prepareSources } from '../../../kernel/tools/source-provider'
-import { sourceReceiptsPath } from '../../../kernel/source-manifest'
+import {
+  manifestDigest,
+  readRequiredSourceManifest,
+  requiredSourcesPromptBlock,
+  sha256Digest,
+  sourceReceiptsPath,
+  type RequiredSourceManifest,
+  writeRequiredSourceManifest
+} from '../../../kernel/source-manifest'
 import type { FetchDocumentationDeps } from '../../../kernel/tools/fetch-documentation'
 import { taskControlDir } from '../../../kernel/isolation/worker-boundary'
 import {
@@ -2212,9 +2220,51 @@ describe('the Engine runner retries a forge connection failure on the newest-rul
   })
 })
 
-describe("a restarted Engine run keeps the round's handed-over finding ids", () => {
-  test('the Developer launch after a restart carries the ids the checkpointed handoff gave the round', async () => {
+describe('the Developer turn schema after an Engine restart', () => {
+  const sources = ['`docs/first.md`', '`docs/second.md`']
+  const cases = [
+    { scenario: 'a prepared manifest', initial: sources },
+    { scenario: 'a brief changed during the pause', initial: sources, amended: ['`docs/replacement.md`'] },
+    { scenario: 'no prepared manifest', initial: [] }
+  ]
+
+  test.each(cases)('restores the turn schema with $scenario', async ({ initial, amended }) => {
     const run = stubRun()
+    const storeDir = developerSourceStoreDir(run.runtimeDir, run.options.args.task)
+    const writeManifest = (requirements: string[], round: number) => {
+      const body: Omit<RequiredSourceManifest, 'digest'> = {
+        schemaVersion: 1,
+        round,
+        base: FACTS.baseSha,
+        briefDigest: sha256Digest(requirements.join('\n')),
+        preparedAt: '2026-01-01T00:00:00.000Z',
+        sources: requirements.map((requirementText) => {
+          const path = requirementText.slice(1, -1)
+          return {
+            sourceId: path,
+            canonicalUri: `repository:${path}`,
+            requirementText,
+            governs: 'the test mechanism',
+            objectiveIds: [1],
+            retrievedAt: '2026-01-01T00:00:00.000Z',
+            versionOrRevision: FACTS.baseSha,
+            contentDigest: sha256Digest(path),
+            mediaType: 'text/plain',
+            deliveryMode: 'injected',
+            snapshotRef: `git:blob:${'c'.repeat(40)}`,
+            freshnessPolicy: 'pinned',
+            trustClassification: 'repository'
+          }
+        })
+      }
+      writeRequiredSourceManifest(storeDir, { ...body, digest: manifestDigest(body) })
+    }
+    let preparePromptManifest = () => {}
+    run.options.developerFacts = async () => {
+      preparePromptManifest()
+      const manifest = readRequiredSourceManifest(storeDir)
+      return { ...FACTS, sources: { block: manifest && requiredSourcesPromptBlock(manifest), evidence: [] } }
+    }
     const freshTaskInput = (): TaskInput =>
       ({
         ...run.options.taskInput,
@@ -2227,6 +2277,13 @@ describe("a restarted Engine run keeps the round's handed-over finding ids", () 
     const wrapped = (task: TaskInput, actions: ActionRegistry): ActionRegistry =>
       Object.fromEntries(Object.entries(actions).map(([name, action]) => [name, withDeveloperContext(task, action)]))
     const schemas: string[] = []
+    const expectSources = (schema: string, requirements: string[]) => {
+      const completed = JSON.parse(schema).properties.turnResult.anyOf[0].properties
+      expect(completed.status.const).toBe('completed')
+      expect(completed.sourceUses.minItems).toBe(requirements.length)
+      expect(completed.sourceUses.maxItems).toBe(requirements.length)
+      expect(completed.sourceUses.items.properties.source.enum).toEqual(requirements.length ? requirements : undefined)
+    }
     run.options.spawnFn = (_command, args) => {
       const role = (args[args.indexOf('--settings') + 1] ?? '').split('/').at(-2) ?? ''
       if (role === 'developer') schemas.push(args[args.indexOf('--json-schema') + 1] ?? '')
@@ -2237,6 +2294,11 @@ describe("a restarted Engine run keeps the round's handed-over finding ids", () 
     run.options.taskInput = firstTask
     run.options.actions = wrapped(firstTask, {
       ...stubbed,
+      'vinaya.prepare-sources': async () => {
+        if (initial.length > 0) writeManifest(initial, 1)
+        firstTask.developerContext = { ...firstTask.developerContext, requiredSources: initial }
+        return { exitCode: 0 }
+      },
       'vinaya.assess-round': async () => ({ exitCode: 1, stdout: record(1) }),
       'vinaya.build-revision-handoff': async () => {
         // The driver dies once the handoff is checkpointed, before the Developer answers it.
@@ -2248,10 +2310,15 @@ describe("a restarted Engine run keeps the round's handed-over finding ids", () 
     expect(first.exitCode).toBe(2)
     expect(schemas).toHaveLength(1)
     expect(schemas[0]).not.toContain('R1-CR-1')
+    expectSources(schemas[0]!, initial)
 
     // A fresh process: the task input is built again from nothing, as a restarted driver's is.
     const restartedTask = freshTaskInput()
     const control = createRunControl()
+    if (amended) {
+      // The resumed prompt prepares the amended brief's manifest over the old one.
+      preparePromptManifest = () => writeManifest(amended, 2)
+    }
     run.options.taskInput = restartedTask
     run.options.actions = wrapped(restartedTask, {
       ...stubbed,
@@ -2264,6 +2331,9 @@ describe("a restarted Engine run keeps the round's handed-over finding ids", () 
     expect(resumed.exitCode).toBe(2)
     expect(schemas).toHaveLength(2)
     expect(schemas[1]).toContain('R1-CR-1')
+    const resumedSources = amended ?? initial
+    expectSources(schemas[1]!, resumedSources)
+    expect(restartedTask.developerContext.requiredSources).toEqual(resumedSources)
   })
 })
 

@@ -2458,9 +2458,19 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
                     // Each Developer turn records the head it starts from and its launch, as the standalone loop does
                     // at each dispatch. `develop` is an agent step, so the action wrapper below never sees it.
                     const begun = await options.beginDeveloperTurn?.()
+                    const facts = await developerFacts()
+                    // Prompt preparation refreshes the manifest on every turn, including after a checkpoint resume.
+                    // Use it for both the launch schema and validation, even when the brief changed during the pause.
+                    if (options.taskInput?.developerContext) {
+                      const manifest = readRequiredSourceManifest(storeDir)
+                      options.taskInput.developerContext = {
+                        ...options.taskInput.developerContext,
+                        requiredSources: manifest?.sources.map((source) => source.requirementText) ?? []
+                      }
+                    }
                     // A conflict turn already leads with its recorded conflict: the pre-turn merge adds no second one.
                     return withDefaultMergeConflict(
-                      developerPrompt(rendered, await developerFacts(), results, context),
+                      developerPrompt(rendered, facts, results, context),
                       developerTurnKind(results) === 'conflict' ? null : (begun?.conflictFiles ?? null)
                     )
                   },
