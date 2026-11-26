@@ -6,8 +6,7 @@
 import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 import { ALL_NAMES, affectedNamesForFile, type LineRange, parseHunkRanges } from '@attalabs/test-selection'
 import { loadConfig } from './config/compose'
 import {
