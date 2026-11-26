@@ -117,10 +117,7 @@ import {
   withLoadedFlow
 } from '../bin/run-engine'
 import { stagedPullRequestStore } from '../loops/dev-review/v2/flow-v2-live'
-import {
-  ENGINE_FORGE_RETRY_MAX_ATTEMPTS,
-  ENGINE_FORGE_RETRY_WAITS_MS
-} from '../loops/dev-review/standalone/dev-review-loop/stop-decision'
+import { ENGINE_FORGE_RETRY_MAX_ATTEMPTS } from '../loops/dev-review/standalone/dev-review-loop/stop-decision'
 import { VINAYA_LAUNCHED_ROLES } from '../integration/policies/launched-roles'
 import { createDispatchCapabilityTable } from '@harness/kernel/tools/host/dev-tools-host'
 import { attributeOf, createRunLifecycleWorld, eventNameOf } from './run-lifecycle-world'
@@ -2186,7 +2183,6 @@ describe('the Engine runner retries a forge connection failure on the newest-rul
       )
     ).toThrow(failure)
     expect(waits).toEqual([15_000, 30_000, 60_000, 60_000, 60_000, 60_000])
-    expect(waits).toEqual([...ENGINE_FORGE_RETRY_WAITS_MS])
     expect(waits).toHaveLength(ENGINE_FORGE_RETRY_MAX_ATTEMPTS)
   })
 
