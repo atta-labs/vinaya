@@ -354,6 +354,7 @@ import {
   liveV2Functions,
   readFetchedMainTip,
   readyGateEvidence,
+  haltRecordStore,
   stagedPullRequestStore,
   sweepReadyGateRuns,
   storagePushLogEvent,
@@ -2023,6 +2024,15 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   // A resumed leg hands its own pauses off afresh: one handoff answers for one leg.
   let handoff = makeHandoff()
   if (taskForHandoff) taskForHandoff.handoff = handoff
+  // The time the run sat halted for a pause, on the clock a round is measured on: a pause handoff opens a halt and the
+  // next leg, in this process or a new one, closes it. A halt that is no pause (a control halt, a signal) opens none.
+  const halts = haltRecordStore(runDir)
+  const haltClock = (): number => (taskForHandoff?.v2?.now ?? Date.now)()
+  if (taskForHandoff)
+    taskForHandoff.haltedIntervals = () =>
+      halts
+        .read()
+        .flatMap((halt) => (halt.endedAt === undefined ? [] : [{ startedAt: halt.startedAt, endedAt: halt.endedAt }]))
   /** An error the run could not absorb is a pause for the infrastructure, never a failed run. */
   const handOffError = (message: string): LegOutcome => {
     const round = taskForHandoff?.reviewRound?.() ?? 1
@@ -2318,6 +2328,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
     const runLeg = async (): Promise<void> => {
       outcome = null
       error = undefined
+      halts.close(haltClock())
       pausedFor = undefined
       usageLimit = null
       if (refusedFile !== null) {
@@ -2581,6 +2592,7 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         legOutcome = handOffError(error)
         translator.endLeg(legOutcome)
       }
+      if (legOutcome?.reason === 'paused' && pausedFor !== undefined) halts.open(haltClock())
       if (lifecycle.publishedWatch && legOutcome?.reason === 'completed' && signalled === null) {
         const published = prNumber > 0 ? prNumber : openPullRequest()
         if (published === null) break

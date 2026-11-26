@@ -400,7 +400,8 @@ line by the shared phrase function in the core package, after the event is
 written, so when and whether an event is logged does not change. A round
 is marked by a developer line ("Developer starting round N with
 <model>"), "Round N started.", a reviewers line, each verdict with its
-blocking count, and "Round N ended after <duration>: <outcome>." followed
+blocking count, and "Round N ended after <duration>: <outcome>." (the
+duration leaves out the time the run was halted for a pause) followed
 by the confidence the developer stated for it: a dash when none was
 asked, "not given" when unavailable, and a note when it came after the
 extra turn. A pause or a stop that needs a person says so, names what the
