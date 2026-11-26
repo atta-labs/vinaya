@@ -716,6 +716,37 @@ test('a restarted driver measures the round from its checkpointed start', async 
   ).toEqual([[1, 212000]])
 })
 
+test("a paused round's duration leaves out the time the run was halted", async () => {
+  let now = 1000
+  let developerOutputReads = 0
+  const observed = await runV2('claude', {
+    now: () => now,
+    continueAfterPause: {
+      resumes: 2,
+      beforeResume: (pause) => {
+        // The two measured pauses: an infrastructure pause, then one for the Principal.
+        now += pause === 1 ? 1332000 : 1637000
+      }
+    },
+    after: {
+      'validate-developer-output': () => {
+        developerOutputReads += 1
+        // The step runs again after each pause; only its first run does work, and its first two runs throw.
+        if (developerOutputReads === 1) now += 1000000
+        if (developerOutputReads <= 2) throw new Error('the forge connection dropped')
+      },
+      'validate-reviewer-outputs': () => {
+        now += 1913000
+      }
+    }
+  })
+  expect(observed.driverLegs).toBe(3)
+  expect(observed.outcome).toBe('completed')
+  const ended = observed.rawEvents.filter((event) => event.event === 'round_ended' && event.round === 1)
+  // Work took 48m33s; the round sat 22m12s and 27m17s in pauses, so it reads 2,913,000 and not 5,882,000.
+  expect(ended.at(-1)?.wall_ms).toBe(2913000)
+})
+
 for (const ci of [['green'], ['red', 'green']] as Array<Array<'green' | 'red'>>) {
   test(`verdicts precede each approved head's CI read without a final duplicate (${ci.join(',')})`, async () => {
     const readHeads: string[] = []
