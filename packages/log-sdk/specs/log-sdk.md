@@ -95,6 +95,8 @@ Each writer of a run has its own numbered segments, so two processes never write
 
 A run id that is not safe as a file-name part is written as `unresolved`.
 
+The local copy is cleaned after the keep window, `logs.keepDays` (§ 5). When a handle opens with recording on, it deletes from the repository's folder every traces and logs file last written longer ago than the window, together with that file's delivery state (§ 4); every newer file stays, the handle's own included. Age is the file's last write, never the run id or the name. It looks at nothing outside the folder and follows no symbolic link, runs at most once per process for one folder, and a failure goes to `onError` without stopping the handle. Sending never deletes.
+
 ## 4. Sending
 
 `sendLocalCopy({ folder, repository, url, headers?, home? })` posts each line of the local copy to the collector's `/v1/traces` or `/v1/logs`, as OTLP/HTTP with a JSON body (`Content-Type: application/json`, as the OTLP specification requires for JSON). It applies redaction again to every string value in a line's parsed JSON before posting, regardless of line size. The `home` option defaults to the process's home directory. The local copy and the original line bytes used for receipts stay intact. A `2xx` response marks the line sent. A response below `400`, at `500` or above, or one of `401`, `403`, `404`, `408` and `429`, or a failed connection or timeout, leaves the line to be tried again by the next call and is reported in `failures`. Any other `4xx` response sets the line aside (below).
@@ -112,6 +114,7 @@ A line is set aside, with a rejected receipt and an entry in `setAside` (not in 
 
 - `runtimeDir` — absolute path of the runtime directory; default `<vinayaHome>/runtime/<owner>-<repo>`, `vinayaHome` being `~/.vinaya`.
 - `logs.folder` — the base folder of § 3.
+- `logs.keepDays` — whole days the local copy is kept after each file's last write; at least 1, default 90, any other value refused when the settings load, naming the key. A caller may pass `keepDays` to `connect()`, which replaces the file's value, as a passed destination replaces the file's `logs`.
 - `logs.otlp.url` and `logs.otlp.headers` — the collector, for the caller to give `sendLocalCopy`.
 - `logs.events` — the declared custom events and their fields.
 - `logs: false`, or `destination: false` — the handle records nothing and keeps every function.

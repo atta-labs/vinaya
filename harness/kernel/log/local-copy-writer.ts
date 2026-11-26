@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import {
+  DEFAULT_KEEP_DAYS,
   defaultRuntimeDir as sdkDefaultRuntimeDir,
   resolveSettings as sdkResolveSettings,
   sendLocalCopy
@@ -16,7 +17,12 @@ export type OtlpAddressDecision =
   | { kind: 'none'; reason: string }
 
 /** Where a run's local copy is kept: the Log folder, and the repository the records are filed under. */
-export type LocalCopyPlace = { folder: string; repository: string | undefined }
+export type LocalCopyPlace = {
+  folder: string
+  repository: string | undefined
+  /** Days a file of the copy is kept after its last write; the Log's default window when absent. */
+  keepDays?: number | undefined
+}
 
 /** What decides the local copy's folder for a repository. */
 export type LocalCopyFolderInputs = {
@@ -38,9 +44,22 @@ export function resolveLocalCopyFolder(
   inputs: LocalCopyFolderInputs,
   repository: string | undefined
 ): string | undefined {
+  return resolveLocalCopySettings(inputs, repository)?.folder
+}
+
+/**
+ * The folder of `resolveLocalCopyFolder` with the keep window beside it. A process that reads no working-tree
+ * setting for the folder (an unattended one, or one handed its runtime directory) reads none for the window
+ * either, and keeps the default.
+ */
+export function resolveLocalCopySettings(
+  inputs: LocalCopyFolderInputs,
+  repository: string | undefined
+): { folder: string; keepDays: number } | undefined {
   const vinayaHome = join(inputs.home, '.vinaya')
-  if (inputs.handedRuntimeDir) return join(inputs.handedRuntimeDir, 'logs')
-  if (inputs.unattended) return join(sdkDefaultRuntimeDir(repository, vinayaHome), 'logs')
+  if (inputs.handedRuntimeDir) return { folder: join(inputs.handedRuntimeDir, 'logs'), keepDays: DEFAULT_KEEP_DAYS }
+  if (inputs.unattended)
+    return { folder: join(sdkDefaultRuntimeDir(repository, vinayaHome), 'logs'), keepDays: DEFAULT_KEEP_DAYS }
   const resolved = sdkResolveSettings({
     repoRoot: inputs.cwd,
     ...(repository === undefined ? {} : { repository }),
@@ -49,9 +68,13 @@ export function resolveLocalCopyFolder(
   if (!resolved.ok || resolved.settings.logs === false) return undefined
   const configured = (resolved.settings.logs || undefined)?.folder
   // A configured folder inside the working tree is never used; the runtime directory's is.
-  return configured !== undefined && !isInsideRepo(configured, inputs.cwd)
-    ? configured
-    : join(resolved.settings.runtimeDir, 'logs')
+  return {
+    folder:
+      configured !== undefined && !isInsideRepo(configured, inputs.cwd)
+        ? configured
+        : join(resolved.settings.runtimeDir, 'logs'),
+    keepDays: resolved.settings.keepDays
+  }
 }
 
 export type LocalCopySenderDeps = {

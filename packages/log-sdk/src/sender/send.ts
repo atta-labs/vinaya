@@ -64,6 +64,32 @@ async function lineKey(identity: { file: string; offset: number }, line: Buffer,
   return hash.digest('hex')
 }
 
+/** The folder under a repository's local copy that holds the sender's delivery state. */
+export const DELIVERY_STATE_DIRECTORY = '.otlp-delivery'
+
+/**
+ * The names of the delivery state the sender keeps for one local-copy file: its two size markers, and the key
+ * every per-line receipt (`<key>.<signal>.pending`, `<key>.<hash>.sent`, `<key>.rejected.json`) starts with.
+ * `data` is the file's bytes; only lines ended by a newline are ever keyed.
+ */
+export function deliveryStateOf(name: string, data: Buffer): { markers: string[]; lineKeys: string[] } {
+  const lineKeys: string[] = []
+  let offset = 0
+  for (;;) {
+    const end = data.indexOf(10, offset)
+    if (end === -1) break
+    lineKeys.push(
+      createHash('sha256')
+        .update(JSON.stringify({ file: name, offset }))
+        .update(data.subarray(offset, end))
+        .digest('hex')
+    )
+    offset = end + 1
+  }
+  const stem = name.slice(0, -'.jsonl'.length)
+  return { markers: [`${stem}.seen`, `${stem}.done`], lineKeys }
+}
+
 function rejectedBeforePost(path: string): boolean {
   try {
     const stat = lstatSync(path)
@@ -249,7 +275,7 @@ async function post(
 /** Send immutable, newline-terminated records without taking a writer or sender lock. */
 export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<LocalCopyReport> {
   const directory = join(options.folder, repoSegment(options.repository))
-  const state = join(directory, '.otlp-delivery')
+  const state = join(directory, DELIVERY_STATE_DIRECTORY)
   const deadline = options.deadline ?? Number.POSITIVE_INFINITY
   const report: LocalCopyReport = { sent: 0, setAside: [], failures: [] }
   let stopped = false

@@ -1436,5 +1436,20 @@
     "decisionRecords": {
       "path": "../adr"
     }
+  },
+  {
+    "logs": {
+      "keepDays": 30
+    }
+  },
+  {
+    "logs": {
+      "keepDays": 0
+    }
+  },
+  {
+    "logs": {
+      "keepDays": 1.5
+    }
   }
 ]

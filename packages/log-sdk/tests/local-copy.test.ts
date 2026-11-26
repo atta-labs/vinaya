@@ -1,8 +1,21 @@
 import { expect, spyOn, test } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { connect } from '../src/index.js'
+import { resetCleanedFolders } from '../src/local-copy/file-exporters.js'
+import { deliveryStateOf } from '../src/sender/send.js'
 
 type Attribute = { key: string; value: { stringValue?: string; intValue?: number | string } }
 type RecordData = {
@@ -116,6 +129,87 @@ test('recording off creates no local copy', () => {
     handle.run.alive()
     handle.run.ended()
     expect(existsSync(join(runtimeDir, 'logs'))).toBe(false)
+  } finally {
+    rmSync(runtimeDir, { recursive: true, force: true })
+  }
+})
+
+test('opening a handle deletes old local-copy files with their delivery state, once per process per folder', () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'log-sdk-clean-'))
+  const logs = join(runtimeDir, 'logs')
+  const folder = join(logs, 'acme-widgets')
+  const state = join(folder, '.otlp-delivery')
+  const outside = join(runtimeDir, 'outside')
+  try {
+    mkdirSync(state, { recursive: true })
+    mkdirSync(outside)
+    const old = 'old~w1~000000000000.traces.jsonl'
+    const recent = 'new~w1~000000000000.traces.jsonl'
+    const line = '{"resourceSpans":[]}\n'
+    writeFileSync(join(folder, old), line)
+    writeFileSync(join(folder, recent), line)
+    const { markers, lineKeys } = deliveryStateOf(old, Buffer.from(line))
+    const receipts = [...markers, `${lineKeys[0]}.traces.pending`, `${lineKeys[0]}.abc.sent`]
+    for (const name of receipts) writeFileSync(join(state, name), 'x')
+    const keptMarker = deliveryStateOf(recent, Buffer.from(line)).markers[0] as string
+    writeFileSync(join(state, keptMarker), 'x')
+    const longAgo = new Date(Date.now() - 100 * 86_400_000)
+    utimesSync(join(folder, old), longAgo, longAgo)
+    // Outside the folder: a sibling file, and a symbolic link in the folder pointing out of it.
+    const beside = join(logs, 'beside~w1~000000000000.traces.jsonl')
+    const target = join(outside, 'target~w1~000000000000.traces.jsonl')
+    const linkName = 'link~w1~000000000000.traces.jsonl'
+    writeFileSync(beside, line)
+    writeFileSync(target, line)
+    utimesSync(beside, longAgo, longAgo)
+    utimesSync(target, longAgo, longAgo)
+    symlinkSync(target, join(folder, linkName))
+
+    const errors: unknown[] = []
+    const open = () =>
+      connect({
+        runId: 'run-9',
+        repository: 'acme/widgets',
+        repoRoot: join(runtimeDir, 'repo'),
+        runtimeDir,
+        onError: (e) => errors.push(e)
+      })
+    resetCleanedFolders()
+    const handle = open()
+    handle.run.started()
+    expect(existsSync(join(folder, old))).toBe(false)
+    for (const name of receipts) expect(existsSync(join(state, name))).toBe(false)
+    expect(existsSync(join(folder, recent))).toBe(true)
+    expect(existsSync(join(state, keptMarker))).toBe(true)
+    expect(readdirSync(folder).some((f) => f.startsWith(`run-9~${handle.writerId}~`))).toBe(true)
+    expect(existsSync(beside)).toBe(true)
+    expect(existsSync(target)).toBe(true)
+    expect(lstatSync(join(folder, linkName)).isSymbolicLink()).toBe(true)
+
+    // A second handle in the same process does not clean again.
+    const second = 'again~w1~000000000000.logs.jsonl'
+    writeFileSync(join(folder, second), line)
+    utimesSync(join(folder, second), longAgo, longAgo)
+    open()
+    expect(existsSync(join(folder, second))).toBe(true)
+    expect(errors).toEqual([])
+  } finally {
+    rmSync(runtimeDir, { recursive: true, force: true })
+  }
+})
+
+test('a window passed to connect decides what is old', () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'log-sdk-window-'))
+  const folder = join(runtimeDir, 'logs', 'acme-widgets')
+  try {
+    mkdirSync(folder, { recursive: true })
+    const name = 'mid~w1~000000000000.logs.jsonl'
+    writeFileSync(join(folder, name), '{}\n')
+    const tenDays = new Date(Date.now() - 10 * 86_400_000)
+    utimesSync(join(folder, name), tenDays, tenDays)
+    resetCleanedFolders()
+    connect({ runId: 'run-w', repository: 'acme/widgets', repoRoot: join(runtimeDir, 'repo'), runtimeDir, keepDays: 5 })
+    expect(existsSync(join(folder, name))).toBe(false)
   } finally {
     rmSync(runtimeDir, { recursive: true, force: true })
   }
