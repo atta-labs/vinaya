@@ -151,23 +151,37 @@ function inspectLine(
   }
   let document: unknown
   try {
-    const json = JSON as typeof JSON & { rawJSON(source: string): object }
-    document = json.parse(text, (_key: string, value: unknown, context?: { source: string }) => {
-      // OTLP also accepts integer fields as JSON numbers. Keep their exact digits on the wire.
-      if (typeof value === 'number' && context && context.source !== JSON.stringify(value)) {
-        return json.rawJSON(context.source)
-      }
-      return value
-    })
-  } catch (error) {
-    if (!(error instanceof SyntaxError)) throw error
+    document = JSON.parse(text)
+  } catch {
     return { valid: false }
   }
   const names = collect(document)
-  const body = JSON.stringify(document, (_key, value: unknown) =>
-    typeof value === 'string' ? redactValue(value, home) : value
-  )
-  return { valid: true, names, body }
+
+  // Reserialize only changed string values in the validated JSON. Scanning the
+  // tokens needs no recursion and keeps number literals at their original precision.
+  const quoteOrEscape = /["\\]/g
+  const propertySeparator = /[ \t\r\n]*:/y
+  let body = ''
+  let copiedThrough = 0
+  let start = text.indexOf('"')
+  while (start !== -1) {
+    quoteOrEscape.lastIndex = start + 1
+    for (let match = quoteOrEscape.exec(text); match?.[0] === '\\'; match = quoteOrEscape.exec(text)) {
+      quoteOrEscape.lastIndex++
+    }
+    const end = quoteOrEscape.lastIndex
+    propertySeparator.lastIndex = end
+    if (!propertySeparator.test(text)) {
+      const value = JSON.parse(text.slice(start, end)) as string
+      const redacted = redactValue(value, home)
+      if (redacted !== value) {
+        body += text.slice(copiedThrough, start) + JSON.stringify(redacted)
+        copiedThrough = end
+      }
+    }
+    start = text.indexOf('"', end)
+  }
+  return { valid: true, names, body: body + text.slice(copiedThrough) }
 }
 
 function inspectLargeLine(line: Buffer, home: string, signal: AbortSignal): Promise<Inspection> {

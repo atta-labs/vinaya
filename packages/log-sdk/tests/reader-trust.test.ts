@@ -70,19 +70,27 @@ test('a secret-shaped string value is redacted wherever it sits, and the home di
 })
 
 test('shortens each whole home path inside a value', () => {
-  const home = '/home/al'
+  const home = '/home/al/'
   const paths = [
     '/home/al/file and /home/al/other',
     'file="/home/al/file" dir=\'/home/al\'',
     'root:/home/al (/home/al)',
-    'file=/home/alice/file (/home/al-backup) /mnt/home/al/file'
+    'PATH=/home/al:/usr/bin:/home/al/work',
+    'PATH="/home/al:/usr/bin"',
+    'file=/home/alice/file (/home/al-backup) /mnt/home/al/file',
+    'file="/home/al ice/file" dir=\'/home/al ice\'',
+    'file=/home/al\\ice/file'
   ]
   const trusted = applyTrust(record({ paths }), { foreign: false, home })
   expect(trusted.attributes.paths).toEqual([
     '~/file and ~/other',
     'file="~/file" dir=\'~\'',
     'root:~ (~)',
-    'file=/home/alice/file (/home/al-backup) /mnt/home/al/file'
+    'PATH=~:/usr/bin:~/work',
+    'PATH="~:/usr/bin"',
+    'file=/home/alice/file (/home/al-backup) /mnt/home/al/file',
+    'file="/home/al ice/file" dir=\'/home/al ice\'',
+    'file=/home/al\\ice/file'
   ])
   const dotted = applyTrust(record({ path: 'file=/home/a.b/file' }), { foreign: false, home: '/home/a.b' })
   expect(dotted.attributes.path).toBe('file=~/file')

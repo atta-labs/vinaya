@@ -136,7 +136,10 @@ A line is set aside, with a rejected receipt and an entry in `setAside` (not in 
 <!-- VINAYA:CLAIM: packages/log-sdk/src/contract/custom.ts contains:export const CUSTOM_TEXT_MAX_LENGTH = 500 -->
 
 - **Every record is checked again** against the contract before it is sent and when it is read (§ 4, § 6).
-- **Redaction runs before writing, sending and reading.** It replaces recognized secrets and shortens a whole home directory to `~` at the start of a string or after whitespace, a quote, `=`, `:` or `(`. For example, `file=/home/al/work` becomes `file=~/work` for `/home/al`, while `file=/home/alice/work` stays intact.
+- **Redaction runs before writing, sending and reading.** It replaces recognized secrets and shortens a whole home directory to `~` at the start of a string or after whitespace, a quote, `=`, `:` or `(`. It ignores trailing separators in the configured home and recognizes colon-separated path lists. With home `/home/al`, `file=/home/al/work` becomes `file=~/work` and `PATH=/home/al:/usr/bin` becomes `PATH=~:/usr/bin`. A prefix-sharing path such as `file="/home/al ice/work"` stays intact because the space belongs to the quoted directory name.
+
+<!-- VINAYA:CLAIM: packages/log-sdk/src/contract/redact.ts contains:out = out.replace(new RegExp(bare + '|' + quoted, 'g'), '$1$2~') -->
+
 - **One version is shared with the CLI.** Records carry the version of this package's own manifest, as `vinaya.sdk.version` and as the instrumentation scope's version; the command-line package depends on this package at that same version.
 
 <!-- VINAYA:CLAIM: packages/log-sdk/src/contract/version.ts contains:export const SDK_VERSION: string = manifest.version -->

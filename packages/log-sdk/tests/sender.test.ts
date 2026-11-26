@@ -71,6 +71,28 @@ test.each([0, 128 * 1024])('redacts posted values and keeps receipts with %i byt
   expect(readFileSync(file, 'utf8')).toBe(local)
 })
 
+test.each([10_000, 40_000])('sends valid records nested %i levels deep', async (depth) => {
+  const options = fixture()
+  const file = join(options.dir, 'run~writer~000000000000.logs.jsonl')
+  const open = '{"nested":' + '['.repeat(depth)
+  const close = ']'.repeat(depth) + '}'
+  const local = open + '["PATH=/home/al:/usr/bin", 9223372036854775807]' + close
+  const expected = open + '["PATH=~:/usr/bin", 9223372036854775807]' + close
+  writeFileSync(file, local + '\n')
+  const posted: string[] = []
+  const report = await sendLocalCopy({
+    ...options,
+    home: '/home/al/',
+    fetch: async (_url, init) => {
+      posted.push(await new Response(init.body).text())
+      return new Response(null, { status: 204 })
+    }
+  })
+  expect(report).toEqual({ sent: 1, setAside: [], failures: [] })
+  expect(posted).toEqual([expected])
+  expect(readFileSync(file, 'utf8')).toBe(local + '\n')
+})
+
 test('sends both signals from each writer and run without changing their files', async () => {
   const options = fixture()
   const expected: string[] = []

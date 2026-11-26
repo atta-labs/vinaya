@@ -45,10 +45,15 @@ export function redact<T>(value: T, home: string): T {
         /\b((?:secret|password|passwd|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key)\s*[:=]\s*)[A-Za-z0-9+/_=-]{16,}\b/gi,
         '$1<redacted>'
       )
-    if (home.length > 0 && out.includes(home)) {
-      const escaped = home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const path = new RegExp(String.raw`(^|[\s"'=:(])${escaped}(?=$|[/\\\s"')])`, 'g')
-      out = out.replace(path, '$1~')
+    const windowsPath = /^[A-Za-z]:[/\\]|^\\\\/.test(home)
+    const directory = home.replace(windowsPath ? /[/\\]+$/ : /\/+$/, '') || home
+    if (directory.length > 0 && out.includes(directory)) {
+      const escaped = directory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const separator = windowsPath ? String.raw`[/\\]` : '/'
+      // Whitespace can end a bare path, but belongs to the name inside quotes.
+      const bare = String.raw`(^|[\s=:(])${escaped}(?=$|${separator}|[\s"':)])`
+      const quoted = String.raw`(["'])${escaped}(?=$|${separator}|\2|:(?=${separator}))`
+      out = out.replace(new RegExp(bare + '|' + quoted, 'g'), '$1$2~')
     }
     return out as unknown as T
   }

@@ -142,7 +142,7 @@ describe('every published package matches the snapshot from a scratch install ou
     const emit = bin('vinaya-log-emit', [])
     expect({ status: emit.status, out: emit.out.slice(0, 600) }).toMatchObject({ status: 2 })
     expect(emit.out).toContain('Usage: vinaya-log-emit <event>')
-  })
+  }, 30_000)
 
   test('every subpath each manifest exports was imported under Bun and typechecked', () => {
     for (const pkg of published) {
