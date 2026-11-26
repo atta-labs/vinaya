@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from '
 import { join, posix, relative, sep } from 'node:path'
 import { type PathAliasTable, resolveAliasedSpecifier } from '@attalabs/test-selection'
 import { BASE_CONFIG_PATH, parseAliasTable, readAliasTable } from '@harness/kernel/imports/alias-table.js'
+import { compareLongImportsToBase } from './long-import-ratchet.js'
 
 // The counted ratchet. The kernel side of the repository — every scope root
 // below, outside any process — is meant to name no process and no role. Today
@@ -504,7 +505,7 @@ export function compareWithBaseline(counts: Baseline, baseline: Baseline): strin
 
 // ── The base comparison ─────────────────────────────────────────────────────
 
-function git(root: string, args: string[]): string {
+export function git(root: string, args: string[]): string {
   return execFileSync('git', args, {
     cwd: root,
     encoding: 'utf8',
@@ -513,7 +514,7 @@ function git(root: string, args: string[]): string {
   })
 }
 
-function gitShow(root: string, rev: string, path: string): string | null {
+export function gitShow(root: string, rev: string, path: string): string | null {
   try {
     return git(root, ['show', `${rev}:${path}`])
   } catch {
@@ -537,16 +538,20 @@ type Renames = {
  * the change deletes paired with a head file it adds under the same file name when each is the only one of that name
  * (a move that rewrote too much of the file for git to see it as the same file).
  */
-function renames(root: string, base: string): Renames {
+export function renames(root: string, base: string): Renames {
   const from = new Map<string, string>()
   const to = new Map<string, string>()
   const added = new Set<string>()
   const touched = new Set<string>()
   const deleted = new Set<string>()
-  for (const line of git(root, ['diff', '--find-renames', '--name-status', base, 'HEAD']).split('\n')) {
-    const [status, old, renamed] = line.split('\t')
+  const fields = git(root, ['diff', '--find-renames', '--name-status', '-z', base, 'HEAD']).split('\0')
+  for (let i = 0; i < fields.length; ) {
+    const status = fields[i++]
+    const old = fields[i++]
     if (!status || !old) continue
-    if (status.startsWith('R') && renamed) {
+    if (status.startsWith('R')) {
+      const renamed = fields[i++]
+      if (!renamed) continue
       from.set(renamed, old)
       to.set(old, renamed)
       touched.add(old)
@@ -868,11 +873,14 @@ function main(argv: string[]): number {
       return 2
     }
     const result = compareBase(REPOSITORY_ROOT, base)
+    const longImports = compareLongImportsToBase(REPOSITORY_ROOT, base)
     if (result.notice) say(result.notice)
     for (const failure of result.failures) complain(failure)
-    if (result.failures.length > 0) return 1
-    if (!result.notice)
+    if (!result.notice && result.failures.length === 0)
       say(`architecture ratchet: head total ${result.headTotal}, base total ${result.baseTotal} — no growth.`)
+    if (longImports.notice) say(longImports.notice)
+    for (const failure of longImports.failures) complain(failure)
+    if (longImports.failures.length > 0 || result.failures.length > 0) return 1
     return 0
   }
   complain(`usage: ${WRITE_COMMAND}\n       ${COMPARE_COMMAND}`)
