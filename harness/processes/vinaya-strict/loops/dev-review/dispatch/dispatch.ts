@@ -4431,6 +4431,8 @@ export async function dispatchRole(
   // The agent turn is one `invoke_agent` span on the run's Log handle: it opens when the agent is sent, or at the
   // moment a dispatch is refused, and ends once, with what came out of it or with why it failed.
   const repository = repo === null ? undefined : `${repo.owner}/${repo.repo}`
+  // The dispatch starts the agent, so it says so before its first record.
+  runRecorder().launching()
   /** One command record on the same handle as the turn: an infrastructure fact a refusal can follow. A Log that cannot be written never changes the dispatch. */
   const writeCommandRecord = (record: Parameters<LogHandle['command']['completed']>[0]): void => {
     try {
