@@ -8,6 +8,8 @@
 
 import { runtimeDirForThisRepo } from '@harness/kernel/run-paths'
 import { draftFingerprint, type PlanDraft, parsePlanDraft } from '@harness/workflow/tools/plan-draft/draft'
+import { type DraftCheckReport, checkDraft } from '@harness/workflow/tools/plan-draft/check'
+import { type DraftPreview, previewDraft } from '@harness/workflow/tools/plan-draft/preview'
 import { readPlanDraft, writePlanDraft } from '@harness/workflow/tools/plan-draft/store'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -892,4 +894,34 @@ export function readStoredPlanDraft(tranche: string, runtimeDir: string = runtim
   const draft = readPlanDraft(runtimeDir, tranche)
   if (draft === null) return { ok: false, message: `no draft is stored for tranche "${tranche}" on this machine` }
   return { ok: true, draft, fingerprint: draftFingerprint(draft) }
+}
+
+/** What checking the stored draft of a tranche returns: the findings of the whole plan, or why it could not be read. */
+export type DraftCheckOutcome = { ok: true; report: DraftCheckReport } | { ok: false; message: string }
+
+/** What previewing the stored draft of a tranche returns. */
+export type DraftPreviewOutcome = { ok: true; preview: DraftPreview } | { ok: false; message: string }
+
+/** Runs the full Issue write gate on every task of the tranche's stored draft, and the checks only the whole plan has. Writes nothing. */
+export async function checkStoredPlanDraft(
+  tranche: string,
+  runtimeDir: string = runtimeDirForThisRepo()
+): Promise<DraftCheckOutcome> {
+  const stored = readStoredPlanDraft(tranche, runtimeDir)
+  if (!stored.ok) return stored
+  return { ok: true, report: await checkDraft(stored.draft) }
+}
+
+/** The exact Issue and brief of each task of the tranche's stored draft (one task when `task` is given). Writes nothing. */
+export async function previewStoredPlanDraft(
+  tranche: string,
+  task?: number,
+  runtimeDir: string = runtimeDirForThisRepo()
+): Promise<DraftPreviewOutcome> {
+  const stored = readStoredPlanDraft(tranche, runtimeDir)
+  if (!stored.ok) return stored
+  if (task !== undefined && !stored.draft.tasks.some((t) => t.number === task)) {
+    return { ok: false, message: `the draft of "${tranche}" holds no task ${task}` }
+  }
+  return { ok: true, preview: await previewDraft(stored.draft, task === undefined ? null : [task]) }
 }

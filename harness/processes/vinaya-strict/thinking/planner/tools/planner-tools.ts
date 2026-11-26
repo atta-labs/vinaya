@@ -25,15 +25,19 @@ import type { SeatCallResult, SeatHandler } from '@harness/kernel/tools/host/sea
 import type { McpToolListEntry } from '@harness/kernel/tools/mcp-protocol.js'
 import type { CheckError } from '@harness/kernel/gates/checks/contract'
 import {
+  checkStoredPlanDraft,
   createIssue,
   editIssue,
   editObjectives,
+  previewStoredPlanDraft,
   printIssueSurface,
   readStoredPlanDraft,
   renderBrief,
   submitPlanDraft,
   type BriefInput as BriefAddress,
   type BriefOutcome,
+  type DraftCheckOutcome,
+  type DraftPreviewOutcome,
   type DraftReadOutcome,
   type DraftSubmitOutcome,
   type IssueWriteOutcome,
@@ -53,7 +57,9 @@ export const PLANNER_TOOL_NAMES = [
   'brief_render',
   'task_issue_validate',
   'plan_draft_submit',
-  'plan_draft_read'
+  'plan_draft_read',
+  'plan_draft_check',
+  'plan_draft_preview'
 ] as const
 
 export type PlannerToolName = (typeof PLANNER_TOOL_NAMES)[number]
@@ -170,6 +176,8 @@ const BriefInput = z
   )
 
 const DraftReadInput = z.object({ tranche: z.string().min(1) }).strict()
+const DraftCheckInput = DraftReadInput
+const DraftPreviewInput = z.object({ tranche: z.string().min(1), task: issueNumber.optional() }).strict()
 
 // --- JSON Schemas (the wire needs them; Zod 3 ships no exporter) ---------------
 
@@ -316,6 +324,21 @@ export const PLANNER_TOOL_INPUT_JSON_SCHEMAS: Record<PlannerToolName, Record<str
     properties: { tranche: { ...str, description: 'The tranche slug of the draft to read.' } },
     required: ['tranche'],
     additionalProperties: false
+  },
+  plan_draft_check: {
+    type: 'object',
+    properties: { tranche: { ...str, description: 'The tranche slug of the stored draft to check.' } },
+    required: ['tranche'],
+    additionalProperties: false
+  },
+  plan_draft_preview: {
+    type: 'object',
+    properties: {
+      tranche: { ...str, description: 'The tranche slug of the stored draft to preview.' },
+      task: { ...issueSchema, description: 'One task number of the draft; omitted, every task is previewed.' }
+    },
+    required: ['tranche'],
+    additionalProperties: false
   }
 }
 
@@ -364,6 +387,47 @@ export const PLANNER_TOOL_OUTPUT_JSON_SCHEMAS: Record<PlannerToolName, Record<st
     properties: { draft: DRAFT_JSON_SCHEMA, fingerprint: { type: 'string' } },
     required: ['draft', 'fingerprint'],
     additionalProperties: false
+  },
+  plan_draft_check: {
+    type: 'object',
+    properties: {
+      fingerprint: { type: 'string', description: 'The fingerprint of the draft that was checked.' },
+      warnings: { ...FINDINGS_ARRAY, description: 'Findings that do not block; a blocking one is a refusal instead.' }
+    },
+    required: ['fingerprint', 'warnings'],
+    additionalProperties: false
+  },
+  plan_draft_preview: {
+    type: 'object',
+    properties: {
+      fingerprint: { type: 'string' },
+      revision: { type: 'string', description: 'The commit the briefs were rendered at.' },
+      tasks: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            task: issueSchema,
+            issue: {
+              type: 'object',
+              properties: { title: { type: 'string' }, body: { type: 'string' }, labels: labelsSchema },
+              required: ['title', 'body', 'labels'],
+              additionalProperties: false
+            },
+            brief: { type: 'string' },
+            waiting: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Each reason the task cannot start yet; empty when it can.'
+            }
+          },
+          required: ['task', 'issue', 'brief', 'waiting'],
+          additionalProperties: false
+        }
+      }
+    },
+    required: ['fingerprint', 'revision', 'tasks'],
+    additionalProperties: false
   }
 }
 
@@ -378,7 +442,9 @@ const DESCRIPTIONS: Record<PlannerToolName, string> = {
   brief_render: `Preview a task's brief from its Issue, addressed by a tranche with a task id or by an Issue number alone. A task waiting on an unmerged dependency or an open conflicting task still renders in full, with each reason it cannot start yet in \`waiting\`; a refusal lists the facts it could not find. Writes nothing. ${REFUSAL_NOTE}`,
   task_issue_validate: `Dry-run the Issue write gate for a create or an edit: runs exactly the gates create and edit run, writes nothing, and returns the findings in the same encoding as the other tools. ${REFUSAL_NOTE}`,
   plan_draft_submit: `Store a whole plan draft — every task's title, body and labels, the task list, the agreed scope and the captured revision — on this machine, replacing any earlier draft of the same tranche. Writes no Issue and nothing to the repository. Returns the one fingerprint covering all of it. ${REFUSAL_NOTE}`,
-  plan_draft_read: `Read back the stored draft of a tranche, with its fingerprint. Writes nothing. ${REFUSAL_NOTE}`
+  plan_draft_read: `Read back the stored draft of a tranche, with its fingerprint. Writes nothing. ${REFUSAL_NOTE}`,
+  plan_draft_check: `Check the stored draft of a tranche as a whole: the full Issue write gate on every task as publication would run it, plus tasks that change the same files without a declared conflict, an edge naming a task the draft does not hold, a dependency cycle, a deferred fact whose producer is not a dependency, and every agreed-scope item delivered once or left out. It reads the code at the draft's captured revision, never the working tree. Writes nothing. ${REFUSAL_NOTE}`,
+  plan_draft_preview: `Preview the exact Issue (title, body, labels) and the exact brief of each task of the stored draft, as the Developer will read them, rendered from the code at the draft's captured revision. A task waiting on an unmerged dependency still previews in full, with each reason in \`waiting\`. Writes nothing. ${REFUSAL_NOTE}`
 }
 
 /** The Planner seat's catalog entries, in the order the seat lists them. */
@@ -400,6 +466,8 @@ export type PlannerOperations = {
   renderBrief: (input: BriefAddress) => Promise<BriefOutcome>
   submitPlanDraft: (input: unknown) => DraftSubmitOutcome
   readPlanDraft: (tranche: string) => DraftReadOutcome
+  checkPlanDraft: (tranche: string) => Promise<DraftCheckOutcome>
+  previewPlanDraft: (tranche: string, task?: number) => Promise<DraftPreviewOutcome>
 }
 
 export const realPlannerOperations: PlannerOperations = {
@@ -409,7 +477,9 @@ export const realPlannerOperations: PlannerOperations = {
   printIssueSurface,
   renderBrief: (input) => renderBrief(input),
   submitPlanDraft: (input) => submitPlanDraft(input),
-  readPlanDraft: (tranche) => readStoredPlanDraft(tranche)
+  readPlanDraft: (tranche) => readStoredPlanDraft(tranche),
+  checkPlanDraft: (tranche) => checkStoredPlanDraft(tranche),
+  previewPlanDraft: (tranche, task) => previewStoredPlanDraft(tranche, task)
 }
 
 /** Writes a body to a scratch file the library reads (`--body-file`), and removes it when the operation is over. */
@@ -590,6 +660,37 @@ export function plannerToolHandlers(
         return refused([finding('plan-draft', outcome.message, 'Submit the draft with `plan_draft_submit` first.')])
       }
       return succeeded({ draft: outcome.draft, fingerprint: outcome.fingerprint })
+    }),
+    plan_draft_check: guarded(DraftCheckInput, async (v) => {
+      const outcome = await ops.checkPlanDraft(v.tranche)
+      if (!outcome.ok) {
+        return refused([finding('plan-draft', outcome.message, 'Submit the draft with `plan_draft_submit` first.')])
+      }
+      const { report } = outcome
+      const all = [
+        ...report.tasks.flatMap((t) =>
+          t.findings.map((e) => fromCheckError({ ...e, message: `task ${t.task}: ${e.message}` }))
+        ),
+        ...report.cross.map(fromCheckError),
+        ...report.coverage.map(fromCheckError)
+      ]
+      if (report.blocking) return refused(all)
+      return succeeded({ fingerprint: report.fingerprint, warnings: all })
+    }),
+    plan_draft_preview: guarded(DraftPreviewInput, async (v) => {
+      const outcome = await ops.previewPlanDraft(v.tranche, v.task)
+      if (!outcome.ok) {
+        return refused([finding('plan-draft', outcome.message, 'Submit the draft with `plan_draft_submit` first.')])
+      }
+      const { preview } = outcome
+      if (!preview.ok) {
+        return refused([...preview.findings, ...preview.tasks.flatMap((t) => t.findings)].map(fromCheckError))
+      }
+      return succeeded({
+        fingerprint: preview.fingerprint,
+        revision: preview.revision,
+        tasks: preview.tasks.map((t) => ({ task: t.task, issue: t.issue, brief: t.brief, waiting: t.waiting }))
+      })
     })
   }
 }

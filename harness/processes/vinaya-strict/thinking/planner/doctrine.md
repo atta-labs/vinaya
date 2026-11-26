@@ -53,7 +53,7 @@ You turn an intent and a slice of work into a whole tranche — not one task, an
 - `task_issue_validate` dry-runs the Issue write gate for a create or an edit — the same gates, nothing written. Run it on a draft before you write.
 - `task_objectives_edit` adds, drops or replaces one objective.
 - `brief_render` renders a task's brief.
-- `plan_draft_submit` stores the whole plan as one draft on this machine, replacing the tranche's earlier draft, and returns the one fingerprint covering it; `plan_draft_read` reads it back. Neither writes an Issue or touches the repository.
+- `plan_draft_submit` stores the whole plan as one draft on this machine, replacing the tranche's earlier draft, and returns the one fingerprint covering it; `plan_draft_read` reads it back; `plan_draft_check` checks the draft as a whole, and `plan_draft_preview` returns each task's exact Issue and brief. None writes an Issue or touches the repository.
 
 A refusal comes back as a `validation` error: its `message` is the first finding, its `detail` the JSON text of every finding as `{check, message, recovery}` — read all of them, each names its check and the fix. Use the role's tool server for these operations.
 

@@ -2523,9 +2523,9 @@ function resolveMilestoneTitleForCreate(ghArgs: string[], labels: string[]): str
  * write still refuses (a `forge-fetch` finding is never dropped), it just no
  * longer erases what came before it.
  */
-type FetchSiblingsResult = { ok: true; siblings: TaskSurfaceFacts[] } | { ok: false; error: CheckError }
+export type FetchSiblingsResult = { ok: true; siblings: TaskSurfaceFacts[] } | { ok: false; error: CheckError }
 
-function fetchOpenTaskSurfaceSiblings(
+export function fetchOpenTaskSurfaceSiblings(
   milestoneTitle: string,
   excludeIssueNumber: number | null,
   retryCommand: string
@@ -2614,7 +2614,7 @@ export const MAX_COLLISION_PULL_REQUESTS = 50
 export type CollisionScope = 'issues-and-pull-requests' | 'pull-requests'
 
 export type CollisionPeers = { peers: TaskFileFacts[]; capHit: boolean }
-type FetchCollisionPeersResult = { ok: true; value: CollisionPeers } | { ok: false; error: CheckError }
+export type FetchCollisionPeersResult = { ok: true; value: CollisionPeers } | { ok: false; error: CheckError }
 
 /** One open Issue, exactly as `gh issue list --json number,body,labels` returns it. */
 export type OpenIssueRow = { number: number; body: string; labels: Array<{ name: string }> }
@@ -2760,7 +2760,7 @@ export function buildCollisionPeers(
   return peers
 }
 
-function fetchCollisionPeers(
+export function fetchCollisionPeers(
   scope: CollisionScope,
   subjectIssueNumber: number | null,
   allTrackedFiles: string[],
@@ -2951,12 +2951,21 @@ function taskIdFromTitle(title: string): string | null {
   return /^\[[a-z0-9._-]+\]\s+(\S+)\s+—/.exec(title)?.[1] ?? null
 }
 
-async function validateRenderedBriefForIssue(input: {
+/**
+ * The tasks of a plan draft, handed to the plan-time render so a task's
+ * `Depends-on` and `Conflicts-with` resolve inside the draft: a bare number
+ * names the draft's task of that number, a `#<n>` a published Issue. A render
+ * given one is always a tranche-draft render, whatever the Issue number.
+ */
+export type DraftRenderContext = { tasks: readonly { id: string; issue: number | null }[] }
+
+export async function validateRenderedBriefForIssue(input: {
   issueNumber: number | null
   title: string
   body: string
   labels: string[]
   retryCommand: string
+  draft?: DraftRenderContext
 }): Promise<RenderedBriefValidation> {
   const renderable = canRenderBriefFromHere()
   if (!renderable.ok) return { errors: [], skipped: renderable.reason }
@@ -2973,7 +2982,7 @@ async function validateRenderedBriefForIssue(input: {
   // must assert every premise is the dispatch one (`dispatch-task.ts`), which
   // passes no scope and so gets `'all'`.
   if (trancheSlug !== null) {
-    if (input.issueNumber === null) {
+    if (input.issueNumber === null || input.draft !== undefined) {
       // O2 — a tranche CREATE has no Issue number for the tranche path
       // (`assembleAndRenderBrief`) to look up yet, so render it as a DRAFT:
       // the draft sentinel `assembleAndRenderBriefForIssue` already uses for
@@ -2990,7 +2999,15 @@ async function validateRenderedBriefForIssue(input: {
       rendered = await assembleAndRenderBriefForIssue(
         DRAFT_ISSUE_SENTINEL,
         { title: input.title, body: input.body, labels: input.labels },
-        { skipFreshness: true, premiseScope: 'none', trancheDraft: { slug: trancheSlug, taskId } }
+        {
+          skipFreshness: true,
+          premiseScope: 'none',
+          trancheDraft: {
+            slug: trancheSlug,
+            taskId,
+            ...(input.draft !== undefined ? { tasks: input.draft.tasks } : {})
+          }
+        }
       )
     } else {
       const taskId = await resolveTrancheTaskId(trancheSlug, input.issueNumber)
@@ -3081,14 +3098,33 @@ export type TaskIssueValidationDeps = {
   readIssueMilestone?: (issueRef: string) => IssueMilestoneRead
   /** The open Milestone the labels' tranche resolves to; defaults to the forge lookup. */
   resolveLabelMilestone?: (labels: string[]) => string | null
+  /**
+   * The open task Issues the `## Surface` overlap gate compares against.
+   * Omitted, they are read from the forge for the body's Milestone, and the
+   * gate is dormant when no Milestone is known — exactly as a body checked
+   * alone. Given, it is called whatever the Milestone, so a caller holding its
+   * own sibling set (a plan not yet published) supplies it.
+   */
+  fetchSiblings?: (
+    milestoneTitle: string | null,
+    excludeIssueNumber: number | null,
+    retryCommand: string
+  ) => FetchSiblingsResult
+  /** The open task Issues and pull requests the pinned-file collision gate compares against; omitted, they are read from the forge. */
+  fetchPeers?: (
+    scope: CollisionScope,
+    subjectIssueNumber: number | null,
+    allTrackedFiles: string[],
+    retryCommand: string
+  ) => FetchCollisionPeersResult
 }
 
-const defaultTaskIssueValidationDeps: Required<TaskIssueValidationDeps> = {
+const defaultTaskIssueValidationDeps = {
   computeRenderedBriefErrors: validateRenderedBriefForIssue,
   runIssueChecks,
   readIssueMilestone: readIssueMilestoneFromForge,
   resolveLabelMilestone: resolveLabelMilestoneFromForge
-}
+} satisfies TaskIssueValidationDeps
 
 /**
  * **O1 — runs every gate group over the SAME body/title/labels and returns
@@ -3117,7 +3153,7 @@ export async function collectTaskIssueErrors(
   depsIn: TaskIssueValidationDeps = defaultTaskIssueValidationDeps,
   collisionScope: CollisionScope = 'issues-and-pull-requests'
 ): Promise<{ errors: CheckError[]; renderSkipped: string | null }> {
-  const deps: Required<TaskIssueValidationDeps> = { ...defaultTaskIssueValidationDeps, ...depsIn }
+  const deps = { ...defaultTaskIssueValidationDeps, ...depsIn }
   const errors: CheckError[] = []
 
   const sections = resolveSections('issue', retryCommand)
@@ -3147,8 +3183,10 @@ export async function collectTaskIssueErrors(
   // contributes to, rather than refusing immediately and discarding the
   // schema group's findings already pushed above.
   let milestoneSiblings: TaskSurfaceFacts[] | null = null
-  if (milestoneTitle !== null) {
-    const siblingsResult = fetchOpenTaskSurfaceSiblings(milestoneTitle, issueNumber, retryCommand)
+  if (milestoneTitle !== null || deps.fetchSiblings !== undefined) {
+    const siblingsResult = deps.fetchSiblings
+      ? deps.fetchSiblings(milestoneTitle, issueNumber, retryCommand)
+      : fetchOpenTaskSurfaceSiblings(milestoneTitle as string, issueNumber, retryCommand)
     if (siblingsResult.ok) {
       milestoneSiblings = siblingsResult.siblings
     } else {
@@ -3167,7 +3205,12 @@ export async function collectTaskIssueErrors(
   const subjectFiles = pinnedFilesOf(body, allTrackedFiles)
   let collisionPeers: CollisionPeers | null = null
   if (subjectFiles.length > 0) {
-    const peersResult = fetchCollisionPeers(collisionScope, issueNumber, allTrackedFiles, retryCommand)
+    const peersResult = (deps.fetchPeers ?? fetchCollisionPeers)(
+      collisionScope,
+      issueNumber,
+      allTrackedFiles,
+      retryCommand
+    )
     if (peersResult.ok) collisionPeers = peersResult.value
     else errors.push(peersResult.error)
   }
