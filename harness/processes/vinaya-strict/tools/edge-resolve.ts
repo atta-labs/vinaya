@@ -312,6 +312,40 @@ export async function resolveEdge(
 }
 
 /**
+ * Resolve one edge of a task in a plan draft. A bare tranche task number names
+ * the draft's task of that number — and only a bare number does: `#<n>` is
+ * always a published Issue and reads the forge, so task 5 and Issue #5 never
+ * stand for one another. A draft task not yet published has no Issue, so it
+ * has not merged: the edge resolves, to a target nothing has landed for. A
+ * draft task that already has an Issue resolves through that Issue. Every
+ * other shape resolves as `resolveEdge` always did.
+ */
+export async function resolveDraftEdge(
+  id: string,
+  draftTasks: readonly EdgeTaskRef[],
+  repo: EdgeRepo,
+  resolveSibling?: SiblingTrancheResolver
+): Promise<ResolvedEdge> {
+  const token = id.trim()
+  const named = /^\d+$/.test(token) ? draftTasks.find((t) => t.id === token) : undefined
+  if (named) {
+    if (named.issue === null) {
+      return {
+        issue: null,
+        merged: false,
+        open: false,
+        issueState: null,
+        stateReason: null,
+        closedByActor: null,
+        resolved: true
+      }
+    }
+    return resolveEdge(`#${named.issue}`, new Map(), new Map(), repo, resolveSibling)
+  }
+  return resolveEdge(id, new Map(), new Map(), repo, resolveSibling)
+}
+
+/**
  * The one mapping from a resolved edge to the gate's dependency fact, shared
  * by the dispatch-readiness check and the brief assembly `vinaya task run`
  * gates on, so both carry the same facts — `readFailed` included.

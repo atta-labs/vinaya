@@ -119,7 +119,9 @@ describe("the Planner seat's grant", () => {
     'brief_render',
     'task_issue_validate',
     'plan_draft_submit',
-    'plan_draft_read'
+    'plan_draft_read',
+    'plan_draft_check',
+    'plan_draft_preview'
   ]
   const list = async (seat: string | null) => {
     const server = createTaskToolsMcpServer({ serverVersion: '0.0.0-test', seat })
@@ -147,6 +149,8 @@ describe("the Planner seat's grant", () => {
       const tools = await list(seat)
       expect(tools).not.toContain('plan_draft_submit')
       expect(tools).not.toContain('plan_draft_read')
+      expect(tools).not.toContain('plan_draft_check')
+      expect(tools).not.toContain('plan_draft_preview')
     }
   })
   it('leaves the Operator seat serving exactly its six task tools', async () => {

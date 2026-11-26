@@ -56,6 +56,14 @@ function stubOps(
       calls.push({ op: 'draft-read', arg: tranche })
       return { ok: false, message: `no draft is stored for tranche "${tranche}" on this machine` }
     },
+    checkPlanDraft: async (tranche) => {
+      calls.push({ op: 'draft-check', arg: tranche })
+      return { ok: false, message: `no draft is stored for tranche "${tranche}" on this machine` }
+    },
+    previewPlanDraft: async (tranche, task) => {
+      calls.push({ op: 'draft-preview', arg: { tranche, task } })
+      return { ok: false, message: `no draft is stored for tranche "${tranche}" on this machine` }
+    },
     ...over
   }
   return Object.assign(ops, { calls })
@@ -116,6 +124,137 @@ describe('the plan draft tools', () => {
     const absent = await call(stubOps(), 'plan_draft_read', { tranche: 'sample-plan' })
     expect(absent.ok).toBe(false)
     expect(refusalFindings(absent)[0]?.check).toBe('plan-draft')
+  })
+})
+
+describe('the plan draft check and preview tools', () => {
+  const blocking = finding('plan-draft-collision')
+  const warning = makeCheckError('plan-draft-collision', 'only a warning', 'no action', 'warning')
+
+  it('are on the Planner seat', () => {
+    expect(PLANNER_TOOL_NAMES).toContain('plan_draft_check')
+    expect(PLANNER_TOOL_NAMES).toContain('plan_draft_preview')
+    expect(PLANNER_TOOL_ENTRIES.map((e) => e.name)).toContain('plan_draft_check')
+    expect(PLANNER_TOOL_ENTRIES.map((e) => e.name)).toContain('plan_draft_preview')
+  })
+
+  it('plan_draft_check refuses a blocking finding as validation errors carrying check, message and recovery', async () => {
+    const r = await call(
+      stubOps({
+        checkPlanDraft: async () => ({
+          ok: true,
+          report: {
+            fingerprint: 'sha256:abc',
+            tasks: [{ task: 2, findings: [blocking] }],
+            cross: [finding('plan-draft-cycle')],
+            coverage: [finding('plan-draft-scope')],
+            blocking: true
+          }
+        })
+      }),
+      'plan_draft_check',
+      { tranche: 'sample-plan' }
+    )
+    const findings = refusalFindings(r)
+    expect(findings.map((f) => f.check)).toEqual(['plan-draft-collision', 'plan-draft-cycle', 'plan-draft-scope'])
+    expect(findings[0]?.message).toBe('task 2: plan-draft-collision message')
+    expect(findings.every((f) => f.recovery.length > 0)).toBe(true)
+  })
+
+  it('plan_draft_check succeeds with the warnings when nothing blocks', async () => {
+    const r = await call(
+      stubOps({
+        checkPlanDraft: async () => ({
+          ok: true,
+          report: {
+            fingerprint: 'sha256:abc',
+            tasks: [{ task: 1, findings: [warning] }],
+            cross: [],
+            coverage: [],
+            blocking: false
+          }
+        })
+      }),
+      'plan_draft_check',
+      { tranche: 'sample-plan' }
+    )
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect((r.result as { fingerprint: string }).fingerprint).toBe('sha256:abc')
+      expect((r.result as { warnings: unknown[] }).warnings).toHaveLength(1)
+    }
+  })
+
+  it('plan_draft_check refuses an absent draft, naming the check and the fix', async () => {
+    const f = refusalFindings(await call(stubOps(), 'plan_draft_check', { tranche: 'sample-plan' }))
+    expect(f[0]?.check).toBe('plan-draft')
+    expect(f[0]?.recovery).toContain('plan_draft_submit')
+  })
+
+  it('plan_draft_preview returns each task’s exact Issue and brief with its waiting reasons', async () => {
+    const ops = stubOps({
+      previewPlanDraft: async () => ({
+        ok: true,
+        preview: {
+          fingerprint: 'sha256:abc',
+          revision: 'a'.repeat(40),
+          findings: [],
+          ok: true,
+          tasks: [
+            {
+              task: 2,
+              issue: { title: '[sample-plan] 2 — Second', body: 'Body', labels: ['vinaya/tranche:sample-plan'] },
+              brief: '# brief',
+              waiting: ['dependency 1 has not merged'],
+              findings: []
+            }
+          ]
+        }
+      })
+    })
+    const r = await call(ops, 'plan_draft_preview', { tranche: 'sample-plan', task: 2 })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      const result = r.result as { tasks: { task: number; brief: string; waiting: string[] }[] }
+      expect(result.tasks[0]).toMatchObject({ task: 2, brief: '# brief', waiting: ['dependency 1 has not merged'] })
+    }
+  })
+
+  it('plan_draft_preview refuses a task that cannot render as validation errors', async () => {
+    const r = await call(
+      stubOps({
+        previewPlanDraft: async () => ({
+          ok: true,
+          preview: {
+            fingerprint: 'sha256:abc',
+            revision: 'a'.repeat(40),
+            findings: [],
+            ok: false,
+            tasks: [
+              {
+                task: 1,
+                issue: { title: 't', body: 'b', labels: [] },
+                brief: null,
+                waiting: [],
+                findings: [finding('plan-draft-preview')]
+              }
+            ]
+          }
+        })
+      }),
+      'plan_draft_preview',
+      { tranche: 'sample-plan' }
+    )
+    expect(refusalFindings(r)[0]).toEqual({
+      check: 'plan-draft-preview',
+      message: 'plan-draft-preview message',
+      recovery: 'plan-draft-preview recovery'
+    })
+  })
+
+  it('refuse input that names no tranche', async () => {
+    expect(refusalFindings(await call(stubOps(), 'plan_draft_preview', { task: 1 }))[0]?.check).toBe('tool-input')
+    expect(refusalFindings(await call(stubOps(), 'plan_draft_check', {}))[0]?.check).toBe('tool-input')
   })
 })
 

@@ -59,7 +59,13 @@ import {
 } from '../dispatch-gate'
 import { parseRationaleDeps } from './forge/parse-rationale-deps'
 import { createForgeSource } from '../sources/forge-adapter.js'
-import { dependsOnFactFromEdge, type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../edge-resolve.js'
+import {
+  dependsOnFactFromEdge,
+  type EdgeFactsSubset,
+  type EdgeTaskRef,
+  resolveDraftEdge,
+  resolveEdge
+} from '../edge-resolve.js'
 import {
   loadConfig,
   loadConfigChecked,
@@ -717,7 +723,8 @@ export function dispatchPremiseRefusals(
   rev: string,
   scope: PremiseScope = 'all',
   readAt: (rev: string, path: string) => string | null = readFileAtRevision,
-  pendingDependencyIssues: readonly number[] = []
+  pendingDependencyIssues: readonly number[] = [],
+  pendingDependencyTasks: readonly number[] = []
 ): string[] {
   if (scope === 'none') return []
   const parsed = parseIssuePremises(issueBody)
@@ -725,7 +732,19 @@ export function dispatchPremiseRefusals(
   const asserted = parsed.value
     .map((premise, index) => ({ premise, index }))
     .filter(({ premise }) => premise.afterIssue === null || !pendingDependencyIssues.includes(premise.afterIssue))
+    .filter(({ premise }) => premise.afterTask === null || !pendingDependencyTasks.includes(premise.afterTask))
   return checkPremisesHold(asserted, (path) => readAt(rev, path))
+}
+
+/**
+ * The tranche task numbers a deferred fact written `after task <n>:` is still
+ * waiting on: each dependency written as that bare number which has not merged,
+ * whether or not the task has an Issue yet. Empty unless the render holds
+ * deferred facts back.
+ */
+function pendingTasksOf(dependsOn: readonly DispatchDependsOnFact[], holdBack: boolean): number[] {
+  if (!holdBack) return []
+  return dependsOn.filter((d) => !d.merged && /^\d+$/.test(d.id.trim())).map((d) => Number(d.id.trim()))
 }
 
 /**
@@ -810,7 +829,17 @@ export type IssueBriefRenderOptions = BriefRenderOptions & {
    * agreement, section shape) are label-independent, so the draft render
    * refuses precisely what dispatch would.
    */
-  trancheDraft?: { slug: string; taskId: string }
+  trancheDraft?: {
+    slug: string
+    taskId: string
+    /**
+     * The tasks of the plan draft this task belongs to. Given, a bare task
+     * number in `Depends-on`/`Conflicts-with` resolves to the draft's task of
+     * that number (see `resolveDraftEdge`); omitted, the draft has no siblings
+     * to resolve against, as for a single Issue being created.
+     */
+    tasks?: readonly EdgeTaskRef[]
+  }
 }
 
 /**
@@ -984,7 +1013,8 @@ export async function assembleAndRenderBrief(
     headSha,
     opts?.premiseScope ?? 'all',
     readFileAtRevision,
-    pending
+    pending,
+    pendingTasksOf(dependsOn, readiness.holdBackDeferredPremises)
   )
   if (premiseRefusals.length > 0) return { ok: false, missing: premiseRefusals }
 
@@ -1277,15 +1307,17 @@ export async function assembleAndRenderBriefForIssue(
   // paths (O2: "optional on such an Issue and enforced when present").
   const taskById = new Map<string, EdgeTaskRef>()
   const factsByTaskId = new Map<string, EdgeFactsSubset>()
+  const draftTasks = opts?.trancheDraft?.tasks
+  const resolveHere = (edge: string) =>
+    draftTasks !== undefined
+      ? resolveDraftEdge(edge, draftTasks, repo)
+      : resolveEdge(edge, taskById, factsByTaskId, repo)
   const dependsOn: DispatchDependsOnFact[] = await Promise.all(
-    task.dependsOn.map(async (dep) => {
-      const r = await resolveEdge(dep, taskById, factsByTaskId, repo)
-      return dependsOnFactFromEdge(dep, r)
-    })
+    task.dependsOn.map(async (dep) => dependsOnFactFromEdge(dep, await resolveHere(dep)))
   )
   const conflictsWith: DispatchConflictsWithFact[] = await Promise.all(
     task.conflictsWith.map(async (c) => {
-      const r = await resolveEdge(c, taskById, factsByTaskId, repo)
+      const r = await resolveHere(c)
       return { id: c, issue: r.issue, openOrInFlight: r.open }
     })
   )
@@ -1313,7 +1345,8 @@ export async function assembleAndRenderBriefForIssue(
     headSha,
     opts?.premiseScope ?? 'all',
     readFileAtRevision,
-    pending
+    pending,
+    pendingTasksOf(dependsOn, readiness.holdBackDeferredPremises)
   )
   if (premiseRefusals.length > 0) return { ok: false, missing: premiseRefusals }
 
