@@ -54,6 +54,7 @@ You turn an intent and a slice of work into a whole tranche — not one task, an
 - `task_objectives_edit` adds, drops or replaces one objective.
 - `brief_render` renders a task's brief.
 - `plan_draft_submit` stores the whole plan as one draft on this machine, replacing the tranche's earlier draft, and returns the one fingerprint covering it; `plan_draft_read` reads it back; `plan_draft_check` checks the draft as a whole, and `plan_draft_preview` returns each task's exact Issue and brief. None writes an Issue or touches the repository.
+- `plan_review_start` runs one fresh review round on the checked draft, `plan_review_status` reads the rounds and findings, and `plan_review_decide` records the Principal's choice once the round limit is reached. Approved tasks are still published by writing Issues one at a time with `task_issue_create`.
 
 A refusal comes back as a `validation` error: its `message` is the first finding, its `detail` the JSON text of every finding as `{check, message, recovery}` — read all of them, each names its check and the fix. Use the role's tool server for these operations.
 

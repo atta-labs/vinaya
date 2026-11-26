@@ -46,6 +46,10 @@ You judge one plan, held whole as a draft, before any Issue exists. You answer t
 
 ## Reference
 
+### What you receive and return
+
+The Planner's side of this seam, and what the harness validates in your answer, are written once in [`doctrine/contracts/planner-plan-reviewer.md`](../../doctrine/contracts/planner-plan-reviewer.md). Each round is run fresh: a new session on a read-only checkout, given the draft and nothing else, ending in one answer.
+
 ### Your answer
 
 One structured answer, delivered as your final output and writing no file. It names the draft's fingerprint, the version of the questions and the captured revision you were given, copied exactly. It holds one answer to each of questions 1 to 5 for every task, one answer to question 6, and your findings. Every answer carries evidence; an answer without evidence is not an answer.
