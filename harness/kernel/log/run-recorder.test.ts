@@ -187,6 +187,48 @@ test('usage with no figure and no reason is recorded as unknown, never as zero',
   expect(attribute(agent, 'gen_ai.usage.output_tokens')).toBeUndefined()
 })
 
+test('a turn with a cost records it with its kind, and never the reason a cost is missing', () => {
+  const { recorder, errors, spans } = setup()
+  const turn = recorder.turn({ seat: 'developer', key: 'turn-cost' })
+  turn.usage({
+    inputTokens: 10,
+    outputTokens: 4,
+    cost: { amount: 0.25, kind: 'estimated' },
+    costUnknownReason: 'not_reported'
+  })
+  turn.returned({ outcome: 'done' })
+  const [agent] = spans()
+  expect(errors).toEqual([])
+  expect(attribute(agent, 'gen_ai.usage.input_tokens')).toBe(10)
+  expect(attribute(agent, 'vinaya.usage.cost')).toBe(0.25)
+  expect(attribute(agent, 'vinaya.usage.cost_kind')).toBe('estimated')
+  expect(attribute(agent, 'vinaya.usage.cost_unknown_reason')).toBeUndefined()
+})
+
+test('a turn with tokens and no cost records the code saying why, and no cost figure', () => {
+  const { recorder, errors, spans } = setup()
+  const turn = recorder.turn({ seat: 'developer', key: 'turn-no-cost' })
+  turn.usage({ inputTokens: 10, outputTokens: 4, costUnknownReason: 'not_reported_by_agent' })
+  turn.returned({ outcome: 'done' })
+  const [agent] = spans()
+  expect(errors).toEqual([])
+  expect(attribute(agent, 'gen_ai.usage.output_tokens')).toBe(4)
+  expect(attribute(agent, 'vinaya.usage.cost_unknown_reason')).toBe('not_reported_by_agent')
+  expect(attribute(agent, 'vinaya.usage.cost')).toBeUndefined()
+  expect(attribute(agent, 'vinaya.usage.cost_kind')).toBeUndefined()
+})
+
+test('a turn whose usage is not known records neither a cost nor a cost reason', () => {
+  const { recorder, errors, spans } = setup()
+  const turn = recorder.turn({ seat: 'developer', key: 'turn-unobserved' })
+  turn.usage({ unknownReason: 'the stream carried no usage', costUnknownReason: 'not_reported' })
+  turn.returned({ outcome: 'done' })
+  const [agent] = spans()
+  expect(errors).toEqual([])
+  expect(attribute(agent, 'vinaya.usage.cost_unknown_reason')).toBeUndefined()
+  expect(attribute(agent, 'vinaya.usage.cost')).toBeUndefined()
+})
+
 test("a stage change becomes a stage-changed event with the stage and round, governed and on the run's trace", () => {
   const { recorder, events } = setup()
   recorder.stageChanged({ stage: 'review', round: 2 })
