@@ -97,14 +97,14 @@ A run id that is not safe as a file-name part is written as `unresolved`.
 
 ## 4. Sending
 
-`sendLocalCopy({ folder, repository, url, headers? })` posts each line of the local copy to the collector's `/v1/traces` or `/v1/logs`, as OTLP/HTTP with a JSON body (`Content-Type: application/json`, as the OTLP specification requires for JSON). A `2xx` response marks the line sent. A response below `400`, at `500` or above, or one of `401`, `403`, `404`, `408` and `429`, or a failed connection or timeout, leaves the line to be tried again by the next call and is reported in `failures`. Any other `4xx` response sets the line aside (below).
+`sendLocalCopy({ folder, repository, url, headers?, home? })` posts each line of the local copy to the collector's `/v1/traces` or `/v1/logs`, as OTLP/HTTP with a JSON body (`Content-Type: application/json`, as the OTLP specification requires for JSON). It applies redaction again to every string value in a line's parsed JSON before posting, regardless of line size. The `home` option defaults to the process's home directory. The local copy and the original line bytes used for receipts stay intact. A `2xx` response marks the line sent. A response below `400`, at `500` or above, or one of `401`, `403`, `404`, `408` and `429`, or a failed connection or timeout, leaves the line to be tried again by the next call and is reported in `failures`. Any other `4xx` response sets the line aside (below).
 
 Delivery state is kept in `.otlp-delivery` inside the repository's folder, with a receipt per line: a line sent once is not sent again, and a line set aside has a rejected receipt and is never posted by a later call. A segment missing from the middle of a writer's numbering is reported as lost. The report holds `sent`, `setAside` and `failures`.
 
 <!-- VINAYA:CLAIM: packages/log-sdk/src/sender/send.ts contains:const state = join(directory, '.otlp-delivery') -->
 <!-- VINAYA:CLAIM: packages/log-sdk/src/sender/send.ts contains:const retryableClientStatuses = new Set([401, 403, 404, 408, 429]) -->
 
-A line is set aside, with a rejected receipt and an entry in `setAside` (not in `failures`), when it is not valid JSON, when its record fails the contract (a `vinaya.*` span, event or attribute name outside the catalogue; the entry names the first failing name), or when the collector answers with a `4xx` status that is not in the retried set above. A line that is valid JSON but holds no `vinaya.*` name is posted as it is.
+A line is set aside, with a rejected receipt and an entry in `setAside` (not in `failures`), when it is not valid JSON, when its record fails the contract (a `vinaya.*` span, event or attribute name outside the catalogue; the entry names the first failing name), or when the collector answers with a `4xx` status that is not in the retried set above. Valid JSON with no `vinaya.*` names also goes through redaction before posting.
 
 ## 5. Settings
 
@@ -136,6 +136,7 @@ A line is set aside, with a rejected receipt and an entry in `setAside` (not in 
 <!-- VINAYA:CLAIM: packages/log-sdk/src/contract/custom.ts contains:export const CUSTOM_TEXT_MAX_LENGTH = 500 -->
 
 - **Every record is checked again** against the contract before it is sent and when it is read (§ 4, § 6).
+- **Redaction runs before writing, sending and reading.** It replaces recognized secrets and shortens a whole home directory to `~` at the start of a string or after whitespace, a quote, `=`, `:` or `(`. For example, `file=/home/al/work` becomes `file=~/work` for `/home/al`, while `file=/home/alice/work` stays intact.
 - **One version is shared with the CLI.** Records carry the version of this package's own manifest, as `vinaya.sdk.version` and as the instrumentation scope's version; the command-line package depends on this package at that same version.
 
 <!-- VINAYA:CLAIM: packages/log-sdk/src/contract/version.ts contains:export const SDK_VERSION: string = manifest.version -->

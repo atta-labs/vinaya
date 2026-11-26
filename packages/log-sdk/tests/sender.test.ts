@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test'
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sendLocalCopy, type SendLocalCopyOptions } from '../src/sender/send.js'
 
@@ -33,6 +33,42 @@ test('sets malformed UTF-8 aside and sends a valid large line unchanged', async 
   expect(report.sent).toBe(1)
   expect(report.failures).toEqual([])
   expect(report.setAside.map(({ reason }) => reason)).toEqual(['invalid JSON'])
+})
+
+test.each([0, 128 * 1024])('redacts posted values and keeps receipts with %i bytes of padding', async (padding) => {
+  const options = fixture()
+  const homeOption = padding > 0 ? { home: '/home/al' } : {}
+  const home = homeOption.home ?? homedir()
+  const file = join(options.dir, 'run~writer~000000000000.logs.jsonl')
+  const token = ['ghp', 'abcdefghijklmnopqrstuvwxyz0123456789'].join('_')
+  const number = '9223372036854775807'
+  const record = {
+    resourceLogs: [],
+    nested: [{ ['__proto__']: `opened "${home}/folder\\file"\n${token}`, intValue: 'exact-number' }],
+    padding: 'a'.repeat(padding)
+  }
+  const local = `${JSON.stringify(record)
+    .replace(token, `\\u0067${token.slice(1)}`)
+    .replace('"exact-number"', number)}\n`
+  writeFileSync(file, local)
+  const posted: string[] = []
+  const fetch: SendLocalCopyOptions['fetch'] = async (_url, init) => {
+    posted.push(await new Response(init.body).text())
+    return new Response(null, { status: 204 })
+  }
+
+  expect(await sendLocalCopy({ ...options, ...homeOption, fetch })).toEqual({ sent: 1, setAside: [], failures: [] })
+  expect(await sendLocalCopy({ ...options, home: '/different/home', fetch })).toEqual({
+    sent: 0,
+    setAside: [],
+    failures: []
+  })
+  const expected = {
+    ...record,
+    nested: [{ ['__proto__']: 'opened "~/folder\\file"\n<redacted>', intValue: 'exact-number' }]
+  }
+  expect(posted).toEqual([JSON.stringify(expected).replace('"exact-number"', number)])
+  expect(readFileSync(file, 'utf8')).toBe(local)
 })
 
 test('sends both signals from each writer and run without changing their files', async () => {
