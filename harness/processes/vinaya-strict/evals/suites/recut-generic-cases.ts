@@ -42,8 +42,8 @@ import { join, posix } from 'node:path'
 import ts from 'typescript'
 import { type PathAliasTable, resolveAliasedSpecifier } from '@attalabs/test-selection'
 import { BASE_CONFIG_PATH, parseAliasTable } from '@harness/kernel/imports/alias-table.js'
-import { findBannedTerms, INTERFACE_ITEM_KINDS, interfaceCodeSpan } from '../../../../kernel/evals/banned-terms'
-import { canonicalJson } from '../../../../kernel/evals/neutral-case'
+import { findBannedTerms, INTERFACE_ITEM_KINDS, interfaceCodeSpan } from '@harness/kernel/evals/banned-terms'
+import { canonicalJson } from '@harness/kernel/evals/neutral-case'
 import { renderCase } from '../vinaya-renderer'
 import { REVIEWER_SEVERITIES, type ReviewerRole } from '../../executing/code-reviewer/review-result'
 import {
@@ -67,7 +67,7 @@ import {
   HELD_OUT_PATH as SOURCE_CITATION_HELD_OUT_PATH,
   type SourceCitationCase
 } from '../../executing/evals/source-citation-suite'
-import { stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture'
+import { stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 const REPO_ROOT = join(import.meta.dir, '../../../../..')
 

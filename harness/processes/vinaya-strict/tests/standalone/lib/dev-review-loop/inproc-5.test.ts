@@ -8,8 +8,11 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { newestPrincipalRulingOrdinal } from '../../../../tools/task-contract/ruling-ordinal'
-import { recordedBeyondSurfacePaths, withBeyondSurfaceBlock } from '../../../../tools/task-contract/issue-validation'
+import { newestPrincipalRulingOrdinal } from '@harness/workflow/tools/task-contract/ruling-ordinal'
+import {
+  recordedBeyondSurfacePaths,
+  withBeyondSurfaceBlock
+} from '@harness/workflow/tools/task-contract/issue-validation'
 import {
   cleanupWorlds,
   controlDir,
@@ -30,18 +33,18 @@ import {
   blockedTurnOutput,
   handoffIdsInPrompt
 } from '../dev-review-loop-harness.js'
-import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
+import type { LoopDeps } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 import {
   CI_PARENT_WAIT_MAX_MS,
   CI_PARENT_WAIT_POLL_MS
-} from '../../../../loops/dev-review/standalone/dev-review-loop/stop-decision.js'
-import type { DeveloperTurnOutput } from '../../../../loops/dev-review/standalone/dev-review-loop/turn-result.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/stop-decision.js'
+import type { DeveloperTurnOutput } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import {
   rulingsAfterNewestBrief,
   TaskWorktreeDivergedError,
   type MarkerComment
-} from '../../../../loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
-import type { DispatchHandle } from '../../../../loops/dev-review/dispatch/dispatch.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
+import type { DispatchHandle } from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
 
 afterEach(cleanupWorlds)
 

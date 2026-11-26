@@ -47,10 +47,10 @@
  * scope: full — a review verdict is a property of the PR, not the diff.
  */
 
-import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point'
 import { checkReviewGate } from '../../tools/review-gate'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
-import { assembleReviewGateInput } from '../../../../../harness/processes/vinaya-strict/loops/dev-review/review-gate-input'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
+import { assembleReviewGateInput } from '@harness/workflow/loops/dev-review/review-gate-input'
 
 const CHECK_NAME = 'review-gate'
 

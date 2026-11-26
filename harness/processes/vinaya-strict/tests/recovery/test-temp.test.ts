@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { StopOptions, StopReport } from '../../../../kernel/conformance/unit/process-registry'
+import type { StopOptions, StopReport } from '@harness/kernel/conformance/unit/process-registry'
 import {
   claimTestTempRun,
   createTestTempRun,
@@ -12,8 +12,8 @@ import {
   readOwnerMarker,
   sweepAbandoned,
   writeOwnerMarker
-} from '../../../../kernel/conformance/unit/test-temp'
-import { fixtureDir } from '../../../../kernel/conformance/unit/test-temp-fixture'
+} from '@harness/kernel/conformance/unit/test-temp'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { ALL_RUNNERS } from './runners'
 
 // Test temp storage on disk with owned cleanup. The storage is shared by every runner's fixtures, so each case

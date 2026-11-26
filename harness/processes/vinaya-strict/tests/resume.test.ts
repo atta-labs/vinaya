@@ -1,18 +1,18 @@
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import type { EscalationRecord, ResolutionRecord } from '../../../kernel/connectors/checkpoint/control-store/index'
+import type { EscalationRecord, ResolutionRecord } from '@harness/kernel/connectors/checkpoint/control-store/index'
 import { createRunControl, type RunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
-import type { ActionRegistry, ProcessAction } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
+import type { ActionRegistry, ProcessAction } from '@harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   readDriverLock,
   ReplayedResolutionError,
   writePauseState,
   type PauseState
 } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
-import { loopLogPathFor } from '../../../kernel/log/client/loop-log'
+import { loopLogPathFor } from '@harness/kernel/log/client/loop-log'
 import { ACTION_BINDINGS, classifyGateResult, dispatchReviewers, type TaskInput } from '../executing/actions'
 import {
   parseResumeArgs,
@@ -856,7 +856,7 @@ describe('a run-engine --resume start ends the person span an earlier process as
       const claim = await harness.withWorldEnv(world, async () => {
         support.raiseInAnotherProcess(facts)
         const claimed = claimResume(world.runtimeDir, { pr: world.prNumber }, deps)
-        await (await import('../../../kernel/log/run-recorder')).runRecorder().drain()
+        await (await import('@harness/kernel/log/run-recorder')).runRecorder().drain()
         return claimed
       })
       expect(claim.escalationId).toBe(escalationId)

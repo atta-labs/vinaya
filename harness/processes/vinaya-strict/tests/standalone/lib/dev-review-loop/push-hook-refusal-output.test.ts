@@ -9,7 +9,10 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { boundedPushOutput, pushBranchClassified } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
+import {
+  boundedPushOutput,
+  pushBranchClassified
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 
 const roots: string[] = []
 afterEach(() => {

@@ -14,7 +14,7 @@ mock.module('@octokit/graphql', () => ({
   graphql: { defaults: () => graphqlClient }
 }))
 
-mock.module('../../../../kernel/adapters/code-host/github/github-token', () => ({ resolveGithubToken }))
+mock.module('@harness/kernel/adapters/code-host/github/github-token', () => ({ resolveGithubToken }))
 
 const { fetchTaskIssueRefs } = await import('./fetch-task-issue-refs')
 

@@ -28,7 +28,7 @@ import {
   type HiddenInputs,
   prepareGradingCopy,
   testContamination
-} from '../../../../kernel/evals/contamination'
+} from '@harness/kernel/evals/contamination'
 import {
   type CloneStaging,
   freezeObjectManifest,
@@ -37,7 +37,7 @@ import {
   type SnapshotStaging,
   StagingError,
   stageTrial
-} from '../../../../kernel/evals/staging'
+} from '@harness/kernel/evals/staging'
 
 const AUTHOR = ['-c', 'user.name=Eval', '-c', 'user.email=eval@example.invalid']
 const BRANCH = 'task/eval/1'

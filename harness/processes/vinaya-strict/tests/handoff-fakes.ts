@@ -1,4 +1,4 @@
-import type { EscalationRecord } from '../../../kernel/connectors/checkpoint/control-store/index'
+import type { EscalationRecord } from '@harness/kernel/connectors/checkpoint/control-store/index'
 import {
   bindPauseToPullRequest,
   readPauseState,

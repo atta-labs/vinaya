@@ -9,11 +9,11 @@ import {
   defaultControlStoreDeps,
   readEffects,
   readExecutionRoundMirror
-} from '../../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 import { DEFAULT_REVIEW_POLICY } from '../../tools/task-contract/review-policy'
 
 import { createRunControl, type RunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { createBroker, scopeTarget } from '../../../../kernel/tools/host/broker'
+import { createBroker, scopeTarget } from '@harness/kernel/tools/host/broker'
 import { vinayaBrokerPolicies } from '../../integration/policies/vinaya-policies'
 import { loopHistoryFromComments } from '../../loops/dev-review/standalone/dev-review-loop/journal-history'
 import { controlStoreRootFor } from '../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
@@ -21,12 +21,9 @@ import type { DispatchTeeRecoveryDeps, ParsedLaunch } from '../../loops/dev-revi
 import {
   readEffectiveResumedState,
   readExecutionRound
-} from '../../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
-import type {
-  ActionRegistry,
-  ProcessAction
-} from '../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
-import { loadProcess } from '../../../../../harness/kernel/dev-process-socket/loader/load-process'
+} from '@harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+import type { ActionRegistry, ProcessAction } from '@harness/kernel/loops/runtimes/atta-engine/run-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import { V2_ACTION_BINDINGS } from '../../loops/dev-review/v2/v2-actions'
 import { checkpointPath, runDirectory, runEngine } from '../../bin/run-engine'
 import { runIdentityOfTask, type RecoveryDeps } from '../../bin/run-lifecycle'

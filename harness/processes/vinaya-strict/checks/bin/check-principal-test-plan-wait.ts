@@ -38,14 +38,10 @@
  * whole repo.
  */
 
-import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point'
 import type { LiveGateInputs } from '../test-plan-gate'
 import { evaluateTestPlanGate } from '../test-plan-gate'
-import {
-  CHECK_SCHEMA_VERSION,
-  type CheckError,
-  emitCheckError
-} from '../../../../../harness/kernel/gates/checks/contract'
+import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { defaultLiveCheckDeps, type LiveCheckDeps, type LiveCheckInputs, resolveLiveCheckInputs } from '../frozen-brief'
 
 const CHECK_NAME = 'principal-test-plan-wait'

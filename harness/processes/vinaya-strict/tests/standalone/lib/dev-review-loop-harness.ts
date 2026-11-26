@@ -48,35 +48,35 @@ import {
   type LoopResult,
   type RebaseOntoTipResult,
   runDriverLoop
-} from '../../../loops/dev-review/standalone/dev-review-loop.js'
-import { resetDefaultLogSinkContext, resetTrustAnchorConfigMemo } from '../../../../../kernel/log/log-sink.js'
-import { resetRuntimeDirCache } from '../../../../../kernel/run-paths.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
+import { resetDefaultLogSinkContext, resetTrustAnchorConfigMemo } from '@harness/kernel/log/log-sink.js'
+import { resetRuntimeDirCache } from '@harness/kernel/run-paths.js'
 import type {
   DispatchFailureReason,
   DispatchHandle,
   ReviewerTurnOutput
-} from '../../../loops/dev-review/dispatch/dispatch.js'
-import type { DeveloperTurnOutput } from '../../../loops/dev-review/standalone/dev-review-loop/turn-result.js'
-import type { DevToolContext } from '../../../../../kernel/tools/dev-tools-server.js'
+} from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
+import type { DeveloperTurnOutput } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/turn-result.js'
+import type { DevToolContext } from '@harness/kernel/tools/dev-tools-server.js'
 import {
   pauseMarker,
   renderNoPushStopComment,
   renderPauseComment,
   sanitizePublicPauseDetail
-} from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import {
   type DeferredFindingEntry,
   type DeferredFindingsIssueRef,
   markedCommentBody
-} from '../../../tools/task-contract/forge/forge-write.js'
-import { DEFAULT_REVIEW_POLICY } from '../../../tools/task-contract/review-policy'
-import type { IssueSurface } from '../../../tools/task-contract/issue-validation'
-import { objectivesOf, objectivesVersion, renderObjectives } from '../../../tools/task-contract/objectives'
-import { FIXTURE_REPO, isolatedConfigFixture } from '../../../../../kernel/conformance/unit/process-fixture.js'
+} from '@harness/workflow/tools/task-contract/forge/forge-write.js'
+import { DEFAULT_REVIEW_POLICY } from '@harness/workflow/tools/task-contract/review-policy'
+import type { IssueSurface } from '@harness/workflow/tools/task-contract/issue-validation'
+import { objectivesOf, objectivesVersion, renderObjectives } from '@harness/workflow/tools/task-contract/objectives'
+import { FIXTURE_REPO, isolatedConfigFixture } from '@harness/kernel/conformance/unit/process-fixture.js'
 import {
   recordWatchedChangeEnded,
   writeRunLifecycleEvent
-} from '../../../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
 
 /** A fake reviewer/security dispatch's outcome, in a compact line grammar `fakeReviewOutput` turns into the structured ReviewResult it returns. */
 export type RoleOutcome = {

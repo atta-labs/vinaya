@@ -1,23 +1,23 @@
 import { describe, expect, it } from 'bun:test'
-import { isProtectedAdminPath, PROTECTED_ADMIN_PATHS } from '../../../tools/task-contract/protected-paths'
-import { normalizeTouchedPath } from '../../../../../kernel/tools/host/touched-path.js'
-import type { DispatchTeeRecoveryDeps } from '../../../loops/dev-review/dispatch/dispatch.js'
-import { vinayaLaunchRecordVerifier } from '../../../integration/policies/launch-records.js'
-import { VINAYA_PROTECTED_PATHS } from '../../../integration/policies/protected-paths.js'
+import { isProtectedAdminPath, PROTECTED_ADMIN_PATHS } from '@harness/workflow/tools/task-contract/protected-paths'
+import { normalizeTouchedPath } from '@harness/kernel/tools/host/touched-path.js'
+import type { DispatchTeeRecoveryDeps } from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
+import { vinayaLaunchRecordVerifier } from '@harness/workflow/integration/policies/launch-records.js'
+import { VINAYA_PROTECTED_PATHS } from '@harness/workflow/integration/policies/protected-paths.js'
 import {
   VINAYA_BOUNDARY_ROLES,
   VINAYA_BROKER_ROLES,
   VINAYA_ROUTER_ROLES,
   VINAYA_TOOL_GRANTS
-} from '../../../integration/policies/roles.js'
-import { VINAYA_SCRATCH_NAMES } from '../../../integration/policies/scratch-names.js'
+} from '@harness/workflow/integration/policies/roles.js'
+import { VINAYA_SCRATCH_NAMES } from '@harness/workflow/integration/policies/scratch-names.js'
 import {
   vinayaBrokerPolicies,
   vinayaProtectedPathPolicy,
   vinayaRouterPolicies,
   vinayaToolGrantPolicy,
   vinayaWorkerBoundaryPolicies
-} from '../../../integration/policies/vinaya-policies.js'
+} from '@harness/workflow/integration/policies/vinaya-policies.js'
 
 /** Vinaya's scratch-name, protected-path and launch-record implementations, and the composition every builder reads. */
 

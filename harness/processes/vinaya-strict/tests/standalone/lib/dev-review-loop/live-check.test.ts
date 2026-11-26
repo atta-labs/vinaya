@@ -8,17 +8,17 @@
  * no `[live]` line runs the round exactly as before.
  */
 
-import type { DevReviewLoopEventInput, LoopState } from '../../../../tools/dev-review-policy/types'
+import type { DevReviewLoopEventInput, LoopState } from '@harness/workflow/tools/dev-review-policy/types'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { carryLiveRecord, readLiveRecord, withLiveRecord } from '../../../../tools/task-contract/live-record'
-import { evaluateTestPlanGate } from '../../../../checks/test-plan-gate'
-import { buildPrincipalTestPlanWaitErrors } from '../../../../checks/bin/check-principal-test-plan-wait.js'
-import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
+import { carryLiveRecord, readLiveRecord, withLiveRecord } from '@harness/workflow/tools/task-contract/live-record'
+import { evaluateTestPlanGate } from '@harness/workflow/checks/test-plan-gate'
+import { buildPrincipalTestPlanWaitErrors } from '@harness/workflow/checks/bin/check-principal-test-plan-wait.js'
+import type { LoopDeps } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 import {
   type LiveRun,
   livePassedAtHead,
@@ -30,7 +30,7 @@ import {
   withdrawApprovedRound,
   runRealLiveCommand,
   vendorSignedIn
-} from '../../../../loops/dev-review/standalone/dev-review-loop/live-check.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/live-check.js'
 import {
   CLEAN_REVIEWER,
   cleanupWorlds,

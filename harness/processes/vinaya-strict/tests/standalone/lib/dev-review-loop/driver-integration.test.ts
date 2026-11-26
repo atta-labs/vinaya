@@ -45,13 +45,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
-import { heldVerdictPath } from '../../../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
-import { reviewerCandidateInputPaths } from '../../../../loops/dev-review/standalone/dev-review-loop/reviewer-isolation.js'
-import { renderDeferredFindingsIssueBody } from '../../../../tools/task-contract/forge/forge-write.js'
-import { buildReexecArgs, setStandaloneLogIdentity } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
-import { objectivesVersion } from '../../../../tools/task-contract/objectives'
-import { agentTurnsOf, localCopyFolderOf } from '../../../lib/dispatch/dispatch-fixtures.js'
-import { REVIEW_FINDING_DESCRIPTION_MAX_LENGTH } from '../../../../../../kernel/log/schema'
+import { heldVerdictPath } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
+import { reviewerCandidateInputPaths } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.js'
+import { renderDeferredFindingsIssueBody } from '@harness/workflow/tools/task-contract/forge/forge-write.js'
+import {
+  buildReexecArgs,
+  setStandaloneLogIdentity
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
+import { objectivesVersion } from '@harness/workflow/tools/task-contract/objectives'
+import { agentTurnsOf, localCopyFolderOf } from '@harness/workflow/tests/lib/dispatch/dispatch-fixtures.js'
+import { REVIEW_FINDING_DESCRIPTION_MAX_LENGTH } from '@harness/kernel/log/schema'
 import {
   CLEAN_REVIEWER,
   CLEAN_SECURITY,
@@ -402,11 +405,11 @@ describe('createTaskWorktree — a fresh host resumes the remote task branch (re
   async function inHost<T>(
     dir: string,
     run: (
-      fn: typeof import('../../../../loops/dev-review/standalone/dev-review-loop/developer-dispatch.js').createTaskWorktree
+      fn: typeof import('@harness/workflow/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js').createTaskWorktree
     ) => T
   ): Promise<T> {
     const { createTaskWorktree } = await import(
-      '../../../../loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
+      '@harness/workflow/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
     )
     const previous = process.cwd()
     process.chdir(dir)

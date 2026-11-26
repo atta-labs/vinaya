@@ -14,14 +14,14 @@ import {
   StaleEpochWriteError,
   writeEffect,
   writeEscalation
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
-import type { CallerContext } from '../../../integration/server.js'
-import { createTaskCancelHandler } from '../../../loops/dev-review/run-control/cancel.js'
-import type { CancelInput } from '../../../loops/dev-review/standalone/dev-review-loop.js'
-import { writePauseState } from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import { isolatedConfigFixture } from '../../../../../kernel/conformance/unit/process-fixture'
-import { type CommandRecord, type RecordScope, writeCommand } from '../../../../../kernel/log/outside-log'
-import { isolatedLocalCopy } from '../../../integration/log/client/local-copy-fixture'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import type { CallerContext } from '@harness/workflow/integration/server.js'
+import { createTaskCancelHandler } from '@harness/workflow/loops/dev-review/run-control/cancel.js'
+import type { CancelInput } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
+import { writePauseState } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { isolatedConfigFixture } from '@harness/kernel/conformance/unit/process-fixture'
+import { type CommandRecord, type RecordScope, writeCommand } from '@harness/kernel/log/outside-log'
+import { isolatedLocalCopy } from '@harness/workflow/integration/log/client/local-copy-fixture'
 
 /**
  * `task_cancel` (task-operator-v1 4, O2) driven in-process against a real,
@@ -313,7 +313,7 @@ describe('task_cancel handler', () => {
     writePause()
     writeEscalationFixture({ host: 'test-host' })
     const { ReplayedResolutionError } = await import(
-      '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+      '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
     )
     const err = new ReplayedResolutionError(ISSUE, ESCALATION_ID, {
       version: 1,
@@ -337,7 +337,7 @@ describe('task_cancel handler', () => {
     writePause()
     writeEscalationFixture({ host: 'test-host' })
     const { ReplayedResolutionError } = await import(
-      '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+      '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
     )
     const err = new ReplayedResolutionError(ISSUE, ESCALATION_ID, {
       version: 1,
@@ -419,7 +419,7 @@ describe('task_cancel handler', () => {
     writePause({ reason: 'stale_driver' })
     writeEscalationFixture({ host: 'test-host' })
     const { StaleEscalationError } = await import(
-      '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+      '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
     )
     const err = new StaleEscalationError(ISSUE, ESCALATION_ID, 'no escalation record was ever written for it')
     const { handler } = harness({ hostname: 'test-host', cancelError: err })

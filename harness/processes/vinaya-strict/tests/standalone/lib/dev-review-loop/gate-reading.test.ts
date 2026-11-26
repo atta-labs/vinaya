@@ -31,7 +31,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 import {
   checkPremiseAtHead,
   judgeCiConclusion,
@@ -43,8 +43,8 @@ import {
   readWorktreeHead,
   type RestCheckRun,
   type RestWorkflowRun
-} from '../../../../loops/dev-review/standalone/dev-review-loop/gate-reading'
-import { observeGitReads, withGitReadMemo } from '../../../../loops/dev-review/v2/git-read-memo'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/gate-reading'
+import { observeGitReads, withGitReadMemo } from '@harness/workflow/loops/dev-review/v2/git-read-memo'
 
 const GATE_READING = join(
   dirname(fileURLToPath(import.meta.url)),

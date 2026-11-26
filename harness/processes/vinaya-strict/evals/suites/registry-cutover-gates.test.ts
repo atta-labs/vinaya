@@ -12,8 +12,8 @@ import {
   checkShardCompleteness,
   loadRegistry,
   type ModuleCatalog
-} from '../../../../kernel/evals/registry'
-import { OPERATOR_EXIT_EXCLUSIONS } from '../../../../kernel/evals/exit-check'
+} from '@harness/kernel/evals/registry'
+import { OPERATOR_EXIT_EXCLUSIONS } from '@harness/kernel/evals/exit-check'
 import {
   type CutoverGateEntry,
   CUTOVER_GATES_HEADING,

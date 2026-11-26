@@ -16,8 +16,8 @@ import {
   validateTaskTally,
   validateTrial,
   validateTrialSet
-} from '../../../../kernel/evals/contracts'
-import { GENERIC_GRADERS } from '../../../../kernel/evals/generic-graders'
+} from '@harness/kernel/evals/contracts'
+import { GENERIC_GRADERS } from '@harness/kernel/evals/generic-graders'
 import { GRADERS as DEVELOPER_CAPABILITY_GRADERS } from '../../executing/developer/evals/developer-capability-suite'
 import { REVIEW_QUALITY_GRADER } from '../../executing/evals/reviewer-quality-suite'
 import { STATE_GRADER, TRACE_GRADER } from '../../executing/evals/tool-selection-suite'

@@ -14,14 +14,14 @@
  */
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { createSuite, type EvaluationLayer, type Suite } from '../../../../kernel/evals/contracts'
-import { GENERIC_GRADERS, globMatches } from '../../../../kernel/evals/generic-graders'
+import { createSuite, type EvaluationLayer, type Suite } from '@harness/kernel/evals/contracts'
+import { GENERIC_GRADERS, globMatches } from '@harness/kernel/evals/generic-graders'
 import {
   canonicalJson,
   type NeutralCase,
   neutralCaseDigest,
   validateNeutralCase
-} from '../../../../kernel/evals/neutral-case'
+} from '@harness/kernel/evals/neutral-case'
 import { extractOutcomes, renderCase, type VinayaTrialRecord } from '../vinaya-renderer'
 import { REVIEWER_SEVERITIES, type ReviewerRole } from '../../executing/code-reviewer/review-result'
 import {

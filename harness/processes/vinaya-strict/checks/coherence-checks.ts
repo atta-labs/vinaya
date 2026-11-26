@@ -8,7 +8,7 @@
 
 import { parseRationaleDeps } from '../tools/task-contract/forge/parse-rationale-deps'
 import { trancheLabel, label } from '../tools/task-contract/forge/labels'
-import { anchoredRegion, stripCode } from '../../../kernel/gates/checks/anchored-region'
+import { anchoredRegion, stripCode } from '@harness/kernel/gates/checks/anchored-region'
 import { PROVENANCE_HEADING, REGION_PREFIXES } from '../tools/legacy-markers'
 import {
   checkIssueObjectives,
@@ -24,7 +24,7 @@ import {
 import { parseTaskBranchIdentity } from '../tools/task-contract/task-branch-identity'
 import { isPrincipal } from '../tools/task-contract/waiver-label'
 import type { ForgeIssue, TaskIssueRef } from '../tools/task-contract/tranche-types'
-import type { GhIssue } from '../../../kernel/adapters/code-host/github/gh'
+import type { GhIssue } from '@harness/kernel/adapters/code-host/github/gh'
 import type { ForgeFacts, Tranche, Task } from '../tools/task-contract/types'
 
 // ---------- grandfather cutoff -----------------------------------------------

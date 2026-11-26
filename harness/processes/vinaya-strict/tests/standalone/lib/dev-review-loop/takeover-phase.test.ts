@@ -25,13 +25,13 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
+import type { LoopDeps } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 import {
   deriveLoopState,
   phaseIsCurrentFor,
   readLoopPhase,
   type TaskLoopState
-} from '../../../../loops/dev-review/run-control/task-status.js'
+} from '@harness/workflow/loops/dev-review/run-control/task-status.js'
 import {
   cleanupWorlds,
   controlDir as ipControlDir,

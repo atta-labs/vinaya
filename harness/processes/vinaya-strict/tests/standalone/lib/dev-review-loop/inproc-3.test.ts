@@ -14,8 +14,8 @@ import {
   cancelDevReviewLoop,
   taskFromPrBody,
   type LoopDeps
-} from '../../../../loops/dev-review/standalone/dev-review-loop.js'
-import { readPauseState } from '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
+import { readPauseState } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import {
   cleanupWorlds,
   controlDir as ipControlDir,

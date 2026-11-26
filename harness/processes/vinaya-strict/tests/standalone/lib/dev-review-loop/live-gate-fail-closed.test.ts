@@ -9,8 +9,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { readLiveRecord } from '../../../../tools/task-contract/live-record'
-import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
+import { readLiveRecord } from '@harness/workflow/tools/task-contract/live-record'
+import type { LoopDeps } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 import {
   cleanupWorlds,
   controlDir,

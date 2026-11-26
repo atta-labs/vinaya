@@ -2,11 +2,11 @@ import { describe, expect, it } from 'bun:test'
 import {
   type DeveloperDevToolDeps,
   createDeveloperDevToolContext
-} from '../../../loops/dev-review/actions/developer-dev-tools-context.js'
-import type { PublicationCheckInput } from '../../../loops/dev-review/standalone/dev-review-loop/developer-publication.js'
-import { devToolError } from '../../../../../kernel/tools/dev-tools-server.js'
-import { EVIDENCE_PLACEHOLDER_TEXT } from '../../../checks/evidence-fresh-logic.js'
-import { REGION_PREFIX_CURRENT } from '../../../tools/legacy-markers.js'
+} from '@harness/workflow/loops/dev-review/actions/developer-dev-tools-context.js'
+import type { PublicationCheckInput } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/developer-publication.js'
+import { devToolError } from '@harness/kernel/tools/dev-tools-server.js'
+import { EVIDENCE_PLACEHOLDER_TEXT } from '@harness/workflow/checks/evidence-fresh-logic.js'
+import { REGION_PREFIX_CURRENT } from '@harness/workflow/tools/legacy-markers.js'
 
 /**
  * The production gate-backed `DevToolContext` (O3): each tool runs the gates in

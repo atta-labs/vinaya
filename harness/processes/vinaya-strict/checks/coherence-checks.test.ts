@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { GhIssue } from '../../../kernel/adapters/code-host/github/gh'
+import type { GhIssue } from '@harness/kernel/adapters/code-host/github/gh'
 import {
   checkA1,
   checkA2,

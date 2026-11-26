@@ -9,7 +9,7 @@ import {
   type EffectRecord,
   readExecutionRoundMirror,
   writeExecutionRoundMirror
-} from '../../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 import { clearDriverLock } from '../../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { controlStoreRootFor } from '../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import {
@@ -17,8 +17,8 @@ import {
   readAgentProvenance,
   readEffectiveResumedState,
   readExecutionRound
-} from '../../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
-import { SqliteCheckpointer } from '../../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
+} from '@harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+import { SqliteCheckpointer } from '@harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import { restoreExecutionRound } from '../../bin/run-lifecycle'
 import {
   checkpointFile,

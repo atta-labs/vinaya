@@ -6,11 +6,11 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { runtimeImportPaths } from './renderer-imports.js'
 import { parseIssueSurface } from '../../tools/task-contract/issue-validation'
-import { KIND_FIELDS, type NeutralCase, NEUTRAL_CASE_KINDS } from '../../../../kernel/evals/neutral-case'
-import { CLAUDE_CAPABILITY_TOOLS } from '../../../../kernel/adapters/agents/claude-code/capabilities'
-import { OUTCOME_NAMES } from '../../../../kernel/evals/neutral-outcomes'
+import { KIND_FIELDS, type NeutralCase, NEUTRAL_CASE_KINDS } from '@harness/kernel/evals/neutral-case'
+import { CLAUDE_CAPABILITY_TOOLS } from '@harness/kernel/adapters/agents/claude-code/capabilities'
+import { OUTCOME_NAMES } from '@harness/kernel/evals/neutral-outcomes'
 import { CLAUDE_COORDINATION_TOOLS, CLAUDE_HARNESS_INTERNAL_TOOLS, layerGTrace } from '../step-one'
-import { loadRoleContract } from '../../../../kernel/adapters/agents/manifest'
+import { loadRoleContract } from '@harness/kernel/adapters/agents/manifest'
 import { ENGINE_ROLE_GRANTS_ROOT } from '../engine-role-step'
 import {
   CASE_ROLE_CAPABILITIES,
@@ -32,7 +32,7 @@ import {
 } from '../vinaya-renderer'
 import { REVIEWER_ROLES, REVIEWER_SEVERITIES } from '../../executing/code-reviewer/review-result'
 import { ROLE_TOOL_GRANTS } from '../../integration/policies/roles'
-import { AGENT_TOOL_CATALOG } from '../../../../kernel/tools/tool-catalog'
+import { AGENT_TOOL_CATALOG } from '@harness/kernel/tools/tool-catalog'
 import {
   claudeTrace,
   codexTrace,

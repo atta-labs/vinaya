@@ -2,9 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import { execFileSync, spawn } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { FAILED_TESTS_RECORD, gitPath } from '../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
-import { identityOf, registerProcess } from '../../../../kernel/conformance/unit/process-registry'
-import { fixtureDir } from '../../../../kernel/conformance/unit/test-temp-fixture'
+import { FAILED_TESTS_RECORD, gitPath } from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
+import { identityOf, registerProcess } from '@harness/kernel/conformance/unit/process-registry'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import {
   ReadyGateCancelledError,
   runReadyGateLive,
@@ -12,7 +12,7 @@ import {
   superviseChild,
   sweepReadyGateRuns
 } from '../../loops/dev-review/v2/flow-v2-live'
-import { createTestTempRun, readOwnerMarker, removeTestTempRun } from '../../../../kernel/conformance/unit/test-temp'
+import { createTestTempRun, readOwnerMarker, removeTestTempRun } from '@harness/kernel/conformance/unit/test-temp'
 import type { RecoveryRunner } from './runners'
 
 // The ready-gate test run is cancellable and contained. Only version 2 of the Engine flow has a ready gate, so the

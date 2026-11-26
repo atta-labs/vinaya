@@ -16,14 +16,14 @@ import {
   type OwedListCauseCode,
   type OwedListInput,
   OPERATOR_EXIT_EXCLUSIONS
-} from '../../../../kernel/evals/exit-check'
+} from '@harness/kernel/evals/exit-check'
 import {
   type EvidenceFiles,
   loadRegistry,
   namesRowId,
   type RegistryResult,
   validateComponentRow
-} from '../../../../kernel/evals/registry'
+} from '@harness/kernel/evals/registry'
 
 const REGISTRY_DIR = join(import.meta.dir, 'registry')
 const OWED_FILE = join(import.meta.dir, 'engine-evidence-owed.json')

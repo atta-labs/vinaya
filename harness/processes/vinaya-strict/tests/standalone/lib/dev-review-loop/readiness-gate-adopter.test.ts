@@ -3,9 +3,9 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { resolveGateStep } from '../../../../checks/registry.js'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture'
-import { checkTaskDispatchReadiness } from '../../../../loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
+import { resolveGateStep } from '@harness/workflow/checks/registry.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
+import { checkTaskDispatchReadiness } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
 
 const PKG = join(import.meta.dir, '..', '..', '..', '..', '..', '..', '..', 'apps', 'cli')
 const DIST_INDEX = pathToFileURL(join(PKG, 'dist', 'index.js')).href

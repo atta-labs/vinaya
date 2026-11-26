@@ -10,9 +10,9 @@ import {
   readEscalationPacket,
   readTaskLoopStateObserved,
   whereTheRunIs
-} from '../../../loops/dev-review/run-control/read.js'
-import type { TaskStatusRow } from '../../../loops/dev-review/run-control/task-status.js'
-import { START_CLAIM_REPORTING_WINDOW_MS } from '../../../loops/dev-review/run-control/start.js'
+} from '@harness/workflow/loops/dev-review/run-control/read.js'
+import type { TaskStatusRow } from '@harness/workflow/loops/dev-review/run-control/task-status.js'
+import { START_CLAIM_REPORTING_WINDOW_MS } from '@harness/workflow/loops/dev-review/run-control/start.js'
 
 const TASK = 558
 

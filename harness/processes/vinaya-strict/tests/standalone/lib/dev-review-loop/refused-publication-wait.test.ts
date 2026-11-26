@@ -14,7 +14,7 @@ import {
   type LoopWorld,
   defaultDeveloperTurnOutput
 } from '../dev-review-loop-harness.js'
-import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
+import type { LoopDeps } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 
 afterEach(cleanupWorlds)
 

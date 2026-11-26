@@ -30,7 +30,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { type IssueSurface, recordedBeyondSurfacePaths } from '../tools/task-contract/issue-validation'
-import type { RoleContract } from '../../../kernel/adapters/agents/manifest'
+import type { RoleContract } from '@harness/kernel/adapters/agents/manifest'
 import { parseDeveloperTurnResult } from '../executing/developer/developer-turn-result'
 import {
   parseReviewResult,
@@ -38,12 +38,12 @@ import {
   REVIEWER_SEVERITIES,
   type ReviewerRole
 } from '../executing/code-reviewer/review-result'
-import type { SourceDeliveryReceipt } from '../../../kernel/source-manifest'
+import type { SourceDeliveryReceipt } from '@harness/kernel/source-manifest'
 import { type GrantedRole, ROLE_TOOL_GRANTS } from '../integration/policies/roles'
-import { AGENT_TOOL_CATALOG } from '../../../kernel/tools/tool-catalog'
-import { anchoredRegionBounds } from '../../../kernel/gates/checks/anchored-region'
+import { AGENT_TOOL_CATALOG } from '@harness/kernel/tools/tool-catalog'
+import { anchoredRegionBounds } from '@harness/kernel/gates/checks/anchored-region'
 import { REGION_PREFIXES } from '../tools/legacy-markers'
-import type { Digest } from '../../../kernel/evals/contracts'
+import type { Digest } from '@harness/kernel/evals/contracts'
 import {
   canonicalJson,
   type ChangeIdentity,
@@ -53,7 +53,7 @@ import {
   NEUTRAL_CASE_KINDS,
   neutralCaseDigest,
   validateNeutralCase
-} from '../../../kernel/evals/neutral-case'
+} from '@harness/kernel/evals/neutral-case'
 import type {
   CheckResult,
   Fact,
@@ -61,7 +61,7 @@ import type {
   Review,
   SourceReceipt,
   TestResult
-} from '../../../kernel/evals/neutral-outcomes'
+} from '@harness/kernel/evals/neutral-outcomes'
 
 // ── Mapping tables ──────────────────────────────────────────────────────────
 

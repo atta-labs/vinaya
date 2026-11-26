@@ -1,12 +1,12 @@
-import { extractIssue } from '../../../kernel/adapters/code-host/github/extract-issue'
+import { extractIssue } from '@harness/kernel/adapters/code-host/github/extract-issue'
 import { REGION_PREFIXES } from '../tools/legacy-markers'
 import { isIssueNotFoundError } from '../tools/task-contract/objectives'
 import { isTaskBranch, resolveNewestFrozenBrief } from '../tools/task-contract/brief-validation'
 import { parseLiveTestPlanItems } from '../tools/task-contract/issue-validation'
 import type { LiveGateInputs } from './test-plan-gate'
 import { PrincipalsUnresolvedError, resolveTrustedPrincipals } from '../integration/config/compose'
-import { isForgeReadOversize, readIssueComments } from '../../../kernel/adapters/code-host/github/forge-read'
-import { incompleteForgeSnapshot } from '../../../kernel/adapters/code-host/github/forge-snapshot'
+import { isForgeReadOversize, readIssueComments } from '@harness/kernel/adapters/code-host/github/forge-read'
+import { incompleteForgeSnapshot } from '@harness/kernel/adapters/code-host/github/forge-snapshot'
 
 /** One task Issue comment, as the CI-side checks read it. */
 export type IssueComment = { body: string; author?: { login?: string } | null }

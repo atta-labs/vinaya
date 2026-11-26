@@ -1,21 +1,18 @@
-import { fixtureDir } from '../../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import type { Checkpoint, CheckpointMetadata } from '@langchain/langgraph'
-import { loadProcess } from '../../../../../harness/kernel/dev-process-socket/loader/load-process'
-import type {
-  ActionRegistry,
-  ProcessAction
-} from '../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
+import type { ActionRegistry, ProcessAction } from '@harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   CHECKPOINT_FORMAT_VERSION,
   ENGINE_RUNTIME_VERSION,
   SqliteCheckpointer,
   type CheckpointProvenance
-} from '../../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
+} from '@harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import { ACTION_BINDINGS, classifyGateResult, dispatchReviewers, type TaskInput } from '../../executing/actions'
 import { checkpointPath, runDirectory, runEngine, type Agent, type EngineRunOptions } from '../../bin/run-engine'
 import { runIdentityOfTask } from '../../bin/run-lifecycle'

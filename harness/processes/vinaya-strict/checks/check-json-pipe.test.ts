@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
+import { spawnBudgetedAsync, spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 /**
  * Regression for the pipe-vs-file stdout-flush defect (Issue #127):

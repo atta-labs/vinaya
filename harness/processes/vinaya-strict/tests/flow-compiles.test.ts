@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import { parse } from 'yaml'
 import { compileFlow, type StepsFlow } from '@atta/engine'
 import { buildAgentSpawnStateGraph } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import { developerTurnResultJsonSchema } from '../executing/developer/developer-turn-result'
 import { reviewResultJsonSchema } from '../executing/code-reviewer/review-result'
 

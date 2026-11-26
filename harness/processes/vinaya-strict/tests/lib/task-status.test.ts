@@ -19,7 +19,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, w
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture.js'
 import { FROZEN_BRIEF_MARKER } from '../../tools/legacy-markers'
 import {
   BRIEF_CANDIDATE_SEARCH,
@@ -54,7 +54,7 @@ import {
   readStartClaims,
   START_CLAIM_REPORTING_WINDOW_MS
 } from '../../loops/dev-review/run-control/start.js'
-import { DEFAULT_PAGE_LIMIT, TASK_NEXT_ACTIONS } from '../../../../kernel/tools/catalog/task-tools'
+import { DEFAULT_PAGE_LIMIT, TASK_NEXT_ACTIONS } from '@harness/kernel/tools/catalog/task-tools'
 import type { ProcessSnapshot } from '../../loops/dev-review/dispatch/dispatch.js'
 import type { TaskPrFacts } from '../../loops/dev-review/run-control/pr-facts.js'
 import {
@@ -71,7 +71,7 @@ import {
   PHASE_HISTORY_FAILURE_BACKOFF_MS,
   SUMMARY_CONFIDENCE_READS_PER_STATUS_READ
 } from '../../loops/dev-review/run-control/task-status-history.js'
-import { appendRoleLine, loopLogPathFor } from '../../../../kernel/log/client/loop-log.js'
+import { appendRoleLine, loopLogPathFor } from '@harness/kernel/log/client/loop-log.js'
 
 const TASK = 515
 

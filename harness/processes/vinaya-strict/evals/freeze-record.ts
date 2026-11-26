@@ -1,5 +1,5 @@
-import { GRADER_LAYERS, type GraderLayer } from '../../../kernel/evals/contracts'
-import { BOOTSTRAP_METHODS } from '../../../kernel/evals/estimators'
+import { GRADER_LAYERS, type GraderLayer } from '@harness/kernel/evals/contracts'
+import { BOOTSTRAP_METHODS } from '@harness/kernel/evals/estimators'
 import { STEP_ONE_ADAPTERS, STEP_ONE_SUITES, type StepOneAdapter } from './step-one'
 
 /**

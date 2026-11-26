@@ -4,7 +4,7 @@ import {
   MAX_FAILURE_EXCERPT_CHARS,
   readFailedCheckExcerpt,
   renderFailureExcerpt
-} from '../../../loops/dev-review/run-control/pr-facts'
+} from '@harness/workflow/loops/dev-review/run-control/pr-facts'
 
 const stamp = (line: string) => `2026-10-28T03:14:15.1234567Z ${line}`
 const ESC = String.fromCharCode(27)

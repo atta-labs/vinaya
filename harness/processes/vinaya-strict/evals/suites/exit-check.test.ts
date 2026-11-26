@@ -16,8 +16,8 @@ import {
   OPERATOR_EXIT_EXCLUSIONS,
   type ExitCauseCode,
   type ExitInput
-} from '../../../../kernel/evals/exit-check'
-import { COMPONENT_KINDS, type ComponentKind, loadRegistry } from '../../../../kernel/evals/registry'
+} from '@harness/kernel/evals/exit-check'
+import { COMPONENT_KINDS, type ComponentKind, loadRegistry } from '@harness/kernel/evals/registry'
 import {
   ENGINE_STATES,
   ENGINE_TRANSITIONS,

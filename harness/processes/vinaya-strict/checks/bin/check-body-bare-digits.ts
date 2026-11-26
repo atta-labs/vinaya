@@ -51,8 +51,8 @@ import { loadTrustAnchorConfig, resolveReleaseActor } from '../../integration/co
 import {
   exitOnIncompleteForgeSnapshot,
   snapshotPullRequest
-} from '../../../../../harness/kernel/adapters/code-host/github/forge-snapshot'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+} from '@harness/kernel/adapters/code-host/github/forge-snapshot'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { checkBareDigits } from '../../tools/body-bare-digits-logic'
 
 const CHECK_NAME = 'body-bare-digits'

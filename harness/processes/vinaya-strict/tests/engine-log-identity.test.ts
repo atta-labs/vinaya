@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { resolve } from 'node:path'
 import enginePackage from '@atta/engine/package.json' with { type: 'json' }
-import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import { ENGINE_VERSION, setEngineLogIdentity } from '../bin/engine-log-identity'
 
 test('stamps the loaded Vinaya process, installed Engine version and dispatched agent runtime', () => {

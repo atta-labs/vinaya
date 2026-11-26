@@ -19,8 +19,8 @@ import { lstatSync, readFileSync } from 'node:fs'
 import {
   resolveMeteringCapability,
   type MeteringCapabilityDeps
-} from '../../../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
-import { emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+} from '@harness/kernel/adapters/agents/claude-code/claude-code-transcript'
+import { emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { evaluateTokenCollectionWiring } from '../token-collection-wiring-logic'
 
 const CHECK_NAME = 'token-collection-wired'

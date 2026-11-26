@@ -6,7 +6,7 @@ import {
   checkTaskStatement,
   findBannedTerms,
   interfaceCodeSpan
-} from '../../../../kernel/evals/banned-terms'
+} from '@harness/kernel/evals/banned-terms'
 import { REVIEWER_SEVERITIES } from '../../executing/code-reviewer/review-result'
 
 const NEUTRAL =

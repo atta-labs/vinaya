@@ -12,8 +12,8 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture.js'
-import { taskRefFromBranch } from '../../../integration/log/branch-issue.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture.js'
+import { taskRefFromBranch } from '@harness/workflow/integration/log/branch-issue.js'
 
 const BRANCH_ISSUE_MODULE = join(import.meta.dir, '..', '..', '..', 'integration', 'log', 'branch-issue.ts')
 const LOG_SINK_FACTORY_MODULE = join(import.meta.dir, '..', '..', '..', 'integration', 'log', 'log-sink-factory.ts')

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { coreCheckRegistry } from './registry'
-import { runChecks } from '../../../kernel/gates/checks/runner'
+import { runChecks } from '@harness/kernel/gates/checks/runner'
 
 // Bin-level tests for check-body-bare-digits.ts's Changesets-release
 // exemption. This check is `ownWorkflow: true` (own-workflow.test.ts) and

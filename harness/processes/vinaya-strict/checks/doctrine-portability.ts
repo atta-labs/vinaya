@@ -40,7 +40,7 @@
  * passed in.
  */
 
-import { maskCode } from '../../../kernel/adapters/code-host/github/strip-code'
+import { maskCode } from '@harness/kernel/adapters/code-host/github/strip-code'
 import { anchorAlternation, VENDOR_EXAMPLE_ANCHORS } from '../tools/legacy-markers'
 import {
   BUNDLED_DOCTRINE_DIR,

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pushedEvidenceMarker, refreshPrEvidence, type RefreshEvidenceDeps } from '../executing/refresh-evidence'
 import { programFile } from '../tools/programs'
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { refreshEvidenceStep, type TaskInput } from '../executing/actions'
 
 const deps = (stdout: string, status: number, calls: unknown[] = []): RefreshEvidenceDeps => ({

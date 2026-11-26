@@ -4,7 +4,7 @@
  * file keeps its own temporary-directory list and its own cleanup hook.
  */
 
-import { programCommandLine } from '../../../tools/programs.js'
+import { programCommandLine } from '@harness/workflow/tools/programs.js'
 import { expect, it } from 'bun:test'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from 'node:child_process'
@@ -12,14 +12,14 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readdirSync } from 'node:fs'
-import { processLocalCopyPlace } from '../../../../../kernel/log/log-sink.js'
+import { processLocalCopyPlace } from '@harness/kernel/log/log-sink.js'
 import { ATTRIBUTE_NAMES, type OtelRecord, readOtlpDocument, SPAN_NAMES, traceIdFor } from '@attalabs/vinaya-log-sdk'
 import {
   openOutputTee,
   timeoutWarningLeadMs,
   getProcessSnapshot,
   matchesCapturedIdentity
-} from '../../../loops/dev-review/dispatch/dispatch.js'
+} from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
 
 export const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..', '..', 'apps', 'cli')
 export const INDEX = join(CLI_ROOT, 'src', 'index.ts')

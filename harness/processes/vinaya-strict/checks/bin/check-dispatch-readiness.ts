@@ -63,7 +63,7 @@
  * scope: full — reads the live forge, not the local diff.
  */
 
-import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point'
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { sep } from 'node:path'
@@ -84,13 +84,10 @@ import { parseRationaleDeps } from '../../tools/task-contract/forge/parse-ration
 import { resolveDuplicateTasks } from '../../tools/task-contract/forge/list-tasks'
 import { resolvePriorTrancheArchival } from '../../tools/prior-tranche-archival'
 import { createForgeSource } from '../../tools/sources/forge-adapter.js'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { resolveTrustedPrincipals } from '../../integration/config/compose'
-import {
-  exitOnIncompleteForgeSnapshot,
-  snapshotIssue
-} from '../../../../../harness/kernel/adapters/code-host/github/forge-snapshot'
-import { containedAbs } from '../../../../../harness/kernel/gates/ops'
+import { exitOnIncompleteForgeSnapshot, snapshotIssue } from '@harness/kernel/adapters/code-host/github/forge-snapshot'
+import { containedAbs } from '@harness/kernel/gates/ops'
 import { dependsOnFactFromEdge, type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../../tools/edge-resolve'
 import { resolveSiblingConflictFacts } from '../sibling-conflict-facts'
 import { reassertPremiseFile } from '../../tools/premise-reassert-logic'

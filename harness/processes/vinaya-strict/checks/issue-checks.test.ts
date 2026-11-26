@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { coreCheckRegistry } from './registry'
-import { runChecks } from '../../../kernel/gates/checks/runner'
+import { runChecks } from '@harness/kernel/gates/checks/runner'
 import { plannerToolHandlers } from '../thinking/planner/tools/planner-tools'
 
 /**

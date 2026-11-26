@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { recordedBeyondSurfacePaths } from '../../../../tools/task-contract/issue-validation'
+import { recordedBeyondSurfacePaths } from '@harness/workflow/tools/task-contract/issue-validation'
 import {
   type LoopDeps,
   defaultClassifyAgainstDefaultTip,
@@ -23,23 +23,23 @@ import {
   defaultRestoreWorktreeHead,
   defaultUpdatePrBody,
   pushBranchClassified
-} from '../../../../loops/dev-review/standalone/dev-review-loop.js'
-import { ProtectedPathError } from '../../../../../../kernel/tools/host/broker.js'
-import { VINAYA_BROKER_ROLES } from '../../../../integration/policies/roles.js'
-import { loopLogPathFor } from '../../../../../../kernel/log/client/loop-log.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
+import { ProtectedPathError } from '@harness/kernel/tools/host/broker.js'
+import { VINAYA_BROKER_ROLES } from '@harness/workflow/integration/policies/roles.js'
+import { loopLogPathFor } from '@harness/kernel/log/client/loop-log.js'
 import {
   createLivePublicationState,
   type LivePublicationScope,
   mergeMovedDefaultBranch,
   mergeMovedDefaultBranchReport,
   resolvePublicationBase
-} from '../../../../loops/dev-review/actions/live-developer-context.js'
+} from '@harness/workflow/loops/dev-review/actions/live-developer-context.js'
 import {
   checkPublicationPreconditions,
   fastForwardedOntoDefaultTip,
   mergedMovedParent,
   validateCommitHeader
-} from '../../../../loops/dev-review/standalone/dev-review-loop/developer-publication.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/developer-publication.js'
 import {
   cleanupWorlds,
   makeInProcessDeps,

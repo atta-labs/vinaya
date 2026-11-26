@@ -38,10 +38,10 @@ import {
   type DispatchGateInput
 } from '../../tools/dispatch-gate'
 import { checkFirstPushDispatchGate, parseTaskBranch, type DispatchReadinessFact } from '../first-push-dispatch-gate'
-import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point'
 import { resolvePriorTrancheArchival } from '../../tools/prior-tranche-archival'
 import { createForgeSource } from '../../tools/sources/forge-adapter.js'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { resolveTrustedPrincipals } from '../../integration/config/compose'
 import { resolveEdge } from '../../tools/edge-resolve'
 import { warnOnUnreadPrincipals } from '../principals-refusal'

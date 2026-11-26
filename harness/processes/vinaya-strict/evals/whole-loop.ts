@@ -39,7 +39,7 @@
 import { ATTRIBUTE_NAMES, EVENT_NAMES, type OtelRecord, readOtlpDocument, SPAN_NAMES } from '@attalabs/vinaya-log-sdk'
 import { PUBLISHED_MARKER_LINE } from '../tools/dev-review-policy/journal-reconstruction'
 import { COMMENT_MARKER_PREFIX_PATTERN, REGION_PREFIXES } from '../tools/legacy-markers'
-import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'
+import { installProcess } from '@harness/kernel/dev-process-socket/contract/install-process'
 import { vinayaProcessIntegration } from '../integration/process/process-integration'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -52,13 +52,13 @@ import {
 } from '../tools/task-contract/verdict-extraction'
 import { issueBranchName } from '../tools/task-contract/task-branch-identity'
 
-import { NO_LOCAL_TESTS_MARKER } from '../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
+import { NO_LOCAL_TESTS_MARKER } from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
 import type { ReviewerRole } from '../executing/code-reviewer/review-result'
 import { PROTECTED_REPOSITORY, REPOSITORY_NAME } from './freeze-record'
-import { GENERIC_GRADERS } from '../../../kernel/evals/generic-graders'
-import { type NeutralCase, validateNeutralCase } from '../../../kernel/evals/neutral-case'
-import type { TestResult } from '../../../kernel/evals/neutral-outcomes'
-import { git, runGit, safeRelativePath } from '../../../kernel/evals/staging'
+import { GENERIC_GRADERS } from '@harness/kernel/evals/generic-graders'
+import { type NeutralCase, validateNeutralCase } from '@harness/kernel/evals/neutral-case'
+import type { TestResult } from '@harness/kernel/evals/neutral-outcomes'
+import { git, runGit, safeRelativePath } from '@harness/kernel/evals/staging'
 import { PRODUCTION_VINAYA_PROCESS_STEPS, STEP_ONE_ADAPTERS, type StepOneAdapter, stepOneWorkRoot } from './step-one'
 import {
   extractOutcomes,

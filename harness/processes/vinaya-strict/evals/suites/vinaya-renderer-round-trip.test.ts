@@ -4,9 +4,9 @@
 // graders' logic digests do not depend on the renderer.
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { GENERIC_GRADERS } from '../../../../kernel/evals/generic-graders'
-import { NEUTRAL_CASE_KINDS, validateNeutralCase } from '../../../../kernel/evals/neutral-case'
-import { OUTCOME_NAMES } from '../../../../kernel/evals/neutral-outcomes'
+import { GENERIC_GRADERS } from '@harness/kernel/evals/generic-graders'
+import { NEUTRAL_CASE_KINDS, validateNeutralCase } from '@harness/kernel/evals/neutral-case'
+import { OUTCOME_NAMES } from '@harness/kernel/evals/neutral-outcomes'
 import {
   extractOutcomes,
   MAPPING_LOGIC,
@@ -24,7 +24,7 @@ import {
   referenceRecord,
   renderOrThrow
 } from './vinaya-trial-records'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 const fixture = loadFixture()
 

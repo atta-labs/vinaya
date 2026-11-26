@@ -23,17 +23,17 @@ import {
   readResolutionRecord,
   runDriverLoop,
   taskFromPrBody
-} from '../../../../loops/dev-review/standalone/dev-review-loop.js'
-import { ownRepoPrForBranch } from '../../../../loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
+import { ownRepoPrForBranch } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
 import {
   type PauseState,
   readDriverLock,
   readPauseState,
   writeDriverLock,
   writePauseState
-} from '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import { rateLimitPauseDetail } from '../../../../loops/dev-review/standalone/dev-review-loop/round-assess.js'
-import { type RunTaskDeps, runTask } from '../../../../loops/dev-review/run-control/task-run.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { rateLimitPauseDetail } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/round-assess.js'
+import { type RunTaskDeps, runTask } from '@harness/workflow/loops/dev-review/run-control/task-run.js'
 import {
   cleanupWorlds,
   makeInProcessDeps,
