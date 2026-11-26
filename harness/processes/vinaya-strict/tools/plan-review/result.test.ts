@@ -163,7 +163,10 @@ describe('an answer that is not a review', () => {
       'rg --hostname-bin sh x',
       'git grep -O sh x',
       'git grep -Osh x',
-      'git -c core.pager=sh log'
+      'git -c core.pager=sh log',
+      'git log --ext-d',
+      'git show --outp=/tmp/x',
+      'git grep --open-files-in-p=sh x'
     ]) {
       expect(isAllowedEvidenceCommand(text), text).toBe(false)
     }
@@ -198,6 +201,11 @@ describe('an answer that is not a review', () => {
     const result = refusal(wrap(review({ answers: foreign })))
     expect(result.reason).toBe('unverified')
     expect(result.errors[0]).toContain('not a passage of the draft')
+  })
+
+  test('a scope passage too short to be a quotation is unverified', () => {
+    const short = answers().map((a) => (a.question === 6 ? { ...a, evidence: [scope('plan')] } : a))
+    expect(refusal(wrap(review({ answers: short }))).reason).toBe('unverified')
   })
 
   test('a passage of a left-out reason is a passage of the agreed scope', () => {

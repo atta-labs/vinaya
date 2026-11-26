@@ -62,7 +62,7 @@ describe('bindings cover the Flow', () => {
     const roles = createRoleLaunchers({ vendor: 'claude-code', generatedRoot: fixtureDir('roles-') })
     const flowRoles = steps.flatMap((step) => (step.type === 'agent' && step.role ? [step.role] : []))
     expect(flowRoles.filter((role) => !Object.hasOwn(roles, role))).toEqual([])
-    expect(Object.keys(roles).sort()).toEqual(['code-reviewer', 'developer', 'security-reviewer'])
+    expect(Object.keys(roles).sort()).toEqual(['code-reviewer', 'developer', 'plan-reviewer', 'security-reviewer'])
   })
 
   test('each loop-backed entry records the function it adapts', () => {

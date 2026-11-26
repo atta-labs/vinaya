@@ -250,16 +250,16 @@ export const PLAN_REVIEW_EVIDENCE_DENIED: readonly string[] = [
   'git config --system',
   'sudo',
   'git -c',
-  'git diff ... --output',
-  'git diff ... --ext-diff',
-  'git diff ... --textconv',
-  'git log ... --output',
-  'git log ... --ext-diff',
-  'git log ... --textconv',
-  'git show ... --output',
-  'git show ... --ext-diff',
-  'git show ... --textconv',
-  'git grep ... --open-files-in-pager',
+  'git diff ... --ou**',
+  'git diff ... --ex**',
+  'git diff ... --te**',
+  'git log ... --ou**',
+  'git log ... --ex**',
+  'git log ... --te**',
+  'git show ... --ou**',
+  'git show ... --ex**',
+  'git show ... --te**',
+  'git grep ... --op**',
   'git grep ... -O*',
   'rg ... --pre',
   'rg ... --hostname-bin',
@@ -274,7 +274,9 @@ const SHELL_CHAINING = /[;&|<>]/
 const QUOTED = /'[^']*'|"[^"]*"/g
 
 function tokenMatchesFlag(token: string, flag: string): boolean {
-  if (flag.endsWith('*')) return token.startsWith(flag.slice(0, -1))
+  // A trailing `*` matches any longer word with that start. The grants write it doubled (`--ou**`) because the
+  // shell-rule syntax drops one trailing `*`; the validator reads both spellings the same way.
+  if (flag.endsWith('*')) return token.startsWith(flag.replace(/\*+$/, ''))
   if (token === flag || token.startsWith(`${flag}=`)) return true
   // A short flag may sit inside a cluster (`-nz`) or carry its value attached.
   return /^-[A-Za-z]$/.test(flag) && /^-[A-Za-z]/.test(token) && token.includes(flag.slice(1))
@@ -296,6 +298,9 @@ export function isAllowedEvidenceCommand(command: string): boolean {
   if (PLAN_REVIEW_EVIDENCE_DENIED.some((rule) => deniedByRule(trimmed, rule))) return false
   return PLAN_REVIEW_EVIDENCE_COMMANDS.some((prefix) => trimmed === prefix || trimmed.startsWith(`${prefix} `))
 }
+
+/** A scope passage is a quotation, not a stray word: shorter than this it proves nothing. */
+const MIN_PASSAGE_LENGTH = 12
 
 const squash = (s: string): string => s.replace(/\s+/g, ' ').trim()
 
@@ -333,6 +338,9 @@ export function evidenceErrors(evidence: PlanReviewEvidence, binding: PlanReview
     case 'scope': {
       if (evidence.passage === null) return ['scope evidence names a passage']
       const passage = squash(evidence.passage)
+      if (passage.length < MIN_PASSAGE_LENGTH) {
+        return [`scope passage ${JSON.stringify(evidence.passage)} is shorter than ${MIN_PASSAGE_LENGTH} characters`]
+      }
       if (!scopeTexts(binding.draft).some((text) => text.includes(passage))) {
         return [`scope passage ${JSON.stringify(evidence.passage)} is not a passage of the draft's agreed scope`]
       }

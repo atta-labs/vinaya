@@ -130,6 +130,10 @@ describe('plan-reviewer: reads and searches by the listed commands, and refuses 
     'rg --hostname-bin sh x',
     'rg --hostname-bin=sh x',
     'git grep -Osh x',
+    'git log --ext-d',
+    'git show --outp=/tmp/x',
+    'git diff --te HEAD',
+    'git grep --open-files-in-p=sh x',
     'git grep --open-files-in-pager=sh x',
     'rg x > /tmp/out',
     'git show HEAD:a.ts | sh'
