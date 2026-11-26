@@ -69,7 +69,7 @@ test('structural refusals take precedence without reading any field values', () 
     'Error: custom event refused (missing_field) [count]',
     'Error: custom event refused (extra_field) [extra]'
   ])
-  expect(logs.getFinishedLogRecords()).toEqual([])
+  expect(logs.getFinishedLogRecords().map((r) => r.eventName)).toEqual(Array(3).fill('vinaya.command.completed'))
 })
 
 test('unreadable custom fields produce value-free refusals', () => {
@@ -80,7 +80,7 @@ test('unreadable custom fields produce value-free refusals', () => {
     }
   })
   expect(errors.map(String)).toEqual(['Error: custom event refused (wrong_type) [count]'])
-  expect(logs.getFinishedLogRecords()).toEqual([])
+  expect(logs.getFinishedLogRecords().map((r) => r.eventName)).toEqual(['vinaya.command.completed'])
 })
 
 test('custom records use the declared name and refuse invalid fields without displaying values', () => {
@@ -95,8 +95,19 @@ test('custom records use the declared name and refuse invalid fields without dis
   handle.custom.recorded('team.checked', { path: 'private value', count: 'private value' })
   handle.custom.recorded('team.checked', { path: 'private value'.repeat(100), count: 1 })
   const records = logs.getFinishedLogRecords()
-  expect(records.map((e) => e.eventName)).toEqual(['team.checked'])
+  expect(records.map((e) => e.eventName)).toEqual([
+    'team.checked',
+    ...Array<string>(5).fill('vinaya.command.completed')
+  ])
   expect(records[0]?.attributes).toMatchObject({ path: '~/work', count: 1 })
+  expect(records.slice(1).map((e) => e.attributes['error.type'])).toEqual([
+    'undeclared',
+    'missing_field',
+    'extra_field',
+    'wrong_type',
+    'too_long'
+  ])
+  expect(JSON.stringify(records.slice(1))).not.toContain('private value')
   expect(errors.map(String)).toEqual([
     'Error: custom event refused (undeclared) []',
     'Error: custom event refused (missing_field) [count]',
@@ -113,4 +124,38 @@ test('connecting with a Vinaya event declaration fails through the callback', ()
   expect(errors).toHaveLength(1)
   expect(String(errors[0])).toContain('namespace is reserved')
   expect(logs.getFinishedLogRecords()).toEqual([])
+})
+
+test('a custom event reads reported on a governed handle, and every other record keeps governed', () => {
+  const { handle, logs } = harness({
+    provenance: 'governed',
+    destination: { events: { 'team.checked': { fields: { count: 'number' } } } }
+  })
+  handle.custom.recorded('team.checked', { count: 1 })
+  handle.command.completed({ action: 'x.run', result: 'ok' })
+  const [custom, other] = logs.getFinishedLogRecords()
+  expect(custom?.attributes['vinaya.provenance']).toBe('reported')
+  expect(other?.attributes['vinaya.provenance']).toBe('governed')
+})
+
+test('a refused custom event writes one log.emit refused record with no field value, and still reaches onError', () => {
+  const { handle, logs, errors } = harness({
+    provenance: 'governed',
+    destination: { events: { 'team.checked': { fields: { count: 'number' } } } }
+  })
+  handle.custom.recorded('team.checked', { count: 'secret-value' })
+  handle.custom.recorded('ghp_notaname', { count: 1 })
+  const records = logs.getFinishedLogRecords()
+  expect(records.map((r) => r.eventName)).toEqual(['vinaya.command.completed', 'vinaya.command.completed'])
+  expect(records[0]?.attributes).toMatchObject({
+    'vinaya.outside.action': 'log.emit',
+    'vinaya.outside.target': 'team.checked',
+    'vinaya.result': 'refused',
+    'error.type': 'wrong_type',
+    'vinaya.provenance': 'governed'
+  })
+  expect(records[1]?.attributes['vinaya.outside.target']).toBeUndefined()
+  expect(records[1]?.attributes['error.type']).toBe('undeclared')
+  expect(JSON.stringify(records)).not.toContain('secret-value')
+  expect(errors).toHaveLength(2)
 })

@@ -74,7 +74,7 @@ The GenAI conventions version the SDK stamps on its records is:
 | `log.forge.written` | event `vinaya.forge.written` | A forge write made |
 | `log.action.verified` | event `vinaya.action.verified` | One outside action: success, failure, uncertain |
 | `log.command.completed` | event `vinaya.command.completed` | A command: ok, error, refused, timeout, cancelled, unavailable |
-| `log.custom.recorded` | event `<namespace>.<name>` | A declared event and its fields |
+| `log.custom.recorded` | event `<namespace>.<name>` | A declared event and its fields; the record is marked reported whatever the handle's provenance. A refused event writes no such record: it writes one `vinaya.command.completed` record, action `log.emit`, result `refused`, the refusal's reason as its error type, and the event's name as target only when it is shaped like a declared name |
 
 The handle also has `flush()`, `shutdown()` and `writeSpan()` (a span whose start and end times the caller already has), which record nothing of their own.
 
@@ -128,7 +128,8 @@ A line is set aside, with a rejected receipt and an entry in `setAside` (not in 
 
 ## 7. The rules every handle keeps
 
-- **It never throws.** A failure goes to `onError`; a handle that could not open records nothing and still has every function.
+- **It never throws.** A failure goes to `onError`; a handle that could not open records nothing and still has every function. A refused custom event is recorded as a refusal record and also reaches `onError`; recording the refusal never throws.
+- **Provenance is the handle's, except for a team's own event.** Every record a handle writes carries the handle's provenance; a declared custom event is always reported.
 - **Absent is absent.** A field not given is not written, never an empty value or a default.
 - **No content is recorded.** Prompts, replies and file contents are not attributes; only names, counts, results and short reasons are.
 - **Free text is capped at 500 characters** after redaction; a longer value is cut so that it ends with `…`, which counts within the 500. A declared custom event's text field over the cap is refused.

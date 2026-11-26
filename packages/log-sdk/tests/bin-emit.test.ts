@@ -29,10 +29,27 @@ test('emit records a declaration and reports usage errors and field-only refusal
       expect(bad.stderr.toString()).toContain(reason)
       expect(bad.stderr.toString()).not.toContain('private-value')
     }
+    // Each call is its own process and writer, so records are compared without their order.
+    const refusals = (await repo.read()).records.filter((r) => r.name === 'vinaya.command.completed')
+    expect(refusals.map((r) => r.attributes['error.type']).sort()).toEqual([
+      'missing_field',
+      'undeclared',
+      'wrong_type'
+    ])
+    expect(refusals.find((r) => r.attributes['error.type'] === 'undeclared')?.attributes).toMatchObject({
+      'vinaya.outside.action': 'log.emit',
+      'vinaya.outside.target': 'acme.other',
+      'vinaya.result': 'refused'
+    })
+    expect(JSON.stringify(refusals)).not.toContain('private-value')
     expect(repo.call(args).exitCode).toBe(2)
     expect(repo.call([...args, 'acme.deploy', '--json', '{"count":1}', '--task']).exitCode).toBe(2)
     expect(repo.call([...args, 'acme.deploy', '--json', '{']).exitCode).toBe(2)
-    expect((await repo.read()).records.map((r) => r.name)).toEqual(['acme.deploy'])
+    // Each refused event is recorded as one refusal record next to the recorded one.
+    expect((await repo.read()).records.map((r) => r.name).sort()).toEqual([
+      'acme.deploy',
+      ...Array<string>(3).fill('vinaya.command.completed')
+    ])
   } finally {
     repo.clean()
   }
