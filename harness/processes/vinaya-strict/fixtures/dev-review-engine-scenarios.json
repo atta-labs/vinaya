@@ -142,7 +142,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-entry.ts",
-        "sha256": "fdbff3a43ef5442e63e2a29004465f0f2b519eabc2ed938e59be28d23abcfe75"
+        "sha256": "3c4fcf90eea8949283dee6a21ec717ad22dcf759980f44951f906658d01f39ba"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-logging.ts",
