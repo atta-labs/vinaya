@@ -77,8 +77,10 @@ import {
   type DispatchBlockerClass,
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
-  type DispatchGateInput
+  type DispatchGateInput,
+  issueReadFailedMessage
 } from '../../tools/dispatch-gate'
+import { readTaskIssue, type TaskIssueRead } from '../../tools/task-issue-read'
 import { fetchForgeFactsByIssue } from '../../tools/task-contract/forge/fetch-forge-facts'
 import { parseRationaleDeps } from '../../tools/task-contract/forge/parse-rationale-deps'
 import { resolveDuplicateTasks } from '../../tools/task-contract/forge/list-tasks'
@@ -86,7 +88,11 @@ import { resolvePriorTrancheArchival } from '../../tools/prior-tranche-archival'
 import { createForgeSource } from '../../tools/sources/forge-adapter.js'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { resolveTrustedPrincipals } from '../../integration/config/compose'
-import { exitOnIncompleteForgeSnapshot, snapshotIssue } from '@harness/kernel/adapters/code-host/github/forge-snapshot'
+import {
+  exitOnIncompleteForgeSnapshot,
+  ForgeSnapshotIssueNotFoundError,
+  snapshotIssue
+} from '@harness/kernel/adapters/code-host/github/forge-snapshot'
 import { containedAbs } from '@harness/kernel/gates/ops'
 import { dependsOnFactFromEdge, type EdgeFactsSubset, type EdgeTaskRef, resolveEdge } from '../../tools/edge-resolve'
 import { resolveSiblingConflictFacts } from '../sibling-conflict-facts'
@@ -242,25 +248,25 @@ function containedRealPath(root: string, p: string): string | null {
 type IssueJson = { number: number; state: 'OPEN' | 'CLOSED'; body: string; labels: { name: string }[] }
 
 /** The backlog Issue — from the run's forge snapshot in CI when it is the task Issue, else `gh issue view`. */
-function fetchIssueJson(issueNumber: number): IssueJson | null {
+function fetchIssueJson(issueNumber: number): TaskIssueRead<IssueJson> {
   try {
     const fromSnapshot = snapshotIssue(issueNumber)
     if (fromSnapshot !== null) {
       return {
-        number: fromSnapshot.number,
-        state: fromSnapshot.state,
-        body: fromSnapshot.body,
-        labels: fromSnapshot.labels
+        outcome: 'read',
+        issue: {
+          number: fromSnapshot.number,
+          state: fromSnapshot.state,
+          body: fromSnapshot.body,
+          labels: fromSnapshot.labels
+        }
       }
     }
-    const out = execFileSync('gh', ['issue', 'view', String(issueNumber), '--json', 'number,state,body,labels'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-    return JSON.parse(out) as IssueJson
-  } catch {
-    return null
+  } catch (err) {
+    if (err instanceof ForgeSnapshotIssueNotFoundError) return { outcome: 'missing' }
+    return { outcome: 'failed', error: err instanceof Error ? err.message : String(err) }
   }
+  return readTaskIssue<IssueJson>(['issue', 'view', String(issueNumber), '--json', 'number,state,body,labels'])
 }
 
 /**
@@ -346,13 +352,17 @@ function exitWithGateVerdict(
  * unchanged.
  */
 async function runIssueMode(issueNumber: number): Promise<void> {
-  const issueJson = fetchIssueJson(issueNumber)
-  if (!issueJson) {
+  const issueRead = fetchIssueJson(issueNumber)
+  if (issueRead.outcome === 'failed') {
+    fail(issueReadFailedMessage('dispatch-gate', issueNumber, issueRead.error), recoveryPromptFor('issue-read-failed'))
+  }
+  if (issueRead.outcome === 'missing') {
     fail(
       `dispatch-gate issue-existence: Issue #${issueNumber} does not resolve on the forge.`,
       'Confirm the Issue number is correct and `gh auth status` passes, then re-run `vinaya-check dispatch-readiness`.'
     )
   }
+  const issueJson = issueRead.issue
   if (issueJson.labels.some((l) => l.name.startsWith('vinaya/tranche:'))) {
     fail(
       `dispatch-gate: Issue #${issueNumber} carries a vinaya/tranche:* label — it belongs to a tranche, not the tranche-less backlog path.`,
@@ -614,6 +624,8 @@ export function recoveryPromptFor(blockerClass: DispatchBlockerClass): string {
       return 'This is an INTERNAL parser-bug report, not a real dispatch gate — a task cannot depend on itself, so there is nothing here to wait for or resolve. Do NOT work around it and do NOT skip the hook. Report it upstream, and re-run once the rationale text is corrected or the parser fix ships.'
     case 'issue-existence':
       return 'This task has no resolvable Issue yet. Wait for the Planner to cut the Issue (or fix the phantom reference in the topology), then re-run `vinaya-check dispatch-readiness`.'
+    case 'issue-read-failed':
+      return "The forge could not be read for this task's Issue, so whether it exists is unknown — this is not a claim that the Issue is missing. Re-run `vinaya-check dispatch-readiness` once the forge answers; if it keeps failing, check forge access (network, rate limit, credentials)."
     case 'rationale':
       return "The task's Issue fails the rationale gate. Ask the Planner to complete the eight-field rationale on the Issue body, then re-run `vinaya-check dispatch-readiness`."
     case 'depends-on-unresolvable':

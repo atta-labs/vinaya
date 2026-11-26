@@ -95,8 +95,10 @@ import { deriveSection7 } from '../../tools/task-contract/derive-section7'
 import { issueBranchName } from '../../tools/task-contract/task-branch-identity'
 import { resolveNewestFrozenBrief } from '../../tools/task-contract/brief-validation'
 import { type BaselineEntry, captureBaseline, compareToBaseline } from '../baseline-capture'
+import { readTaskIssue, type TaskIssueRead } from '../../tools/task-issue-read'
 import {
   checkDispatchReadiness,
+  issueReadFailedMessage,
   type DispatchConflictsWithFact,
   type DispatchDependsOnFact,
   type DispatchPriorTaskFact
@@ -199,21 +201,22 @@ type IssueJson = {
   milestone: { number: number; title: string } | null
 }
 
-const issueCache = new Map<number, IssueJson | null>()
+/**
+ * The task's Issue with its three outcomes (read, missing, failed), a retry of
+ * a connection failure, and a cache of successful reads only — all in
+ * `task-issue-read.ts`. A failed read keeps `gh`'s standard error.
+ */
+function ghIssueRead(num: number, repo: RepoRef, retry = true): TaskIssueRead<IssueJson> {
+  return readTaskIssue<IssueJson>(
+    ['issue', 'view', String(num), '-R', `${repo.owner}/${repo.repo}`, '--json', 'number,state,body,labels,milestone'],
+    { retry }
+  )
+}
 
-function ghIssueView(num: number, repo: RepoRef): IssueJson | null {
-  if (issueCache.has(num)) return issueCache.get(num) ?? null
-  const result = shJson<IssueJson>('gh', [
-    'issue',
-    'view',
-    String(num),
-    '-R',
-    `${repo.owner}/${repo.repo}`,
-    '--json',
-    'number,state,body,labels,milestone'
-  ])
-  issueCache.set(num, result)
-  return result
+/** The Issue when read, else `null` — for a caller that does not tell a missing Issue from a failed read. */
+function ghIssueView(num: number, repo: RepoRef, retry = true): IssueJson | null {
+  const read = ghIssueRead(num, repo, retry)
+  return read.outcome === 'read' ? read.issue : null
 }
 
 /**
@@ -675,7 +678,8 @@ function resolvePriorTask(
   if (idx <= 0) return null
   const prior = tranche.tasks[idx - 1] as Task
   const pr = branchPrs.get(prior.id)
-  const issueJson = prior.issue !== null ? ghIssueView(prior.issue, repo) : null
+  // Fills a dormant field only, so one attempt is enough: no wait for it.
+  const issueJson = prior.issue !== null ? ghIssueView(prior.issue, repo, false) : null
   return {
     id: prior.id,
     issue: prior.issue,
@@ -1220,7 +1224,9 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
     process.exit(1)
   }
 
-  const issueJson = task.issue !== null ? ghIssueView(task.issue, repo) : null
+  const issueRead = task.issue !== null ? ghIssueRead(task.issue, repo) : null
+  const issueJson = issueRead?.outcome === 'read' ? issueRead.issue : null
+  const issueReadFailed = issueRead?.outcome === 'failed' ? issueRead.error : undefined
   const issueRationalePass = issueJson ? checkIssueRationale(issueJson.body).status === 'pass' : true
 
   const branchPrs = fetchTrancheBranchPrs(trancheSlug, repo)
@@ -1243,6 +1249,7 @@ async function runGateMode(trancheSlug: string, taskId: string): Promise<void> {
       task.issue !== null && issueJson
         ? { number: task.issue, state: issueJson.state === 'OPEN' ? 'open' : 'closed' }
         : null,
+    ...(issueReadFailed !== undefined ? { issueReadFailed } : {}),
     issueRationalePass,
     dependsOn,
     conflictsWith,
@@ -1333,11 +1340,16 @@ async function runGateModeForIssue(issueNumber: number): Promise<void> {
     process.exit(1)
   }
 
-  const issueJson = ghIssueView(issueNumber, repo)
-  if (!issueJson) {
+  const issueRead = ghIssueRead(issueNumber, repo)
+  if (issueRead.outcome === 'failed') {
+    console.error(issueReadFailedMessage('verify-dispatch', issueNumber, issueRead.error))
+    process.exit(1)
+  }
+  if (issueRead.outcome === 'missing') {
     console.error(`verify-dispatch issue-existence: Issue #${issueNumber} does not resolve on the forge.`)
     process.exit(1)
   }
+  const issueJson = issueRead.issue
   if (issueJson.labels.some((l) => l.name.startsWith('vinaya/tranche:'))) {
     console.error(
       `verify-dispatch: Issue #${issueNumber} carries a vinaya/tranche:* label — it belongs to a tranche; use \`verify-dispatch <tranche> <n>\` instead of --issue.`

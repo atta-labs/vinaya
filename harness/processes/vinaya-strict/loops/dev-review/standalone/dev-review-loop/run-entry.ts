@@ -403,6 +403,8 @@ export async function initializeRunEntry(c: LoopRunContext): Promise<void> {
 
   // The run's records, whichever sink writes them, belong to the one run this task names.
   process.env.VINAYA_RUN_ID = c.runId
+  // The driver started this work, so its records read parent-attributed; say so before the first record.
+  runRecorder().launching()
   // So is every record the harness writes through the process's own Log handle: an outside action, a command.
   runRecorder().bind({ runId: c.runId })
 

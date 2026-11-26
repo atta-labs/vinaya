@@ -63,6 +63,19 @@ describe('checkDispatchReadiness', () => {
     expect(result.blockers[0]).toContain('phantom reference')
   })
 
+  it('blocks a failed read of the Issue as issue-read-failed, never as a phantom reference', () => {
+    const stderr = 'Post "https://api.github.com/graphql": dial tcp: lookup api.github.com: i/o timeout\n'
+    const result = checkDispatchReadiness(makeInput({ issue: null, issueReadFailed: stderr }))
+    expect(result.ready).toBe(false)
+    expect(result.blockerDetails.map((b) => b.class)).toEqual(['issue-read-failed'])
+    const message = result.blockers[0] ?? ''
+    expect(message).toContain('#326')
+    expect(message).toContain('could not be read')
+    expect(message).toContain('not a claim that the Issue is missing')
+    expect(message).toContain(stderr)
+    expect(message).not.toContain('phantom reference')
+  })
+
   it('blocks when the Issue fails the rationale gate', () => {
     const result = checkDispatchReadiness(makeInput({ issueRationalePass: false }))
     expect(result.ready).toBe(false)

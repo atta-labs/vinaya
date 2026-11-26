@@ -64,6 +64,8 @@ export type RunRecorderDeps = {
   sender: () => Pick<LocalCopySender, 'request' | 'remember' | 'drain'>
   home: () => string
   cwd: () => string
+  /** The role and task the process's environment names; read when a handle opens. Absent: the process's own environment. */
+  environment?: () => { role?: string | undefined; task?: string | undefined }
   /** Called once per process with the first failure; the recorder never throws. */
   onError: (error: unknown) => void
   connect?: typeof connect
@@ -185,6 +187,17 @@ export function createRunRecorder(deps: RunRecorderDeps) {
       report(error)
     }
   }
+  /** Set only by a process that started the work itself (the loop driver, the dispatch); nothing else upgrades trust. */
+  let launches = false
+  /**
+   * How far the records this process writes can be trusted for attribution. Only a process that launched the work
+   * says so; the environment is inherited by any child, so it only correlates, and a process with neither is unknown.
+   */
+  const trustNow = (): 'parent_attributed' | 'env_correlated' | 'unavailable' => {
+    if (launches) return 'parent_attributed'
+    const env = deps.environment?.() ?? { role: process.env.VINAYA_ROLE, task: process.env.VINAYA_TASK }
+    return env.role || env.task ? 'env_correlated' : 'unavailable'
+  }
   const idleProcessor = { forceFlush: async () => {}, shutdown: async () => {} }
   const runIdNow = (): string => bound.runId ?? deps.runId()
 
@@ -197,7 +210,9 @@ export function createRunRecorder(deps: RunRecorderDeps) {
     const repo = repository ?? bound.repository ?? deps.repository()
     const place = deps.place(repo)
     if (place === undefined) return undefined
-    const key = `${runId}\0${place.folder}\0${repo ?? ''}\0${workRefOverride ?? ''}`
+    // A handle's trust is fixed when it opens, so the trust is part of what names it.
+    const trust = trustNow()
+    const key = `${runId}\0${place.folder}\0${repo ?? ''}\0${workRefOverride ?? ''}\0${trust}`
     const known = handles.get(key)
     if (known !== undefined) return known
     const home = deps.home()
@@ -222,7 +237,7 @@ export function createRunRecorder(deps: RunRecorderDeps) {
       vinayaHome: join(home, '.vinaya'),
       home,
       provenance: 'governed',
-      trust: 'parent_attributed',
+      trust,
       identity: runIdentity,
       ...(identity === undefined ? {} : { processName: identity.name, serviceVersion: identity.version }),
       ...(workRef === undefined ? {} : { workRef }),
@@ -315,6 +330,13 @@ export function createRunRecorder(deps: RunRecorderDeps) {
   }
 
   return {
+    /**
+     * States that this process started the work its records describe, so they read parent-attributed. Call it before
+     * the process's first record: a handle opened earlier keeps the weaker trust it opened with.
+     */
+    launching(): void {
+      launches = true
+    },
     /** Names the run and repository this process's records belong to, for every call that names neither. */
     bind(run: { runId?: string; repository?: string; narrate?: AgentRecordNarrator; effort?: string }): void {
       bound.runId = run.runId

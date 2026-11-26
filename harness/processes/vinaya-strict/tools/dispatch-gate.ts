@@ -142,6 +142,13 @@ export type DispatchGateInput = {
   task: Task
   /** null when the task has no Issue (#TBD/blank) OR the Issue number doesn't resolve on the forge (phantom ref). */
   issue: DispatchIssueFact
+  /**
+   * Set when the read of the task's Issue failed (`gh`'s standard error,
+   * verbatim). The Issue is then neither known nor known missing, so the gate
+   * blocks as `issue-read-failed` and never as a phantom reference. `issue`
+   * stays `null` beside it.
+   */
+  issueReadFailed?: string
   /** `checkIssueRationale` result for this task's Issue — irrelevant (treated as passing) when `issue` is null. */
   issueRationalePass: boolean
   dependsOn: DispatchDependsOnFact[]
@@ -182,12 +189,24 @@ export type DispatchGateInput = {
 export type DispatchBlockerClass =
   | 'internal-self-dependency'
   | 'issue-existence'
+  | 'issue-read-failed'
   | 'rationale'
   | 'depends-on-unresolvable'
   | 'depends-on-not-merged'
   | 'depends-on-read-failed'
   | 'conflicts-with'
   | 'prior-tranche-archival'
+
+/**
+ * The text of a failed read of the task's Issue, shared by the gate and the
+ * scripts' Issue modes: it names the Issue, says the forge could not be read
+ * and that the Issue is not claimed missing, and carries `gh`'s standard error
+ * verbatim and untrimmed so a connection-failure check on the output still
+ * recognises it.
+ */
+export function issueReadFailedMessage(prefix: string, issueNumber: number, error: string): string {
+  return `${prefix} issue-read-failed: the forge could not be read for Issue #${issueNumber}, so whether it exists is unknown — this is not a claim that the Issue is missing. gh reported: ${error}`
+}
 
 /** A blocker's machine-readable class, beside the human string it always also carries. */
 export type DispatchBlocker = { class: DispatchBlockerClass; message: string }
@@ -250,6 +269,8 @@ export function checkDispatchReadiness(input: DispatchGateInput): DispatchResult
       'issue-existence',
       `dispatch-gate issue-existence: ${taskLabel} has no Issue (#TBD or blank) in the topology — not dispatchable until the Planner cuts the Issue.`
     )
+  } else if (input.issueReadFailed !== undefined) {
+    push('issue-read-failed', issueReadFailedMessage('dispatch-gate', task.issue, input.issueReadFailed))
   } else if (input.issue === null) {
     // Row names an Issue number, but it doesn't resolve on the forge — phantom ref (T1's fail class).
     push(

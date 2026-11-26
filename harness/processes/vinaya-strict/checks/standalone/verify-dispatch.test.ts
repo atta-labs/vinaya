@@ -399,12 +399,20 @@ describe('(d) sh()/shJson() other call sites are untouched', () => {
       "sh('git', ['ls-remote', '--heads', 'origin', branch])",
       "sh('git', ['fetch', 'origin', branch, '--quiet'])",
       "sh('git', ['log', '-1', '--format=%cI'])",
-      "'issue',\n    'view',",
-      "'--json',\n    'number,state,body,labels,milestone'",
       "'--json',\n      'number,headRefName,state,mergedAt',"
     ]) {
       expect(src).toContain(needle)
     }
+    // The task Issue's read goes through the shared three-outcome read, which
+    // keeps `gh`'s standard error; the same arguments as before, in one call.
+    const issueRead = src.match(/readTaskIssue<IssueJson>\(\s*\[([\s\S]*?)\],/)
+    expect(issueRead).not.toBeNull()
+    const issueReadArgs = issueRead?.[1] ?? ''
+    expect(issueReadArgs.replace(/\s+/g, ' ')).toContain("'issue', 'view', String(num), '-R'")
+    expect(issueReadArgs).toContain("'--json'")
+    expect(issueReadArgs).toContain("'number,state,body,labels,milestone'")
+    // No cache of results is kept here: a failed read must not be remembered.
+    expect(src).not.toContain('issueCache')
     // The capture helper is scoped to currentFindingCounts's two tool
     // invocations only — defined once, called exactly twice.
     const occurrences = src.split('captureStreams(').length - 1
@@ -470,7 +478,12 @@ describe('(e) every gh invocation carries an explicit repo target (Part 1, task 
     // the sixth. Back to 5: the open-Issues read of the prior-tranche archival
     // resolution moved to the forge-state modules, which read through the
     // async Issue list.
-    expect(ghCommands.length).toBe(5)
+    // 4, not 5: the task Issue's read moved to `readTaskIssue`, which is scanned below.
+    expect(ghCommands.length).toBe(4)
+    const taskIssueRead = src.match(/readTaskIssue<IssueJson>\(\s*\[([\s\S]*?)\],/)
+    expect(taskIssueRead).not.toBeNull()
+    expect(taskIssueRead?.[1]).toContain("'-R'")
+    expect(taskIssueRead?.[1]).toMatch(/`\$\{repo\.owner\}\/\$\{repo\.repo\}`/)
     for (const argsText of ghCommands) {
       if (argsText.includes("'graphql'")) {
         // `gh api` accepts no `-R`; the repo target is the `owner`/`repo` GraphQL variables.

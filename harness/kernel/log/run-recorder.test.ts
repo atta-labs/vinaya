@@ -17,7 +17,15 @@ const IDENTITY = {
   processDigest: 'a'.repeat(64)
 }
 
-function setup(options: { off?: boolean; root?: string; identity?: typeof IDENTITY | {}; folder?: string } = {}) {
+function setup(
+  options: {
+    off?: boolean
+    root?: string
+    identity?: typeof IDENTITY | {}
+    folder?: string
+    environment?: { role?: string; task?: string }
+  } = {}
+) {
   const dir = mkdtempSync(join(tmpdir(), 'vinaya-run-recorder-'))
   const folder = options.folder ?? join(dir, 'logs')
   const errors: unknown[] = []
@@ -37,6 +45,7 @@ function setup(options: { off?: boolean; root?: string; identity?: typeof IDENTI
         drained += 1
       }
     }),
+    environment: () => options.environment ?? {},
     home: () => dir,
     cwd: () => options.root ?? mkdtempSync(join(tmpdir(), 'vinaya-run-recorder-root-')),
     onError: (e) => errors.push(e)
@@ -326,6 +335,35 @@ test('a second recorder for the same run in a new process connects with the same
   const all = second.resources()
   expect(all.length).toBeGreaterThanOrEqual(2)
   expect(new Set(all.map((r) => JSON.stringify(r))).size).toBe(1)
+})
+
+/** The trust and provenance the first agent span's resource and attributes carry. */
+function trustOf(setupResult: ReturnType<typeof setup>): { trust: unknown; provenance: unknown } {
+  const [resource] = setupResult.resources()
+  const [span] = setupResult.spans()
+  return {
+    trust: resource?.['vinaya.trust'] ?? attribute(span, 'vinaya.trust'),
+    provenance: resource?.['vinaya.provenance'] ?? attribute(span, 'vinaya.provenance')
+  }
+}
+
+test('a launching process writes parent_attributed, one with a role or task in its environment env_correlated, a bare one unavailable; provenance stays governed', () => {
+  const launched = setup({ environment: {} })
+  launched.recorder.launching()
+  launched.recorder.turn({ seat: 'developer', key: 'l' }).returned()
+  expect(trustOf(launched)).toEqual({ trust: 'parent_attributed', provenance: 'governed' })
+
+  const byRole = setup({ environment: { role: 'developer' } })
+  byRole.recorder.turn({ seat: 'developer', key: 'r' }).returned()
+  expect(trustOf(byRole)).toEqual({ trust: 'env_correlated', provenance: 'governed' })
+
+  const byTask = setup({ environment: { task: '404' } })
+  byTask.recorder.turn({ seat: 'developer', key: 't' }).returned()
+  expect(trustOf(byTask)).toEqual({ trust: 'env_correlated', provenance: 'governed' })
+
+  const bare = setup({ environment: {} })
+  bare.recorder.turn({ seat: 'developer', key: 'b' }).returned()
+  expect(trustOf(bare)).toEqual({ trust: 'unavailable', provenance: 'governed' })
 })
 
 test("each agent turn records its effort: the one named, the run's own, else medium", () => {

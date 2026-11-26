@@ -58,7 +58,7 @@ function writeFakeGh(dir: string, issueJson: Record<string, unknown> | null): vo
     p,
     `#!/bin/sh
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
-${body === null ? '  exit 1' : `  printf '%s' '${body.replace(/'/g, "'\\''")}'\n  exit 0`}
+${body === null ? "  echo 'GraphQL: Could not resolve to an issue or pull request with the number of 1. (repository.issue)' >&2\n  exit 1" : `  printf '%s' '${body.replace(/'/g, "'\\''")}'\n  exit 0`}
 fi
 if [ "$1" = "api" ]; then
   case "$2" in

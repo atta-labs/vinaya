@@ -1786,6 +1786,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
   mkdirSync(runDir, { recursive: true })
   const tracePath = join(runDir, 'trace.json')
   const trace = createTraceRecorder({ task: args.task, agent: args.agent, loopId: options.loopId })
+  // The driver started this work, so its records read parent-attributed; say so before the first record.
+  runRecorder().launching()
   // The run's Log handle: the id every record of the run carries, the repository, and the driver log each agent
   // record is narrated into as it is written.
   runRecorder().bind({
