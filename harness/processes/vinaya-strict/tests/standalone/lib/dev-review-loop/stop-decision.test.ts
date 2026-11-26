@@ -10,7 +10,7 @@ import {
   classifyDriverError,
   decideStop,
   ENGINE_FORGE_RETRY_MAX_ATTEMPTS,
-  ENGINE_FORGE_RETRY_WAIT_MS,
+  ENGINE_FORGE_RETRY_WAITS_MS,
   pauseForDriverError,
   uncaughtErrorDetail,
   type DriverErrorClass,
@@ -93,19 +93,23 @@ describe('decideStop — driver errors', () => {
     }
   })
 
-  test('the Engine runner retries a forge connection failure after the fixed wait, within the fixed bound', () => {
+  test('the Engine runner retries a forge connection failure after the growing waits, within the fixed bound', () => {
+    expect([...ENGINE_FORGE_RETRY_WAITS_MS]).toEqual([15_000, 30_000, 60_000, 60_000, 60_000, 60_000])
     for (let used = 0; used < ENGINE_FORGE_RETRY_MAX_ATTEMPTS; used += 1) {
       expect(decideStop({ ...base, runner: 'engine', errorClass: 'forge_connection', attempts: used })).toEqual({
         type: 'retry',
-        waitMs: ENGINE_FORGE_RETRY_WAIT_MS,
+        waitMs: [15_000, 30_000, 60_000, 60_000, 60_000, 60_000][used] ?? 0,
         bound: { kind: 'attempts', used: used + 1, max: ENGINE_FORGE_RETRY_MAX_ATTEMPTS }
       })
     }
   })
 
   test('the bound is a few minutes in total', () => {
-    expect(ENGINE_FORGE_RETRY_WAIT_MS * ENGINE_FORGE_RETRY_MAX_ATTEMPTS).toBeLessThanOrEqual(5 * 60_000)
-    expect(ENGINE_FORGE_RETRY_WAIT_MS * ENGINE_FORGE_RETRY_MAX_ATTEMPTS).toBeGreaterThanOrEqual(2 * 60_000)
+    const total = ENGINE_FORGE_RETRY_WAITS_MS.reduce((sum, ms) => sum + ms, 0)
+    expect(total).toBe(285_000)
+    expect(ENGINE_FORGE_RETRY_WAITS_MS).toHaveLength(ENGINE_FORGE_RETRY_MAX_ATTEMPTS)
+    expect(total).toBeLessThanOrEqual(5 * 60_000)
+    expect(total).toBeGreaterThanOrEqual(2 * 60_000)
   })
 
   test('once the bound is spent the Engine runner pauses as it did, for the infrastructure', () => {

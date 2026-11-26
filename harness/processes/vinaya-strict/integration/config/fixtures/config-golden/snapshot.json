@@ -9568,6 +9568,124 @@
         }
       ],
       "detail": "decisionRecords.path: must stay inside the repository — no `..` segment"
+    },
+    {
+      "value": {
+        "logs": {
+          "keepDays": 30
+        }
+      },
+      "accepted": true,
+      "data": {
+        "logs": {
+          "keepDays": 30
+        }
+      },
+      "resolved": {
+        "resolveReviewPolicy": {
+          "value": {
+            "codeReviewThreshold": "BLOCKER",
+            "securityThreshold": "HIGH",
+            "maxRounds": 3,
+            "maxTaskMinutes": 180,
+            "readyPushTimeoutMinutes": 20
+          }
+        },
+        "resolveGateCutovers": {
+          "value": {
+            "objectivesSinceIssue": null,
+            "briefSectionsSinceIssue": null,
+            "documentationSinceIssue": null,
+            "briefRulesSincePr": null,
+            "agentBoxesRefusedSincePr": null
+          }
+        },
+        "resolveCollisionThreshold": {
+          "value": 3
+        },
+        "resolveReleaseActor": {
+          "value": "github-actions[bot]"
+        },
+        "resolveSecurityScanCommand": {
+          "value": null
+        },
+        "resolveRuntimeDirSetting": {
+          "value": null
+        },
+        "resolveTrustAnchorRuntimeDir": {
+          "value": null
+        },
+        "resolveLogsSetting": {
+          "value": null
+        },
+        "resolveTrustAnchorLogsDestination": {
+          "value": null
+        },
+        "resolveLogsHeaderValues": {
+          "value": null
+        },
+        "resolveAgentVendors": {
+          "value": ["skills", "claude", "gemini"]
+        },
+        "isDefaultedAgentVendorPath": {
+          "value": [true, true, true, true, false]
+        },
+        "resolveTaskRunner": {
+          "value": "atta-engine"
+        },
+        "lintEnvDeclarations": {
+          "value": []
+        },
+        "decisionRecordsPathIssue": {
+          "value": null
+        },
+        "resolveTrustedPrincipals": {
+          "error": "no Principal is configured (vinaya.config.json on the default branch sets no \"principals\") — add \"principals\": [...] to vinaya.config.json on the default branch.",
+          "kind": "not-configured"
+        },
+        "loadTrustAnchorConfig": {
+          "result": {
+            "value": {
+              "logs": {
+                "keepDays": 30
+              }
+            }
+          },
+          "stdout": ""
+        }
+      }
+    },
+    {
+      "value": {
+        "logs": {
+          "keepDays": 0
+        }
+      },
+      "accepted": false,
+      "issues": [
+        {
+          "code": "too_small",
+          "path": ["logs", "keepDays"],
+          "message": "must be at least 1"
+        }
+      ],
+      "detail": "logs.keepDays: must be at least 1"
+    },
+    {
+      "value": {
+        "logs": {
+          "keepDays": 1.5
+        }
+      },
+      "accepted": false,
+      "issues": [
+        {
+          "code": "invalid_type",
+          "path": ["logs", "keepDays"],
+          "message": "must be a whole number of days"
+        }
+      ],
+      "detail": "logs.keepDays: must be a whole number of days"
     }
   ]
 }

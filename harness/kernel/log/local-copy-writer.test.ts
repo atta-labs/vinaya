@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as localCopyWriter from './local-copy-writer.js'
@@ -20,6 +20,17 @@ describe('the local copy has no converted earlier-format writer', () => {
     expect(typeof localCopyWriter.createLocalCopySender).toBe('function')
     expect(typeof localCopyWriter.resolveLocalCopyFolder).toBe('function')
     expect('createLocalCopyWriter' in localCopyWriter).toBe(false)
+  })
+})
+
+describe('the keep window beside the local copy folder', () => {
+  test("a repository's window is read from its settings, and an unattended or handed-directory process keeps the default", () => {
+    const cwd = tmp()
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify({ logs: { keepDays: 12 } }))
+    const base = { home: tmp(), cwd, handedRuntimeDir: undefined, unattended: false }
+    expect(localCopyWriter.resolveLocalCopySettings(base, 'a/b')?.keepDays).toBe(12)
+    expect(localCopyWriter.resolveLocalCopySettings({ ...base, unattended: true }, 'a/b')?.keepDays).toBe(90)
+    expect(localCopyWriter.resolveLocalCopySettings({ ...base, handedRuntimeDir: tmp() }, 'a/b')?.keepDays).toBe(90)
   })
 })
 

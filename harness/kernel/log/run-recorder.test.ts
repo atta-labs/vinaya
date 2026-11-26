@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { traceIdFor } from '@attalabs/vinaya-log-sdk'
@@ -23,6 +23,7 @@ function setup(
     root?: string
     identity?: typeof IDENTITY | {}
     folder?: string
+    keepDays?: number
     environment?: { role?: string; task?: string }
   } = {}
 ) {
@@ -35,7 +36,10 @@ function setup(
     runId: () => RUN,
     workRef: () => '404',
     repository: () => 'atta-labs/vinaya',
-    place: (repository) => (options.off ? undefined : { folder, repository }),
+    place: (repository) =>
+      options.off
+        ? undefined
+        : { folder, repository, ...(options.keepDays === undefined ? {} : { keepDays: options.keepDays }) },
     processIdentity: () => ({ name: 'Example', version: '1.2.3' }),
     ...(options.identity === undefined ? {} : { runIdentity: () => options.identity as typeof IDENTITY }),
     sender: () => ({
@@ -335,6 +339,34 @@ test('a second recorder for the same run in a new process connects with the same
   const all = second.resources()
   expect(all.length).toBeGreaterThanOrEqual(2)
   expect(new Set(all.map((r) => JSON.stringify(r))).size).toBe(1)
+})
+
+/** Plants a traces file last written `days` days ago in a recorder's repository folder; returns its path. */
+function plantOld(folder: string, name: string, days: number): string {
+  const directory = join(folder, 'atta-labs-vinaya')
+  mkdirSync(directory, { recursive: true })
+  const path = join(directory, name)
+  writeFileSync(path, '{}\n')
+  const when = new Date(Date.now() - days * 86_400_000)
+  utimesSync(path, when, when)
+  return path
+}
+
+test('the run handle cleans the local copy with the window the place carries', () => {
+  const configured = setup({ keepDays: 5 })
+  const old = plantOld(configured.folder, 'past~w1~000000000000.traces.jsonl', 10)
+  configured.recorder.turn({ seat: 'developer', key: 'turn-0' }).returned()
+  expect(existsSync(old)).toBe(false)
+  expect(configured.errors).toEqual([])
+})
+
+test('a place that carries no window cleans with the default of 90 days', () => {
+  const plain = setup()
+  const tenDays = plantOld(plain.folder, 'ten~w1~000000000000.traces.jsonl', 10)
+  const longAgo = plantOld(plain.folder, 'long~w1~000000000000.traces.jsonl', 120)
+  plain.recorder.turn({ seat: 'developer', key: 'turn-0' }).returned()
+  expect(existsSync(tenDays)).toBe(true)
+  expect(existsSync(longAgo)).toBe(false)
 })
 
 /** The trust and provenance the first agent span's resource and attributes carry. */

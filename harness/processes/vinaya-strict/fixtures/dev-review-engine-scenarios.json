@@ -90,7 +90,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/stop-decision.ts",
-        "sha256": "4863004089da6c88fb62535377050278437be19ddda6e1ead68906d01f662abe"
+        "sha256": "5f30147da75f735c44ff29465a3ee6cc4d019af3b5d14c0cb0778ec4fcb2077c"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.ts",

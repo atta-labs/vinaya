@@ -109,15 +109,15 @@ import {
   ROLE_HOST_BRIDGES,
   retryForgeRead,
   retryingForge,
+  type EngineForge,
+  liveDeveloperFacts,
+  liveRecovery,
   runDirectory,
   type EngineArgs,
   withLoadedFlow
 } from '../bin/run-engine'
 import { stagedPullRequestStore } from '../loops/dev-review/v2/flow-v2-live'
-import {
-  ENGINE_FORGE_RETRY_MAX_ATTEMPTS,
-  ENGINE_FORGE_RETRY_WAIT_MS
-} from '../loops/dev-review/standalone/dev-review-loop/stop-decision'
+import { ENGINE_FORGE_RETRY_MAX_ATTEMPTS } from '../loops/dev-review/standalone/dev-review-loop/stop-decision'
 import { VINAYA_LAUNCHED_ROLES } from '../integration/policies/launched-roles'
 import { createDispatchCapabilityTable } from '@harness/kernel/tools/host/dev-tools-host'
 import { attributeOf, createRunLifecycleWorld, eventNameOf } from './run-lifecycle-world'
@@ -2158,7 +2158,7 @@ describe('the Engine runner retries a forge connection failure on the newest-rul
       (ms) => waits.push(ms)
     )
     expect(forge.fetchNewestRulingOrdinal(1)).toBe(5)
-    expect(waits).toEqual([ENGINE_FORGE_RETRY_WAIT_MS])
+    expect(waits).toEqual([15_000])
   })
 
   test('a read that recovers is retried after the fixed wait and returns', () => {
@@ -2170,7 +2170,7 @@ describe('the Engine runner retries a forge connection failure on the newest-rul
       return 7
     }
     expect(retryForgeRead(read, (ms) => waits.push(ms))).toBe(7)
-    expect(waits).toEqual([ENGINE_FORGE_RETRY_WAIT_MS, ENGINE_FORGE_RETRY_WAIT_MS])
+    expect(waits).toEqual([15_000, 30_000])
   })
 
   test('a read that never recovers throws its error once the bound is spent, as before', () => {
@@ -2184,6 +2184,7 @@ describe('the Engine runner retries a forge connection failure on the newest-rul
         (ms) => waits.push(ms)
       )
     ).toThrow(failure)
+    expect(waits).toEqual([15_000, 30_000, 60_000, 60_000, 60_000, 60_000])
     expect(waits).toHaveLength(ENGINE_FORGE_RETRY_MAX_ATTEMPTS)
   })
 
@@ -2200,27 +2201,130 @@ describe('the Engine runner retries a forge connection failure on the newest-rul
     expect(waits).toEqual([])
   })
 
-  test('the wrapped forge retries both newest-ruling reads and leaves the rest alone', () => {
+  const RETRIED_READS = [
+    'fetchNewestRulingOrdinal',
+    'fetchNewestIssueRulingOrdinal',
+    'fetchFrozenBrief',
+    'resolveIssueObjectives',
+    'fetchSourceRevision',
+    'fetchIssueRulingsAfterBrief',
+    'fetchRulings',
+    'prBody',
+    'fetchLoopHistory'
+  ] as const
+  const NOT_RETRIED = [
+    'publishRound',
+    'postMarkedComment',
+    'createTaskWorktree',
+    'rerunFailedWorkflowJobs',
+    'refreshPrEvidence',
+    'fetchCiConclusion',
+    'fetchSettledCiConclusion',
+    'fetchMergeableState',
+    'findOpenPrForBranch',
+    'fetchFailingCheckRuns',
+    'fetchFailedCheckWorkflowRunIds',
+    'fetchConflictingFiles',
+    'resolveParentBranch',
+    'resolveHead',
+    'pullRequestView'
+  ] as const
+
+  test.each(RETRIED_READS)('the wrapped forge retries %s once after a connection failure', (name) => {
     const waits: number[] = []
     let calls = 0
     const forge = retryingForge(
       testForge({
-        fetchNewestRulingOrdinal: () => {
+        [name]: () => {
           calls += 1
           if (calls === 1) throw connectionFailure()
-          return 3
-        },
-        fetchNewestIssueRulingOrdinal: () => {
-          calls += 1
-          if (calls === 3) throw connectionFailure()
-          return 4
+          return 'value'
         }
-      }),
+      } as Partial<EngineForge>),
       (ms) => waits.push(ms)
     )
-    expect(forge.fetchNewestRulingOrdinal(1)).toBe(3)
-    expect(forge.fetchNewestIssueRulingOrdinal(1)).toBe(4)
-    expect(waits).toHaveLength(2)
+    expect((forge[name] as (...args: unknown[]) => unknown)(1)).toBe('value')
+    expect(calls).toBe(2)
+    expect(waits).toEqual([15_000])
+  })
+
+  test.each(RETRIED_READS)('the wrapped forge throws %s at once on a non-connection failure', (name) => {
+    const waits: number[] = []
+    const forge = retryingForge(
+      testForge({
+        [name]: () => {
+          throw new Error('HTTP 500')
+        }
+      } as Partial<EngineForge>),
+      (ms) => waits.push(ms)
+    )
+    expect(() => (forge[name] as (...args: unknown[]) => unknown)(1)).toThrow('HTTP 500')
+    expect(waits).toEqual([])
+  })
+
+  test('the wrapped forge calls each excluded read exactly once on a connection failure, with no wait', () => {
+    for (const name of NOT_RETRIED) {
+      const waits: number[] = []
+      let calls = 0
+      const forge = retryingForge(
+        testForge({
+          [name]: () => {
+            calls += 1
+            throw connectionFailure()
+          }
+        } as Partial<EngineForge>),
+        (ms) => waits.push(ms)
+      )
+      expect(() => (forge[name] as (...args: unknown[]) => unknown)(1)).toThrow()
+      expect(calls).toBe(1)
+      expect(waits).toEqual([])
+    }
+  })
+
+  test('the Developer facts step retries its forge read and takes the injected wait', async () => {
+    const waits: number[] = []
+    let calls = 0
+    const facts = liveDeveloperFacts({
+      forge: testForge({
+        fetchFrozenBrief: () => {
+          calls += 1
+          if (calls === 1) throw connectionFailure()
+          throw new Error('stop after the retried read')
+        }
+      }),
+      forgeRetrySleep: (ms) => waits.push(ms),
+      policy: (() => DEFAULT_REVIEW_POLICY) as never,
+      task: 1,
+      repoRoot: '/nonexistent',
+      runtimeDir: '/nonexistent',
+      branch: 'task/x/1',
+      worktreePath: '/nonexistent',
+      round: () => 1
+    })
+    await expect(facts()).rejects.toThrow('stop after the retried read')
+    expect(waits).toEqual([15_000])
+  })
+
+  test('the recovery reads retry the loop history and take the injected wait', () => {
+    const waits: number[] = []
+    let calls = 0
+    const recovery = liveRecovery({
+      args: {} as never,
+      runtimeDir: '/nonexistent',
+      taskInput: {} as never,
+      forge: testForge({
+        fetchLoopHistory: () => {
+          calls += 1
+          if (calls === 1) throw connectionFailure()
+          return [] as never
+        }
+      }),
+      forgeRetrySleep: (ms) => waits.push(ms),
+      repo: null
+    })
+    recovery.fetchLoopHistory(1)
+    expect(calls).toBe(2)
+    expect(waits).toEqual([15_000])
   })
 })
 

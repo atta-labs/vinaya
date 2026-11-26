@@ -53,8 +53,13 @@ async function nextNewline(data: Buffer, offset: number, signal: AbortSignal): P
   return -1
 }
 
+/** The hash every per-line receipt key is built from: the line's file and offset, then its bytes. */
+function lineHash(identity: { file: string; offset: number }) {
+  return createHash('sha256').update(JSON.stringify(identity))
+}
+
 async function lineKey(identity: { file: string; offset: number }, line: Buffer, signal: AbortSignal) {
-  const hash = createHash('sha256').update(JSON.stringify(identity))
+  const hash = lineHash(identity)
   const block = 64 * 1024
   for (let start = 0; start < line.length; start += block) {
     if (signal.aborted) return undefined
@@ -62,6 +67,27 @@ async function lineKey(identity: { file: string; offset: number }, line: Buffer,
     if (line.length > block) await new Promise<void>((resolve) => setImmediate(resolve))
   }
   return hash.digest('hex')
+}
+
+/** The folder under a repository's local copy that holds the sender's delivery state. */
+export const DELIVERY_STATE_DIRECTORY = '.otlp-delivery'
+
+/**
+ * The names of the delivery state the sender keeps for one local-copy file: its two size markers, and the key
+ * every per-line receipt (`<key>.<signal>.pending`, `<key>.<hash>.sent`, `<key>.rejected.json`) starts with.
+ * `data` is the file's bytes; only lines ended by a newline are ever keyed.
+ */
+export function deliveryStateOf(name: string, data: Buffer): { markers: string[]; lineKeys: string[] } {
+  const lineKeys: string[] = []
+  let offset = 0
+  for (;;) {
+    const end = data.indexOf(10, offset)
+    if (end === -1) break
+    lineKeys.push(lineHash({ file: name, offset }).update(data.subarray(offset, end)).digest('hex'))
+    offset = end + 1
+  }
+  const stem = name.slice(0, -'.jsonl'.length)
+  return { markers: [`${stem}.seen`, `${stem}.done`], lineKeys }
 }
 
 function rejectedBeforePost(path: string): boolean {

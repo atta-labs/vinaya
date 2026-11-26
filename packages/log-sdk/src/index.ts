@@ -66,6 +66,7 @@ export {
 } from './writer/connect.js'
 export { EMIT_USAGE, readFields } from './bin/args.js'
 export {
+  DEFAULT_KEEP_DAYS,
   defaultRuntimeDir,
   type LogsSetting,
   type PassedSettings,

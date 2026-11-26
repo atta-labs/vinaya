@@ -20,7 +20,7 @@ import {
 import { SDK_VERSION } from '../contract/version.js'
 import type { CustomEventDeclarations } from '../contract/custom.js'
 import { createRunIdGenerator, type SpanParent, traceIdFor } from '../contract/ids.js'
-import { copyFilePrefix, copyFolder, createFileExporters } from '../local-copy/file-exporters.js'
+import { cleanLocalCopy, copyFilePrefix, copyFolder, createFileExporters } from '../local-copy/file-exporters.js'
 import * as agent from './agent.js'
 import { type Attrs, guard, type InputVersions, type Work, type WriterCore } from './attributes.js'
 import { carryOn } from './carried.js'
@@ -82,6 +82,8 @@ export type ConnectOptions = {
   repoRoot?: string
   runtimeDir?: string
   destination?: LogsSetting
+  /** Days the local copy is kept; replaces `logs.keepDays` from the settings files, which a passed destination replaces too. */
+  keepDays?: number
   headers?: Record<string, string>
   /** Carried on every record as vinaya.work.ref. */
   workRef?: string
@@ -267,6 +269,7 @@ export function connect(options: ConnectOptions): LogHandle {
 
   const passed: PassedSettings = {}
   if (options.destination !== undefined) passed.destination = options.destination
+  if (options.keepDays !== undefined) passed.keepDays = options.keepDays
   if (options.headers !== undefined) passed.headers = options.headers
   if (options.runtimeDir !== undefined) passed.runtimeDir = options.runtimeDir
 
@@ -315,6 +318,16 @@ export function connect(options: ConnectOptions): LogHandle {
         repoRoot: options.repoRoot ?? process.cwd(),
         settings
       })
+      try {
+        cleanLocalCopy({
+          folder: copyFolder({ repository: options.repository, repoRoot: options.repoRoot ?? process.cwd(), settings }),
+          keepDays: settings.keepDays,
+          now: Date.now(),
+          keepWriterId: writerId
+        })
+      } catch (e) {
+        report(e)
+      }
       const reportExport = (result: { error?: Error }) => {
         if (result.error) report(result.error)
       }

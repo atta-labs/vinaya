@@ -38,7 +38,7 @@ import {
   type LocalCopyPlace,
   type LocalCopySender,
   type OtlpAddressDecision,
-  resolveLocalCopyFolder
+  resolveLocalCopySettings
 } from './local-copy-writer.js'
 import { configProvider, type ProvidedConfig } from '../config/loader/config-provider.js'
 import {
@@ -2070,7 +2070,7 @@ export async function resolveProcessOtlpAddress(source: {
 /** Where this process's local copy of a repository's runs is kept, from the process's own settings; `undefined` when recording is off. */
 export function processLocalCopyPlace(repository: string | undefined): LocalCopyPlace | undefined {
   const base = defaultDeps()
-  const folder = resolveLocalCopyFolder(
+  const found = resolveLocalCopySettings(
     {
       home: base.home(),
       cwd: base.cwd(),
@@ -2079,7 +2079,7 @@ export function processLocalCopyPlace(repository: string | undefined): LocalCopy
     },
     repository
   )
-  return folder === undefined ? undefined : { folder, repository }
+  return found === undefined ? undefined : { folder: found.folder, repository, keepDays: found.keepDays }
 }
 
 let processSender: LocalCopySender | undefined
