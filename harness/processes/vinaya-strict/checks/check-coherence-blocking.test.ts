@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'bun:test'
 import type { GhIssue } from '@harness/kernel/adapters/code-host/github/gh'
 import type { SlugMilestoneIndex } from '../tools/task-contract/forge/fetch-milestone'
-import type { TaskEntry } from './coherence-checks'
-import { evaluateA2, evaluateBranchL5, sweepOtherTranchesL5 } from './bin/check-coherence'
+import type { ForgeFacts, Task } from '../tools/task-contract/types'
+import { buildIssueEntries, buildTaskEntries, checkT2, type TaskEntry } from './coherence-checks'
+import { evaluateA2, evaluateBranchL5, sweepOtherTranchesL5, topologyIssueNumbers } from './bin/check-coherence'
 
 const SLUG = 'branch-tranche-v1'
 const AFTER_CUTOFF = '2026-08-01T00:00:00Z'
@@ -130,6 +131,54 @@ describe('evaluateA2 (branch tranche, blocking)', () => {
     const result = await evaluateA2(SLUG, [entry('1', 11, { issueState: 'open' })], '', async () => {
       throw new Error('must not read')
     })
+    expect(result.status).toBe('pass')
+  })
+})
+
+describe('duplicate task number: a closed not-planned Issue beside its replacement', () => {
+  const task = (issue: number): Task => ({
+    id: '3',
+    title: 'task 3',
+    issue,
+    projects: [],
+    dependsOn: [],
+    conflictsWith: [],
+    rationaleMarkdown: ''
+  })
+  // Both Issues read the shared task branch's merged pull request.
+  const mergedFacts = (stateReason: 'completed' | 'not_planned'): ForgeFacts => ({
+    ...(merged('3', 0).facts as ForgeFacts),
+    stateReason
+  })
+  const tasks = [task(103), task(104)]
+  const factsByIssue = new Map([
+    [103, mergedFacts('not_planned')],
+    [104, mergedFacts('completed')]
+  ])
+
+  it('builds one task-3 entry carrying the merged Issue’s facts', () => {
+    const entries = buildTaskEntries(SLUG, false, tasks, factsByIssue)
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.task.issue).toBe(104)
+    expect(entries[0]?.facts?.stateReason).toBe('completed')
+  })
+
+  it('passes A2 with the merged Issue’s close-out present', async () => {
+    const issueEntries = buildIssueEntries(SLUG, false, tasks, factsByIssue)
+    const result = await evaluateA2(SLUG, issueEntries, 'tok', async () => new Map([[104, true]]))
+    expect(result.status).toBe('pass')
+  })
+
+  it('fails A2 naming the merged Issue only when its close-out is absent', async () => {
+    const issueEntries = buildIssueEntries(SLUG, false, tasks, factsByIssue)
+    const result = await evaluateA2(SLUG, issueEntries, 'tok', async () => new Map([[104, false]]))
+    expect(result.status).toBe('fail')
+    expect(result.failures.map((f) => [f.code, f.issue])).toEqual([['archived-without-provenance', 104]])
+  })
+
+  it('keeps both Issues in the T2 topology set', () => {
+    expect(topologyIssueNumbers(tasks)).toEqual(new Set([103, 104]))
+    const result = checkT2(new Map([[SLUG, [103, 104]]]), new Map([[SLUG, topologyIssueNumbers(tasks)]]), SLUG)
     expect(result.status).toBe('pass')
   })
 })

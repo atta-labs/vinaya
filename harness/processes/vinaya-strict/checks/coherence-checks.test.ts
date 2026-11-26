@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 import type { GhIssue } from '@harness/kernel/adapters/code-host/github/gh'
 import {
+  buildIssueEntries,
+  buildTaskEntries,
   checkA1,
   checkA2,
   checkA3,
@@ -377,18 +379,65 @@ describe('A1: closed-without-merge', () => {
   })
 })
 
+// ---------- entry builders ----------------------------------------------------
+
+describe('buildIssueEntries / buildTaskEntries', () => {
+  const dropped = makeFacts({ issueState: 'closed', prState: 'merged', stateReason: 'not_planned' })
+  const standing = makeFacts({ issueState: 'closed', prState: 'merged', stateReason: 'completed' })
+  const tasks = [makeTask('3', 101), makeTask('3', 102), makeTask('4', null)]
+  const facts = new Map([
+    [101, dropped],
+    [102, standing]
+  ])
+
+  it('buildIssueEntries keeps one entry per Issue, each with its own facts', () => {
+    const entries = buildIssueEntries('t', false, tasks, facts)
+    expect(entries.map((e) => [e.task.issue, e.facts])).toEqual([
+      [101, dropped],
+      [102, standing],
+      [null, undefined]
+    ])
+  })
+
+  it('buildTaskEntries yields one entry per task number carrying the standing Issue’s facts', () => {
+    const entries = buildTaskEntries('t', false, tasks, facts)
+    expect(entries.map((e) => [e.task.id, e.task.issue, e.facts])).toEqual([
+      ['3', 102, standing],
+      ['4', null, undefined]
+    ])
+  })
+
+  it('buildTaskEntries lets an open Issue stand over a newer closed one', () => {
+    const open = makeFacts({ issueState: 'open' })
+    const entries = buildTaskEntries(
+      't',
+      false,
+      tasks.slice(0, 2),
+      new Map([
+        [101, open],
+        [102, dropped]
+      ])
+    )
+    expect(entries.map((e) => e.task.issue)).toEqual([101])
+  })
+
+  it('leaves facts undefined when the forge was unavailable', () => {
+    expect(buildTaskEntries('t', false, tasks, undefined).every((e) => e.facts === undefined)).toBe(true)
+  })
+})
+
 // ---------- A2: archived-without-provenance ----------------------------------
 
 describe('A2: archived-without-provenance', () => {
   it('pass — closed+merged entry with provenance present', () => {
     const entries = [makeEntry('iter-1', '1', 101, makeFacts({ issueState: 'closed', prState: 'merged' }))]
-    const map = new Map([['iter-1/1', true]])
+    const map = new Map([['101', true]])
     passesWithNoFailures(checkA2(entries, map))
   })
 
   it('fail — closed+merged entry with no provenance', () => {
     const entries = [makeEntry('iter-1', '1', 101, makeFacts({ issueState: 'closed', prState: 'merged' }))]
-    const map = new Map([['iter-1/1', false]])
+    const map = new Map([['101', false]])
     const r = checkA2(entries, map)
     expect(r.status).toBe('fail')
     expect(r.failures[0]!.task).toBe('1')
@@ -416,7 +465,7 @@ describe('A2: archived-without-provenance', () => {
     // which is exactly the point: not "no map entry, so nothing to report", but
     // "a would-fail map entry, still nothing to report, because facts are unknown".
     const entries = [makeEntry('iter-1', '1', 101, undefined)]
-    const map = new Map([['iter-1/1', false]])
+    const map = new Map([['101', false]])
     passesWithNoFailures(checkA2(entries, map))
   })
 
@@ -429,10 +478,46 @@ describe('A2: archived-without-provenance', () => {
         makeFacts({ issueState: 'closed', prState: 'merged', mergedAt: '2026-06-15T10:00:00Z' })
       )
     ]
-    const map = new Map([['iter-1/1', false]])
+    const map = new Map([['101', false]])
     const r = checkA2(entries, map)
     expect(r.status).toBe('info')
     expect(r.failures[0]!.grandfathered).toBe(true)
+  })
+
+  it('skip — an Issue closed as not planned is never owed a close-out', () => {
+    const entries = [
+      makeEntry(
+        'iter-1',
+        '1',
+        101,
+        makeFacts({
+          issueState: 'closed',
+          prState: 'merged',
+          stateReason: 'not_planned',
+          mergedAt: '2026-08-01T00:00:00Z'
+        })
+      )
+    ]
+    passesWithNoFailures(checkA2(entries, new Map([['101', false]])))
+  })
+
+  it('keys the lookup by Issue number: two Issues sharing a task number are judged apart', () => {
+    const merged = makeFacts({ issueState: 'closed', prState: 'merged', mergedAt: '2026-08-01T00:00:00Z' })
+    const entries = [makeEntry('iter-1', '3', 101, merged), makeEntry('iter-1', '3', 102, merged)]
+    const r = checkA2(
+      entries,
+      new Map([
+        ['101', true],
+        ['102', false]
+      ])
+    )
+    expect(r.status).toBe('fail')
+    expect(r.failures.map((f) => f.issue)).toEqual([102])
+  })
+
+  it('skip — a lookup keyed by slug and task id is not an answer for any Issue', () => {
+    const entries = [makeEntry('iter-1', '1', 101, makeFacts({ issueState: 'closed', prState: 'merged' }))]
+    passesWithNoFailures(checkA2(entries, new Map([['iter-1/1', false]])))
   })
 
   it('fail — missing provenance on/after COHERENCE_ENFORCED_FROM is not grandfathered', () => {
@@ -444,7 +529,7 @@ describe('A2: archived-without-provenance', () => {
         makeFacts({ issueState: 'closed', prState: 'merged', mergedAt: '2026-07-05T10:00:00Z' })
       )
     ]
-    const map = new Map([['iter-1/1', false]])
+    const map = new Map([['101', false]])
     const r = checkA2(entries, map)
     expect(r.status).toBe('fail')
     expect(r.failures[0]!.grandfathered).toBe(false)
