@@ -702,6 +702,29 @@ export const realObjectivesDeps: ObjectivesDeps = {
   postComment: postMarkedComment
 }
 
+/**
+ * Writes `body` back to the Issue after a later step of the objectives edit
+ * failed. A restore that itself fails throws one error naming both failures,
+ * so the caller learns the Issue and its frozen brief now disagree.
+ */
+function restoreIssueBody(forge: PlannerForge, issueRef: string, body: string, cause: unknown): void {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-objectives-restore-'))
+  const tmp = join(dir, 'body.md')
+  writeFileSync(tmp, body, 'utf8')
+  try {
+    const ghArgs = ['--body-file', tmp]
+    const written = forge.ghWrite(['issue', 'edit', issueRef], ghArgs, locateBody(ghArgs))
+    if (!written.ok) {
+      const why = cause instanceof Error ? cause.message : String(cause)
+      throw new Error(
+        `${why}\nRestoring Issue ${issueRef}'s previous body also failed (${written.errors.map((e) => e.message).join('; ')}): the Issue now holds the new objectives and its frozen brief the old ones.`
+      )
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 async function editObjectivesOrRefuse(args: string[], io: PlannerIo, deps: ObjectivesDeps): Promise<ObjectivesOutcome> {
   const { issueRef, op, reason, part } = parseArgs(args)
   deps.requirePrincipal(RETRY)
@@ -796,12 +819,19 @@ async function editObjectivesOrRefuse(args: string[], io: PlannerIo, deps: Objec
   const frozen = resolveNewestFrozenBrief(comments, allowlist)
   if (frozen !== null) {
     const taskRef = resolveTaskIssueRef(title, labels)
-    const result = await deps.supersede(
-      taskRef !== null
-        ? { tranche: taskRef.trancheSlug, n: Number.parseInt(taskRef.taskId, 10), supersede: { reason } }
-        : { issue: number, supersede: { reason } }
-    )
-    supersedeUrl = result.commentUrl
+    try {
+      const result = await deps.supersede(
+        taskRef !== null
+          ? { tranche: taskRef.trancheSlug, n: Number.parseInt(taskRef.taskId, 10), supersede: { reason } }
+          : { issue: number, supersede: { reason } }
+      )
+      supersedeUrl = result.commentUrl
+    } catch (err) {
+      // The superseding brief could not be posted: put the Issue body back, so
+      // the Issue and its frozen brief keep the same objectives.
+      restoreIssueBody(deps.forge, issueRef, body, err)
+      throw err
+    }
   }
 
   const k =

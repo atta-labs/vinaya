@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -286,6 +286,51 @@ describe('editObjectives with a stubbed forge', () => {
       forge: stubForge({ ghWrite: () => ({ ok: false, errors: [finding('forge-write')], cause: boom }) })
     })
     await expect(editObjectives(addArgs, {}, deps)).rejects.toBe(boom)
+    expect(deps.posted).toEqual([])
+  })
+
+  /** A frozen brief on the Issue, so the edit supersedes it; and a forge that records each body it writes. */
+  function frozenDeps(over: Partial<ObjectivesDeps> & { failRestore?: boolean } = {}) {
+    const bodies: string[] = []
+    const forge = stubForge({
+      ghWrite: (_cmd, args) => {
+        bodies.push(readFileSync(args[args.indexOf('--body-file') + 1] as string, 'utf8'))
+        if (over.failRestore && bodies.length > 1)
+          return { ok: false as const, errors: [finding('forge-write')], cause: undefined }
+        return { ok: true as const, url: 'https://example.test/issues/7' }
+      }
+    })
+    const deps = stubDeps({
+      forge,
+      fetchIssue: () => ({
+        number: 7,
+        body: issueBody,
+        title: '[demo] 1 — A task',
+        labels: ['vinaya/tranche:demo'],
+        comments: [{ body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nold brief', author: 'someone' }] as never
+      }),
+      supersede: (async () => {
+        throw new Error('supersede refused')
+      }) as never,
+      ...over
+    })
+    return { deps, bodies }
+  }
+
+  it('puts the previous Issue body back and posts no comment when the supersede fails', async () => {
+    const { deps, bodies } = frozenDeps()
+    await expect(editObjectives(addArgs, {}, deps)).rejects.toThrow('supersede refused')
+    expect(bodies).toHaveLength(2)
+    expect(bodies[0]).toContain('O2. Second thing.')
+    expect(bodies[1]).toBe(issueBody)
+    expect(deps.posted).toEqual([])
+  })
+
+  it('names both failures when the restore after a failed supersede also fails', async () => {
+    const { deps } = frozenDeps({ failRestore: true })
+    await expect(editObjectives(addArgs, {}, deps)).rejects.toThrow(
+      /supersede refused[\s\S]*Restoring Issue 7's previous body also failed/
+    )
     expect(deps.posted).toEqual([])
   })
 

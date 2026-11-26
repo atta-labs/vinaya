@@ -493,6 +493,44 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
     expect(existingCheckCalled).toBe(false)
   })
 
+  it('a supersede renders as a preview, so an unmerged dependency never refuses or delays the new brief', async () => {
+    let now = 0
+    const previews: boolean[] = []
+    let posted = false
+    const result = await prepareTask(
+      { tranche: 'task-run-v1', n: 1, supersede: { reason: 'objectives reworded' } },
+      preparePostingDeps({
+        dependencyClock: {
+          now: () => now,
+          sleep: async (ms) => {
+            now += ms
+          }
+        },
+        assembleAndRenderBrief: async (_tranche, _id, _globs, _body, opts) => {
+          previews.push(opts?.preview === true)
+          const message = 'dispatch-gate depends-on: task 1 depends on #999, whose PR is not merged yet.'
+          return opts?.preview === true
+            ? { ok: true, brief: BRIEF_TEXT, issue: 427, waiting: [message] }
+            : { ok: false, missing: [message], dispatchBlockerDetails: [{ class: 'depends-on-not-merged', message }] }
+        },
+        findExistingFrozenBrief: () => ({
+          body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nold brief',
+          url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
+          author: 'a-principal',
+          version: 1
+        }),
+        postMarkedComment: () => {
+          posted = true
+          return 'https://github.com/acme/widget/issues/427#issuecomment-2'
+        }
+      })
+    )
+    expect(result.version).toBe(2)
+    expect(posted).toBe(true)
+    expect(previews).toEqual([true])
+    expect(now).toBe(0)
+  })
+
   it('refuses when a frozen brief already exists, naming the existing comment url — nothing posted', async () => {
     let postCalled = false
     await expect(
@@ -917,6 +955,78 @@ describe('prepareTask / prepareIssueTask --supersede --surface-in — the gate g
     ).rejects.toThrow(/undecided importer/)
     expect(fake.state.gateRuns).toEqual(['live'])
   })
+})
+
+describe('prepareTask / prepareIssueTask --supersede — an unmerged dependency never refuses the new brief', () => {
+  const FROZEN = {
+    body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nold brief',
+    url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
+    author: 'a-principal',
+    version: 1
+  }
+  const WAITING = 'dispatch-gate depends-on: task 1 depends on #999, whose PR is not merged yet.'
+
+  /** A render that refuses on the unmerged dependency unless asked for a preview, recording each call's mode. */
+  function waitingRender(previews: boolean[]) {
+    return async (...args: unknown[]) => {
+      const opts = args[args.length - 1] as { preview?: boolean } | undefined
+      const preview = typeof opts === 'object' && opts !== null && opts.preview === true
+      previews.push(preview)
+      return preview
+        ? { ok: true as const, brief: BRIEF_TEXT, issue: 427, waiting: [WAITING] }
+        : {
+            ok: false as const,
+            missing: [WAITING],
+            dispatchBlockerDetails: [{ class: 'depends-on-not-merged' as const, message: WAITING }]
+          }
+    }
+  }
+
+  const supersedes: Array<[string, { reason: string; surfaceIn?: string[] }]> = [
+    ['an objectives edit', { reason: 'objectives reworded' }],
+    ['a Surface widen', { reason: 'widen', surfaceIn: ['apps/cli/src/importer'] }]
+  ]
+
+  for (const [edit, supersede] of supersedes) {
+    for (const form of ['<tranche> <n>', '--issue <n>'] as const) {
+      it(`${form}: ${edit} posts the new brief at once, every render a preview`, async () => {
+        const previews: boolean[] = []
+        let posted = false
+        let now = 0
+        const common = {
+          findExistingFrozenBrief: () => FROZEN,
+          postMarkedComment: () => {
+            posted = true
+            return 'https://github.com/acme/widget/issues/427#issuecomment-2'
+          },
+          resolveDispatchAuthorization: () => ({ authorized: true as const, login: 'a-principal' }),
+          runIssueWriteGate: async () => {},
+          widenSurface: async () => {},
+          dependencyClock: {
+            now: () => now,
+            sleep: async (ms: number) => {
+              now += ms
+            }
+          }
+        }
+        const result =
+          form === '<tranche> <n>'
+            ? await prepareTask({ tranche: 'task-run-v1', n: 1, supersede }, {
+                ...common,
+                assembleAndRenderBrief: waitingRender(previews)
+              } as unknown as PrepareTaskDeps)
+            : await prepareIssueTask({ issue: 1, supersede }, {
+                ...common,
+                assembleAndRenderBriefForIssue: waitingRender(previews)
+              } as unknown as PrepareIssueTaskDeps)
+        expect(result.version).toBe(2)
+        expect(posted).toBe(true)
+        expect(previews.length).toBe(supersede.surfaceIn ? 2 : 1)
+        expect(previews.every(Boolean)).toBe(true)
+        expect(now).toBe(0)
+      })
+    }
+  }
 })
 
 describe('contentAfterTwoLines', () => {

@@ -747,8 +747,17 @@ export async function prepareTask(
       ? (issue: number, body: string, labels: string[]) => deps.repairIssue!(issue, body, labels, retryCommand)
       : undefined
   const result = await waitForDependencies(
-    () => deps.assembleAndRenderBrief(tranche, String(n), undefined, undefined, { beforeIssueRender }),
+    () =>
+      deps.assembleAndRenderBrief(tranche, String(n), undefined, undefined, {
+        beforeIssueRender,
+        ...(supersede ? { preview: true } : {})
+      }),
     (r) =>
+      // A supersede (an objectives or Surface edit on a task already in flight)
+      // renders as a preview: an unmerged dependency or an open conflicting task
+      // only gates starting a task, never re-freezing its brief, so it is listed as
+      // waiting instead of refusing, and the edit never waits on it.
+      !supersede &&
       !r.ok &&
       !!r.dispatchBlockerDetails?.length &&
       r.dispatchBlockerDetails.every((b) => b.class === 'depends-on-not-merged') &&
@@ -800,7 +809,9 @@ export async function prepareTask(
     // before this version's comment body is built.
     if (supersede.surfaceIn && supersede.surfaceIn.length > 0) {
       await deps.widenSurface(issue, supersede.surfaceIn, retryCommand)
-      const reRendered = await deps.assembleAndRenderBrief(tranche, String(n))
+      // A preview, like the render above: the widened brief is posted while a
+      // dependency or conflicting task is still open.
+      const reRendered = await deps.assembleAndRenderBrief(tranche, String(n), undefined, undefined, { preview: true })
       if (!reRendered.ok) {
         throw new DispatchTaskError(
           `\`## Surface\` widened, but the task no longer renders a valid brief afterward:\n${reRendered.missing.map((m) => `  - ${m}`).join('\n')}`
@@ -894,8 +905,17 @@ export async function prepareIssueTask(
       ? (issue: number, body: string, labels: string[]) => deps.repairIssue!(issue, body, labels, retryCommand)
       : undefined
   const result = await waitForDependencies(
-    () => deps.assembleAndRenderBriefForIssue(n, undefined, { beforeIssueRender }),
+    () =>
+      deps.assembleAndRenderBriefForIssue(n, undefined, {
+        beforeIssueRender,
+        ...(supersede ? { preview: true } : {})
+      }),
     (r) =>
+      // A supersede (an objectives or Surface edit on a task already in flight)
+      // renders as a preview: an unmerged dependency or an open conflicting task
+      // only gates starting a task, never re-freezing its brief, so it is listed as
+      // waiting instead of refusing, and the edit never waits on it.
+      !supersede &&
       !r.ok &&
       !!r.dispatchBlockerDetails?.length &&
       r.dispatchBlockerDetails.every((b) => b.class === 'depends-on-not-merged') &&
@@ -932,7 +952,9 @@ export async function prepareIssueTask(
     }
     if (supersede.surfaceIn && supersede.surfaceIn.length > 0) {
       await deps.widenSurface(issue, supersede.surfaceIn, retryCommand)
-      const reRendered = await deps.assembleAndRenderBriefForIssue(n)
+      // A preview, like the render above: the widened brief is posted while a
+      // dependency or conflicting task is still open.
+      const reRendered = await deps.assembleAndRenderBriefForIssue(n, undefined, { preview: true })
       if (!reRendered.ok) {
         throw new DispatchTaskError(
           `\`## Surface\` widened, but the task no longer renders a valid brief afterward:\n${reRendered.missing.map((m) => `  - ${m}`).join('\n')}`
