@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import ts from 'typescript'
-import { DRIVER_OWNED_PATHS } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
+import { DRIVER_OWNED_PATHS } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 import { cleanupWorlds } from '../dev-review-loop-harness.js'
 import { tempDirs as sharedTempDirs } from './driver-test-support.js'
 
@@ -232,7 +232,7 @@ describe('the driver file keeps every name it exported before the split (driver-
   })
 
   it('exports each listed value at run time, under the same path', async () => {
-    const loaded = (await import('../../../../loops/dev-review/standalone/dev-review-loop.js')) as Record<
+    const loaded = (await import('@harness/workflow/loops/dev-review/standalone/dev-review-loop.js')) as Record<
       string,
       unknown
     >

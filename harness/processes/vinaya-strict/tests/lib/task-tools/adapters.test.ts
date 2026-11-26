@@ -5,9 +5,9 @@ import {
   PROCESS_FIXTURE_BUDGET_MS,
   spawnSyncBudgeted,
   stripVinayaEnv
-} from '../../../../../kernel/conformance/unit/process-fixture.js'
-import { SEAT_ARGUMENT } from '../../../../../kernel/tools/host/seat-host.js'
-import type { VendoredVinaya } from '../../../tools/self-host.js'
+} from '@harness/kernel/conformance/unit/process-fixture.js'
+import { SEAT_ARGUMENT } from '@harness/kernel/tools/host/seat-host.js'
+import type { VendoredVinaya } from '@harness/workflow/tools/self-host.js'
 import {
   CLAUDE_MCP_ADAPTER,
   claudeMcpJsonConfig,
@@ -17,8 +17,8 @@ import {
   MCP_RUNTIME_ADAPTERS,
   seatServerRegistrations,
   taskToolsServerInvocation
-} from '../../../integration/adapters.js'
-import { ownVersion } from '../../../integration/artifacts.js'
+} from '@harness/workflow/integration/adapters.js'
+import { ownVersion } from '@harness/workflow/integration/artifacts.js'
 import {
   MCP_PROTOCOL_VERSION,
   ARCHITECT_TOOLS_MCP_SERVER_NAME,
@@ -26,7 +26,7 @@ import {
   PLANNER_TOOLS_MCP_SERVER_NAME,
   TASK_TOOLS_MCP_SERVER_NAME,
   vinayaToolSeats
-} from '../../../integration/server.js'
+} from '@harness/workflow/integration/server.js'
 
 const REPO_ROOT = join(import.meta.dir, '../../../../../..')
 

@@ -15,7 +15,7 @@
  * when every generic grader passes, `0` otherwise.
  */
 
-import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'
+import { installProcess } from '@harness/kernel/dev-process-socket/contract/install-process'
 import { vinayaProcessIntegration } from '../integration/process/process-integration'
 import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -28,11 +28,11 @@ import {
   testDigest
 } from '../executing/developer/evals/developer-capability-suite'
 import { type FixtureEntry, referenceRecord } from './suites/vinaya-trial-records'
-import { stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
-import { GENERIC_GRADERS } from '../../../kernel/evals/generic-graders'
-import { canonicalJson, type NeutralCase, validateNeutralCase } from '../../../kernel/evals/neutral-case'
-import type { TestResult } from '../../../kernel/evals/neutral-outcomes'
-import { git } from '../../../kernel/evals/staging'
+import { stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
+import { GENERIC_GRADERS } from '@harness/kernel/evals/generic-graders'
+import { canonicalJson, type NeutralCase, validateNeutralCase } from '@harness/kernel/evals/neutral-case'
+import type { TestResult } from '@harness/kernel/evals/neutral-outcomes'
+import { git } from '@harness/kernel/evals/staging'
 import { extractOutcomes, renderCase, VINAYA_RENDERER_VERSION, type VinayaTrialRecord } from './vinaya-renderer'
 
 /** The agent part's file in Harbor's agent log directory, `/logs/agent` in the container. */

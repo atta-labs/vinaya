@@ -1,5 +1,5 @@
 import { initialLoopState, type VerdictObservation } from '../tools/dev-review-policy/types'
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -8,8 +8,8 @@ import { DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 
 import { objectivesVersion } from '../tools/task-contract/objectives'
 import { createRunControl, type SpawnedProcessLike, type StepNodeResult } from '@atta/executor-agent-spawn'
-import type { ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
-import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
+import type { ActionRegistry } from '@harness/kernel/loops/runtimes/atta-engine/run-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import { resolveRoleDoctrineText } from '../integration/roles/plan'
 import { cleanupAllReviewerIsolationArtifacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
 import { ENGINE_SCENARIO_DRIVERS } from './dev-review-engine-loop-adapter'
@@ -27,7 +27,7 @@ import { createVinayaLogProducers } from '../executing/log-events'
 import {
   readEffectiveResumedState,
   readExecutionRound
-} from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+} from '@harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import { runIdentityOfTask } from '../bin/run-lifecycle'
 import { clearDriverLock } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { recordedHandoff } from './handoff-fakes'

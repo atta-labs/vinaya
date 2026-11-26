@@ -18,7 +18,10 @@ import {
   runLoopInProcess,
   taskRunDir as ipTaskRunDir
 } from '../dev-review-loop-harness.js'
-import { readDriverLock, readPauseState } from '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import {
+  readDriverLock,
+  readPauseState
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 
 afterEach(cleanupWorlds)
 

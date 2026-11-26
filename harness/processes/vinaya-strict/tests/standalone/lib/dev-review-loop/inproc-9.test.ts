@@ -13,12 +13,12 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { briefHash, policyDigest } from '../../../../tools/task-contract/review-input-manifest'
-import { DEFAULT_REVIEW_POLICY } from '../../../../tools/task-contract/review-policy'
-import { objectivesOf, objectivesVersion, type Objective } from '../../../../tools/task-contract/objectives'
-import { renderCodeReviewComment, renderSecurityComment } from '../../../../loops/dev-review/bin/review-post.js'
-import { writeHeldVerdict } from '../../../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
-import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
+import { briefHash, policyDigest } from '@harness/workflow/tools/task-contract/review-input-manifest'
+import { DEFAULT_REVIEW_POLICY } from '@harness/workflow/tools/task-contract/review-policy'
+import { objectivesOf, objectivesVersion, type Objective } from '@harness/workflow/tools/task-contract/objectives'
+import { renderCodeReviewComment, renderSecurityComment } from '@harness/workflow/loops/dev-review/bin/review-post.js'
+import { writeHeldVerdict } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.js'
+import type { LoopDeps } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 import {
   cleanupWorlds,
   controlDir,

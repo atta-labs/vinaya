@@ -4,7 +4,7 @@ import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isTestFile } from './bin/check-workspace-escape'
-import type { CheckError } from '../../../kernel/gates/checks/contract'
+import type { CheckError } from '@harness/kernel/gates/checks/contract'
 
 // O2 (found live 2026-09-04): `*.test.ts`/`*.test.tsx` files are excluded
 // from the swept surface entirely, silencing both this repo's own known

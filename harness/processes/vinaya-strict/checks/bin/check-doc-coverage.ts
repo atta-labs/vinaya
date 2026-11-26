@@ -23,13 +23,13 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { isWaiverLabelActorVerified, WAIVER_LABEL } from '../../tools/task-contract/waiver-label'
 import { DOC_OWNERS_PATH, evaluateC5 } from '../../tools/doc-owners'
-import { fileDiffAgainst } from '../../../../../harness/kernel/connectors/git/diff-evidence'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { fileDiffAgainst } from '@harness/kernel/connectors/git/diff-evidence'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { resolveTrustedPrincipals } from '../../integration/config/compose'
 import {
   exitOnIncompleteForgeSnapshot,
   snapshotPullRequest
-} from '../../../../../harness/kernel/adapters/code-host/github/forge-snapshot'
+} from '@harness/kernel/adapters/code-host/github/forge-snapshot'
 import { refuseUnresolvedPrincipals } from '../principals-refusal'
 
 // No chdir: `DOC_OWNERS_PATH` (`.vinaya/doc-owners`) and the `git diff` below

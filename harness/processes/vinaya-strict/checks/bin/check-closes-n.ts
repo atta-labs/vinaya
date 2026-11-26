@@ -28,7 +28,7 @@ import { fetchTaskIssueRefs } from '../forge/fetch-task-issue-refs'
 import { parseTaskBranchIdentity } from '../../tools/task-contract/task-branch-identity'
 import { checkClosesNTopology, extractClosesReferences, type TrancheFile } from '../coherence-checks'
 import { createForgeSource } from '../../tools/sources/forge-adapter.js'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 
 // No chdir — see check-doc-coverage.ts's rationale; the runner's spawn
 // already inherits the caller's cwd, which IS the repo being evaluated.

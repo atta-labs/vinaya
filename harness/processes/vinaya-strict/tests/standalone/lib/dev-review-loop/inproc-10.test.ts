@@ -31,13 +31,13 @@ import {
   type LoopResult,
   resolveEscalation,
   runDriverLoop
-} from '../../../../loops/dev-review/standalone/dev-review-loop.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 import {
   type PauseState,
   readDriverLock,
   readPauseState,
   writeDriverLock
-} from '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import {
   assertDispatchOrEscalate,
   DispatchUsageLimit,
@@ -46,12 +46,12 @@ import {
   rateLimitPauseDetail,
   spendsInfrastructureRetry,
   usageLimitPauseDetail
-} from '../../../../loops/dev-review/standalone/dev-review-loop/round-assess.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/round-assess.js'
 import {
   renderNoPushStopComment,
   renderPauseComment
-} from '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import type { DispatchHandle, UsageLimit } from '../../../../loops/dev-review/dispatch/dispatch.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import type { DispatchHandle, UsageLimit } from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
 import {
   cleanupWorlds,
   controlDir,
@@ -170,9 +170,9 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
   it('never retries a resolution that was already consumed: it resumes again only on a strictly newer ruling', async () => {
     const world = makeEscalationWorld()
     const { ReplayedResolutionError } = await import(
-      '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+      '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
     )
-    const real = (await import('../../../../loops/dev-review/standalone/dev-review-loop.js')).devReviewLoop
+    const real = (await import('@harness/workflow/loops/dev-review/standalone/dev-review-loop.js')).devReviewLoop
     let attempts = 0
     let sleepCalls = 0
     let consumedNote = ''
@@ -228,9 +228,9 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
   it("follows the pause the run moved on to after a consumed resolution, and ends on that pause's own cancel", async () => {
     const world = makeEscalationWorld()
     const { ReplayedResolutionError, readPauseState: readPause } = await import(
-      '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+      '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
     )
-    const real = (await import('../../../../loops/dev-review/standalone/dev-review-loop.js')).devReviewLoop
+    const real = (await import('@harness/workflow/loops/dev-review/standalone/dev-review-loop.js')).devReviewLoop
     let replayed = false
     let attempts = 0
     let sleepCalls = 0
@@ -278,9 +278,9 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
   it('ends when the pull request merged while a consumed resolution was being skipped', async () => {
     const world = makeEscalationWorld()
     const { ReplayedResolutionError } = await import(
-      '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+      '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
     )
-    const real = (await import('../../../../loops/dev-review/standalone/dev-review-loop.js')).devReviewLoop
+    const real = (await import('@harness/workflow/loops/dev-review/standalone/dev-review-loop.js')).devReviewLoop
     let sleepCalls = 0
     const result = await runDriverLoopInProcess(
       world,

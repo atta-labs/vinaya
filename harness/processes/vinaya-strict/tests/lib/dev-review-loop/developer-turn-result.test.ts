@@ -10,12 +10,12 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CONFIDENCE_REASON_MAX_LENGTH } from '../../../../../kernel/log/schema'
-import { handoffFindings } from '../../../loops/dev-review/standalone/dev-review-loop.js'
+import { CONFIDENCE_REASON_MAX_LENGTH } from '@harness/kernel/log/schema'
+import { handoffFindings } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 import {
   defangReportedCommand,
   renderDeveloperRoundComment
-} from '../../../loops/dev-review/standalone/dev-review-loop/round-assess.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/round-assess.js'
 import {
   addressedFindingIdsFromRecords,
   confidenceFromRecords,
@@ -32,14 +32,14 @@ import {
   turnResultCorrectionPrompt,
   writeTurnResultRecord,
   REPORTED_CHECK_COMMAND_MAX_LENGTH
-} from '../../../loops/dev-review/standalone/dev-review-loop/turn-result.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import {
   BLOCKER_KINDS,
   type DeveloperTurnResult,
   developerTurnResultJsonSchema
-} from '../../../executing/developer/developer-turn-result.js'
-import { deliveredDocumentation } from '../../../loops/dev-review/dispatch/dispatch.js'
-import type { DevToolContext } from '../../../../../kernel/tools/dev-tools-server.js'
+} from '@harness/workflow/executing/developer/developer-turn-result.js'
+import { deliveredDocumentation } from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
+import type { DevToolContext } from '@harness/kernel/tools/dev-tools-server.js'
 import {
   cleanupWorlds,
   completedTurnOutput,

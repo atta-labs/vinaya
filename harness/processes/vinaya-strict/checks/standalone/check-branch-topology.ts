@@ -22,7 +22,7 @@
  */
 
 import { deriveTrancheFromForge } from '../../tools/task-contract/forge/derive-from-forge'
-import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
+import { resolveRepo } from '@harness/kernel/adapters/code-host/github/resolve-repo'
 import { checkBranchTopology, taskBranchTopologyFields } from '../branch-topology-gate'
 import { LEGACY_TRANCHES_DIR } from '../../tools/legacy-paths'
 

@@ -16,14 +16,14 @@ import {
   type LoopDeps,
   type LoopResult,
   runDriverLoop
-} from '../../../../loops/dev-review/standalone/dev-review-loop.js'
-import type { PauseState } from '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
+import type { PauseState } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import {
   isRateLimitPauseDetail,
   RATE_LIMIT_FALLBACK_WAIT_MS,
   rateLimitPauseDetail,
   rateLimitResetFromDetail
-} from '../../../../loops/dev-review/standalone/dev-review-loop/round-assess.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/round-assess.js'
 import {
   blockedTurnOutput,
   cleanupWorlds,

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_COLLISION_THRESHOLD } from '../tools/task-contract/issue-validation'
 import type { BriefSection } from '../integration/config/compose'
-import { resetTrustAnchorConfigMemo } from '../../../kernel/log/log-sink.js'
+import { resetTrustAnchorConfigMemo } from '@harness/kernel/log/log-sink.js'
 import {
   ForgeArgError,
   collectBodyCheckErrors,

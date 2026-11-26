@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'bun:test'
-import { VINAYA_LOG_ROLE_NAMES } from '../../../integration/log/log-roles'
-import { DEV_TOOL_NAMES } from '../../../../../kernel/tools/dev-tools-server.js'
-import { isToolGranted } from '../../../../../kernel/tools/role-grants.js'
-import { AGENT_TOOL_CATALOG } from '../../../../../kernel/tools/tool-catalog.js'
+import { VINAYA_LOG_ROLE_NAMES } from '@harness/workflow/integration/log/log-roles'
+import { DEV_TOOL_NAMES } from '@harness/kernel/tools/dev-tools-server.js'
+import { isToolGranted } from '@harness/kernel/tools/role-grants.js'
+import { AGENT_TOOL_CATALOG } from '@harness/kernel/tools/tool-catalog.js'
 import {
   OPERATOR_SEAT,
   PLANNER_SEAT,
   ARCHITECT_SEAT,
   TRANCHE_ARCHIVIST_SEAT,
   createTaskToolsMcpServer
-} from '../../../integration/server.js'
-import { ARCHITECT_TOOL_GRANT, TRANCHE_ARCHIVIST_TOOL_GRANT } from '../../../integration/policies/roles.js'
-import { PLANNER_TOOL_NAMES } from '../../../thinking/planner/tools/planner-tools.js'
+} from '@harness/workflow/integration/server.js'
+import { ARCHITECT_TOOL_GRANT, TRANCHE_ARCHIVIST_TOOL_GRANT } from '@harness/workflow/integration/policies/roles.js'
+import { PLANNER_TOOL_NAMES } from '@harness/workflow/thinking/planner/tools/planner-tools.js'
 import {
   GRANTED_ROLES,
   OPERATOR_TOOL_GRANT,
@@ -21,8 +21,8 @@ import {
   VINAYA_BOUNDARY_ROLES,
   VINAYA_BROKER_ROLES,
   VINAYA_ROUTER_ROLES
-} from '../../../integration/policies/roles.js'
-import { vinayaToolGrantPolicy } from '../../../integration/policies/vinaya-policies.js'
+} from '@harness/workflow/integration/policies/roles.js'
+import { vinayaToolGrantPolicy } from '@harness/workflow/integration/policies/vinaya-policies.js'
 
 /**
  * Vinaya's role facts — the grant table, and the role names the broker, the

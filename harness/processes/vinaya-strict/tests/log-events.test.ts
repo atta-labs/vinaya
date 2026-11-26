@@ -1,6 +1,6 @@
 import { assessRound } from '../tools/dev-review-policy/assess-round'
 import { initialLoopState, type LoopState, type Observations } from '../tools/dev-review-policy/types'
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { MemorySaver } from '@langchain/langgraph'
 import { readFileSync } from 'node:fs'
@@ -9,23 +9,23 @@ import { parse } from 'yaml'
 
 import { buildReviewInputManifest } from '../tools/task-contract/review-input-manifest'
 import { DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
-import { buildHeader } from '../../../kernel/log/envelope'
-import { DevReviewLoopEventSchema, HandoffEventSchema, RoleAttemptEventSchema } from '../../../kernel/log/schema'
+import { buildHeader } from '@harness/kernel/log/envelope'
+import { DevReviewLoopEventSchema, HandoffEventSchema, RoleAttemptEventSchema } from '@harness/kernel/log/schema'
 import { createRunControl, type RunOutcome, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import {
   resumeProcessRun,
   startProcessRun,
   type ActionRegistry,
   type ProcessRunOptions
-} from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+} from '@harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   createLogTranslator,
   recordingActions,
   type LogEventInput,
   type LogTranslator
-} from '../../../../harness/kernel/log/client/translate'
-import { loadRoleGrants } from '../../../../harness/kernel/adapters/agents/manifest'
+} from '@harness/kernel/log/client/translate'
+import { loadRoleGrants } from '@harness/kernel/adapters/agents/manifest'
 import { VINAYA_LAUNCHED_ROLES } from '../integration/policies/launched-roles'
 import {
   ACTION_BINDINGS,
@@ -35,7 +35,7 @@ import {
   encodeLoopState,
   type TaskInput
 } from '../executing/actions'
-import { encodeExecutionRound } from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+import { encodeExecutionRound } from '@harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import { AGENT_STEP_ROLES, createVinayaLogProducers, handoffHaltReason } from '../executing/log-events'
 import { LOG_INVENTORY } from '../executing/log-inventory'
 import { createHandoff } from '../executing/handoff'

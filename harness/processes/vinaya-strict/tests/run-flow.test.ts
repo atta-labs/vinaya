@@ -1,5 +1,5 @@
 import { assessRound } from '../tools/dev-review-policy/assess-round'
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { MemorySaver } from '@langchain/langgraph'
 import { readFileSync } from 'node:fs'
@@ -7,13 +7,13 @@ import { basename, dirname, resolve } from 'node:path'
 import { parse } from 'yaml'
 
 import { createRunControl, type RunOutcome, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import {
   resumeProcessRun,
   startProcessRun,
   type ActionRegistry,
   type ProcessRunOptions
-} from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+} from '@harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   checkTaskDispatchReadiness,
   createTaskWorktree,
@@ -22,10 +22,10 @@ import {
 } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
 import { publishRound } from '../loops/dev-review/standalone/dev-review-loop/publication'
 import { cleanupAllReviewerIsolationArtifacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
-import { enforcementControlsActive } from '../../../kernel/gates/enforcement-controls'
-import { probeAgentSandbox } from '../../../kernel/isolation/worker-boundary'
+import { enforcementControlsActive } from '@harness/kernel/gates/enforcement-controls'
+import { probeAgentSandbox } from '@harness/kernel/isolation/worker-boundary'
 import { handoffFindings } from '../loops/dev-review/standalone/dev-review-loop'
-import { runCliChecks } from '../../../../harness/kernel/gates/checks/run-checks'
+import { runCliChecks } from '@harness/kernel/gates/checks/run-checks'
 import { validateDeveloperTurnResult } from '../executing/developer/developer-turn-result'
 import { classifyReviewOutcome } from '../executing/code-reviewer/review-result'
 import {

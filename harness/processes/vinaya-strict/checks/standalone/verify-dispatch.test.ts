@@ -89,7 +89,7 @@ const {
   resolveTargetRoot
 } = await import('./verify-dispatch')
 const { checkDispatchReadiness } = await import('../../tools/dispatch-gate')
-const { resetResolveRepoCache } = await import('../../../../kernel/adapters/code-host/github/resolve-repo')
+const { resetResolveRepoCache } = await import('@harness/kernel/adapters/code-host/github/resolve-repo')
 
 const tempDirs: string[] = []
 

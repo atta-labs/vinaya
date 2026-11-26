@@ -17,15 +17,15 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { currentRunId, type LogSinkDeps } from '../../../kernel/log/log-sink'
+import { currentRunId, type LogSinkDeps } from '@harness/kernel/log/log-sink'
 import {
   currentOwner,
   removeTree,
   TEST_TEMP_ROOT_ENV,
   testTempRoot,
   writeOwnerMarker
-} from '../../../kernel/conformance/unit/test-temp'
-import { TEST_TEMP_REPO_ID } from '../../../kernel/conformance/unit/test-temp-fixture'
+} from '@harness/kernel/conformance/unit/test-temp'
+import { TEST_TEMP_REPO_ID } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import type { Agent } from '../bin/run-engine'
 import type { Observation } from '../integration/conformance/unit/dev-review-current-loop-adapter'
 import type { EngineScenarioRun } from './dev-review-engine-loop-adapter'

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkDecisionsText } from '../../tools/task-contract/issue-validation.js'
-import { spawnBudgetedAsync } from '../../../../kernel/conformance/unit/process-fixture.js'
+import { spawnBudgetedAsync } from '@harness/kernel/conformance/unit/process-fixture.js'
 import {
   assembleAndRenderBriefForIssue,
   canRenderBriefFromHere,

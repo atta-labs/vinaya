@@ -1,4 +1,4 @@
-import { isEntryPoint } from '../../../kernel/gates/checks/entry-point.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
 import { execFileSync } from 'node:child_process'
 import { dirname } from 'node:path'
 import {
@@ -6,9 +6,9 @@ import {
   type CheckError,
   type CheckOutcome,
   type CheckSpec
-} from '../../../kernel/gates/checks/contract'
-import { installedCheckRegistry } from '../../../kernel/gates/checks/registry'
-import { runsUnderAll } from '../../../kernel/gates/checks/registry'
+} from '@harness/kernel/gates/checks/contract'
+import { installedCheckRegistry } from '@harness/kernel/gates/checks/registry'
+import { runsUnderAll } from '@harness/kernel/gates/checks/registry'
 import {
   bareKeyRejectedDiagnostic,
   overriddenReplacesCoreDiagnostic,
@@ -16,14 +16,14 @@ import {
   type ResolvedCheck,
   type ResolverFailure,
   type ResolveResult
-} from '../../../kernel/gates/checks/resolver'
-import { CHECK_EXCLUDE_ENV, defaultParallelism, runChecks } from '../../../kernel/gates/checks/runner'
+} from '@harness/kernel/gates/checks/resolver'
+import { CHECK_EXCLUDE_ENV, defaultParallelism, runChecks } from '@harness/kernel/gates/checks/runner'
 import { type ConfigLoadResult, configPath, loadConfigChecked } from '../integration/config/compose'
-import { printJson } from '../../../kernel/effects/envelope'
-import { checkProgressWriter } from '../../../kernel/gates/ring0-hooks/pre-push/push-progress'
+import { printJson } from '@harness/kernel/effects/envelope'
+import { checkProgressWriter } from '@harness/kernel/gates/ring0-hooks/pre-push/push-progress'
 import { type ProseRulesPlan, proseRulesPlanSection } from '../tools/prose-rules-plan'
 import { buildRolePlan, type RolePlan } from '../integration/roles/plan'
-import type { RoleResolutionState } from '../../../kernel/config/loader/roles/resolver'
+import type { RoleResolutionState } from '@harness/kernel/config/loader/roles/resolver'
 
 // Array-form execFileSync — no shell, so `base` (env-controlled) is passed
 // to git as an inert literal argv element, never shell-interpreted.

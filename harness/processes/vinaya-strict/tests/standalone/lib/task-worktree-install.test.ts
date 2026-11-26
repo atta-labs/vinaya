@@ -20,12 +20,12 @@ import {
   withWorldEnv,
   type LoopWorld
 } from './dev-review-loop-harness.js'
-import { loopLogPathFor } from '../../../../../kernel/log/client/loop-log.js'
+import { loopLogPathFor } from '@harness/kernel/log/client/loop-log.js'
 import {
   defaultInstallWorktreeDependencies,
   worktreeInstallEnv,
   type LoopDeps
-} from '../../../loops/dev-review/standalone/dev-review-loop.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 
 afterEach(cleanupWorlds)
 

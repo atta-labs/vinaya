@@ -22,10 +22,10 @@
 
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
-import { checkDirectMainPush } from '../../../../kernel/gates/ring2-audits/direct-main-push'
-import { ensureLabelExists as ensureLabelExistsShared } from '../../../../kernel/gates/ring2-audits/ensure-label'
+import { checkDirectMainPush } from '@harness/kernel/gates/ring2-audits/direct-main-push'
+import { ensureLabelExists as ensureLabelExistsShared } from '@harness/kernel/gates/ring2-audits/ensure-label'
 import { label } from '../../tools/task-contract/forge/labels'
-import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
+import { resolveRepo } from '@harness/kernel/adapters/code-host/github/resolve-repo'
 
 const REPO_ROOT = join(import.meta.dirname, '../../../../..')
 process.chdir(REPO_ROOT)

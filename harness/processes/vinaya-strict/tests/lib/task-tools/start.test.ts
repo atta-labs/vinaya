@@ -1,21 +1,27 @@
 import { describe, expect, it } from 'bun:test'
-import type { TaskResumeResult, TaskToolRef } from '../../../../../kernel/tools/catalog/task-tools'
+import type { TaskResumeResult, TaskToolRef } from '@harness/kernel/tools/catalog/task-tools'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isDriverPidAlive, readDriverLock } from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import { readTaskIssueFacts, resolveOpenTaskIssueForRef } from '../../../loops/dev-review/run-control/handlers.js'
-import type { TaskIssueFacts } from '../../../loops/dev-review/run-control/handlers.js'
-import type { AgentVendor, ProcessSnapshot } from '../../../loops/dev-review/dispatch/dispatch.js'
+import {
+  isDriverPidAlive,
+  readDriverLock
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import {
+  readTaskIssueFacts,
+  resolveOpenTaskIssueForRef
+} from '@harness/workflow/loops/dev-review/run-control/handlers.js'
+import type { TaskIssueFacts } from '@harness/workflow/loops/dev-review/run-control/handlers.js'
+import type { AgentVendor, ProcessSnapshot } from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
 import {
   deriveLoopState,
   readStartClaim,
   type StartClaimDeps,
   type TaskLoopState
-} from '../../../loops/dev-review/run-control/task-status.js'
-import { appendRoleLine, loopLogPathFor } from '../../../../../kernel/log/client/loop-log.js'
-import type { CallerContext } from '../../../integration/server.js'
+} from '@harness/workflow/loops/dev-review/run-control/task-status.js'
+import { appendRoleLine, loopLogPathFor } from '@harness/kernel/log/client/loop-log.js'
+import type { CallerContext } from '@harness/workflow/integration/server.js'
 import {
   createTaskStartHandler,
   type PauseDisposition,
@@ -29,8 +35,8 @@ import {
   type LaunchResult,
   type RequestStore,
   type StartRecord
-} from '../../../loops/dev-review/run-control/start.js'
-import type { TaskToolCallResult } from '../../../loops/dev-review/run-control/handlers.js'
+} from '@harness/workflow/loops/dev-review/run-control/start.js'
+import type { TaskToolCallResult } from '@harness/workflow/loops/dev-review/run-control/handlers.js'
 
 /**
  * `task_start` driven in-process with injected deps: an in-memory idempotency

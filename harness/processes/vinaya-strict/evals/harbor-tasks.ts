@@ -29,7 +29,7 @@
  * counts.
  */
 
-import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'
+import { installProcess } from '@harness/kernel/dev-process-socket/contract/install-process'
 import { vinayaProcessIntegration } from '../integration/process/process-integration'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -60,11 +60,11 @@ import {
   type SourceCitationCase
 } from '../executing/evals/source-citation-suite'
 import type { ReviewerRole } from '../executing/code-reviewer/review-result'
-import type { Quarantine } from '../../../kernel/evals/contracts'
+import type { Quarantine } from '@harness/kernel/evals/contracts'
 import type { GradingSpec, OracleSpec } from './harbor-grade'
 import { checkedQuarantine, HarborResultsRefused, QUARANTINE_METADATA } from './harbor-results'
 import { HARBOR_TRIAL_ADAPTERS, type HarborCaseFile, type HarborCounterpart } from './harbor-trial'
-import type { NeutralCase } from '../../../kernel/evals/neutral-case'
+import type { NeutralCase } from '@harness/kernel/evals/neutral-case'
 import { GRADING_CODEX_PACKAGE, type StepOneRunSuite } from './step-one'
 import { renderCase, VINAYA_RENDERER_VERSION } from './vinaya-renderer'
 

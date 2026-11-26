@@ -22,12 +22,8 @@
  */
 
 import { evaluateTestPlanGate, type TestPlanGateResult } from '../test-plan-gate'
-import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
-import {
-  CHECK_SCHEMA_VERSION,
-  type CheckError,
-  emitCheckError
-} from '../../../../../harness/kernel/gates/checks/contract'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point'
+import { CHECK_SCHEMA_VERSION, type CheckError, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { defaultLiveCheckDeps, type LiveCheckDeps, type LiveCheckInputs, resolveLiveCheckInputs } from '../frozen-brief'
 
 const CHECK_NAME = 'test-plan'

@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { setStandaloneLogIdentity } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
+import { setStandaloneLogIdentity } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', '..', '..')
 

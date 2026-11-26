@@ -3,9 +3,12 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { MAX_RETURNED_TEXT_CHARS, type TaskPrCheck } from '../../../../../kernel/tools/catalog/task-tools'
-import { taskEscalationReadHandler, taskStatusHandler } from '../../../loops/dev-review/run-control/handlers.js'
-import { PR_FACTS_READS_PER_STATUS_READ } from '../../../loops/dev-review/run-control/task-status.js'
+import { MAX_RETURNED_TEXT_CHARS, type TaskPrCheck } from '@harness/kernel/tools/catalog/task-tools'
+import {
+  taskEscalationReadHandler,
+  taskStatusHandler
+} from '@harness/workflow/loops/dev-review/run-control/handlers.js'
+import { PR_FACTS_READS_PER_STATUS_READ } from '@harness/workflow/loops/dev-review/run-control/task-status.js'
 import {
   buildReviewRecord,
   capTail,
@@ -20,9 +23,9 @@ import {
   summarizeChecks,
   taskPrFactsFrom,
   toChecks
-} from '../../../loops/dev-review/run-control/pr-facts.js'
-import type { RestWorkflowRun } from '../../../loops/dev-review/standalone/dev-review-loop/gate-reading.js'
-import { type PrReadForge, taskPrReadHandler } from '../../../loops/dev-review/run-control/pr-read.js'
+} from '@harness/workflow/loops/dev-review/run-control/pr-facts.js'
+import type { RestWorkflowRun } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/gate-reading.js'
+import { type PrReadForge, taskPrReadHandler } from '@harness/workflow/loops/dev-review/run-control/pr-read.js'
 
 /** The default branch's `vinaya.config.json` every `gh` stub here serves to the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`), base64-encoded as the contents API returns it. */
 const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')

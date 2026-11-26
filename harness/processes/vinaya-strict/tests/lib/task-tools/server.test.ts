@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'bun:test'
 import { PassThrough } from 'node:stream'
-import { UnknownSeatError } from '../../../../../kernel/tools/host/seat-host.js'
+import { UnknownSeatError } from '@harness/kernel/tools/host/seat-host.js'
 import {
   createTaskToolsMcpServer,
   dispatchToolCall,
   serveTaskToolsStdio,
   TASK_TOOLS_MCP_SERVER_NAME,
   type TaskToolHandlers
-} from '../../../integration/server.js'
+} from '@harness/workflow/integration/server.js'
 
 /**
  * `handleLine`'s own doc comment promises it never throws. In-process

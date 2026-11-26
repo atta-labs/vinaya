@@ -33,13 +33,13 @@
  * scope: full — reads the live forge, not the local diff.
  */
 
-import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point'
 import { deriveTrancheFromForge } from '../../tools/task-contract/forge/derive-from-forge'
 import { fetchProvenance } from '../forge/fetch-provenance'
 import { fetchTrancheIssuesAsync, tasksFromIssues } from '../../tools/task-contract/forge/list-tasks'
 import { indexTrancheMilestonesForSlugAsync } from '../../tools/task-contract/forge/fetch-milestone'
 import { issueMilestonesFromIssues } from '../forge/list-issue-milestones'
-import type { GhIssue } from '../../../../../harness/kernel/adapters/code-host/github/gh'
+import type { GhIssue } from '@harness/kernel/adapters/code-host/github/gh'
 import type { SlugMilestoneIndex, TrancheMilestoneIndex } from '../../tools/task-contract/forge/fetch-milestone'
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
@@ -69,7 +69,7 @@ import {
   type TrancheFile,
   type TaskEntry
 } from '../coherence-checks'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../integration/config/compose'
 import { warnOnUnreadPrincipals } from '../principals-refusal'
 

@@ -1,19 +1,19 @@
 import { assessRound } from '../tools/dev-review-policy/assess-round'
 import { initialLoopState, type LoopState, type VerdictObservation } from '../tools/dev-review-policy/types'
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { SqliteCheckpointer } from '../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
+import { SqliteCheckpointer } from '@harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import {
   resumeProcessRun,
   startProcessRun,
   type ActionRegistry
-} from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
-import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
+} from '@harness/kernel/loops/runtimes/atta-engine/run-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import {
   carriedLoopState,
   classifyGateResult,

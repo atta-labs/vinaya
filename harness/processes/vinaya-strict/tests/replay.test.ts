@@ -1,4 +1,4 @@
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'

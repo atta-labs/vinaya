@@ -2,7 +2,7 @@
 // alone, fails on any outcome whose fact status is not known or inapplicable,
 // and rejects its own planted bad outcome.
 import { describe, expect, it } from 'bun:test'
-import { validateGraderIdentity } from '../../../../kernel/evals/contracts'
+import { validateGraderIdentity } from '@harness/kernel/evals/contracts'
 import {
   CAPABILITY_GRADER,
   CHANGE_BINDING_GRADER,
@@ -18,15 +18,15 @@ import {
   PLANTED_DEFECTS_GRADER,
   REVIEW_BINDING_GRADER,
   SCOPE_GRADER
-} from '../../../../kernel/evals/generic-graders'
+} from '@harness/kernel/evals/generic-graders'
 import {
   intentVersion,
   NEUTRAL_CASE_KINDS,
   type NeutralCase,
   type NeutralCaseKind,
   validateNeutralCase
-} from '../../../../kernel/evals/neutral-case'
-import { FACT_STATUSES, type NeutralOutcomes, OUTCOME_NAMES } from '../../../../kernel/evals/neutral-outcomes'
+} from '@harness/kernel/evals/neutral-case'
+import { FACT_STATUSES, type NeutralOutcomes, OUTCOME_NAMES } from '@harness/kernel/evals/neutral-outcomes'
 
 // The grade port's only parameter is a neutral case plus neutral outcomes; this
 // fails to typecheck if a grader's input ever widens beyond them.

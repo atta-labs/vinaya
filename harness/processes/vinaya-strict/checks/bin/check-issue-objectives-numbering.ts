@@ -15,7 +15,7 @@
  */
 
 import { checkIssueObjectives } from '../../tools/task-contract/issue-validation'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { loadConfig, resolveGateCutovers } from '../../integration/config/compose'
 import { readIssueCheckEnv } from '../issue-check-env'
 

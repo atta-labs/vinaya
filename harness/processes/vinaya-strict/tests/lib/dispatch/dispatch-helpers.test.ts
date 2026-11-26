@@ -35,9 +35,9 @@ import {
   codexBoundaryFailureReason,
   developerWrittenTextFromVendorOutput,
   type DispatchTeeRecoveryDeps
-} from '../../../loops/dev-review/dispatch/dispatch.js'
-import { addedDiffLines, findCredentialPatterns } from '../../../../../kernel/isolation/worker-boundary.js'
-import { devToolsSocketRoot } from '../../../../../kernel/tools/dev-tools-registration.js'
+} from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
+import { addedDiffLines, findCredentialPatterns } from '@harness/kernel/isolation/worker-boundary.js'
+import { devToolsSocketRoot } from '@harness/kernel/tools/dev-tools-registration.js'
 import {
   CLI_ROOT,
   collectLaunchedChildren,

@@ -17,7 +17,7 @@ import {
   objectivesVersion,
   renderObjectives,
   type Objective
-} from '../../../../tools/task-contract/objectives'
+} from '@harness/workflow/tools/task-contract/objectives'
 import {
   cleanupWorlds,
   makeInProcessDeps,

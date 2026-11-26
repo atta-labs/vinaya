@@ -6,11 +6,11 @@ import { describe, expect, it } from 'bun:test'
 import { programCommandLine } from '../tools/programs.js'
 import { checkG7, reachesProducer } from './registry-checks'
 import { parseEnforcementRegistry } from '../tools/registry-parse'
-import { findCrossingFiles, globCandidateFiles } from '../../../kernel/gates/checks/github-crossing-files.js'
+import { findCrossingFiles, globCandidateFiles } from '@harness/kernel/gates/checks/github-crossing-files.js'
 import { blockingGateFiles, gatherLogProducerGraph, readG7Exemptions } from './log-producer-graph.js'
 import { buildInitOps } from '../integration/artifacts.js'
 import { COMMENT_MARKER_PREFIX } from '../tools/legacy-markers.js'
-import { HOOK_DIRS, initHookPaths } from '../../../kernel/gates/ring0-hooks/init-hook-paths.js'
+import { HOOK_DIRS, initHookPaths } from '@harness/kernel/gates/ring0-hooks/init-hook-paths.js'
 
 // Task `vinaya-adopter-portability-v1` 2 (Issue #232): before this fix, an
 // absent doctrine `enforcement.md` made `check-registry-gates.ts` exit 0 with

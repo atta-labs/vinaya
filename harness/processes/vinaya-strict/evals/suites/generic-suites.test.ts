@@ -6,9 +6,9 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'bun:test'
-import { findBannedTerms } from '../../../../kernel/evals/banned-terms'
-import { GENERIC_GRADERS } from '../../../../kernel/evals/generic-graders'
-import { validateNeutralCase } from '../../../../kernel/evals/neutral-case'
+import { findBannedTerms } from '@harness/kernel/evals/banned-terms'
+import { GENERIC_GRADERS } from '@harness/kernel/evals/generic-graders'
+import { validateNeutralCase } from '@harness/kernel/evals/neutral-case'
 import { LIVE_SUITE_LAYERS } from '../freeze-record'
 import { loadCaseFile as loadDeveloperCaseFile } from '../../executing/developer/evals/developer-capability-suite'
 import {

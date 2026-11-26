@@ -3,8 +3,8 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { CheckError } from '../../../kernel/gates/checks/contract'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
+import type { CheckError } from '@harness/kernel/gates/checks/contract'
+import { spawnBudgetedAsync, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 // Bin-level tests for check-doc-claims.ts — the pure evaluator
 // (`checkDocClaims`, the process package) has its own unit suite fed hand-built file

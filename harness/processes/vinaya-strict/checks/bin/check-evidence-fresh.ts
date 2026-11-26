@@ -60,12 +60,12 @@ import {
   exitOnIncompleteForgeSnapshot,
   snapshotComments,
   snapshotPullRequest
-} from '../../../../../harness/kernel/adapters/code-host/github/forge-snapshot'
-import { patchIdAt } from '../../../../../harness/kernel/connectors/git/patch-id'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+} from '@harness/kernel/adapters/code-host/github/forge-snapshot'
+import { patchIdAt } from '@harness/kernel/connectors/git/patch-id'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { compareEvidenceBlock, EVIDENCE_PLACEHOLDER_TEXT } from '../evidence-fresh-logic'
 import { refuseUnresolvedPrincipals } from '../principals-refusal'
-import { ScanContext, resolveAnchoredRegion } from '../../../../../harness/kernel/gates/checks/scan-context'
+import { ScanContext, resolveAnchoredRegion } from '@harness/kernel/gates/checks/scan-context'
 import { COMMENT_MARKER_PREFIX_PATTERN, REGION_PREFIXES } from '../../tools/legacy-markers'
 
 /** The exact marker `developerRoundMarker` (`dev-review-loop/round-assess.ts`) renders into every round's own comment — posted the first time this PR's gate ever goes green, the SAME moment the driver's automatic evidence report first runs. */

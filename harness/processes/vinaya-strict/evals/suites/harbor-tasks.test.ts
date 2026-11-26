@@ -8,7 +8,7 @@
  * `1` and each known-bad variant `0`; the trial entry records an agent part
  * on a fake process run; and the held-out path refuses without its approval.
  */
-import { fixtureDir } from '../../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import {
@@ -72,7 +72,7 @@ import {
 } from '../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import { ENGINE_DEV_TOOLS_SERVER } from '../engine-role-step'
 import { HARBOR_TRIAL_BACKENDS, type HarborCaseFile, harborTrialCommand, runHarborTrial } from '../harbor-trial'
-import type { NeutralCase } from '../../../../kernel/evals/neutral-case'
+import type { NeutralCase } from '@harness/kernel/evals/neutral-case'
 import {
   type ContainerTrialRecord,
   GRADING_CODEX_PACKAGE,
@@ -81,10 +81,10 @@ import {
   type VinayaProcessSteps
 } from '../step-one'
 import { renderCase, VINAYA_RENDERER_VERSION } from '../vinaya-renderer'
-import { stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture'
+import { stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 import { DERIVED_FILE_DIGESTS, HELD_OUT_IDS } from './generic-suites'
-import { DEV_TOOLS_MCP_SERVER_NAME } from '../../../../kernel/tools/dev-tools-names'
-import type { DevToolContext } from '../../../../kernel/tools/dev-tools-server'
+import { DEV_TOOLS_MCP_SERVER_NAME } from '@harness/kernel/tools/dev-tools-names'
+import type { DevToolContext } from '@harness/kernel/tools/dev-tools-server'
 import { developmentCases } from './generic-suites'
 import { KNOWN_BAD_VARIANTS, referenceRecord } from './vinaya-trial-records'
 

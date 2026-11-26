@@ -7,7 +7,7 @@
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { EVALUATION_LAYERS, type EvaluationLayer } from '../../../../../kernel/evals/contracts'
+import { EVALUATION_LAYERS, type EvaluationLayer } from '@harness/kernel/evals/contracts'
 
 export const PROGRAM_DOCUMENT = 'harness/kernel/evals/dev-review-evaluation-program.md'
 export const PROGRAM_FILE = join(import.meta.dir, '../../../../../kernel/evals/dev-review-evaluation-program.md')

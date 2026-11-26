@@ -19,7 +19,7 @@ import {
   findBunOnPath,
   runTaskEngine
 } from '../loops/dev-review/run-control/task-run-engine.js'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture.js'
+import { spawnBudgetedAsync, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture.js'
 
 /** A Bun the stand-in lookup finds, so no test depends on a real Bun on the PATH. */
 const BUN = '/usr/local/bin/bun'

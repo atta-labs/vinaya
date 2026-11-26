@@ -13,7 +13,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readOwnerMarker, removeTree } from '../../../kernel/conformance/unit/test-temp'
+import { readOwnerMarker, removeTree } from '@harness/kernel/conformance/unit/test-temp'
 import type { Observation } from '../integration/conformance/unit/dev-review-current-loop-adapter'
 import {
   applyFolderModes,

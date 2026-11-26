@@ -1,10 +1,10 @@
-import { installCheckRegistry } from '../../../kernel/gates/checks/registry'
+import { installCheckRegistry } from '@harness/kernel/gates/checks/registry'
 import { existsSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cliPackageRoot } from '../../../../apps/cli/src/lib/package-root.js'
 import { DOCTRINE_REPO_PATHS } from '../tools/doctrine/doctrine-map'
-import type { CheckSpec } from '../../../kernel/gates/checks/contract'
+import type { CheckSpec } from '@harness/kernel/gates/checks/contract'
 
 // `cliPackageRoot()` walks up to the nearest `package.json`
 // rather than a fixed `../..` — the fixed depth was correct only when

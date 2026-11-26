@@ -11,7 +11,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { isNewDiskStateFile, type DiskStateFileStatus } from '../no-disk-state'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'no-disk-state'
 

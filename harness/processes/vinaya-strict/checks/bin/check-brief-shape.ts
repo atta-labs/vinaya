@@ -34,12 +34,12 @@ import {
   objectivesOf
 } from '../../tools/task-contract/objectives'
 import { readTierFromPrBody } from '../../tools/task-contract/pr-tier'
-import { extractIssue } from '../../../../../harness/kernel/adapters/code-host/github/extract-issue'
+import { extractIssue } from '@harness/kernel/adapters/code-host/github/extract-issue'
 import { REGION_PREFIXES } from '../../tools/legacy-markers'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { resolveTaskFrozenBrief } from '../frozen-brief'
-import { readIssueBody, readIssueComments } from '../../../../../harness/kernel/adapters/code-host/github/forge-read'
-import { exitOnIncompleteForgeSnapshot } from '../../../../../harness/kernel/adapters/code-host/github/forge-snapshot'
+import { readIssueBody, readIssueComments } from '@harness/kernel/adapters/code-host/github/forge-read'
+import { exitOnIncompleteForgeSnapshot } from '@harness/kernel/adapters/code-host/github/forge-snapshot'
 import { loadConfig, resolveGateCutovers, resolveTrustedPrincipals } from '../../integration/config/compose'
 
 const CHECK_NAME = 'brief-shape'

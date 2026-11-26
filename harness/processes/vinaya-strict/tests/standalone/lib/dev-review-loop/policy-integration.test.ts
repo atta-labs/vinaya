@@ -9,22 +9,22 @@ import { join } from 'node:path'
 import {
   parseObjectivesEditComment,
   reviewPolicyForLoop
-} from '../../../../loops/dev-review/standalone/dev-review-loop.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 import {
   deriveCodeReviewVerdict,
   renderCodeReviewComment,
   renderSecurityComment
-} from '../../../../loops/dev-review/bin/review-post.js'
-import { spliceObjectivesSection } from '../../../../thinking/planner/tools/planner-operations'
-import { DEFAULT_REVIEW_POLICY } from '../../../../tools/task-contract/review-policy'
+} from '@harness/workflow/loops/dev-review/bin/review-post.js'
+import { spliceObjectivesSection } from '@harness/workflow/thinking/planner/tools/planner-operations'
+import { DEFAULT_REVIEW_POLICY } from '@harness/workflow/tools/task-contract/review-policy'
 import {
   objectivesOf,
   objectivesVersion,
   renderObjectives,
   type Objective
-} from '../../../../tools/task-contract/objectives'
-import { policyDigest } from '../../../../tools/task-contract/review-input-manifest'
-import { checkReviewGate } from '../../../../tools/review-gate'
+} from '@harness/workflow/tools/task-contract/objectives'
+import { policyDigest } from '@harness/workflow/tools/task-contract/review-input-manifest'
+import { checkReviewGate } from '@harness/workflow/tools/review-gate'
 import { cleanupWorlds, controlDir as ipControlDir, makeWorld, runLoopInProcess } from '../dev-review-loop-harness.js'
 import { DEFAULT_POLICY_DIGEST, tempDirs as sharedTempDirs } from './driver-test-support.js'
 

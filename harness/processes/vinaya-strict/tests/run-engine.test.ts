@@ -1,4 +1,4 @@
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { agentTurnsOf, processLocalCopyFolder } from './lib/dispatch/dispatch-fixtures'
@@ -32,7 +32,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { failedCheckLogsOnHead } from '../loops/dev-review/standalone/dev-review-loop'
-import { gitObjectReader, prepareSources } from '../../../kernel/tools/source-provider'
+import { gitObjectReader, prepareSources } from '@harness/kernel/tools/source-provider'
 import {
   manifestDigest,
   readRequiredSourceManifest,
@@ -41,9 +41,9 @@ import {
   sourceReceiptsPath,
   type RequiredSourceManifest,
   writeRequiredSourceManifest
-} from '../../../kernel/source-manifest'
-import type { FetchDocumentationDeps } from '../../../kernel/tools/fetch-documentation'
-import { taskControlDir } from '../../../kernel/isolation/worker-boundary'
+} from '@harness/kernel/source-manifest'
+import type { FetchDocumentationDeps } from '@harness/kernel/tools/fetch-documentation'
+import { taskControlDir } from '@harness/kernel/isolation/worker-boundary'
 import {
   BASE,
   BRANCH,
@@ -58,10 +58,10 @@ import {
 import { developerPrompt } from '../executing/developer-prompt'
 import { type DeveloperTurnResult, validateDeveloperTurnResult } from '../executing/developer/developer-turn-result'
 import { AGENT_EXIT_EVENT, createRoleLaunchers } from '../executing/actions'
-import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
-import type { ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
-import type { NodeLifecycle } from '../../../../harness/kernel/log/client/translate'
-import { devToolsSocketPath } from '../../../kernel/tools/dev-tools-registration'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
+import type { ActionRegistry } from '@harness/kernel/loops/runtimes/atta-engine/run-process'
+import type { NodeLifecycle } from '@harness/kernel/log/client/translate'
+import { devToolsSocketPath } from '@harness/kernel/tools/dev-tools-registration'
 import {
   agentOutput,
   classifyDeveloperOutput,
@@ -78,8 +78,8 @@ import {
   MAX_AUTOMATIC_CONFLICT_REENTRIES
 } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
 import { readPauseState } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
-import { loopLogPathFor } from '../../../kernel/log/client/loop-log'
-import { SqliteCheckpointer } from '../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
+import { loopLogPathFor } from '@harness/kernel/log/client/loop-log'
+import { SqliteCheckpointer } from '@harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import { currentRunGeneration, resumeEffort, runIdentityOfTask } from '../bin/run-lifecycle'
 import { createHandoff } from '../executing/handoff'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
@@ -119,7 +119,7 @@ import {
   ENGINE_FORGE_RETRY_WAIT_MS
 } from '../loops/dev-review/standalone/dev-review-loop/stop-decision'
 import { VINAYA_LAUNCHED_ROLES } from '../integration/policies/launched-roles'
-import { createDispatchCapabilityTable } from '../../../kernel/tools/host/dev-tools-host'
+import { createDispatchCapabilityTable } from '@harness/kernel/tools/host/dev-tools-host'
 import { attributeOf, createRunLifecycleWorld, eventNameOf } from './run-lifecycle-world'
 
 const loaded = loadProcess(resolve(import.meta.dir, '..'), { flow: 'v1' })

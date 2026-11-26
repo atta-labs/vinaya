@@ -13,9 +13,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { prReportRefreshArgs } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture.js'
-import { programCommandLine } from '../../../../tools/programs.js'
+import { prReportRefreshArgs } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture.js'
+import { programCommandLine } from '@harness/workflow/tools/programs.js'
 
 const USAGE = 'Usage: vinaya-pr-report [--write <body-file> | --push <pr> [--body-file <path>]]'
 

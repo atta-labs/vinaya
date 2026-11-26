@@ -13,7 +13,7 @@
  */
 
 import { checkForgeTitle } from '../../tools/task-contract/brief-validation'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { readIssueCheckEnv } from '../issue-check-env'
 
 const CHECK_NAME = 'issue-title-grammar'

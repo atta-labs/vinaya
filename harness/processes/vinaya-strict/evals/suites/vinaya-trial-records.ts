@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beyondSurfacePaths, withBeyondSurfaceBlock } from '../../tools/task-contract/issue-validation'
-import type { NeutralCase } from '../../../../kernel/evals/neutral-case'
+import type { NeutralCase } from '@harness/kernel/evals/neutral-case'
 import { renderCase, TOOL_CAPABILITIES, type VinayaProcessInput, type VinayaTrialRecord } from '../vinaya-renderer'
 import type { ReviewerRole } from '../../executing/code-reviewer/review-result'
 

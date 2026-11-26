@@ -24,7 +24,7 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import type { ResolutionRecord } from '../../../../kernel/connectors/checkpoint/control-store/index'
+import type { ResolutionRecord } from '@harness/kernel/connectors/checkpoint/control-store/index'
 import {
   describeModelResolution,
   isAlreadyDispatchedError,
@@ -1072,7 +1072,7 @@ describe('vinaya task run ends the person span an earlier process asked', () => 
       await harness.withWorldEnv(world, async () => {
         support.raiseInAnotherProcess(facts)
         defaultRunTaskDeps.widen?.recordResolution(facts.task, escalationId, 'principal-1', 'issue-ruling')
-        await (await import('../../../../kernel/log/run-recorder')).runRecorder().drain()
+        await (await import('@harness/kernel/log/run-recorder')).runRecorder().drain()
       })
       const seen = support.personRecordsOf(world)
       expect(seen.asked()).toHaveLength(1)
