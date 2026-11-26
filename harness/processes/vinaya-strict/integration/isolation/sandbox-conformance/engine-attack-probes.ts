@@ -23,7 +23,7 @@
  * run can never print a credential into the output a pull request pastes.
  */
 
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -754,11 +754,16 @@ export function branchConfigurationIgnored(
 
 /** The config the Engine generates for every role under each adapter, with the directory it is generated into. */
 export function generatedRoleConfigs(): Record<Agent, Record<string, { config: GeneratedAgentConfig; dir: string }>> {
-  const processRoot = join(import.meta.dir, '../../../executing')
+  const processFolder = join(import.meta.dir, '../../..')
+  // A launched role's folder is under Executing, or under Thinking for a seat that judges a plan.
+  const roleFolder = (role: string): string =>
+    existsSync(join(processFolder, 'executing', role))
+      ? join(processFolder, 'executing', role)
+      : join(processFolder, 'thinking', role)
   const out = { claude: {}, codex: {} } as Record<Agent, Record<string, { config: GeneratedAgentConfig; dir: string }>>
   for (const role of VINAYA_LAUNCHED_ROLES) {
-    const grants = loadRoleGrants(join(processRoot, role, 'grants.yaml'))
-    const outputSchemaPath = join(processRoot, role, 'output.schema.json')
+    const grants = loadRoleGrants(join(roleFolder(role), 'grants.yaml'))
+    const outputSchemaPath = join(roleFolder(role), 'output.schema.json')
     const paths = (dir: string) => ({
       generatedDir: dir,
       outputSchemaPath,
