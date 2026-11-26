@@ -173,13 +173,15 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       const reached = blockingFiles.filter((f) => reachesProducer(f, producers, imports))
       expect(crossingFiles).toHaveLength(0)
       expect(blockingFiles).toHaveLength(16)
-      expect(reached).toHaveLength(3)
+      expect(reached).toHaveLength(4)
       expect(reached).toContain('harness/processes/vinaya-strict/thinking/planner/tools/open-issue.ts')
+      // `verify-dispatch.ts` reaches a producer through the connection classifier its Issue read calls.
+      expect(reached).toContain('harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts')
       // `task-run.ts` is a blocking gate that reaches a producer by importing the escalation resolver, which writes the
       // person's answer through the run's Log handle.
       expect(reached).toContain('harness/processes/vinaya-strict/loops/dev-review/run-control/task-run.ts')
       const exemptions = readG7Exemptions(repoRoot)
-      expect(Object.keys(exemptions)).toHaveLength(13)
+      expect(Object.keys(exemptions)).toHaveLength(12)
       const result = checkG7({
         enforcementMapPresent: true,
         crossingFiles,
@@ -202,7 +204,7 @@ describe('registry-gates G7 — anything that can block or write to the forge re
     }
   })
 
-  it("loads exactly today's thirteen path-to-reason pairs from the committed data file", () => {
+  it("loads exactly today's twelve path-to-reason pairs from the committed data file", () => {
     const checkBin =
       'a check bin: it runs only as a child of `vinaya check`, whose runner writes each check run through the run Log handle, so no import of the Log is needed'
     const script =
@@ -216,7 +218,6 @@ describe('registry-gates G7 — anything that can block or write to the forge re
       'harness/kernel/gates/checks/resolver.ts':
         'the pure step that decides which checks `vinaya check` runs; the runner it feeds writes each run through the run Log handle and the invocation records its own command at exit',
       'harness/processes/vinaya-strict/tools/pull-request/bin/open-pr.ts': script,
-      'harness/processes/vinaya-strict/checks/standalone/verify-dispatch.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/verify-task.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/check-branch-topology.ts': script,
       'harness/processes/vinaya-strict/checks/standalone/check-push-target.ts': script,
