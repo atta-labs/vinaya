@@ -573,3 +573,14 @@ test('usage the agent never reported is absent, never zero', () => {
     expect(name in attributes, name).toBe(false)
   }
 })
+
+test('the usage row lists the cost-unknown reason beside the tokens, and writes no cost', () => {
+  const t = harness()
+  inAgent(t.handle)
+  t.handle.usage.recorded({ inputTokens: 10, outputTokens: 5, costUnknownReason: 'not_priced' })
+  endAgent(t.handle)
+  const attributes = t.spans.getFinishedSpans().find((s) => s.name === 'invoke_agent reviewer')?.attributes ?? {}
+  expect(attributes['vinaya.usage.cost_unknown_reason']).toBe('not_priced')
+  expect(attributes['gen_ai.usage.input_tokens']).toBe(10)
+  expect('vinaya.usage.cost' in attributes).toBe(false)
+})

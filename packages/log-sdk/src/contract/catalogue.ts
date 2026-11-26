@@ -161,6 +161,7 @@ export const ATTRIBUTE_NAMES = {
   usageCost: 'vinaya.usage.cost',
   usageCostKind: 'vinaya.usage.cost_kind',
   usageUnknownReason: 'vinaya.usage.unknown_reason',
+  usageCostUnknownReason: 'vinaya.usage.cost_unknown_reason',
   // Review
   seats: 'vinaya.review.seats',
   verdicts: 'vinaya.review.verdicts',

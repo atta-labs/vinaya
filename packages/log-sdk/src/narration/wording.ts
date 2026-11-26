@@ -380,13 +380,20 @@ export function usageRecordedLine(detail: {
   input: number | null
   output: number | null
   unknownReason: string | null
+  cost?: number | null
+  costKind?: string | null
+  costUnknownReason?: string | null
 }): NarrationLine {
   if (detail.input === null && detail.output === null)
     return line('information', `Usage was not known${detail.unknownReason ? `: ${detail.unknownReason}` : ''}.`)
   const parts: string[] = []
   if (detail.input !== null) parts.push(`${detail.input} tokens in`)
   if (detail.output !== null) parts.push(`${detail.output} out`)
-  return line('information', `Usage recorded: ${parts.join(', ')}.`)
+  let tail = ''
+  if (detail.cost !== null && detail.cost !== undefined)
+    tail = `; cost ${detail.cost}${detail.costKind ? ` (${detail.costKind})` : ''}`
+  else if (detail.costUnknownReason) tail = `; cost unknown: ${detail.costUnknownReason}`
+  return line('information', `Usage recorded: ${parts.join(', ')}${tail}.`)
 }
 
 export function findingsComparedLine(count: {

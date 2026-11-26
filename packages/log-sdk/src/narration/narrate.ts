@@ -399,7 +399,10 @@ function moreLines(
       return usageRecordedLine({
         input: wholeOf(a[A.usageInputTokens]),
         output: wholeOf(a[A.usageOutputTokens]),
-        unknownReason: codeOf(a[A.usageUnknownReason])
+        unknownReason: codeOf(a[A.usageUnknownReason]),
+        cost: typeof a[A.usageCost] === 'number' ? (a[A.usageCost] as number) : null,
+        costKind: codeOf(a[A.usageCostKind]),
+        costUnknownReason: codeOf(a[A.usageCostUnknownReason])
       })
     case E.findingsCompared:
       return findingsComparedLine({
