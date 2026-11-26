@@ -18,7 +18,9 @@ test('subject records share writer sequencing and the answer uses the answering 
   expect(events.map((event) => event.attributes[A.seq])).toEqual([1, 3, 4, 5, 6])
   expect(new Set(events.map((event) => event.attributes[A.eventId])).size).toBe(events.length)
   for (const event of events) {
-    expect(event.attributes).toMatchObject({ [A.writerId]: a.handle.writerId, [A.provenance]: 'governed' })
+    // The team's own event is reported; every other record keeps the handle's provenance.
+    const provenance = event.eventName === 'team.done' ? 'reported' : 'governed'
+    expect(event.attributes).toMatchObject({ [A.writerId]: a.handle.writerId, [A.provenance]: provenance })
     expect(typeof event.attributes[A.eventId]).toBe('string')
   }
   expect(a.spans.getFinishedSpans()[0]?.attributes).toMatchObject({

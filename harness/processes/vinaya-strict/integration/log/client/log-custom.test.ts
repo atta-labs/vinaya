@@ -27,6 +27,7 @@ function realHandle(): { handle: LogHandle; stored: () => Promise<StoredEvent[]>
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
   const handle = connect({
     runId: 'custom-test-run',
+    provenance: 'governed',
     repository: REPOSITORY,
     repoRoot: join(dir, 'repo'),
     runtimeDir: dir,
@@ -86,6 +87,13 @@ describe('emitCustomEvent — a declared event (O1, O4)', () => {
     expect(events).toHaveLength(1)
     expect(events[0]?.name).toBe('acme.deploy')
     expect(JSON.stringify(events[0]?.attributes)).toContain('shipped')
+  })
+
+  it("reads reported in the run's local copy, though the handle is governed", async () => {
+    const { handle, stored } = realHandle()
+    emitCustomEvent('acme.deploy', valid, { declarations: () => declarations, handle: () => handle })
+    const events = await stored()
+    expect(events[0]?.attributes['vinaya.provenance']).toBe('reported')
   })
 
   it('writes no earlier-format file for the event', async () => {

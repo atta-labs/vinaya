@@ -80,7 +80,6 @@ export async function main(argv: string[]): Promise<number> {
   if (checked !== undefined && !checked.ok) {
     const fields = checked.fieldNames.length === 0 ? '' : ' (fields: ' + checked.fieldNames.join(', ') + ')'
     console.error('vinaya log emit: refused — %s%s', checked.reason, fields)
-    return 1
   }
 
   let failed = false
@@ -96,6 +95,9 @@ export async function main(argv: string[]): Promise<number> {
   try {
     if (checked?.ok) {
       handle.custom.recorded(checked.name, checked.fields)
+    } else if (checked !== undefined) {
+      // The handle refuses the same event and records the refusal in the run's local copy.
+      handle.custom.recorded(parsed.name, parsed.fields)
     } else {
       const folder = await localFolder(settings, repoRoot, repository)
       await invoke(command, handle, parsed.fields, folder)
@@ -106,6 +108,7 @@ export async function main(argv: string[]): Promise<number> {
   } finally {
     await handle.shutdown()
   }
+  if (checked !== undefined && !checked.ok) return 1
   if (failed) {
     console.error('vinaya-log: could not record')
     return 1

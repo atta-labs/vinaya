@@ -183,7 +183,13 @@ export function emitEvent(
           ])
         )
   const seq = nextSeq(core)
-  const stamped = sanitize(core, { ...stamps(core, seq), [ATTRIBUTE_NAMES.eventId]: `${core.writerId}:${seq}` })
+  // A team's own declared event is reported whatever the handle was opened with;
+  // every other record keeps the handle's provenance.
+  const stamped = sanitize(core, {
+    ...stamps(core, seq),
+    ...(customFields === undefined ? {} : { [ATTRIBUTE_NAMES.provenance]: 'reported' }),
+    [ATTRIBUTE_NAMES.eventId]: `${core.writerId}:${seq}`
+  })
   core.logger.emit({
     eventName: name,
     timestamp: time ?? Date.now(),
