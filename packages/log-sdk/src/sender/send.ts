@@ -275,7 +275,7 @@ async function post(
 /** Send immutable, newline-terminated records without taking a writer or sender lock. */
 export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<LocalCopyReport> {
   const directory = join(options.folder, repoSegment(options.repository))
-  const state = join(directory, DELIVERY_STATE_DIRECTORY)
+  const state = join(directory, '.otlp-delivery')
   const deadline = options.deadline ?? Number.POSITIVE_INFINITY
   const report: LocalCopyReport = { sent: 0, setAside: [], failures: [] }
   let stopped = false
