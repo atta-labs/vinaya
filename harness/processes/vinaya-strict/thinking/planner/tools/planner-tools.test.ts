@@ -64,6 +64,28 @@ function stubOps(
       calls.push({ op: 'draft-preview', arg: { tranche, task } })
       return { ok: false, message: `no draft is stored for tranche "${tranche}" on this machine` }
     },
+    startPlanReview: async (tranche) => {
+      calls.push({ op: 'review-start', arg: tranche })
+      return {
+        ok: false,
+        reason: 'no_draft',
+        findings: [{ check: 'plan-review', message: 'no draft is stored', recovery: 'Submit the draft first.' }]
+      }
+    },
+    planReviewStatus: (tranche) => {
+      calls.push({ op: 'review-status', arg: tranche })
+      return {
+        ok: false,
+        findings: [{ check: 'plan-review', message: 'no draft is stored', recovery: 'Submit the draft first.' }]
+      }
+    },
+    decidePlanReview: (input) => {
+      calls.push({ op: 'review-decide', arg: input })
+      return {
+        ok: false,
+        findings: [{ check: 'plan-review', message: 'the round limit is not reached', recovery: 'Start a round.' }]
+      }
+    },
     ...over
   }
   return Object.assign(ops, { calls })
@@ -255,6 +277,119 @@ describe('the plan draft check and preview tools', () => {
   it('refuse input that names no tranche', async () => {
     expect(refusalFindings(await call(stubOps(), 'plan_draft_preview', { task: 1 }))[0]?.check).toBe('tool-input')
     expect(refusalFindings(await call(stubOps(), 'plan_draft_check', {}))[0]?.check).toBe('tool-input')
+  })
+})
+
+describe('the plan review tools', () => {
+  const STATUS = {
+    tranche: 'sample-plan',
+    fingerprint: 'sha256:abc',
+    roundsSpent: 2,
+    roundsAllowed: 2,
+    roundLimit: 2,
+    approved: false,
+    stale: false,
+    lastVerdict: 'not_approved',
+    approvedTasks: [],
+    openFindings: [],
+    notes: [],
+    resolvedFindings: [],
+    stopped: false,
+    limitReached: true,
+    nextScope: null,
+    decisions: []
+  }
+
+  it('are on the Planner seat', () => {
+    for (const name of ['plan_review_start', 'plan_review_status', 'plan_review_decide'] as const) {
+      expect(PLANNER_TOOL_NAMES).toContain(name)
+    }
+  })
+
+  it('plan_review_start returns the round, its verdict and its findings', async () => {
+    const ops = stubOps({
+      startPlanReview: async () => ({
+        ok: true,
+        round: 1,
+        fingerprint: 'sha256:abc',
+        agent: 'codex',
+        verdict: 'not_approved',
+        findings: [],
+        openFindings: [],
+        resolved: [],
+        roundsSpent: 1,
+        roundsAllowed: 2,
+        scope: null
+      })
+    })
+    const r = await call(ops, 'plan_review_start', { tranche: 'sample-plan' })
+    expect(r.ok).toBe(true)
+    if (r.ok) expect((r.result as { verdict: string; round: number }).verdict).toBe('not_approved')
+  })
+
+  it('plan_review_start refuses as validation errors, one finding each', async () => {
+    const r = await call(stubOps(), 'plan_review_start', { tranche: 'sample-plan' })
+    expect(r.ok).toBe(false)
+    expect(refusalFindings(r)[0]?.check).toBe('plan-review')
+  })
+
+  it('plan_review_status returns the status and refuses an absent draft', async () => {
+    const present = await call(
+      stubOps({ planReviewStatus: () => ({ ok: true, status: STATUS as never }) }),
+      'plan_review_status',
+      { tranche: 'sample-plan' }
+    )
+    expect(present.ok).toBe(true)
+    if (present.ok) expect(present.result).toEqual({ status: STATUS })
+    expect(refusalFindings(await call(stubOps(), 'plan_review_status', { tranche: 'sample-plan' }))[0]?.check).toBe(
+      'plan-review'
+    )
+  })
+
+  it('plan_review_decide records a decision against the fingerprint it names', async () => {
+    const ops = stubOps({
+      decidePlanReview: (input) => ({
+        ok: true,
+        status: STATUS as never,
+        decision: { fingerprint: input.fingerprint, choice: input.choice, afterRounds: 2 }
+      })
+    })
+    const r = await call(ops, 'plan_review_decide', {
+      tranche: 'sample-plan',
+      fingerprint: 'sha256:abc',
+      choice: 'allow_one_more'
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect((r.result as { decision: unknown }).decision).toEqual({
+        fingerprint: 'sha256:abc',
+        choice: 'allow_one_more',
+        afterRounds: 2
+      })
+    }
+  })
+
+  it('plan_review_decide refuses, as a validation error, a decision the limit does not call for', async () => {
+    const ops = stubOps()
+    const r = await call(ops, 'plan_review_decide', {
+      tranche: 'sample-plan',
+      fingerprint: 'sha256:abc',
+      choice: 'stop'
+    })
+    expect(refusalFindings(r)[0]?.message).toContain('not reached')
+    expect(ops.calls.map((c) => c.op)).toEqual(['review-decide'])
+  })
+
+  it('refuse input without a tranche, a fingerprint or a known choice', async () => {
+    expect(refusalFindings(await call(stubOps(), 'plan_review_start', {}))[0]?.check).toBe('tool-input')
+    expect(
+      refusalFindings(await call(stubOps(), 'plan_review_decide', { tranche: 'sample-plan', choice: 'stop' }))[0]?.check
+    ).toBe('tool-input')
+    expect(
+      refusalFindings(
+        await call(stubOps(), 'plan_review_decide', { tranche: 'a', fingerprint: 'sha256:abc', choice: 'approve' })
+      )[0]?.check
+    ).toBe('tool-input')
   })
 })
 

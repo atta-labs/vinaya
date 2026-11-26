@@ -128,7 +128,10 @@ export const PLANNER_TOOL_GRANT = [
   'plan_draft_submit',
   'plan_draft_read',
   'plan_draft_check',
-  'plan_draft_preview'
+  'plan_draft_preview',
+  'plan_review_start',
+  'plan_review_status',
+  'plan_review_decide'
 ] as const
 
 export type PlannerGrantedTool = (typeof PLANNER_TOOL_GRANT)[number]

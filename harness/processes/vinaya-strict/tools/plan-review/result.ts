@@ -47,6 +47,7 @@ export const PLAN_REVIEW_QUESTION_NAMES = {
 
 export const EVIDENCE_KINDS = ['code', 'scope'] as const
 export const FINDING_KINDS = ['blocking', 'note'] as const
+export const CONFIRMATION_STATUSES = ['resolved', 'open'] as const
 
 const schemaVersion = z.literal(PLAN_REVIEW_SCHEMA_VERSION)
 const question = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)])
@@ -92,6 +93,18 @@ const FindingSchema = z
   })
   .strict()
 
+/**
+ * The seat's confirmation of one finding an earlier round left open: resolved or still open, with evidence.
+ * `finding` is the id the harness gave the finding when it stored it; the round's input lists those ids.
+ */
+const ConfirmationSchema = z
+  .object({
+    finding: z.string().min(1),
+    status: z.enum(CONFIRMATION_STATUSES),
+    evidence: z.array(EvidenceSchema)
+  })
+  .strict()
+
 export const PlanReviewSchema = z
   .object({
     schemaVersion,
@@ -100,7 +113,9 @@ export const PlanReviewSchema = z
     revision: z.string().min(1),
     summary: z.string().min(1),
     answers: z.array(AnswerSchema),
-    findings: z.array(FindingSchema)
+    findings: z.array(FindingSchema),
+    /** One per finding still open from an earlier round; empty in the first round. */
+    confirmations: z.array(ConfirmationSchema)
   })
   .strict()
 
@@ -110,6 +125,7 @@ export const PlanReviewOutputSchema = z.object({ planReview: PlanReviewSchema })
 export type PlanReviewEvidence = z.infer<typeof EvidenceSchema>
 export type PlanReviewAnswer = z.infer<typeof AnswerSchema>
 export type PlanReviewFinding = z.infer<typeof FindingSchema>
+export type PlanReviewConfirmation = z.infer<typeof ConfirmationSchema>
 export type PlanReview = z.infer<typeof PlanReviewSchema>
 
 /** The JSON Schema handed to the vendor CLI. `$schema` is dropped: neither CLI needs it. */
@@ -121,10 +137,21 @@ export function planReviewJsonSchema(): Record<string, unknown> {
   return rest
 }
 
+/**
+ * What a later round judges: the tasks to answer questions 1 to 5 for, and the ids of the findings still open
+ * that the seat must confirm. A first round has no scope and judges every task.
+ */
+export type PlanReviewScope = {
+  readonly tasks: readonly number[]
+  readonly openFindings: readonly string[]
+}
+
 /** What the controller knows about the review it dispatched — never read from the seat. */
 export type PlanReviewBinding = {
   /** The exact draft the seat judged; its fingerprint, question version and revision are the answer's binding. */
   readonly draft: PlanDraft
+  /** Set for a round after the first: the answers and confirmations required are exactly these. */
+  readonly scope?: PlanReviewScope
   /** The number of lines of a file at the draft's captured revision, or `null` when the file is not there. */
   readonly lineCount: (path: string) => number | null
 }
@@ -174,7 +201,8 @@ const askedOfTask = (q: number): boolean => (TASK_QUESTIONS as readonly number[]
 /** Every task has exactly one answer to each of questions 1 to 5, and the plan exactly one to question 6. */
 export function completenessErrors(review: PlanReview, binding: PlanReviewBinding): string[] {
   const errors: string[] = []
-  const tasks = new Set(binding.draft.tasks.map((t) => t.number))
+  const draftTasks = new Set(binding.draft.tasks.map((t) => t.number))
+  const tasks = binding.scope === undefined ? draftTasks : new Set(binding.scope.tasks)
   const seen = new Map<string, number>()
   for (const [i, a] of review.answers.entries()) {
     if (askedOfTask(a.question)) {
@@ -182,8 +210,12 @@ export function completenessErrors(review: PlanReview, binding: PlanReviewBindin
         errors.push(`answers.${i}: question ${a.question} is asked of a task and names none`)
         continue
       }
-      if (!tasks.has(a.task)) {
+      if (!draftTasks.has(a.task)) {
         errors.push(`answers.${i}: task ${a.task} is not a task of the draft`)
+        continue
+      }
+      if (!tasks.has(a.task)) {
+        errors.push(`answers.${i}: task ${a.task} is not in this round's scope`)
         continue
       }
     } else if (a.task !== null) {
@@ -202,6 +234,26 @@ export function completenessErrors(review: PlanReview, binding: PlanReviewBindin
     }
   }
   if (!seen.has(`${PLAN_QUESTION}/plan`)) errors.push(`answers: the plan has no answer to question ${PLAN_QUESTION}`)
+  errors.push(...confirmationErrors(review, binding))
+  return errors
+}
+
+/** Exactly the findings the round named as open are confirmed, each once, each with evidence. */
+export function confirmationErrors(review: PlanReview, binding: PlanReviewBinding): string[] {
+  const errors: string[] = []
+  const expected = new Set(binding.scope?.openFindings ?? [])
+  const counts = new Map<string, number>()
+  for (const [i, c] of review.confirmations.entries()) {
+    if (!expected.has(c.finding)) {
+      errors.push(`confirmations.${i}: finding ${c.finding} is not one this round asked to confirm`)
+      continue
+    }
+    counts.set(c.finding, (counts.get(c.finding) ?? 0) + 1)
+    if (c.evidence.length === 0) errors.push(`confirmations.${i}: a confirmation of ${c.finding} names its evidence`)
+  }
+  for (const [id, count] of counts)
+    if (count > 1) errors.push(`confirmations: finding ${id} is confirmed ${count} times`)
+  for (const id of expected) if (!counts.has(id)) errors.push(`confirmations: finding ${id} is not confirmed`)
   return errors
 }
 
@@ -270,6 +322,11 @@ export function evidenceSetErrors(review: PlanReview, binding: PlanReviewBinding
   for (const [i, f] of review.findings.entries()) {
     for (const [j, e] of f.evidence.entries()) {
       for (const message of evidenceErrors(e, binding)) errors.push(`findings.${i}.evidence.${j}: ${message}`)
+    }
+  }
+  for (const [i, c] of review.confirmations.entries()) {
+    for (const [j, e] of c.evidence.entries()) {
+      for (const message of evidenceErrors(e, binding)) errors.push(`confirmations.${i}.evidence.${j}: ${message}`)
     }
   }
   return errors

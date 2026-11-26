@@ -60,6 +60,8 @@ import {
   resolveGateCutovers as sectionResolveGateCutovers,
   resolveLocalPacingOverride,
   resolveReleaseActor as sectionResolveReleaseActor,
+  resolveReviewAgent as sectionResolveReviewAgent,
+  resolveReviewRoundLimit as sectionResolveReviewRoundLimit,
   resolveReviewPolicy as sectionResolveReviewPolicy,
   resolveSecurityScanCommand as sectionResolveSecurityScanCommand,
   type TokensCollectDeclaration,
@@ -347,6 +349,8 @@ export const resolveSecurityScanCommand: (config: VinayaConfig | null) => readon
   sectionResolveSecurityScanCommand
 export const resolveGateCutovers: (config: VinayaConfig | null) => GateCutovers = sectionResolveGateCutovers
 export const resolveCollisionThreshold: (config: VinayaConfig | null) => number = sectionResolveCollisionThreshold
+export const resolveReviewRoundLimit: (config: VinayaConfig | null) => number = sectionResolveReviewRoundLimit
+export const resolveReviewAgent: (config: VinayaConfig | null) => 'same' | 'different' = sectionResolveReviewAgent
 export const resolveRuntimeDirSetting: (config: VinayaConfig | null) => string | null = kernelResolveRuntimeDirSetting
 export const resolveTrustAnchorRuntimeDir: (
   localRuntimeDir: string,

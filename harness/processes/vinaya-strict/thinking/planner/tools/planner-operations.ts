@@ -11,6 +11,20 @@ import { draftFingerprint, type PlanDraft, parsePlanDraft } from '@harness/workf
 import { type DraftCheckReport, checkDraft } from '@harness/workflow/tools/plan-draft/check'
 import { type DraftPreview, previewDraft } from '@harness/workflow/tools/plan-draft/preview'
 import { readPlanDraft, writePlanDraft } from '@harness/workflow/tools/plan-draft/store'
+import {
+  type CoordinatorDeps,
+  type CoordinatorFinding,
+  type DecideOutcome,
+  type DecisionChoice,
+  decidePlanReview,
+  planReviewStatus,
+  resolveReviewerAgent,
+  type StartOutcome,
+  startPlanReview,
+  type StatusOutcome
+} from '@harness/workflow/tools/plan-review/coordinator'
+import type { PlanReviewAgent } from '@harness/workflow/tools/plan-review/launch'
+import { loadConfig, resolveReviewAgent, resolveReviewRoundLimit } from '@harness/workflow/integration/config/compose'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -924,4 +938,72 @@ export async function previewStoredPlanDraft(
     return { ok: false, message: `the draft of "${tranche}" holds no task ${task}` }
   }
   return { ok: true, preview: await previewDraft(stored.draft, task === undefined ? null : [task]) }
+}
+
+// --- the plan review -------------------------------------------------------------
+
+/** How long one review round may run before it is stopped and not counted. */
+const REVIEW_ROUND_TIMEOUT_MS = 20 * 60 * 1000
+
+/**
+ * The agent the Planner runs on, read from the environment its own CLI gives a
+ * tool server: Codex marks its sessions with a `CODEX_` variable of its own, and
+ * anything else is Claude Code. No model is chosen here.
+ */
+export function plannerAgentFromEnv(env: Record<string, string | undefined> = process.env): PlanReviewAgent {
+  const codex = ['CODEX_THREAD_ID', 'CODEX_SANDBOX', 'CODEX_CI', 'CODEX_SANDBOX_NETWORK_DISABLED']
+  return codex.some((k) => (env[k] ?? '') !== '') && (env.CLAUDECODE ?? '') === '' ? 'codex' : 'claude-code'
+}
+
+/** The coordinator's dependencies as this repository and this machine give them. */
+export function realCoordinatorDeps(runtimeDir: string = runtimeDirForThisRepo()): CoordinatorDeps {
+  const config = loadConfig()
+  return {
+    runtimeDir,
+    readDraft: (tranche) => readPlanDraft(runtimeDir, tranche),
+    check: (draft) => checkDraft(draft),
+    repoRoot: process.cwd(),
+    roundLimit: resolveReviewRoundLimit(config),
+    agent: resolveReviewerAgent(resolveReviewAgent(config), plannerAgentFromEnv()),
+    timeoutMs: REVIEW_ROUND_TIMEOUT_MS
+  }
+}
+
+const isSlug = (tranche: string): boolean => /^[a-z0-9][a-z0-9-]*$/i.test(tranche)
+const notSlug = (tranche: string): { ok: false; findings: CoordinatorFinding[] } => ({
+  ok: false,
+  findings: [
+    {
+      check: 'plan-review',
+      message: `"${tranche}" is not a tranche slug (letters, digits and hyphens)`,
+      recovery: 'Name the tranche slug of the stored draft.'
+    }
+  ]
+})
+
+/** Starts one review round of the tranche's stored draft; refuses unless the draft was checked and a round is allowed. */
+export async function startStoredPlanReview(
+  tranche: string,
+  deps: CoordinatorDeps = realCoordinatorDeps()
+): Promise<StartOutcome> {
+  if (!isSlug(tranche)) return { ok: false, reason: 'no_draft', findings: notSlug(tranche).findings }
+  return startPlanReview(deps, tranche)
+}
+
+/** The stored review state of the tranche's draft, read for this draft's fingerprint. */
+export function readStoredPlanReviewStatus(
+  tranche: string,
+  deps: Pick<CoordinatorDeps, 'runtimeDir' | 'readDraft' | 'roundLimit'> = realCoordinatorDeps()
+): StatusOutcome {
+  if (!isSlug(tranche)) return notSlug(tranche)
+  return planReviewStatus(deps, tranche)
+}
+
+/** Records the Principal's decision at the round limit. */
+export function decideStoredPlanReview(
+  input: { tranche: string; fingerprint: string; choice: DecisionChoice },
+  deps: Pick<CoordinatorDeps, 'runtimeDir' | 'readDraft' | 'roundLimit'> = realCoordinatorDeps()
+): DecideOutcome {
+  if (!isSlug(input.tranche)) return notSlug(input.tranche)
+  return decidePlanReview(deps, input)
 }

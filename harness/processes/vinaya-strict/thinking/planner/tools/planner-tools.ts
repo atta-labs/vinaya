@@ -40,11 +40,20 @@ import {
   type DraftPreviewOutcome,
   type DraftReadOutcome,
   type DraftSubmitOutcome,
+  decideStoredPlanReview,
+  readStoredPlanReviewStatus,
+  startStoredPlanReview,
   type IssueWriteOutcome,
   type ObjectivesOutcome,
   type SurfaceOutcome
 } from './planner-operations'
 import { PlanDraftSchema } from '@harness/workflow/tools/plan-draft/draft'
+import type {
+  DecideOutcome,
+  DecisionChoice,
+  StartOutcome,
+  StatusOutcome
+} from '@harness/workflow/tools/plan-review/coordinator'
 
 // --- names ------------------------------------------------------------------
 
@@ -59,7 +68,10 @@ export const PLANNER_TOOL_NAMES = [
   'plan_draft_submit',
   'plan_draft_read',
   'plan_draft_check',
-  'plan_draft_preview'
+  'plan_draft_preview',
+  'plan_review_start',
+  'plan_review_status',
+  'plan_review_decide'
 ] as const
 
 export type PlannerToolName = (typeof PLANNER_TOOL_NAMES)[number]
@@ -178,6 +190,15 @@ const BriefInput = z
 const DraftReadInput = z.object({ tranche: z.string().min(1) }).strict()
 const DraftCheckInput = DraftReadInput
 const DraftPreviewInput = z.object({ tranche: z.string().min(1), task: issueNumber.optional() }).strict()
+const ReviewStartInput = DraftReadInput
+const ReviewStatusInput = DraftReadInput
+const ReviewDecideInput = z
+  .object({
+    tranche: z.string().min(1),
+    fingerprint: z.string().min(1),
+    choice: z.enum(['allow_one_more', 'stop'])
+  })
+  .strict()
 
 // --- JSON Schemas (the wire needs them; Zod 3 ships no exporter) ---------------
 
@@ -192,6 +213,71 @@ const FINDING_JSON_SCHEMA = {
   additionalProperties: false
 } as const
 const FINDINGS_ARRAY = { type: 'array', items: FINDING_JSON_SCHEMA } as const
+
+/** A review finding as the coordinator stores it: open, resolved or a note, with the id a confirmation names. */
+const STORED_FINDING_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    round: { type: 'integer' },
+    question: { type: 'integer' },
+    task: { type: ['integer', 'null'] },
+    state: { enum: ['open', 'resolved', 'note'] },
+    resolution: { type: 'string', description: 'What would resolve it.' },
+    evidence: { type: 'array', items: { type: 'object' } },
+    resolvedInRound: { type: ['integer', 'null'] }
+  },
+  required: ['id', 'round', 'question', 'task', 'state', 'resolution', 'evidence', 'resolvedInRound'],
+  additionalProperties: false
+} as const
+
+/** Where a plan's review stands for the stored draft's current fingerprint. */
+const REVIEW_STATUS_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    tranche: { type: 'string' },
+    fingerprint: { type: 'string' },
+    roundsSpent: { type: 'integer' },
+    roundsAllowed: { type: 'integer' },
+    roundLimit: { type: 'integer' },
+    approved: {
+      type: 'boolean',
+      description: 'True only when the latest round judged this exact fingerprint and approved it.'
+    },
+    stale: {
+      type: 'boolean',
+      description: 'A round exists but judged a different fingerprint: its verdict does not apply.'
+    },
+    lastVerdict: { enum: ['approved', 'not_approved', null] },
+    approvedTasks: { type: 'array', items: { type: 'integer' } },
+    openFindings: { type: 'array', items: STORED_FINDING_JSON_SCHEMA },
+    notes: { type: 'array', items: STORED_FINDING_JSON_SCHEMA },
+    resolvedFindings: { type: 'array', items: STORED_FINDING_JSON_SCHEMA },
+    stopped: { type: 'boolean' },
+    limitReached: { type: 'boolean', description: 'Review has stopped: only the Principal decides what follows.' },
+    nextScope: { type: ['object', 'null'], description: 'What the next round judges; null before the first round.' },
+    decisions: { type: 'array', items: { type: 'object' } }
+  },
+  required: [
+    'tranche',
+    'fingerprint',
+    'roundsSpent',
+    'roundsAllowed',
+    'roundLimit',
+    'approved',
+    'stale',
+    'lastVerdict',
+    'approvedTasks',
+    'openFindings',
+    'notes',
+    'resolvedFindings',
+    'stopped',
+    'limitReached',
+    'nextScope',
+    'decisions'
+  ],
+  additionalProperties: false
+} as const
 
 const WRITTEN_OUTPUT = {
   type: 'object',
@@ -339,6 +425,31 @@ export const PLANNER_TOOL_INPUT_JSON_SCHEMAS: Record<PlannerToolName, Record<str
     },
     required: ['tranche'],
     additionalProperties: false
+  },
+  plan_review_start: {
+    type: 'object',
+    properties: { tranche: { ...str, description: 'The tranche slug of the stored draft to review.' } },
+    required: ['tranche'],
+    additionalProperties: false
+  },
+  plan_review_status: {
+    type: 'object',
+    properties: { tranche: { ...str, description: 'The tranche slug of the stored draft.' } },
+    required: ['tranche'],
+    additionalProperties: false
+  },
+  plan_review_decide: {
+    type: 'object',
+    properties: {
+      tranche: { ...str, description: 'The tranche slug of the stored draft.' },
+      fingerprint: { ...str, description: "The draft's current fingerprint, which the decision is given for." },
+      choice: {
+        enum: ['allow_one_more', 'stop'],
+        description: "The Principal's choice at the round limit: one more round, or stop the plan."
+      }
+    },
+    required: ['tranche', 'fingerprint', 'choice'],
+    additionalProperties: false
   }
 }
 
@@ -428,6 +539,58 @@ export const PLANNER_TOOL_OUTPUT_JSON_SCHEMAS: Record<PlannerToolName, Record<st
     },
     required: ['fingerprint', 'revision', 'tasks'],
     additionalProperties: false
+  },
+  plan_review_start: {
+    type: 'object',
+    properties: {
+      round: { type: 'integer', description: 'The number of this round among all rounds spent on the tranche.' },
+      fingerprint: { type: 'string', description: 'The fingerprint of the draft the round judged.' },
+      agent: { enum: ['claude-code', 'codex'] },
+      verdict: { enum: ['approved', 'not_approved'], description: 'Derived by the harness from the validated answer.' },
+      findings: { type: 'array', items: STORED_FINDING_JSON_SCHEMA, description: 'The findings this round made.' },
+      resolved: {
+        type: 'array',
+        items: STORED_FINDING_JSON_SCHEMA,
+        description: 'Findings this round resolved with a valid confirmation.'
+      },
+      openFindings: {
+        type: 'array',
+        items: STORED_FINDING_JSON_SCHEMA,
+        description: 'Every blocking finding still open after the round.'
+      },
+      roundsSpent: { type: 'integer' },
+      roundsAllowed: { type: 'integer' }
+    },
+    required: [
+      'round',
+      'fingerprint',
+      'agent',
+      'verdict',
+      'findings',
+      'resolved',
+      'openFindings',
+      'roundsSpent',
+      'roundsAllowed'
+    ],
+    additionalProperties: false
+  },
+  plan_review_status: {
+    type: 'object',
+    properties: { status: REVIEW_STATUS_JSON_SCHEMA },
+    required: ['status'],
+    additionalProperties: false
+  },
+  plan_review_decide: {
+    type: 'object',
+    properties: {
+      decision: {
+        type: 'object',
+        description: 'The decision as stored: its fingerprint, its choice and the rounds then spent.'
+      },
+      status: REVIEW_STATUS_JSON_SCHEMA
+    },
+    required: ['decision', 'status'],
+    additionalProperties: false
   }
 }
 
@@ -444,7 +607,10 @@ const DESCRIPTIONS: Record<PlannerToolName, string> = {
   plan_draft_submit: `Store a whole plan draft — every task's title, body and labels, the task list, the agreed scope and the captured revision — on this machine, replacing any earlier draft of the same tranche. Writes no Issue and nothing to the repository. Returns the one fingerprint covering all of it. ${REFUSAL_NOTE}`,
   plan_draft_read: `Read back the stored draft of a tranche, with its fingerprint. Writes nothing. ${REFUSAL_NOTE}`,
   plan_draft_check: `Check the stored draft of a tranche as a whole: the full Issue write gate on every task as publication would run it, plus tasks that change the same files without a declared conflict, an edge naming a task the draft does not hold, a dependency cycle, a deferred fact whose producer is not a dependency, and every agreed-scope item delivered once or left out. It reads the code at the draft's captured revision, never the working tree. Writes nothing. ${REFUSAL_NOTE}`,
-  plan_draft_preview: `Preview the exact Issue (title, body, labels) and the exact brief of each task of the stored draft, as the Developer will read them, rendered from the code at the draft's captured revision. A task waiting on an unmerged dependency still previews in full, with each reason in \`waiting\`. Writes nothing. ${REFUSAL_NOTE}`
+  plan_draft_preview: `Preview the exact Issue (title, body, labels) and the exact brief of each task of the stored draft, as the Developer will read them, rendered from the code at the draft's captured revision. A task waiting on an unmerged dependency still previews in full, with each reason in \`waiting\`. Writes nothing. ${REFUSAL_NOTE}`,
+  plan_review_start: `Start one independent review round of the stored draft of a tranche. Refused unless the draft was checked as a whole at its current fingerprint with no blocking finding, and the round limit allows another round. The harness runs one fresh read-only reviewer session, validates its answer, derives the verdict and stores the result with the round; the reviewer never decides the verdict. A later round judges only each finding still open, the tasks whose text changed since the last round and their related tasks. A round that produced no valid review is refused and not counted. Writes nothing to the repository. ${REFUSAL_NOTE}`,
+  plan_review_status: `Read the stored review state of a tranche's draft: the rounds spent and allowed, whether the current fingerprint is approved (an earlier approval of a different fingerprint is stale and does not apply), each finding open, resolved or a note, the tasks whose approval still holds, and what the next round judges. Writes nothing. ${REFUSAL_NOTE}`,
+  plan_review_decide: `Record the Principal's decision once the round limit is reached for the draft's current fingerprint: allow one more round, or stop the plan. Records that a decision was given and for which fingerprint, never who gave it. Refused when the limit is not reached or the fingerprint is not the stored draft's. ${REFUSAL_NOTE}`
 }
 
 /** The Planner seat's catalog entries, in the order the seat lists them. */
@@ -468,6 +634,9 @@ export type PlannerOperations = {
   readPlanDraft: (tranche: string) => DraftReadOutcome
   checkPlanDraft: (tranche: string) => Promise<DraftCheckOutcome>
   previewPlanDraft: (tranche: string, task?: number) => Promise<DraftPreviewOutcome>
+  startPlanReview: (tranche: string) => Promise<StartOutcome>
+  planReviewStatus: (tranche: string) => StatusOutcome
+  decidePlanReview: (input: { tranche: string; fingerprint: string; choice: DecisionChoice }) => DecideOutcome
 }
 
 export const realPlannerOperations: PlannerOperations = {
@@ -479,7 +648,10 @@ export const realPlannerOperations: PlannerOperations = {
   submitPlanDraft: (input) => submitPlanDraft(input),
   readPlanDraft: (tranche) => readStoredPlanDraft(tranche),
   checkPlanDraft: (tranche) => checkStoredPlanDraft(tranche),
-  previewPlanDraft: (tranche, task) => previewStoredPlanDraft(tranche, task)
+  previewPlanDraft: (tranche, task) => previewStoredPlanDraft(tranche, task),
+  startPlanReview: (tranche) => startStoredPlanReview(tranche),
+  planReviewStatus: (tranche) => readStoredPlanReviewStatus(tranche),
+  decidePlanReview: (input) => decideStoredPlanReview(input)
 }
 
 /** Writes a body to a scratch file the library reads (`--body-file`), and removes it when the operation is over. */
@@ -691,6 +863,31 @@ export function plannerToolHandlers(
         revision: preview.revision,
         tasks: preview.tasks.map((t) => ({ task: t.task, issue: t.issue, brief: t.brief, waiting: t.waiting }))
       })
+    }),
+    plan_review_start: guarded(ReviewStartInput, async (v) => {
+      const outcome = await ops.startPlanReview(v.tranche)
+      if (!outcome.ok) return refused(outcome.findings)
+      return succeeded({
+        round: outcome.round,
+        fingerprint: outcome.fingerprint,
+        agent: outcome.agent,
+        verdict: outcome.verdict,
+        findings: outcome.findings,
+        resolved: outcome.resolved,
+        openFindings: outcome.openFindings,
+        roundsSpent: outcome.roundsSpent,
+        roundsAllowed: outcome.roundsAllowed
+      })
+    }),
+    plan_review_status: guarded(ReviewStatusInput, (v) => {
+      const outcome = ops.planReviewStatus(v.tranche)
+      if (!outcome.ok) return refused(outcome.findings)
+      return succeeded({ status: outcome.status })
+    }),
+    plan_review_decide: guarded(ReviewDecideInput, (v) => {
+      const outcome = ops.decidePlanReview(v)
+      if (!outcome.ok) return refused(outcome.findings)
+      return succeeded({ decision: outcome.decision, status: outcome.status })
     })
   }
 }

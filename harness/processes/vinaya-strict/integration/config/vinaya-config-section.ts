@@ -553,7 +553,9 @@ export const VINAYA_CONFIG_FRAGMENT = {
   // a merge-authority decision like `principals`/`reviewPolicy`.
   planning: z
     .object({
-      collisionThreshold: z.number().int().nonnegative().optional()
+      collisionThreshold: z.number().int().nonnegative().optional(),
+      reviewRoundLimit: z.number().int().positive().optional(),
+      reviewAgent: z.enum(['same', 'different']).optional()
     })
     .optional(),
   // The pre-push hook's test-file selector (`lib/test-selector.ts`) chooses
@@ -925,6 +927,24 @@ export function resolveGateCutovers(config: VinayaSectionConfig | null): GateCut
  */
 export function resolveCollisionThreshold(config: VinayaSectionConfig | null): number {
   return config?.planning?.collisionThreshold ?? DEFAULT_COLLISION_THRESHOLD
+}
+
+/** How many independent review rounds a plan may spend, across every revision of it, before the Principal decides. */
+export const DEFAULT_REVIEW_ROUND_LIMIT = 2
+
+/** Which agent reviews a plan: the one the Planner runs on, or the other one. */
+export const REVIEW_AGENT_SETTINGS = ['same', 'different'] as const
+export type ReviewAgentSetting = (typeof REVIEW_AGENT_SETTINGS)[number]
+export const DEFAULT_REVIEW_AGENT: ReviewAgentSetting = 'same'
+
+/** The resolved `planning.reviewRoundLimit`: the declared value when set, else `DEFAULT_REVIEW_ROUND_LIMIT`. */
+export function resolveReviewRoundLimit(config: VinayaSectionConfig | null): number {
+  return config?.planning?.reviewRoundLimit ?? DEFAULT_REVIEW_ROUND_LIMIT
+}
+
+/** The resolved `planning.reviewAgent`: the declared value when set, else `DEFAULT_REVIEW_AGENT`. */
+export function resolveReviewAgent(config: VinayaSectionConfig | null): ReviewAgentSetting {
+  return config?.planning?.reviewAgent ?? DEFAULT_REVIEW_AGENT
 }
 
 /**
