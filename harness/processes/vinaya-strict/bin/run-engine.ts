@@ -1163,6 +1163,10 @@ export function withAgentNarration(
 /** What one role's agent launch used, as `withDispatchUsage` reports it when the launch ends. */
 export interface LaunchUsage {
   role: HeldVerdictRole | 'developer'
+  /** The coding agent the launch ran. */
+  agent: Agent
+  /** Whether the launch continued an earlier session: for Claude, exactly when its arguments carry `--resume`. */
+  resumed: boolean
   reading: DispatchUsageReading
   exitCode: number | null
   durationMs: number
@@ -1222,7 +1226,16 @@ export function withDispatchUsage(
       child.on('close', (code: number | null) => {
         try {
           const reading = readDispatchUsage(agent, { tail, head })
-          onUsage({ role, reading, exitCode: code, durationMs: now() - startedAt, attribution, turn })
+          onUsage({
+            role,
+            agent,
+            resumed: agent === 'claude' && args.includes('--resume'),
+            reading,
+            exitCode: code,
+            durationMs: now() - startedAt,
+            attribution,
+            turn
+          })
         } catch {
           // Reading usage never ends the run it observes.
         }
@@ -1314,7 +1327,7 @@ export function startLaunchTurn(
 export function endLaunchTurn(launch: LaunchUsage, limit: UsageLimit | null): void {
   const turn = launch.turn
   if (turn === undefined) return
-  recordUsage(turn, launch.reading.cacheUsage, launch.reading.units)
+  recordUsage(turn, launch.reading.cacheUsage, launch.reading.units, { agent: launch.agent, resumed: launch.resumed })
   const attempt = launch.attribution?.attempt ?? null
   if (launch.exitCode === 0) {
     turn.returned({

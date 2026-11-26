@@ -105,7 +105,8 @@ describe('readClaudeTranscriptUsage', () => {
     ])
     expect(readClaudeTranscriptUsage(SESSION_ID, configDir)).toEqual({
       units: { input: 11, output: 7, cache: 307 },
-      unknownReason: null
+      unknownReason: null,
+      costUsd: null
     })
   })
 
@@ -148,10 +149,11 @@ describe('readClaudeTranscriptUsage', () => {
 })
 
 describe('resolveClaudeUsageUnits', () => {
-  const streamKnown = { units: { input: 1, output: 2, cache: 3 }, unknownReason: null }
+  const streamKnown = { units: { input: 1, output: 2, cache: 3 }, unknownReason: null, costUsd: null }
   const streamUnknown = {
     units: { input: null, output: null, cache: null },
-    unknownReason: 'claude emitted no stream-json line'
+    unknownReason: 'claude emitted no stream-json line',
+    costUsd: null
   }
 
   it('keeps the stream figures and never reads the transcript when the stream carried usage', () => {
@@ -167,7 +169,7 @@ describe('resolveClaudeUsageUnits', () => {
     const configDir = tempDir('vinaya-transcript-cfg-')
     plantTranscript(configDir, SESSION_ID, [transcriptLine('m1', 10, 5, 1, 2)])
     expect(resolveClaudeUsageUnits(streamUnknown, SESSION_ID, configDir)).toEqual({
-      observation: { units: { input: 10, output: 5, cache: 3 }, unknownReason: null },
+      observation: { units: { input: 10, output: 5, cache: 3 }, unknownReason: null, costUsd: null },
       source: 'claude-transcript'
     })
   })

@@ -330,7 +330,15 @@ export type RecordedAgentTurn = {
   effort?: string
   /** The resource the span's record carries: what ran the run. */
   resource: Record<string, unknown>
-  usage: { input?: number; output?: number; cacheRead?: number; unknownReason?: string }
+  usage: {
+    input?: number
+    output?: number
+    cacheRead?: number
+    unknownReason?: string
+    cost?: number
+    costKind?: string
+    costUnknownReason?: string
+  }
   steps: { tool: string; errorType?: string }[]
 }
 
@@ -399,6 +407,12 @@ export function agentTurnsOf(logFolder: string, runId?: string): RecordedAgentTu
     if (output !== undefined) turn.usage.output = output
     if (cacheRead !== undefined) turn.usage.cacheRead = cacheRead
     if (unknownReason !== undefined) turn.usage.unknownReason = unknownReason
+    const cost = asNumber(a[ATTRIBUTE_NAMES.usageCost])
+    const costKind = asText(a[ATTRIBUTE_NAMES.usageCostKind])
+    const costUnknownReason = asText(a[ATTRIBUTE_NAMES.usageCostUnknownReason])
+    if (cost !== undefined) turn.usage.cost = cost
+    if (costKind !== undefined) turn.usage.costKind = costKind
+    if (costUnknownReason !== undefined) turn.usage.costUnknownReason = costUnknownReason
     return turn
   })
 }

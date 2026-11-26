@@ -78,12 +78,17 @@ export type AgentTurn = {
   readonly ref: SpanParent | undefined
   /** Records the turn's steps under the span, and ends any step the stream left open. */
   readonly steps: StepRecording
-  /** Tokens on the span; usage that is not known is recorded with its reason, never as zero. */
+  /**
+   * Tokens on the span; usage that is not known is recorded with its reason, never as zero. A cost is recorded with
+   * its kind; a turn with tokens and no cost records a short code saying why instead, and a cost wins over the code.
+   */
   usage: (usage: {
     inputTokens?: number | null
     outputTokens?: number | null
     cacheReadInputTokens?: number | null
     unknownReason?: string | null
+    cost?: { amount: number; kind: 'exact' | 'estimated' }
+    costUnknownReason?: string
   }) => void
   /** Ends the span with what came out of the turn. */
   returned: (end?: { outcome?: string; attempt?: number | null; responseModel?: string; endTime?: number }) => void
@@ -380,7 +385,9 @@ export function createRunRecorder(deps: RunRecorderDeps) {
               ...(known(usage.outputTokens) === undefined ? {} : { outputTokens: known(usage.outputTokens) as number }),
               ...(known(usage.cacheReadInputTokens) === undefined
                 ? {}
-                : { cacheReadInputTokens: known(usage.cacheReadInputTokens) as number })
+                : { cacheReadInputTokens: known(usage.cacheReadInputTokens) as number }),
+              ...(usage.cost === undefined ? {} : { cost: usage.cost }),
+              ...(usage.costUnknownReason === undefined ? {} : { costUnknownReason: usage.costUnknownReason })
             })
           })
         },

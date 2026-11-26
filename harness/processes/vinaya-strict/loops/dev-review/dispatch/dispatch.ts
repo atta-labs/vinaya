@@ -2402,6 +2402,8 @@ function parseCodexUsage(stdout: string): { input: number; output: number } | nu
 export type UsageObservation = {
   units: { input: number | null; output: number | null; cache: number | null }
   unknownReason: string | null
+  /** The cost in US dollars the vendor's own terminal result line reported, or `null` when it reported none. Never `0` for a missing figure. */
+  costUsd: number | null
 }
 type UsageUnitsParser = (stdout: string) => UsageObservation
 
@@ -2427,6 +2429,7 @@ export function parseClaudeUsageUnits(stdout: string): UsageObservation {
           cache_creation_input_tokens?: unknown
           cache_read_input_tokens?: unknown
         }
+        total_cost_usd?: unknown
       }
       const u = obj.usage
       if (u && typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
@@ -2434,7 +2437,10 @@ export function parseClaudeUsageUnits(stdout: string): UsageObservation {
         const cacheRead = typeof u.cache_read_input_tokens === 'number' ? u.cache_read_input_tokens : 0
         return {
           units: { input: u.input_tokens, output: u.output_tokens, cache: cacheCreation + cacheRead },
-          unknownReason: null
+          unknownReason: null,
+          // The cost rides on the same terminal result object as the tokens, never summed across lines.
+          costUsd:
+            typeof obj.total_cost_usd === 'number' && Number.isFinite(obj.total_cost_usd) ? obj.total_cost_usd : null
         }
       }
     } catch {
@@ -2443,7 +2449,8 @@ export function parseClaudeUsageUnits(stdout: string): UsageObservation {
   }
   return {
     units: NO_USAGE_UNITS,
-    unknownReason: 'claude emitted no stream-json line carrying a `usage.input_tokens`/`usage.output_tokens` pair'
+    unknownReason: 'claude emitted no stream-json line carrying a `usage.input_tokens`/`usage.output_tokens` pair',
+    costUsd: null
   }
 }
 
@@ -2473,7 +2480,8 @@ const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
 export function readClaudeTranscriptUsage(sessionId: string | null, configDir: string): UsageObservation {
   const unknown = (why: string): UsageObservation => ({
     units: NO_USAGE_UNITS,
-    unknownReason: `session transcript fallback: ${why}`
+    unknownReason: `session transcript fallback: ${why}`,
+    costUsd: null
   })
   if (sessionId === null)
     return unknown('the dispatch never learned a session identifier, so no transcript could be located')
@@ -2516,7 +2524,8 @@ export function readClaudeTranscriptUsage(sessionId: string | null, configDir: s
         output: c.outputTokens,
         cache: c.cacheCreationInputTokens + c.cacheReadInputTokens
       },
-      unknownReason: null
+      unknownReason: null,
+      costUsd: null
     }
   }
   return unknown(`no transcript for session ${sessionId} under ${projectsDir}`)
@@ -2541,7 +2550,8 @@ export function resolveClaudeUsageUnits(
   return {
     observation: {
       units: NO_USAGE_UNITS,
-      unknownReason: `${streamUnits.unknownReason}; ${fromTranscript.unknownReason}`
+      unknownReason: `${streamUnits.unknownReason}; ${fromTranscript.unknownReason}`,
+      costUsd: null
     },
     source: 'stream'
   }
@@ -2569,7 +2579,11 @@ export function parseCodexUsageUnits(stdout: string): UsageObservation {
         const u = obj.usage
         if (typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
           const cache = typeof u.cached_input_tokens === 'number' ? u.cached_input_tokens : null
-          return { units: { input: u.input_tokens, output: u.output_tokens, cache }, unknownReason: null }
+          return {
+            units: { input: u.input_tokens, output: u.output_tokens, cache },
+            unknownReason: null,
+            costUsd: null
+          }
         }
       }
     } catch {
@@ -2578,7 +2592,8 @@ export function parseCodexUsageUnits(stdout: string): UsageObservation {
   }
   return {
     units: NO_USAGE_UNITS,
-    unknownReason: 'codex emitted no parseable `turn.completed` event carrying a usage pair'
+    unknownReason: 'codex emitted no parseable `turn.completed` event carrying a usage pair',
+    costUsd: null
   }
 }
 
@@ -3837,21 +3852,47 @@ function resolveExecutable(binary: string): string | null {
   }
 }
 
+/** The short codes a turn's missing cost is recorded under. */
+export const COST_UNKNOWN_REASONS = {
+  /** A Claude turn that resumed a session: its reported figure accumulates across the conversation, so it is not recorded. */
+  cumulativeOnResume: 'cumulative_on_resume',
+  /** A Claude turn whose stream carried no cost figure. */
+  notReported: 'not_reported',
+  /** A Codex turn: its stream never reports a cost. */
+  notReportedByAgent: 'not_reported_by_agent'
+} as const
+
 /**
- * Writes one launch's tokens on its agent turn: the figures the vendor's own stream gave, the cache read as its own
- * figure, and the reason when nothing was observed — never a zero for an unread unit.
+ * Why an observed turn has no recorded cost, decided in this order: a resumed Claude turn (its figure accumulates, so
+ * it would count twice), else a Claude turn whose stream carried no figure; a Codex turn is always not reported.
+ */
+export function costUnknownReasonOf(agent: AgentVendor, resumed: boolean): string {
+  if (agent !== 'claude') return COST_UNKNOWN_REASONS.notReportedByAgent
+  return resumed ? COST_UNKNOWN_REASONS.cumulativeOnResume : COST_UNKNOWN_REASONS.notReported
+}
+
+/**
+ * Writes one launch's usage on its agent turn: the figures the vendor's own stream gave, the cache read as its own
+ * figure, and the reason when nothing was observed — never a zero for an unread unit. A fresh Claude turn whose stream
+ * reported a cost records it as an estimate; any other observed turn records why its cost is unknown, never a zero.
+ * A turn whose usage was not observed records neither.
  */
 export function recordUsage(
   turn: Pick<AgentTurn, 'usage'>,
   cacheUsage: { read: number; creation: number } | null | undefined,
-  observation: UsageObservation
+  observation: UsageObservation,
+  launch: { agent: AgentVendor; resumed: boolean }
 ): void {
-  const { units, unknownReason } = observation
+  const { units, unknownReason, costUsd } = observation
+  const observed = unknownReason === null
+  const costAmount = observed && launch.agent === 'claude' && !launch.resumed ? costUsd : null
   turn.usage({
     inputTokens: units.input,
     outputTokens: units.output,
     cacheReadInputTokens: cacheUsage?.read ?? units.cache,
-    ...(unknownReason === null ? {} : { unknownReason })
+    ...(unknownReason === null ? {} : { unknownReason }),
+    ...(costAmount === null ? {} : { cost: { amount: costAmount, kind: 'estimated' as const } }),
+    ...(observed && costAmount === null ? { costUnknownReason: costUnknownReasonOf(launch.agent, launch.resumed) } : {})
   })
 }
 
@@ -4534,6 +4575,8 @@ export async function dispatchRole(
     role === 'developer' && opts.cwd !== undefined
       ? resolveOpenedAgentConfigPaths(opts.cwd, opts.agentConfigOpened ?? [])
       : []
+  // A dispatch resumes a vendor session exactly when it builds the vendor's resume arguments.
+  const dispatchLaunch = { agent, resumed: Boolean(opts.resumeId) }
   const vendorArgs = opts.resumeId
     ? vendor.resumeArgs(opts.resumeId, opts.model, opts.effort)
     : vendor.args(opts.model, opts.effort)
@@ -5701,7 +5744,7 @@ export async function dispatchRole(
       const neverBoundSession = launch.resumeId === null && vendor.parseResumeId(stdoutBuf) === null
 
       if (timedOut) {
-        recordUsage(agentTurn, cacheUsage, usageUnits)
+        recordUsage(agentTurn, cacheUsage, usageUnits, dispatchLaunch)
         agentTurn.failed({ errorType: 'timeout', attempt: launch.attempt })
         // O1: keep the intent record, and bind whatever session the child did
         // report before the ceiling killed it (mid-stream, or a final line in
@@ -5755,7 +5798,7 @@ export async function dispatchRole(
       const usageLimit = detectUsageLimit(agent, stdoutBuf, code, Date.now())
       const devToolsStartFailure = devToolsStart.failure()
       if (code !== 0 || usageLimit !== null || devToolsStartFailure !== null) {
-        recordUsage(agentTurn, cacheUsage, usageUnits)
+        recordUsage(agentTurn, cacheUsage, usageUnits, dispatchLaunch)
         agentTurn.failed({
           errorType: usageLimit !== null ? 'usage_limit' : 'crash',
           attempt: launch.attempt,
@@ -5826,7 +5869,7 @@ export async function dispatchRole(
       // a real observation once reported). Falls back to the pre-completion
       // request label (`resolvedModel`) only when this vendor emits no
       // receipt (Codex, always) or the payload didn't parse.
-      recordUsage(agentTurn, cacheUsage, usageUnits)
+      recordUsage(agentTurn, cacheUsage, usageUnits, dispatchLaunch)
       agentTurn.returned({
         outcome: 'done',
         attempt: launch.attempt,
