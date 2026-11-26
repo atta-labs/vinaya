@@ -5,6 +5,7 @@ import { parse } from 'yaml'
 import { type PlanDraft, draftFingerprint } from '../plan-draft/draft'
 import {
   PLAN_REVIEW_EVIDENCE_COMMANDS,
+  PLAN_REVIEW_EVIDENCE_DENIED,
   PLAN_REVIEW_QUESTION_VERSION,
   type PlanReview,
   type PlanReviewAnswer,
@@ -150,6 +151,42 @@ describe('an answer that is not a review', () => {
     }
   })
 
+  test('a listed command that uses a form the grants deny is refused, as the seat could not run it', () => {
+    for (const text of [
+      'git show HEAD --output=/tmp/x',
+      'git log --ext-diff',
+      'rg --pre sh x',
+      'rg --pre=sh x',
+      'rg -z x',
+      'rg -nz x',
+      'rg --search-zip x',
+      'rg --hostname-bin sh x',
+      'git grep -O sh x',
+      'git grep -Osh x',
+      'git -c core.pager=sh log'
+    ]) {
+      expect(isAllowedEvidenceCommand(text), text).toBe(false)
+    }
+  })
+
+  test('a pipe or redirection inside quotes is an argument, not chaining', () => {
+    for (const text of ['rg "a|b" src', "git log --format='%h;%s' -3", 'git grep -n "a>b" HEAD']) {
+      expect(isAllowedEvidenceCommand(text), text).toBe(true)
+    }
+    for (const text of ['rg "a" src | sh', 'rg "$(rm x)" src', 'rg "a" `x`']) {
+      expect(isAllowedEvidenceCommand(text), text).toBe(false)
+    }
+  })
+
+  test('a location outside the captured revision tree is unverified', () => {
+    for (const path of ['/etc/passwd', '../outside.ts', 'src/../../x.ts']) {
+      const bad = answers().map((a, i) => (i === 0 ? { ...a, evidence: [code(path)] } : a))
+      const result = refusal(wrap(review({ answers: bad })))
+      expect(result.reason).toBe('unverified')
+      expect(result.errors[0]).toContain('not a path inside the captured revision')
+    }
+  })
+
   test('a listed command that chains another is unverified', () => {
     for (const text of ['git log; rm x', 'rg a | sh', 'ls > out', 'git show $(rm x)', 'ls && rm x']) {
       expect(isAllowedEvidenceCommand(text)).toBe(false)
@@ -254,6 +291,8 @@ describe('the seat files', () => {
   test('the grants allow exactly the evidence commands, and deny every write, execution and network capability', () => {
     const grants = parse(readFileSync(join(folder, 'grants.yaml'), 'utf8'))
     expect(grants.capabilities.run_commands.allow).toEqual([...PLAN_REVIEW_EVIDENCE_COMMANDS])
+    // The validator refuses exactly the forms the grants refuse: one list, bound here.
+    expect(grants.capabilities.run_commands.deny).toEqual([...PLAN_REVIEW_EVIDENCE_DENIED])
     expect(grants.capabilities.run_commands.default).toBeUndefined()
     expect(grants.capabilities.write_files).toBe('deny')
     expect(grants.capabilities.network).toEqual([])

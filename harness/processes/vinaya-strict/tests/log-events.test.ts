@@ -3,8 +3,8 @@ import { initialLoopState, type LoopState, type Observations } from '../tools/de
 import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { MemorySaver } from '@langchain/langgraph'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { parse } from 'yaml'
 
 import { buildReviewInputManifest } from '../tools/task-contract/review-input-manifest'
@@ -451,7 +451,15 @@ describe('the Engine path writes the review loop events from the run', () => {
       expect(Object.keys(launcher).sort()).toEqual(['allowedPermissions', 'buildArgs', 'command', 'env'])
     }
     for (const role of VINAYA_LAUNCHED_ROLES) {
-      const grants = loadRoleGrants(resolve(import.meta.dir, '..', 'executing', role, 'grants.yaml'))
+      const grants = loadRoleGrants(
+        join(
+          existsSync(resolve(import.meta.dir, '..', 'executing', role))
+            ? resolve(import.meta.dir, '..', 'executing')
+            : resolve(import.meta.dir, '..', 'thinking'),
+          role,
+          'grants.yaml'
+        )
+      )
       const allowed = [
         ...Object.entries(grants.tools.claude).flatMap(([tool, decision]) => (decision === 'allow' ? [tool] : [])),
         ...Object.entries(grants.tools.codex).flatMap(([tool, decision]) => (decision === 'allow' ? [tool] : [])),

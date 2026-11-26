@@ -223,12 +223,77 @@ export function completenessErrors(review: PlanReview, binding: PlanReviewBindin
   return errors
 }
 
-const SHELL_CHAINING = /[;&|<>`\n]|\$\(/
+/**
+ * The command forms the seat's shell refuses even though their prefix is allowed, as the grants list them:
+ * `prefix ... -flag` refuses the flag anywhere after the prefix (a trailing `*` matches a longer flag), and a
+ * rule without `...` refuses the prefix itself. A test binds this list to `thinking/plan-reviewer/grants.yaml`.
+ */
+export const PLAN_REVIEW_EVIDENCE_DENIED: readonly string[] = [
+  'git push',
+  'git commit',
+  'git add',
+  'gh',
+  'bun install',
+  'bun test',
+  'bun run',
+  'npx',
+  'security',
+  'launchctl',
+  'defaults',
+  'systemsetup',
+  'networksetup',
+  'pmset',
+  'dscl',
+  'crontab',
+  'chsh',
+  'git config --global',
+  'git config --system',
+  'sudo',
+  'git -c',
+  'git diff ... --output',
+  'git diff ... --ext-diff',
+  'git diff ... --textconv',
+  'git log ... --output',
+  'git log ... --ext-diff',
+  'git log ... --textconv',
+  'git show ... --output',
+  'git show ... --ext-diff',
+  'git show ... --textconv',
+  'git grep ... --open-files-in-pager',
+  'git grep ... -O*',
+  'rg ... --pre',
+  'rg ... --hostname-bin',
+  'rg ... --search-zip',
+  'rg ... -z'
+]
 
-/** Whether a command begins with an allowed read-only prefix, at a word boundary, and chains nothing after it. */
+/** Command substitution and backticks run code wherever they sit; a newline starts another command. */
+const SHELL_EXECUTION = /[`\n]|\$\(/
+/** Chaining, piping and redirection outside quotes; inside quotes they are arguments (`rg "a|b" src`). */
+const SHELL_CHAINING = /[;&|<>]/
+const QUOTED = /'[^']*'|"[^"]*"/g
+
+function tokenMatchesFlag(token: string, flag: string): boolean {
+  if (flag.endsWith('*')) return token.startsWith(flag.slice(0, -1))
+  if (token === flag || token.startsWith(`${flag}=`)) return true
+  // A short flag may sit inside a cluster (`-nz`) or carry its value attached.
+  return /^-[A-Za-z]$/.test(flag) && /^-[A-Za-z]/.test(token) && token.includes(flag.slice(1))
+}
+
+function deniedByRule(command: string, rule: string): boolean {
+  const [prefix, flag] = rule.split(' ... ')
+  const words = command.split(/\s+/)
+  const head = (prefix as string).split(' ')
+  if (!head.every((word, i) => words[i] === word)) return false
+  if (flag === undefined) return true
+  return words.slice(head.length).some((token) => tokenMatchesFlag(token, flag))
+}
+
+/** Whether a command begins with an allowed read-only prefix, at a word boundary, uses no denied form and chains nothing. */
 export function isAllowedEvidenceCommand(command: string): boolean {
   const trimmed = command.trim()
-  if (SHELL_CHAINING.test(trimmed)) return false
+  if (SHELL_EXECUTION.test(trimmed) || SHELL_CHAINING.test(trimmed.replace(QUOTED, ''))) return false
+  if (PLAN_REVIEW_EVIDENCE_DENIED.some((rule) => deniedByRule(trimmed, rule))) return false
   return PLAN_REVIEW_EVIDENCE_COMMANDS.some((prefix) => trimmed === prefix || trimmed.startsWith(`${prefix} `))
 }
 
@@ -247,6 +312,10 @@ export function evidenceErrors(evidence: PlanReviewEvidence, binding: PlanReview
   switch (evidence.kind) {
     case 'code': {
       if (evidence.path === null || evidence.line === null) return ['code evidence names a path and a line']
+      // A location is inside the captured revision's tree: never absolute, never climbing out of it.
+      if (evidence.path.startsWith('/') || evidence.path.split('/').includes('..')) {
+        return [`${evidence.path} is not a path inside the captured revision`]
+      }
       const lines = binding.lineCount(evidence.path)
       if (lines === null) return [`${evidence.path} does not exist at revision ${binding.draft.revision}`]
       if (evidence.line > lines) return [`${evidence.path}:${evidence.line} is past the file's ${lines} lines`]

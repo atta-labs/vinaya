@@ -9,7 +9,7 @@ capabilities:
   # No `default`: a command no allow rule names is refused.
   run_commands:
     allow: ["git show", "git cat-file", "git ls-tree", "git ls-files", "git grep", "git log", "git diff", "rg", "grep", "ls"]
-    deny: ["git push", "git commit", "git add", "gh", "bun install", "bun test", "bun run", "npx", "security", "launchctl", "defaults", "systemsetup", "networksetup", "pmset", "dscl", "crontab", "chsh", "git config --global", "git config --system", "sudo", "git -c", "git diff ... --output", "git diff ... --ext-diff", "git diff ... --textconv", "git log ... --output", "git log ... --ext-diff", "git log ... --textconv", "git show ... --output", "git show ... --ext-diff", "git show ... --textconv", "git grep ... --open-files-in-pager", "git grep ... -O", "rg ... --pre"]
+    deny: ["git push", "git commit", "git add", "gh", "bun install", "bun test", "bun run", "npx", "security", "launchctl", "defaults", "systemsetup", "networksetup", "pmset", "dscl", "crontab", "chsh", "git config --global", "git config --system", "sudo", "git -c", "git diff ... --output", "git diff ... --ext-diff", "git diff ... --textconv", "git log ... --output", "git log ... --ext-diff", "git log ... --textconv", "git show ... --output", "git show ... --ext-diff", "git show ... --textconv", "git grep ... --open-files-in-pager", "git grep ... -O*", "rg ... --pre", "rg ... --hostname-bin", "rg ... --search-zip", "rg ... -z"]
   write_files: deny
   network: []
   web_fetch: deny

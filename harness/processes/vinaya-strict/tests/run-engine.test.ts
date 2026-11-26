@@ -194,13 +194,15 @@ describe('the dry run', () => {
       expect(launches.map((line) => line.split(':')[0])).toEqual([
         'launch developer',
         'launch code-reviewer',
-        'launch security-reviewer'
+        'launch security-reviewer',
+        'launch plan-reviewer'
       ])
       for (const launch of launches) expect(launch).toContain(agent === 'claude' ? 'claude' : 'codex')
       expect(lines.filter((line) => line.startsWith('shim '))).toEqual([
         'shim developer: /runs/1/dev-bridge.sh',
         'shim code-reviewer: /runs/1/dev-bridge.sh',
-        'shim security-reviewer: /runs/1/dev-bridge.sh'
+        'shim security-reviewer: /runs/1/dev-bridge.sh',
+        'shim plan-reviewer: /runs/1/dev-bridge.sh'
       ])
     })
   }

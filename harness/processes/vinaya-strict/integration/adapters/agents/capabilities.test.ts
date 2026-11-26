@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '@harness/kernel/tools/host/dev-tools'
@@ -134,6 +134,7 @@ describe('a role that reads but does not run commands', () => {
 
 describe('the developer before and after the capability contract', () => {
   const processRoot = join(import.meta.dir, '../../../executing')
+  const thinkingRoot = join(import.meta.dir, '../../../thinking')
   const before = JSON.parse(
     readFileSync(join(import.meta.dir, 'fixtures', 'developer-before-capability-contract.json'), 'utf8')
   ) as { claude: GeneratedAgentConfig; codex: GeneratedAgentConfig }
@@ -181,7 +182,9 @@ describe('the developer before and after the capability contract', () => {
 
   for (const role of VINAYA_LAUNCHED_ROLES)
     test(`Codex ${role} requires its dev-tools server at startup`, () => {
-      const roleGrants = loadRoleGrants(join(processRoot, role, 'grants.yaml'))
+      // A launched role's folder sits under the Executing or the Thinking folder.
+      const folder = [processRoot, thinkingRoot].map((root) => join(root, role)).find((dir) => existsSync(dir))
+      const roleGrants = loadRoleGrants(join(folder as string, 'grants.yaml'))
       const generated = generateCodexConfig(roleGrants, paths)
       const settings = Bun.TOML.parse(generated.files['config.toml'] as string)
       expect(settings).toHaveProperty('mcp_servers.vinaya_dev_tools.required', true)
@@ -330,7 +333,8 @@ describe('the capability probe', () => {
       .split('\n')
       .filter((line) => line.trim() !== '')
       .map((line) => JSON.parse(line) as { vendor: string; role: string; prompt: string })
-    expect(lines).toHaveLength(6)
+    // Two vendors for each of the four launched roles.
+    expect(lines).toHaveLength(8)
     for (const { vendor, prompt } of lines)
       for (const tool of vendor === 'claude-code' ? CLAUDE_BUILTINS : CODEX_BUILTINS)
         expect(prompt).toContain(`- ${tool}: invoke the ${tool} built-in`)
