@@ -15,7 +15,7 @@ import type { BoundaryRolePolicy } from '@harness/kernel/isolation/worker-bounda
 // --- tool grants (`harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md` §3) --
 
 /** The roles the driver dispatches against the tool server's grant table. The controller is listed so its empty grant is explicit, not implied. */
-export const GRANTED_ROLES = ['developer', 'code-reviewer', 'security', 'controller'] as const
+export const GRANTED_ROLES = ['developer', 'code-reviewer', 'security', 'plan-reviewer', 'controller'] as const
 
 export type GrantedRole = (typeof GRANTED_ROLES)[number]
 
@@ -38,6 +38,8 @@ export const ROLE_TOOL_GRANTS: Readonly<Record<GrantedRole, readonly string[]>> 
   ],
   'code-reviewer': ['read_source'],
   security: ['read_source'],
+  // The Plan reviewer reads and searches the code and its history with its own shell and holds no driver tool.
+  'plan-reviewer': [],
   controller: []
 }
 

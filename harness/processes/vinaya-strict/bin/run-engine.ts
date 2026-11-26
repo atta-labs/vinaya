@@ -1044,7 +1044,7 @@ export function tolerateReviewerExit(
 
 /** Whether a launch is one of the reviewer roles' generated launches under `generatedRoot`. */
 export function isReviewerLaunch(generatedRoot: string) {
-  const roots = ['code-reviewer', 'security-reviewer'].map((role) => join(generatedRoot, role))
+  const roots = ['code-reviewer', 'security-reviewer', 'plan-reviewer'].map((role) => join(generatedRoot, role))
   return (args: readonly string[], env: Readonly<Record<string, string | undefined>> | undefined): boolean =>
     roots.some(
       (root) =>

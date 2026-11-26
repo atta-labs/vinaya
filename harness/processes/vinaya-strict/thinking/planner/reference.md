@@ -252,6 +252,8 @@ This follows the locked task-movement rule: a moved task is neither *done* nor *
 
 ### Independent plan review
 
+The Plan reviewer is the seat that answers this review as a structured answer: six fixed questions, each with evidence, a verdict the harness derives and the reviewer never gives (`thinking/plan-reviewer/doctrine.md`). Until the seat is launched for a plan, the manual prompt below stays.
+
 A newly cut tranche is not planned until a separate, fresh-context Planner session has reviewed it and every finding has been fixed. The reviewing session reads the default branch and the newly cut Issues but writes no forge state. Give it this fixed prompt:
 
 > Independently review the newly cut tranche. For every Issue, answer four questions and support each answer with either a `file:line` on the default branch or a command and its output: What is the named source of every file, package, dataset, fixture, or suite its objectives consume? What Developer-runnable command observes each stop condition inside the Developer sandbox? Is every premise already true on the default branch? For every declared dependency or conflict edge, are the shared files it names really edited by both tasks? Report findings only; write no forge state.

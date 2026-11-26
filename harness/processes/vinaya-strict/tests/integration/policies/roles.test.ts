@@ -40,6 +40,15 @@ describe('ROLE_TOOL_GRANTS — the one grant table', () => {
     expect(ROLE_TOOL_GRANTS['code-reviewer']).toEqual(['read_source'])
     expect(ROLE_TOOL_GRANTS.security).toEqual(['read_source'])
   })
+  it('grants the Plan reviewer no driver tool: it reads and searches with its own shell only', () => {
+    expect(GRANTED_ROLES as readonly string[]).toContain('plan-reviewer')
+    expect(ROLE_TOOL_GRANTS['plan-reviewer']).toEqual([])
+    expect(isToolGranted(vinayaToolGrantPolicy(), 'plan-reviewer', 'read_source')).toBe(false)
+    expect(isToolGranted(vinayaToolGrantPolicy(), 'plan-reviewer', 'publish_changes')).toBe(false)
+    // No other seat gained a tool.
+    expect(ROLE_TOOL_GRANTS['code-reviewer']).toEqual(['read_source'])
+    expect(ROLE_TOOL_GRANTS.security).toEqual(['read_source'])
+  })
   it('grants the controller nothing', () => {
     expect(ROLE_TOOL_GRANTS.controller).toEqual([])
   })

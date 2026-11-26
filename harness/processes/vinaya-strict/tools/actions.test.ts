@@ -85,7 +85,7 @@ describe('ACTIONS — real-file cross-check', () => {
       const { data } = matter(readFileSync(file, 'utf8'))
       if (typeof data.role_id === 'string') roleIds.add(data.role_id)
     }
-    expect(roleIds.size).toBe(9)
+    expect(roleIds.size).toBe(10)
 
     const referenced = new Set<string>(ACTIONS.flatMap((a: Action) => a.performedBy))
     for (const roleId of referenced) {

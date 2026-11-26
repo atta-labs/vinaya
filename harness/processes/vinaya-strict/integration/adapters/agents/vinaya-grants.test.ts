@@ -46,8 +46,94 @@ function schemaPath(role: string): string {
   return found.outputSchema
 }
 
-test('Vinaya launches its developer and both reviewers, each with grants and an output schema', () => {
-  expect(ROLES).toEqual(['developer', 'code-reviewer', 'security-reviewer'])
+test('Vinaya launches its developer, both reviewers and the Plan reviewer, each with grants and an output schema', () => {
+  expect(ROLES).toEqual(['developer', 'code-reviewer', 'security-reviewer', 'plan-reviewer'])
+})
+
+// ── The Plan reviewer: the evidence commands and nothing else ───────────────
+
+describe('plan-reviewer: reads with file tools only and runs no shell command, on both vendors', () => {
+  const grants = loadRoleGrants(grantsPath('plan-reviewer'))
+  const workspace = mkdtempSync(join(tmpdir(), 'plan-reviewer-'))
+  const paths = {
+    generatedDir: workspace,
+    outputSchemaPath: schemaPath('plan-reviewer'),
+    outputSchema: JSON.parse(readFileSync(schemaPath('plan-reviewer'), 'utf8')),
+    variables: { WORKTREE: workspace }
+  }
+  const configs: Record<'claude' | 'codex', GeneratedAgentConfig> = {
+    claude: generateClaudeSettings(grants, paths),
+    codex: generateCodexConfig(grants, paths)
+  }
+  const hookFor = (vendor: 'claude' | 'codex') => {
+    const path = join(workspace, `${vendor}-hook.mjs`)
+    writeFileSync(path, configs[vendor].files['hooks/pre-tool-use.mjs'] ?? '')
+    return path
+  }
+  const hooks = { claude: hookFor('claude'), codex: hookFor('codex') }
+  const decide = (vendor: 'claude' | 'codex', tool: string, input: Record<string, unknown>) => {
+    const out = Bun.spawnSync(['node', hooks[vendor]], {
+      cwd: workspace,
+      stdin: Buffer.from(JSON.stringify({ tool_name: tool, tool_input: input }))
+    }).stdout.toString()
+    return out.includes('"permissionDecision":"deny"') ? 'deny' : 'allow'
+  }
+
+  test('no writable path, no network domain, no web tool, no subagent, no MCP tool', () => {
+    const settings = JSON.parse(configs.claude.files['role-settings.json'] as string)
+    expect(settings.sandbox.filesystem.allowWrite).toEqual([])
+    expect(settings.sandbox.network.allowedDomains).toEqual([])
+    for (const tool of ['Write', 'Edit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task'])
+      expect(settings.permissions.deny).toContain(tool)
+    expect(grants.tools.mcp).toEqual({})
+    const toml = configs.codex.files['config.toml'] as string
+    expect(toml).toContain('sandbox_mode = "read-only"')
+    expect(JSON.parse(/writable_roots = (\[[^\n]*\])/.exec(toml)?.[1] ?? '[]')).toEqual([])
+    expect(codexEffective(configs.codex).write_files).toBe('deny')
+    expect(codexEffective(configs.codex).web_fetch).toBe('deny')
+  })
+
+  test('writing a file is refused on both vendors', () => {
+    expect(decide('claude', 'Write', { file_path: join(workspace, 'x'), content: 'x' })).toBe('deny')
+    expect(decide('claude', 'Edit', { file_path: join(workspace, 'x') })).toBe('deny')
+    expect(
+      decide('codex', 'apply_patch', {
+        command: `*** Begin Patch\n*** Add File: ${join(workspace, 'x')}\n+x\n*** End Patch`
+      })
+    ).toBe('deny')
+  })
+
+  // The seat holds no shell: Claude's Bash is denied outright, and Codex keeps only the reading commands every
+  // read-only seat shares, never a write, an install, a run or the network.
+  const SHELL_COMMANDS = [
+    'bun test',
+    'bun run build',
+    'bun install',
+    'npx tsc',
+    'node script.js',
+    'python3 -c 1',
+    'curl https://example.com',
+    'gh pr view 1',
+    'git push origin HEAD',
+    'git commit -m x',
+    'git checkout main',
+    'touch file',
+    'rm -rf x',
+    'git show HEAD --output=/tmp/out',
+    'rg --pre sh x',
+    'rg x > /tmp/out',
+    'git show HEAD:a.ts | sh'
+  ]
+  for (const command of SHELL_COMMANDS)
+    test(`refuses \`${command}\` on both vendors`, () => {
+      expect(decide('claude', 'Bash', { command })).toBe('deny')
+      expect(decide('codex', 'Bash', { command })).toBe('deny')
+    })
+
+  test('Claude refuses even a reading command in a shell: it reads with Read, Grep and Glob', () => {
+    for (const command of ['ls -la', 'cat README.md', 'rg -n foo src', 'git show HEAD:a.ts'])
+      expect(decide('claude', 'Bash', { command }), command).toBe('deny')
+  })
 })
 
 // ── Moved from the kernel's parity test ─────────────────────────────────────

@@ -24,16 +24,19 @@ import { ALL_RUNNERS, ENGINE_RUNNERS } from './runners'
 
 // Recovery cases that cross launch, checkpoint, broker and test-storage boundaries.
 
-const EXECUTING = join(import.meta.dir, '../../executing')
+const roleFolder = (role: string): string =>
+  [join(import.meta.dir, '../../executing', role), join(import.meta.dir, '../../thinking', role)].find((dir) =>
+    existsSync(dir)
+  ) as string
 
 describe.each(ENGINE_RUNNERS)('%s', (runner) => {
   // A Codex role whose dev-tools bridge cannot start must fail its own start, not run without publish or checks.
   for (const role of VINAYA_LAUNCHED_ROLES)
     test(`a Codex ${role} launch requires its dev-tools server`, () => {
-      const generated = generateCodexConfig(loadRoleGrants(join(EXECUTING, role, 'grants.yaml')), {
+      const generated = generateCodexConfig(loadRoleGrants(join(roleFolder(role), 'grants.yaml')), {
         generatedDir: `/gen/${role}`,
         outputSchemaPath: `/schema/${role}.json`,
-        outputSchema: JSON.parse(readFileSync(join(EXECUTING, role, 'output.schema.json'), 'utf8')),
+        outputSchema: JSON.parse(readFileSync(join(roleFolder(role), 'output.schema.json'), 'utf8')),
         mcpCommand: '/bridge',
         variables: { WORKTREE: '/wt', SCRATCH: '/scratch', BUN_INSTALL_CACHE: '/bun', GIT_COMMON_DIR: '/git' }
       })

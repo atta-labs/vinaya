@@ -51,6 +51,7 @@ describe('the doctrine map', () => {
       'archivist',
       'developer',
       'operator',
+      'plan-reviewer',
       'planner',
       'principal',
       'reviewer',

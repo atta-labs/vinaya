@@ -10,7 +10,7 @@ import type {
   VerdictObservation
 } from '../tools/dev-review-policy/types'
 import { execFileSync } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { parseLiveTestPlanItems } from '../tools/task-contract/issue-validation'
@@ -3027,6 +3027,12 @@ export const decisions: DecisionRegistry = {
 /** The launched roles' folders: under the process folder `processFolderFor` names, a checkout's or the package's copy. */
 const executing = join(processFolderFor(), 'executing')
 
+/** A launched role's folder: under Executing, or under Thinking for a seat that judges a plan rather than a change. */
+function launchedRoleFolder(role: string): string {
+  const inExecuting = join(executing, role)
+  return existsSync(inExecuting) ? inExecuting : join(processFolderFor(), 'thinking', role)
+}
+
 /** Role launchers from the roles' grants files, one generated settings set per role under `generatedRoot`. */
 export function createRoleLaunchers(options: {
   vendor: 'claude-code' | 'codex'
@@ -3051,10 +3057,10 @@ export function createRoleLaunchers(options: {
   const launchers: Record<string, ReturnType<typeof createRoleLauncher>> = {}
   for (const role of VINAYA_LAUNCHED_ROLES) {
     const grants = withEffort(
-      withModel(loadRoleGrants(join(executing, role, 'grants.yaml')), options.model),
+      withModel(loadRoleGrants(join(launchedRoleFolder(role), 'grants.yaml')), options.model),
       options.effort
     )
-    const outputSchemaPath = join(executing, role, 'output.schema.json')
+    const outputSchemaPath = join(launchedRoleFolder(role), 'output.schema.json')
     const generatedDir = join(options.generatedRoot, role)
     const paths: GeneratorPaths = {
       generatedDir,
