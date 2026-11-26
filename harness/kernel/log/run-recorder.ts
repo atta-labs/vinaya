@@ -234,6 +234,7 @@ export function createRunRecorder(deps: RunRecorderDeps) {
       ...(repo === undefined ? {} : { repository: repo }),
       repoRoot: deps.cwd(),
       destination: { folder: place.folder },
+      ...(place.keepDays === undefined ? {} : { keepDays: place.keepDays }),
       vinayaHome: join(home, '.vinaya'),
       home,
       provenance: 'governed',

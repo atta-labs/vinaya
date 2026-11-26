@@ -1,8 +1,21 @@
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, realpathSync, writeSync } from 'node:fs'
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeSync
+} from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { JsonLogsSerializer, JsonTraceSerializer } from '@opentelemetry/otlp-transformer'
 import type { LogRecordExporter, ReadableLogRecord } from '@opentelemetry/sdk-logs'
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base'
+import { DELIVERY_STATE_DIRECTORY, deliveryStateOf } from '../sender/send.js'
 import { MAX_COMPONENT_BYTES, repoSegment, type ResolvedSettings } from '../writer/settings.js'
 
 const MAX_BYTES = 8 * 1024 * 1024
@@ -37,7 +50,7 @@ type FileCopyOptions = {
   writerId: string
   repository: string | undefined
   repoRoot: string
-  settings: ResolvedSettings
+  settings: Pick<ResolvedSettings, 'logs' | 'runtimeDir'>
 }
 
 function runSegment(runId: string, writerId: string): string {
@@ -62,6 +75,76 @@ export function copyFolder(options: Pick<FileCopyOptions, 'repository' | 'repoRo
   const target = join(physicalPath(resolve(folder)), repoSegment(options.repository))
   if (inside(target, physicalRoot)) throw new Error(`Log directory is inside the repository: ${target}`)
   return target
+}
+
+const COPY_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*~[A-Za-z0-9][A-Za-z0-9._-]*~\d{12}\.(traces|logs)\.jsonl$/
+const DAY_MS = 24 * 60 * 60 * 1000
+const cleaned = new Set<string>()
+
+/** Forgets which folders this process cleaned; for tests. */
+export function resetCleanedFolders(): void {
+  cleaned.clear()
+}
+
+/**
+ * Deletes from one repository's local-copy folder every traces and logs file last written more than `keepDays`
+ * days ago, with that file's delivery state; newer files, the caller's own among them, stay. It looks at nothing
+ * outside the folder and never follows a symbolic link. Runs once per folder per process. Returns the count deleted.
+ */
+export function cleanLocalCopy(options: {
+  folder: string
+  keepDays: number
+  now: number
+  /** Files whose name contains this are never deleted. */
+  keepWriterId?: string
+}): number {
+  const { folder } = options
+  if (cleaned.has(folder)) return 0
+  cleaned.add(folder)
+  let top: ReturnType<typeof lstatSync>
+  try {
+    top = lstatSync(folder)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0
+    throw error
+  }
+  if (!top.isDirectory()) return 0
+  const cutoff = options.now - options.keepDays * DAY_MS
+  const state = join(folder, DELIVERY_STATE_DIRECTORY)
+  const removeState = (name: string): void => {
+    try {
+      const path = join(state, name)
+      if (lstatSync(path).isFile()) unlinkSync(path)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
+  const old: { name: string; markers: string[] }[] = []
+  const doomedKeys = new Set<string>()
+  for (const entry of readdirSync(folder, { withFileTypes: true })) {
+    if (!entry.isFile() || !COPY_FILE.test(entry.name)) continue
+    if (options.keepWriterId !== undefined && entry.name.includes(options.keepWriterId)) continue
+    const path = join(folder, entry.name)
+    const stat = lstatSync(path)
+    if (!stat.isFile() || stat.mtimeMs >= cutoff) continue
+    const { markers, lineKeys } = deliveryStateOf(entry.name, readFileSync(path))
+    for (const key of lineKeys) doomedKeys.add(key)
+    old.push({ name: entry.name, markers })
+  }
+  if (old.length === 0) return 0
+  // A line's receipts go first, so a file that stays after a failure is never sent twice.
+  let stateNames: string[] = []
+  try {
+    if (lstatSync(state).isDirectory()) stateNames = readdirSync(state)
+  } catch {
+    stateNames = []
+  }
+  for (const name of stateNames) if (doomedKeys.has(name.slice(0, 64)) && name[64] === '.') removeState(name)
+  for (const { name, markers } of old) {
+    unlinkSync(join(folder, name))
+    for (const marker of markers) removeState(marker)
+  }
+  return old.length
 }
 
 export function createFileExporters(options: FileCopyOptions): { spans: SpanExporter; logs: LogRecordExporter } {

@@ -41,10 +41,11 @@ test('passed values win, then log.config.json, then vinaya.config.json', () => {
   const dir = root({
     'vinaya.config.json': { logs: { url: 'https://v.example' }, runtimeDir: '/v' }
   })
-  expect(settingsOf(dir)).toEqual({ logs: { url: 'https://v.example' }, runtimeDir: '/v' })
+  expect(settingsOf(dir)).toEqual({ logs: { url: 'https://v.example' }, runtimeDir: '/v', keepDays: 90 })
   expect(settingsOf(dir, { runtimeDir: '/p', destination: { folder: '/f' } })).toEqual({
     logs: { folder: '/f' },
-    runtimeDir: '/p'
+    runtimeDir: '/p',
+    keepDays: 90
   })
   expect(settingsOf(dir, { headers: { a: 'b' } }).logs).toEqual({ url: 'https://v.example', headers: { a: 'b' } })
 })
@@ -54,7 +55,7 @@ test('log.config.json is the whole source when it exists', () => {
     'log.config.json': { logs: { folder: '/l' }, runtimeDir: '/lr' },
     'vinaya.config.json': { logs: false, runtimeDir: '/v' }
   })
-  expect(settingsOf(dir)).toEqual({ logs: { folder: '/l' }, runtimeDir: '/lr' })
+  expect(settingsOf(dir)).toEqual({ logs: { folder: '/l' }, runtimeDir: '/lr', keepDays: 90 })
 })
 
 test('the default runtime directory is under the Vinaya home with the safe repository segment', () => {
@@ -101,4 +102,28 @@ test('connect without custom processors does not throw', () => {
     h.run.started()
     h.run.ended()
   }).not.toThrow()
+})
+
+test('logs.keepDays is read from both settings files, and defaults to 90', () => {
+  expect(settingsOf(root({})).keepDays).toBe(90)
+  expect(settingsOf(root({ 'log.config.json': { logs: { keepDays: 30 } } })).keepDays).toBe(30)
+  expect(settingsOf(root({ 'vinaya.config.json': { logs: { keepDays: 7 } } })).keepDays).toBe(7)
+  expect(settingsOf(root({ 'vinaya.config.json': { logs: { folder: '/tmp/x', keepDays: 1 } } })).keepDays).toBe(1)
+})
+
+test('logs.keepDays below 1 or not whole is refused, naming the key', () => {
+  for (const bad of [0, -3, 1.5, '30', null]) {
+    for (const file of ['log.config.json', 'vinaya.config.json']) {
+      const r = resolveSettings({ repoRoot: root({ [file]: { logs: { keepDays: bad } } }) })
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.error.message).toContain('keepDays')
+    }
+  }
+})
+
+test('a passed keepDays replaces the file value and is checked too', () => {
+  const dir = root({ 'log.config.json': { logs: { keepDays: 30 } } })
+  expect(settingsOf(dir, { keepDays: 5 }).keepDays).toBe(5)
+  expect(settingsOf(dir, { destination: { folder: '/tmp/x' } }).keepDays).toBe(30)
+  expect(resolveSettings({ repoRoot: dir, passed: { keepDays: 0 } }).ok).toBe(false)
 })

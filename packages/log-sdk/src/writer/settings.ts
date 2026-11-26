@@ -15,6 +15,14 @@ const absolutePath = (label: string) =>
     .min(1)
     .refine((v) => isAbsolute(v), { message: `${label}: must be an absolute path` })
 
+/** How many days a run's local copy is kept when the settings name no window. */
+export const DEFAULT_KEEP_DAYS = 90
+
+const keepDaysSchema = z
+  .number({ invalid_type_error: 'must be a whole number of days' })
+  .int({ message: 'must be a whole number of days' })
+  .min(1, { message: 'must be at least 1' })
+
 const logsObject = z
   .object({
     folder: absolutePath('logs.folder').optional(),
@@ -31,6 +39,7 @@ const logsObject = z
       .optional(),
     headers: z.record(z.string()).optional(),
     readHeaders: z.record(z.string()).optional(),
+    keepDays: keepDaysSchema.optional(),
     events: z.unknown().optional()
   })
   .strict()
@@ -50,6 +59,8 @@ export type LogsSetting = z.infer<typeof logsSchema>
 /** What a caller may pass to override the settings files. */
 export type PassedSettings = {
   destination?: LogsSetting
+  /** The keep window in days; it replaces the settings files' `logs.keepDays`. */
+  keepDays?: number
   headers?: Record<string, string>
   runtimeDir?: string
 }
@@ -58,6 +69,8 @@ export type ResolvedSettings = {
   /** `false` when the repository turned the Log off; `undefined` when nothing is configured. */
   logs: LogsSetting | undefined
   runtimeDir: string
+  /** Days a local-copy file is kept after its last write. */
+  keepDays: number
 }
 
 export type SettingsResult =
@@ -99,6 +112,13 @@ function readJson(path: string): { ok: true; value: unknown } | { ok: false; err
   }
 }
 
+/** The union with `false` hides which key failed, so `logs.keepDays` is checked on its own first. */
+function keepDaysIssue(logs: unknown): string | undefined {
+  if (logs === null || typeof logs !== 'object' || Array.isArray(logs) || !('keepDays' in logs)) return undefined
+  const checked = keepDaysSchema.safeParse((logs as { keepDays: unknown }).keepDays)
+  return checked.success ? undefined : `logs.keepDays ${checked.error.issues.map((i) => i.message).join('; ')}`
+}
+
 function zodMessage(label: string, e: z.ZodError): string {
   return `${label}: ${e.issues.map((i) => `${i.path.join('.') || '(root)'} ${i.message}`).join('; ')}`
 }
@@ -118,6 +138,8 @@ export function resolveSettings(input: {
   if (existsSync(logConfigPath)) {
     const read = readJson(logConfigPath)
     if (!read.ok) return { ok: false, error: read.error }
+    const keepIssue = keepDaysIssue((read.value as { logs?: unknown } | null)?.logs)
+    if (keepIssue) return fail(`${logConfigPath}: ${keepIssue}`)
     const parsed = logConfigSchema.safeParse(read.value)
     if (!parsed.success) return fail(zodMessage(logConfigPath, parsed.error))
     fileLogs = parsed.data.logs
@@ -129,6 +151,8 @@ export function resolveSettings(input: {
     if (root === null || typeof root !== 'object' || Array.isArray(root))
       return fail(`${vinayaConfigPath}: must hold one object`)
     const keys = root as Record<string, unknown>
+    const keepIssue = keepDaysIssue(keys.logs)
+    if (keepIssue) return fail(`${vinayaConfigPath}: ${keepIssue}`)
     const parsed = z
       .object({ logs: logsSchema.optional(), runtimeDir: runtimeDirSchema.optional() })
       .safeParse({ logs: keys.logs, runtimeDir: keys.runtimeDir })
@@ -164,5 +188,12 @@ export function resolveSettings(input: {
     if (!checked.success) return fail(zodMessage('runtimeDir', checked.error))
   }
   const runtimeDir = passedDir ?? fileRuntimeDir ?? defaultRuntimeDir(input.repository, input.vinayaHome)
-  return { ok: true, settings: { logs, runtimeDir }, declarations }
+  if (passed.keepDays !== undefined) {
+    const checked = keepDaysSchema.safeParse(passed.keepDays)
+    if (!checked.success) return fail(zodMessage('logs.keepDays', checked.error))
+  }
+  // A passed destination replaces the file's `logs`, so the window falls back to the file's own `logs` when none is passed.
+  const fileKeepDays = fileLogs === undefined || fileLogs === false ? undefined : fileLogs.keepDays
+  const keepDays = passed.keepDays ?? (logs === false ? undefined : logs?.keepDays) ?? fileKeepDays ?? DEFAULT_KEEP_DAYS
+  return { ok: true, settings: { logs, runtimeDir, keepDays }, declarations }
 }
