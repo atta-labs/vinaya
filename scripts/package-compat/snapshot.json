@@ -647,7 +647,7 @@
             "ALL_ATTRIBUTE_NAMES": ["const ALL_ATTRIBUTE_NAMES: readonly string[]"],
             "ALL_EVENT_NAMES": ["const ALL_EVENT_NAMES: readonly string[]"],
             "ALL_SPAN_NAMES": ["const ALL_SPAN_NAMES: readonly string[]"],
-            "ATTRIBUTE_NAMES": ["sha256:9d9b59f515c8cdacea0a60c5ffc866b673659802a1d561a1e659732bdf35b553"],
+            "ATTRIBUTE_NAMES": ["sha256:8a33ba7f64cffcbfa659feb12a726f458e1517c68b402337149441b55210368f"],
             "ActionVerified": [
               "type ActionVerified = { action: string; target: string; result: 'success' | 'failure' | 'uncertain'; errorType?: string; };"
             ],
@@ -970,7 +970,7 @@
             "UsageEvent": ["type UsageEvent = z.infer<typeof UsageEventSchema>;"],
             "UsageEventSchema": ["sha256:23aae45514bd25ec7115ac27b8c914309d49d3c9028979e5b73031b67feb0e4c"],
             "UsageRecorded": [
-              "type UsageRecorded = { /** The started record's nanosecond timestamp when the span lives in another writer. */ spanStart?: string; inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cost?: { amount: number; kind: 'exact' | 'estimated'; }; /** Why usage is unknown, as a short code; with it no figure is recorded. */ unknownReason?: string; agent?: SpanParent; };"
+              "type UsageRecorded = { /** The started record's nanosecond timestamp when the span lives in another writer. */ spanStart?: string; inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cost?: { amount: number; kind: 'exact' | 'estimated'; }; /** Why usage is unknown, as a short code; with it no figure is recorded. */ unknownReason?: string; /** Why the cost is unknown, as a short code; the token figures are still recorded, and a cost wins over it. */ costUnknownReason?: string; agent?: SpanParent; };"
             ],
             "UsageUnits": ["type UsageUnits = z.infer<typeof UsageUnitsSchema>;"],
             "Work": [
