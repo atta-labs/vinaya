@@ -375,6 +375,39 @@ revisions. A repository's own declarations — its folder-scanning tests, the
 programs its tests start, its always-run lists — reach the library only as
 policy.
 
+### What a selection costs
+
+Resolving imports through the TypeScript compiler is the expensive part of a
+selection: building the compiler program takes several seconds on a large
+repository, and `profile.programMs` (and `SelectionResult.programMs` on the
+working-tree path, `selectAffectedFiles`) reports it on its own.
+
+Within one process the compiler graph is built once per set of inputs, on both
+paths that build it: `selectTests` over a base and a head revision, and
+`selectAffectedFiles` over a working tree. A later selection with identical
+inputs takes the earlier edge map and reports a program time of `0`. Nothing is
+cached on disk, and only the edge map is kept — never the program — for at most
+two input sets at a time.
+
+The graph is rebuilt when any of these differs from the earlier call:
+
+- the TypeScript module in use;
+- the repository root, or whether the files are read through a view of a
+  revision rather than from the disk;
+- the list of source files, in order, or the text of any one of them;
+- a workspace package's name, directory or manifest, which includes the
+  entrypoints its manifest names;
+- the path aliases;
+- on the disk, a workspace link in a `node_modules` folder the compiler may
+  walk, by its name and the directory it points at.
+
+What a selection adds after the graph — the edges for tests that scan the
+tree, the edges for programs a test starts, and the edges the caller supplies —
+is computed again on every selection and never reused, so changing those
+options changes the answer exactly as it would without the reuse. A direct
+caller of `buildCompilerGraph` that omits the optional `workspaceKey` of
+`GraphInput` gets no reuse.
+
 ## Running what a plan names
 
 ```ts

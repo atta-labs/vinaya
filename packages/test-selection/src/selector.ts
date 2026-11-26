@@ -1348,7 +1348,7 @@ export type SelectionResult = {
   totalTestFiles: number
   /** Which graph answered: the TypeScript compiler, or the text-scan fallback for a repository with no `typescript` to resolve. */
   resolver: 'compiler' | 'text-scan'
-  /** Milliseconds the compiler program build took, `0` under the text scan — reported separately because it dominates selector runtime. */
+  /** Milliseconds the compiler program build took, `0` under the text scan or when this process already built the same graph — reported separately because it dominates selector runtime. */
   programMs: number
   /**
    * Why each test in {@link selected} was selected, one entry per selected
@@ -1545,6 +1545,11 @@ function buildSelectionGraph(tree: SourceTree, options: GraphOptions): Selection
       }
     }
     const graph = buildCompilerGraph(graphTypescript, {
+      // What the two package closures below are built from, so an identical
+      // repeat of this call can reuse the compiler graph.
+      workspaceKey: JSON.stringify(
+        packages.map((pkg) => [pkg.name, pkg.dir, tree.readFile(join(pkg.dir, 'package.json'))])
+      ),
       repoRoot,
       files: [...allSourceFiles],
       packageOfFile: (f) => fileToPackage.get(f) ?? null,

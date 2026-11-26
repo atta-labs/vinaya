@@ -218,6 +218,19 @@ function selectSet(root: string, changed: string[]): Set<string> {
 
 const INDEX_MAIN = './src/index.ts'
 
+/** The program time each selection over the real repository reported, in order. A reused compiler graph reports 0. */
+const realRepoProgramMs: number[] = []
+
+/** One selection over the real repository, its program time tallied for the last case of this file. */
+function selectOnRealRepo(
+  changed: string[],
+  options?: Parameters<typeof selectAffectedTestFiles>[2]
+): ReturnType<typeof selectAffectedTestFiles> {
+  const result = selectAffectedTestFiles(REPO_ROOT, changed, options)
+  realRepoProgramMs.push(result.programMs)
+  return result
+}
+
 // The never-miss ORACLE, and the one rule that makes it worth anything: its
 // module graph comes from a DIFFERENT resolver than the selector's.
 //
@@ -315,7 +328,7 @@ describe('selectAffectedTestFiles replayed against the two recorded 2026-09-19 i
   for (const [label, changed] of Object.entries(INCIDENT_CHANGE_SETS)) {
     it(`${label} — with this repo's real alwaysRun config, log-callers — O2 is selected`, () => {
       const alwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
-      const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun })
+      const { selected } = selectOnRealRepo(changed, { alwaysRun })
       expect(selected).toContain(LOG_CALLERS_TEST)
     }, 30_000)
 
@@ -325,10 +338,10 @@ describe('selectAffectedTestFiles replayed against the two recorded 2026-09-19 i
       // pre-push and failed CI, and why the configured always-run list was the
       // only thing that could select it. The scan rule closes that on the
       // merits; withhold it and the original gap is still visible underneath.
-      expect(selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [] }).selected).toContain(LOG_CALLERS_TEST)
-      expect(
-        selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [], repoTreeScanners: 'ignore' }).selected
-      ).not.toContain(LOG_CALLERS_TEST)
+      expect(selectOnRealRepo(changed, { alwaysRun: [] }).selected).toContain(LOG_CALLERS_TEST)
+      expect(selectOnRealRepo(changed, { alwaysRun: [], repoTreeScanners: 'ignore' }).selected).not.toContain(
+        LOG_CALLERS_TEST
+      )
     }, 60_000)
   }
 })
@@ -360,18 +373,18 @@ describe('a second real CI failure in the SAME task-files-v1/1 change set (Issue
 
   it("with this repo's real alwaysRun config, commands/task-status.test.ts (shard 3's real CI failure) is selected", () => {
     const alwaysRun = loadConfig()?.prePush?.alwaysRun ?? []
-    const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun })
+    const { selected } = selectOnRealRepo(changed, { alwaysRun })
     expect(selected).toContain(TASK_STATUS_E2E_TEST)
   }, 120_000)
 
   it('reachability ALONE (no alwaysRun) now selects it on the merits — the CLI-spawn edge (Issue #702), not the escape hatch', () => {
-    expect(selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [] }).selected).toContain(TASK_STATUS_E2E_TEST)
+    expect(selectOnRealRepo(changed, { alwaysRun: [] }).selected).toContain(TASK_STATUS_E2E_TEST)
     // Withhold the new edge alone and the ORIGINAL gap is still visible
     // underneath — proving it is this edge doing the work, not a static
     // import this fixture happened to gain some other way.
-    expect(
-      selectAffectedTestFiles(REPO_ROOT, changed, { alwaysRun: [], cliSpawnDetection: 'ignore' }).selected
-    ).not.toContain(TASK_STATUS_E2E_TEST)
+    expect(selectOnRealRepo(changed, { alwaysRun: [], cliSpawnDetection: 'ignore' }).selected).not.toContain(
+      TASK_STATUS_E2E_TEST
+    )
   }, 60_000)
 })
 
@@ -429,7 +442,7 @@ describe('Part 4 — never-miss: optimized selection is a superset of the indepe
     ].map((f) => join(REPO_ROOT, f))
     let checkedNonEmpty = 0
     for (const changed of sample) {
-      const optimized = new Set(selectAffectedTestFiles(REPO_ROOT, [changed]).selected)
+      const optimized = new Set(selectOnRealRepo([changed]).selected)
       const reached = testFiles.filter((t) => oracle.reaches(changed, t))
       if (reached.length > 0) checkedNonEmpty++
       expect(
@@ -530,10 +543,8 @@ describe('Issue #702, O2 — the exact regression: a log-sink.ts-only change now
   })
 
   it('is invisible to reachability alone, and selected once the CLI-spawn edge is in play', () => {
-    expect(selectAffectedTestFiles(REPO_ROOT, [LOG_SINK], { cliSpawnDetection: 'ignore' }).selected).not.toContain(
-      CHECK_TEST
-    )
-    expect(selectAffectedTestFiles(REPO_ROOT, [LOG_SINK]).selected).toContain(CHECK_TEST)
+    expect(selectOnRealRepo([LOG_SINK], { cliSpawnDetection: 'ignore' }).selected).not.toContain(CHECK_TEST)
+    expect(selectOnRealRepo([LOG_SINK]).selected).toContain(CHECK_TEST)
   }, 60_000)
 })
 
@@ -576,7 +587,15 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
       .map((f) => resolve(f))
   }
 
+  // Bundling every started program is the slow part, so the two cases below
+  // that read it share one bundle, built on first use for the same test files.
+  let startsBundle: ReturnType<typeof buildStarts> | undefined
   function startsOf(testFiles: readonly string[]) {
+    startsBundle ??= buildStarts(testFiles)
+    return startsBundle
+  }
+
+  function buildStarts(testFiles: readonly string[]) {
     const ts = loadTypeScript(REPO_ROOT) as NonNullable<ReturnType<typeof loadTypeScript>>
     const sourceFiles = new Set(discoverWorkspacePackages(REPO_ROOT).flatMap((p) => p.sourceFiles))
     const read = (file: string) => readFileSync(file, 'utf8')
@@ -619,7 +638,7 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
       )
     })
     expect(owed.length).toBeGreaterThan(0)
-    const selected = new Set(selectAffectedTestFiles(REPO_ROOT, [LOG_SINK]).selected)
+    const selected = new Set(selectOnRealRepo([LOG_SINK]).selected)
     expect(owed.filter((f) => !selected.has(f))).toEqual([])
   }, 240_000)
 
@@ -636,8 +655,8 @@ describe('Issue #702, O2 — every test file the Origin’s own grep identifies 
       return start !== undefined && !start.coarse && !start.scripts.some(reachesLogSink)
     })
     const changed = [LOG_SINK]
-    const withEdge = new Set(selectAffectedTestFiles(REPO_ROOT, changed).selected)
-    const withoutEdge = new Set(selectAffectedTestFiles(REPO_ROOT, changed, { cliSpawnDetection: 'ignore' }).selected)
+    const withEdge = new Set(selectOnRealRepo(changed).selected)
+    const withoutEdge = new Set(selectOnRealRepo(changed, { cliSpawnDetection: 'ignore' }).selected)
     expect(unowed.filter((f) => withEdge.has(f) && !withoutEdge.has(f))).toEqual([])
   }, 240_000)
 })
@@ -750,7 +769,7 @@ describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings
       join(REPO_ROOT, 'harness/processes/vinaya-strict/integration/config/compose.ts'),
       join(REPO_ROOT, 'harness/kernel/run-paths.ts')
     ]
-    const { selected } = selectAffectedTestFiles(REPO_ROOT, changed, { depth: 'one' })
+    const { selected } = selectOnRealRepo(changed, { depth: 'one' })
     // Runner selection and disabled-recording suites directly consume these modules too, and so does the
     // standalone and Engine Log replay, which records both runners through the sink's own overrides.
     expect(selected.length).toBeLessThanOrEqual(45)
@@ -762,7 +781,7 @@ describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings
     // every suite that exercises ownership, effects, or the task-tools MCP
     // handlers against a real store.
     const changed = join(REPO_ROOT, 'harness/kernel/connectors/checkpoint/control-store/local.ts')
-    const { selected } = selectAffectedTestFiles(REPO_ROOT, [changed], {
+    const { selected } = selectOnRealRepo([changed], {
       depth: 'one',
       affectedNames: new Map([[changed, new Set(['defaultControlStoreDeps'])]])
     })
@@ -773,7 +792,18 @@ describe('selectAffectedTestFiles depth: "one" — reference change-set ceilings
     // `sum-ledger.ts` — a small, narrowly-consumed utility with no re-export
     // fan-out of its own.
     const changed = join(REPO_ROOT, 'harness/processes/vinaya-strict/tools/pr-report/tokens/sum-ledger.ts')
-    const { selected } = selectAffectedTestFiles(REPO_ROOT, [changed], { depth: 'one' })
+    const { selected } = selectOnRealRepo([changed], { depth: 'one' })
     expect(selected.length).toBeLessThanOrEqual(5)
   }, 120_000)
+})
+
+// The compiler graph is built once per set of inputs in a process, so every
+// selection over the real repository in this file shares it.
+describe('the compiler graph is reused across this file’s selections over the real repository', () => {
+  it('the selections over the real repository built the compiler program at most twice', () => {
+    // Twice, not once: the constructed workspace in the middle of the file can
+    // push the real repository out of the two graphs a process keeps. More than
+    // twice means a change defeated the reuse.
+    expect(realRepoProgramMs.filter((ms) => ms > 0).length).toBeLessThanOrEqual(2)
+  })
 })
