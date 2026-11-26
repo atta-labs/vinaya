@@ -8,6 +8,7 @@
 
 import { parseRationaleDeps } from '../tools/task-contract/forge/parse-rationale-deps'
 import { trancheLabel, label } from '../tools/task-contract/forge/labels'
+import { resolveDuplicateTasks } from '../tools/task-contract/forge/list-tasks'
 import { anchoredRegion, stripCode } from '@harness/kernel/gates/checks/anchored-region'
 import { PROVENANCE_HEADING, REGION_PREFIXES } from '../tools/legacy-markers'
 import {
@@ -131,6 +132,51 @@ export type TrancheFile = {
   tranche: Tranche
 }
 
+// ---------- task entry builders ----------------------------------------------
+
+/**
+ * One entry per task Issue of a tranche, each carrying the facts read for that
+ * Issue alone. Two Issues that share a task number (a re-cut task keeps its
+ * closed not-planned Issue beside its replacement) stay two entries, so a
+ * check that judges every Issue, such as A2, never sees one Issue wearing
+ * another's facts. `factsByIssue` is `undefined` when the forge was unavailable.
+ */
+export function buildIssueEntries(
+  trancheSlug: string,
+  archived: boolean,
+  tasks: Task[],
+  factsByIssue: Map<number, ForgeFacts> | undefined
+): TaskEntry[] {
+  return tasks.map((task) => ({
+    trancheSlug,
+    archived,
+    task,
+    facts: task.issue === null ? undefined : factsByIssue?.get(task.issue)
+  }))
+}
+
+/**
+ * One entry per task number, for the checks that judge a task by its number.
+ * A task number carried by several Issues resolves with the shared duplicate
+ * rule (an open Issue over closed ones; among closed ones the newest), and the
+ * entry carries the standing Issue's own facts. The duplicate-conflict list the
+ * rule also returns is ignored here: the dispatch-readiness check reports it.
+ */
+export function buildTaskEntries(
+  trancheSlug: string,
+  archived: boolean,
+  tasks: Task[],
+  factsByIssue: Map<number, ForgeFacts> | undefined
+): TaskEntry[] {
+  const { tasks: standing } = resolveDuplicateTasks(tasks, (n) => factsByIssue?.get(n)?.issueState === 'open')
+  return buildIssueEntries(trancheSlug, archived, standing, factsByIssue)
+}
+
+/** The key A2 looks a close-out up by: the Issue number, which no two task Issues share. */
+export function provenanceKey(issue: number): string {
+  return String(issue)
+}
+
 // ---------- pure check evaluators --------------------------------------------
 
 /**
@@ -185,17 +231,23 @@ export function checkA1(entries: TaskEntry[], principalAllowlist: string[]): Che
  * Fail class: `archived-without-provenance`
  * Terminal event date: `prMergedAt` — grandfathered when before `COHERENCE_ENFORCED_FROM`.
  *
- * `hasProvenanceByKey`: Map keyed by `${trancheSlug}/${taskId}` → true when the
- * closing PR has a comment containing `### Vinaya provenance`.
+ * `entries` holds one entry per task Issue (see `buildIssueEntries`), each with
+ * its own facts, so a re-cut task number never lends one Issue's facts to
+ * another. An Issue closed as not planned is dropped, never done, and is never
+ * owed a close-out (A1 excludes it the same way).
+ *
+ * `hasProvenanceByKey`: Map keyed by `provenanceKey(issue)` (the Issue number) → true
+ * when the closing PR has a comment containing `### Vinaya provenance`.
  */
 export function checkA2(entries: TaskEntry[], hasProvenanceByKey: Map<string, boolean>): CheckResult {
   const failures: CheckFailure[] = []
   for (const e of entries) {
     if (!e.facts) continue
+    if (e.task.issue === null) continue
+    if (e.facts.stateReason === 'not_planned') continue
     // Only check tasks whose issue is closed AND whose closing PR merged.
     if (e.facts.issueState !== 'closed' || e.facts.prState !== 'merged') continue
-    const key = `${e.trancheSlug}/${e.task.id}`
-    const hasProvenance = hasProvenanceByKey.get(key)
+    const hasProvenance = hasProvenanceByKey.get(provenanceKey(e.task.issue))
     // If key is absent from the map we were unable to fetch (forge error); skip.
     if (hasProvenance === undefined) continue
     if (!hasProvenance) {

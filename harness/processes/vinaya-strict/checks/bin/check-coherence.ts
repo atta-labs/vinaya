@@ -41,11 +41,12 @@ import { indexTrancheMilestonesForSlugAsync } from '../../tools/task-contract/fo
 import { issueMilestonesFromIssues } from '../forge/list-issue-milestones'
 import type { GhIssue } from '@harness/kernel/adapters/code-host/github/gh'
 import type { SlugMilestoneIndex, TrancheMilestoneIndex } from '../../tools/task-contract/forge/fetch-milestone'
+import type { Task } from '../../tools/task-contract/types'
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { fetchForgeFacts } from '../../tools/task-contract/forge/fetch-forge-facts'
+import { fetchForgeFactsByIssue } from '../../tools/task-contract/forge/fetch-forge-facts'
 import { fetchOpenIssuesByLabel } from '../../tools/task-contract/forge/fetch-open-issues'
 import { parseRegistry } from '../../tools/task-contract/parse-registry'
 import {
@@ -62,6 +63,9 @@ import {
   checkT1,
   checkT2,
   checkT3,
+  buildIssueEntries,
+  buildTaskEntries,
+  provenanceKey,
   R1_GRANDFATHERED_ISSUES,
   scopeT2ToPlanPr,
   type CheckResult,
@@ -300,12 +304,23 @@ function emitAdvisories(results: CheckResult[]): void {
   }
 }
 
+/**
+ * T2's topology set: every labeled Issue of the tranche, not only the one
+ * standing for each task number, so resolving duplicate task numbers never
+ * makes a labeled Issue read as missing from the plan.
+ */
+export function topologyIssueNumbers(tasks: Task[]): Set<number> {
+  return new Set(tasks.map((t) => t.issue).filter((n): n is number => n !== null))
+}
+
 /** Reads, for each closed Issue number, whether its closing PR carries a provenance block. */
 export type ProvenanceReader = (issueNums: number[]) => Promise<Map<number, boolean>>
 
 /**
  * A2 over the branch tranche. Its candidates are the tasks whose Issue is
- * closed and whose closing PR merged, keyed `<slug>/<task id>` for `checkA2`.
+ * closed and whose closing PR merged, keyed by Issue number for `checkA2`.
+ * `entries` holds one entry per task Issue, each with its own facts, and an
+ * Issue closed as not planned is never a candidate: it is owed no close-out.
  * The provenance read answers an empty map on a network or token failure, and
  * `checkA2` skips a key it is missing, so a lost read would pass silently: a
  * missing token, or a candidate the read gave no answer for, fails the result
@@ -318,7 +333,11 @@ export async function evaluateA2(
   readProvenance: ProvenanceReader
 ): Promise<CheckResult> {
   const candidates = entries.filter(
-    (e) => e.facts?.issueState === 'closed' && e.facts.prState === 'merged' && e.task.issue !== null
+    (e) =>
+      e.facts?.issueState === 'closed' &&
+      e.facts.prState === 'merged' &&
+      e.facts.stateReason !== 'not_planned' &&
+      e.task.issue !== null
   )
   if (candidates.length === 0) return checkA2(entries, new Map())
 
@@ -342,7 +361,7 @@ export async function evaluateA2(
     const issue = e.task.issue as number
     const has = byIssue.get(issue)
     if (has === undefined) missing.push(issue)
-    else provenanceByKey.set(`${slug}/${e.task.id}`, has)
+    else provenanceByKey.set(provenanceKey(issue), has)
   }
   if (missing.length > 0) {
     return unread(
@@ -531,15 +550,15 @@ async function main(): Promise<void> {
   )
   const file: TrancheFile = { slug, archived: false, tranche }
 
-  const baseEntries: TaskEntry[] = tranche.tasks.map((t) => ({
-    trancheSlug: slug,
-    archived: false,
-    task: t,
-    facts: undefined
-  }))
-
+  // Facts are read per Issue: a re-cut task leaves a closed not-planned Issue
+  // beside its replacement under one task number, and the two must not share facts.
   const taskRefs = tranche.tasks.filter((t) => t.issue !== null).map((t) => ({ id: t.id, issue: t.issue as number }))
-  const snapshot = await fetchForgeFacts({ owner: repo.owner, repo: repo.repo, tranche: slug, tasks: taskRefs })
+  const snapshot = await fetchForgeFactsByIssue({
+    owner: repo.owner,
+    repo: repo.repo,
+    tranche: slug,
+    tasks: taskRefs
+  })
 
   const results: CheckResult[] = [checkL3([file])]
 
@@ -555,22 +574,21 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  const enrichedEntries: TaskEntry[] = tranche.tasks.map((t) => ({
-    trancheSlug: slug,
-    archived: false,
-    task: t,
-    facts: snapshot.facts.get(t.id)
-  }))
+  // One entry per task number carrying the standing Issue's own facts, for the
+  // checks that judge a task by its number; and one entry per Issue for A2.
+  const enrichedEntries = buildTaskEntries(slug, false, tranche.tasks, snapshot.facts)
+  const issueEntries = buildIssueEntries(slug, false, tranche.tasks, snapshot.facts)
+  const baseEntries: TaskEntry[] = enrichedEntries.map((e) => ({ ...e, facts: undefined }))
 
   const token = (await resolveToken()) ?? ''
 
   if (a1Principals !== null) results.push(checkA1(enrichedEntries, a1Principals))
   results.push(
-    await evaluateA2(slug, enrichedEntries, token, (nums) => fetchProvenance(nums, repo.owner, repo.repo, token))
+    await evaluateA2(slug, issueEntries, token, (nums) => fetchProvenance(nums, repo.owner, repo.repo, token))
   )
   results.push(checkA3(enrichedEntries))
   results.push(checkT1(enrichedEntries))
-  results.push(checkD1(enrichedEntries, issueToEntry(enrichedEntries), taskToEntry(enrichedEntries, slug)))
+  results.push(checkD1(enrichedEntries, issueToEntry(issueEntries), taskToEntry(enrichedEntries, slug)))
   results.push(checkT3(baseEntries, slug, enrichedEntries, new Set()))
   results.push(checkL1([file], new Map([[slug, enrichedEntries]])))
   // L5 has no active-tranche authority but the index; a failed index read
@@ -592,7 +610,7 @@ async function main(): Promise<void> {
   emitOtherTrancheL5(await otherTranchesL5)
 
   const openIssuesBySlug = await fetchOpenIssuesByLabel([slug], repo.owner, repo.repo, token)
-  const topologyIssues = new Set(tranche.tasks.map((t) => t.issue).filter((n): n is number => n !== null))
+  const topologyIssues = topologyIssueNumbers(tranche.tasks)
   const openNums = (openIssuesBySlug.get(slug) ?? []).map((i) => i.number)
   results.push(scopeT2ToPlanPr(checkT2(new Map([[slug, openNums]]), new Map([[slug, topologyIssues]]), slug), false))
   // R1's project-registry half needs the registry passed in (the process package is pure).

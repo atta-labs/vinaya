@@ -75,7 +75,59 @@ mock.module('@octokit/graphql', () => ({
   }
 }))
 
-const { fetchProvenance } = await import('./verify-coherence')
+const { fetchProvenance, evaluateA2ByIssue } = await import('./verify-coherence')
+const { buildIssueEntries } = await import('../coherence-checks')
+
+describe('evaluateA2ByIssue — keyed by Issue number', () => {
+  const task = (issue: number) => ({
+    id: '3',
+    title: 'a task',
+    issue,
+    projects: [],
+    dependsOn: [],
+    conflictsWith: [],
+    rationaleMarkdown: ''
+  })
+  const facts = (stateReason: 'completed' | 'not_planned') => ({
+    issueState: 'closed' as const,
+    assigned: false,
+    blockedLabel: false,
+    branchExists: false,
+    prState: 'merged' as const,
+    reviewDecision: 'none' as const,
+    stateReason,
+    closedAt: null,
+    mergedAt: '2026-08-01T00:00:00Z',
+    closedByActor: null
+  })
+  // Issue 101 was dropped (not planned) and Issue 102 re-used task number 3; both
+  // read the shared task branch's merged pull request.
+  const entries = buildIssueEntries(
+    't',
+    false,
+    [task(101), task(102)],
+    new Map([
+      [101, facts('not_planned')],
+      [102, facts('completed')]
+    ])
+  )
+
+  it('passes the duplicate-number tranche when the standing Issue’s close-out is present', async () => {
+    const asked: number[][] = []
+    const result = await evaluateA2ByIssue(entries, async (nums) => {
+      asked.push(nums)
+      return new Map([[102, true]])
+    })
+    expect(result.status).toBe('pass')
+    expect(asked).toEqual([[102]])
+  })
+
+  it('fails naming the merged Issue only when its close-out is absent', async () => {
+    const result = await evaluateA2ByIssue(entries, async () => new Map([[102, false]]))
+    expect(result.status).toBe('fail')
+    expect(result.failures.map((f) => f.issue)).toEqual([102])
+  })
+})
 
 const PROVENANCE_FOR = (issue: number) =>
   `${PROVENANCE_HEADING.old} — task 1 (tranche fixture)\n- Issue:        #${issue}  (closed by merge)\n- Tier:         1`

@@ -42,7 +42,7 @@ import { resolveRepo } from '@harness/kernel/adapters/code-host/github/resolve-r
 import type { GhIssue } from '@harness/kernel/adapters/code-host/github/gh'
 import type { TrancheMilestoneIndex } from '../../tools/task-contract/forge/fetch-milestone'
 import type { Tranche } from '../../tools/task-contract/tranche-types'
-import { fetchForgeFacts } from '../../tools/task-contract/forge/fetch-forge-facts'
+import { fetchForgeFactsByIssue } from '../../tools/task-contract/forge/fetch-forge-facts'
 import { fetchOpenIssuesByLabel } from '../../tools/task-contract/forge/fetch-open-issues'
 import { parseRegistry } from '../../tools/task-contract/parse-registry'
 import { parseTranche } from '../../tools/task-contract/parse-tranche'
@@ -63,6 +63,9 @@ import {
   checkT1,
   checkT2,
   checkT3,
+  buildIssueEntries,
+  buildTaskEntries,
+  provenanceKey,
   extractClosesReferences,
   R1_GRANDFATHERED_ISSUES,
   scopeT2ToPlanPr
@@ -680,6 +683,30 @@ export type RunCoherenceChecksOptions = {
   isPlanPr?: boolean
 }
 
+/**
+ * A2 over one entry per task Issue. Candidates are the closed Issues whose
+ * closing PR merged, except one closed as not planned (owed no close-out); the
+ * close-out lookup is keyed by Issue number, so two Issues sharing a task
+ * number never read each other's answer. An Issue the read gave no answer for
+ * is skipped by `checkA2`.
+ */
+export async function evaluateA2ByIssue(
+  entries: TaskEntry[],
+  readProvenance: (issueNums: number[]) => Promise<Map<number, boolean>>
+): Promise<CheckResult> {
+  const candidates = entries.filter(
+    (e) =>
+      e.facts?.issueState === 'closed' &&
+      e.facts.prState === 'merged' &&
+      e.facts.stateReason !== 'not_planned' &&
+      e.task.issue !== null
+  )
+  const byIssue = await readProvenance(candidates.map((e) => e.task.issue as number))
+  const provenanceByKey = new Map<string, boolean>()
+  for (const [issue, has] of byIssue) provenanceByKey.set(provenanceKey(issue), has)
+  return checkA2(entries, provenanceByKey)
+}
+
 export async function runCoherenceChecks(
   options: RunCoherenceChecksOptions = {}
 ): Promise<{ results: CheckResult[]; forgeUnavailable: boolean }> {
@@ -769,8 +796,10 @@ export async function runCoherenceChecks(
 
   const { owner, repo: repoName } = repo
 
-  // Fetch forge facts for all tranches (A1/A2/A3 share this fetch)
-  const snapshotsBySlug = new Map<string, Map<string, ForgeFacts>>()
+  // Fetch forge facts for all tranches (A1/A2/A3 share this fetch), per Issue:
+  // a re-cut task keeps a closed not-planned Issue beside its replacement under
+  // one task number, and the two must not share facts.
+  const snapshotsBySlug = new Map<string, Map<number, ForgeFacts>>()
   let anyForgeUnavailable = false
 
   const eligible = files
@@ -783,7 +812,7 @@ export async function runCoherenceChecks(
   const snapshotResults = await Promise.all(
     eligible.map(async ({ f, tasks }) => ({
       f,
-      snapshot: await fetchForgeFacts({ owner, repo: repoName, tranche: f.slug, tasks })
+      snapshot: await fetchForgeFactsByIssue({ owner, repo: repoName, tranche: f.slug, tasks })
     }))
   )
 
@@ -801,24 +830,23 @@ export async function runCoherenceChecks(
   const forgeUnavailableSlugs = new Set(files.map((f) => f.slug).filter((slug) => !snapshotsBySlug.has(slug)))
 
   // Build enriched entries with forge facts
-  const enrichedEntries: TaskEntry[] = files.flatMap((f) => {
-    const factsMap = snapshotsBySlug.get(f.slug)
-    return f.tranche.tasks.map((t) => ({
-      trancheSlug: f.slug,
-      archived: f.archived,
-      task: t,
-      // undefined when forge unavailable for this tranche OR when issue doesn't exist
-      facts: factsMap?.get(t.id)
-    }))
-  })
+  // One entry per task number carrying the standing Issue's own facts (facts are
+  // undefined when forge is unavailable for the tranche OR the Issue doesn't exist).
+  const enrichedEntries: TaskEntry[] = files.flatMap((f) =>
+    buildTaskEntries(f.slug, f.archived, f.tranche.tasks, snapshotsBySlug.get(f.slug))
+  )
+  // One entry per Issue, each with its own facts: A2 judges these, and D1 resolves
+  // an Issue-number dependency against them, so a dropped Issue still resolves.
+  const allIssueEntries: TaskEntry[] = files.flatMap((f) =>
+    buildIssueEntries(f.slug, f.archived, f.tranche.tasks, snapshotsBySlug.get(f.slug))
+  )
+  const issueEntries = allIssueEntries.filter((e) => snapshotsBySlug.has(e.trancheSlug))
 
   // Build lookup maps
   const issueToEntry = new Map<number, TaskEntry>()
   const taskToEntry = new Map<string, TaskEntry>()
-  for (const e of enrichedEntries) {
-    if (e.task.issue !== null) issueToEntry.set(e.task.issue, e)
-    taskToEntry.set(`${e.trancheSlug}/${e.task.id}`, e)
-  }
+  for (const e of allIssueEntries) if (e.task.issue !== null) issueToEntry.set(e.task.issue, e)
+  for (const e of enrichedEntries) taskToEntry.set(`${e.trancheSlug}/${e.task.id}`, e)
 
   // Only run forge checks for entries whose tranche snapshot was available
   const availableEntries = enrichedEntries.filter((e) => snapshotsBySlug.has(e.trancheSlug))
@@ -828,22 +856,7 @@ export async function runCoherenceChecks(
   results.push(checkA3(availableEntries))
 
   // A2 — needs closing PR numbers + comment check (separate batch query)
-  const a2Candidates = availableEntries.filter(
-    (e) => e.facts?.issueState === 'closed' && e.facts.prState === 'merged' && e.task.issue !== null
-  )
-  const a2IssueNums = a2Candidates.map((e) => e.task.issue as number)
-  const provenanceByIssueNum = await fetchProvenance(a2IssueNums, owner, repoName, token)
-
-  // Convert provenance lookup from issue# to `slug/taskId` key
-  const provenanceByKey = new Map<string, boolean>()
-  for (const e of a2Candidates) {
-    if (e.task.issue === null) continue
-    const hasProvenance = provenanceByIssueNum.get(e.task.issue)
-    if (hasProvenance !== undefined) {
-      provenanceByKey.set(`${e.trancheSlug}/${e.task.id}`, hasProvenance)
-    }
-  }
-  results.push(checkA2(availableEntries, provenanceByKey))
+  results.push(await evaluateA2ByIssue(issueEntries, (nums) => fetchProvenance(nums, owner, repoName, token)))
 
   // T1 check (only when forge available)
   results.push(checkT1(availableEntries))
