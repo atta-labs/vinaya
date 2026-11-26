@@ -973,7 +973,7 @@ describe('dispatchRole — timeout ceiling', () => {
     // The one span ends with the timeout and carries every figure the stream gave, the cache read included.
     const [turn] = agentTurnsOf(localCopyFolderOf(home))
     expect(turn?.errorType).toBe('timeout')
-    expect(turn?.usage).toEqual({ input: 184327, output: 22190, cacheRead: 500 })
+    expect(turn?.usage).toEqual({ input: 184327, output: 22190, cacheRead: 500, costUnknownReason: 'not_reported' })
   })
 })
 
@@ -1002,7 +1002,7 @@ describe('dispatchRole — transcript usage fallback', () => {
     expect(r.status).toBe(0)
     const turns = agentTurnsOf(localCopyFolderOf(home))
     expect(turns).toHaveLength(1)
-    expect(turns[0]?.usage).toEqual({ input: 101, output: 22, cacheRead: 77 })
+    expect(turns[0]?.usage).toEqual({ input: 101, output: 22, cacheRead: 77, costUnknownReason: 'not_reported' })
   })
 
   it('a killed dispatch still records the usage its transcript holds so far', () => {
@@ -1020,7 +1020,7 @@ describe('dispatchRole — transcript usage fallback', () => {
     expect(result.timedOut).toBe(true)
     const [turn] = agentTurnsOf(localCopyFolderOf(home))
     expect(turn?.errorType).toBe('timeout')
-    expect(turn?.usage).toEqual({ input: 7, output: 8, cacheRead: 19 })
+    expect(turn?.usage).toEqual({ input: 7, output: 8, cacheRead: 19, costUnknownReason: 'not_reported' })
   })
 
   it('with neither a stream usage line nor a transcript the units are unknown and the reason names both', () => {
@@ -1077,10 +1077,70 @@ describe("dispatchRole — a dispatched role's usage event survives the PR-body 
     const turns = agentTurnsOf(localCopyFolderOf(home))
     expect(turns).toHaveLength(1)
     // The cache read is its own figure: the creation tokens are not part of it.
-    expect(turns[0]?.usage).toEqual({ input: 91442, output: 7318, cacheRead: 60 })
+    expect(turns[0]?.usage).toEqual({ input: 91442, output: 7318, cacheRead: 60, costUnknownReason: 'not_reported' })
     // The turn itself is a clean one, so no failure path supplied these numbers.
     expect(turns[0]?.errorType).toBeUndefined()
     expect(turns[0]?.outcome).toBe('done')
+  })
+
+  /** Runs one dispatch whose fake vendor prints `stdout`, and returns the one agent turn it recorded. */
+  function turnOfStream(agent: 'claude' | 'codex', stdout: string, extra: string[] = []) {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    writeFakeBinary(binDir, agent, `#!/bin/sh\ncat > /dev/null\necho '${stdout}'\nexit 0\n`)
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const r = runDispatch(
+      ['developer', '--agent', agent, '--prompt-file', promptFile, ...extra],
+      cwd,
+      home,
+      `${binDir}:${pathWithoutRealVendors()}`
+    )
+    expect(r.status).toBe(0)
+    const turns = agentTurnsOf(localCopyFolderOf(home))
+    expect(turns).toHaveLength(1)
+    return turns[0]
+  }
+
+  const CLAUDE_RESULT_WITH_COST =
+    '{"type":"result","total_cost_usd":0.0731,"usage":{"input_tokens":91442,"output_tokens":7318,"cache_read_input_tokens":60}}'
+
+  it('a fresh Claude turn whose result line reports a cost records it as an estimate beside its tokens', () => {
+    const turn = turnOfStream('claude', CLAUDE_RESULT_WITH_COST)
+    expect(turn?.usage).toEqual({
+      input: 91442,
+      output: 7318,
+      cacheRead: 60,
+      cost: 0.0731,
+      costKind: 'estimated'
+    })
+  })
+
+  it('a resumed Claude turn records its tokens and cumulative_on_resume, never the accumulated cost', () => {
+    const turn = turnOfStream('claude', CLAUDE_RESULT_WITH_COST, ['--resume', '44444444-4444-4444-4444-444444444444'])
+    expect(turn?.usage).toEqual({
+      input: 91442,
+      output: 7318,
+      cacheRead: 60,
+      costUnknownReason: 'cumulative_on_resume'
+    })
+  })
+
+  it('a Codex turn records its tokens and not_reported_by_agent', () => {
+    const turn = turnOfStream(
+      'codex',
+      '{"type":"turn.completed","usage":{"input_tokens":20,"output_tokens":10,"cached_input_tokens":4}}'
+    )
+    expect(turn?.usage).toEqual({ input: 20, output: 10, cacheRead: 4, costUnknownReason: 'not_reported_by_agent' })
+  })
+
+  it('a turn whose usage was not observed records its usage reason and no cost or cost reason', () => {
+    const turn = turnOfStream('claude', '{}')
+    expect(turn?.usage.unknownReason).toBeDefined()
+    expect(turn?.usage.cost).toBeUndefined()
+    expect(turn?.usage.costKind).toBeUndefined()
+    expect(turn?.usage.costUnknownReason).toBeUndefined()
   })
 })
 
@@ -2582,6 +2642,7 @@ describe('dispatch usage envelopes match between runners', () => {
                 { type: 'system', subtype: 'init', session_id: 'parity-session', model: 'parity-model' },
                 {
                   type: 'result',
+                  total_cost_usd: 0.0731,
                   usage: {
                     input_tokens: 101,
                     output_tokens: 17,
@@ -2679,8 +2740,70 @@ describe('dispatch usage envelopes match between runners', () => {
           const engine = agentTurnsOf(folder)
           expect(engine.map(comparable)).toEqual(standalone.map(comparable))
           expect(engine.map((turn) => turn.attempt)).toEqual(Array.from({ length: round }, (_, index) => index + 1))
+          // A fresh launch records the same estimate the standalone dispatch does: Claude's, never Codex's.
+          expect(engine.map((turn) => [turn.usage.cost, turn.usage.costKind, turn.usage.costUnknownReason])).toEqual(
+            Array.from({ length: round }, () =>
+              agent === 'claude' ? [0.0731, 'estimated', undefined] : [undefined, undefined, 'not_reported_by_agent']
+            )
+          )
         }
       })
+
+  it('an Engine Claude launch that carries --resume records cumulative_on_resume and no cost', async () => {
+    const home = tempDir('dispatch-resume-home-')
+    const cwd = tempDir('dispatch-resume-cwd-')
+    const folder = join(cwd, 'engine-logs')
+    const stdout = `${JSON.stringify({
+      type: 'result',
+      total_cost_usd: 4.2,
+      usage: { input_tokens: 101, output_tokens: 17 }
+    })}\n`
+    const recorder = createRunRecorder({
+      runId: () => 'resume-run',
+      workRef: () => '9001',
+      repository: () => undefined,
+      place: (repository) => ({ folder, repository }),
+      processIdentity: () => undefined,
+      sender: () => ({ request: () => {}, remember: () => {}, drain: async () => {} }),
+      home: () => home,
+      cwd: () => tempDir('dispatch-resume-root-'),
+      onError: (error) => {
+        throw error
+      }
+    })
+    const wrapped = withDispatchUsage(
+      () => {
+        const child = spawn(process.execPath, ['-e', `process.stdout.write(${JSON.stringify(stdout)})`], {
+          cwd,
+          env: { ...stripVinayaEnv(process.env), HOME: home },
+          stdio: ['ignore', 'pipe', 'pipe']
+        })
+        const budget = setTimeout(() => child.kill('SIGKILL'), DISPATCH_SUBPROCESS_BUDGET_MS)
+        child.once('close', () => clearTimeout(budget))
+        return child
+      },
+      join(cwd, 'generated'),
+      'claude',
+      (launch) => endLaunchTurn(launch, null),
+      Date.now,
+      undefined,
+      (launchedRole, launchAttribution, startedAt) =>
+        startLaunchTurn(
+          { agent: 'claude', model: 'parity-model', loopId: 'launch', recorder },
+          launchedRole,
+          launchAttribution,
+          startedAt
+        )
+    )
+    const child = wrapped(
+      'fixture',
+      ['--settings', join(cwd, 'generated', 'developer', 'settings.json'), '--resume', 'a-session'],
+      { cwd, env: {} }
+    )
+    await new Promise<void>((resolve) => child.on('close', () => resolve()))
+    const [turn] = agentTurnsOf(folder)
+    expect(turn?.usage).toEqual({ input: 101, output: 17, cacheRead: 0, costUnknownReason: 'cumulative_on_resume' })
+  })
 })
 
 describe('dispatchRole — effort', () => {

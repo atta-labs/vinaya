@@ -15,13 +15,40 @@ describe('parseClaudeUsageUnits', () => {
     })
     expect(parseClaudeUsageUnits(stdout)).toEqual({
       units: { input: 100, output: 50, cache: 42 },
-      unknownReason: null
+      unknownReason: null,
+      costUsd: null
     })
   })
 
   it('treats an absent cache field as zero, not unknown — the usage object itself DID parse', () => {
     const stdout = JSON.stringify({ usage: { input_tokens: 5, output_tokens: 2 } })
-    expect(parseClaudeUsageUnits(stdout)).toEqual({ units: { input: 5, output: 2, cache: 0 }, unknownReason: null })
+    expect(parseClaudeUsageUnits(stdout)).toEqual({
+      units: { input: 5, output: 2, cache: 0 },
+      unknownReason: null,
+      costUsd: null
+    })
+  })
+
+  it('reads total_cost_usd from the same terminal result line as the tokens', () => {
+    const stdout = JSON.stringify({
+      type: 'result',
+      total_cost_usd: 0.0421,
+      usage: { input_tokens: 5, output_tokens: 2 }
+    })
+    expect(parseClaudeUsageUnits(stdout).costUsd).toBe(0.0421)
+  })
+
+  it('reads no cost when the terminal result line carries none, never a zero or a figure from another line', () => {
+    const stdout = [
+      JSON.stringify({ type: 'assistant', total_cost_usd: 9.99 }),
+      JSON.stringify({ type: 'result', usage: { input_tokens: 5, output_tokens: 2 } })
+    ].join('\n')
+    expect(parseClaudeUsageUnits(stdout).costUsd).toBeNull()
+  })
+
+  it('reads no cost from a non-numeric total_cost_usd', () => {
+    const stdout = JSON.stringify({ total_cost_usd: '0.5', usage: { input_tokens: 5, output_tokens: 2 } })
+    expect(parseClaudeUsageUnits(stdout).costUsd).toBeNull()
   })
 
   it('an unparseable stream reports null units with an explicit reason, never a fabricated zero', () => {
@@ -42,7 +69,11 @@ describe('parseClaudeUsageUnits', () => {
 describe('parseCodexUsageUnits', () => {
   it('reads input/output from the terminal turn.completed event', () => {
     const stdout = JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 20, output_tokens: 10 } })
-    expect(parseCodexUsageUnits(stdout)).toEqual({ units: { input: 20, output: 10, cache: null }, unknownReason: null })
+    expect(parseCodexUsageUnits(stdout)).toEqual({
+      units: { input: 20, output: 10, cache: null },
+      unknownReason: null,
+      costUsd: null
+    })
   })
 
   it('reads cached_input_tokens when present', () => {

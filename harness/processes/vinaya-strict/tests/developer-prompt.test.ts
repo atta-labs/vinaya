@@ -18,6 +18,7 @@ import {
   type DeveloperPromptFacts,
   developerPrompt,
   FLOW_V2_NOTE,
+  TEST_RUN_RULE_V2,
   roundTestFailureOf,
   withDefaultMergeConflict
 } from '../executing/developer-prompt'
@@ -349,6 +350,31 @@ describe('the Developer’s optional focused test and no evidence refresh, in ve
     expect(v1).not.toContain(FLOW_V2_NOTE)
     expect(v1).not.toContain('focused test invocation')
     expect(v1).not.toContain('do not call `pr report --write` or `refresh_evidence`')
+  })
+
+  test('the test-run rule is in the version 2 first-turn prompt, once in the open-pull-request answer, and in no version 1 prompt', () => {
+    const count = (text: string) => text.split(TEST_RUN_RULE_V2).length - 1
+    expect(count(developerPrompt('', { ...FACTS, flow: 'v2' }, {}))).toBe(1)
+    expect(FLOW_V2_NOTE.endsWith(TEST_RUN_RULE_V2)).toBe(true)
+    expect(TEST_RUN_RULE_V2).not.toContain('focused test invocation')
+    const answerResults = { develop: mech(0), 'check-mergeability': sentBack({ kind: 'open-pull-request' }) }
+    const answer = developerPrompt('x', { ...FACTS, flow: 'v2' }, answerResults, { resumeSessionId: SESSION })
+    expect(count(answer)).toBe(1)
+    expect(answer).toContain(FLOW_V2_NOTE)
+    expect(developerPrompt('', FACTS, {})).not.toContain(TEST_RUN_RULE_V2)
+  })
+
+  test('the rule reaches a version 2 revision-path prompt and not a version 1 one', () => {
+    const results = {
+      develop: mech(0),
+      'run-mechanical-gates': mech(0),
+      'check-mergeability': sentBack({ kind: 'conflict', headBefore: 'h1', files: ['src/a.ts'] })
+    }
+    const v2 = developerPrompt('x', { ...FACTS, flow: 'v2' }, results, { resumeSessionId: SESSION })
+    expect(v2.split(TEST_RUN_RULE_V2).length - 1).toBe(1)
+    expect(v2).not.toContain(FLOW_V2_NOTE)
+    const v1 = developerPrompt('x', FACTS, results, { resumeSessionId: SESSION })
+    expect(v1).not.toContain(TEST_RUN_RULE_V2)
   })
 })
 
