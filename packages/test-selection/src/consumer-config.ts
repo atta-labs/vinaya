@@ -8,6 +8,7 @@
  * and an unknown key or a value of the wrong shape is refused naming the key.
  */
 import { stableHash } from './inventory.js'
+import type { PathAlias } from './path-aliases.js'
 import type { ScannerDeclaration, ScannerTrigger } from './scanner-inputs.js'
 import type { SpawnProgram } from './spawn-inputs.js'
 import type { InventoryView, ResolvedEdge, SelectionObligation, SelectionPolicy, WholeSuitePolicy } from './types.js'
@@ -21,7 +22,16 @@ export type ConsumerConfig = { policy: SelectionPolicy; inputs: DeclaredInput[] 
 /** A consumer config the command refuses; the message names the offending key. */
 export class ConsumerConfigError extends Error {}
 
-const TOP_KEYS = ['depth', 'scanners', 'spawnPrograms', 'dataFolders', 'alwaysRun', 'wholeSuites', 'inputs'] as const
+const TOP_KEYS = [
+  'depth',
+  'pathAliases',
+  'scanners',
+  'spawnPrograms',
+  'dataFolders',
+  'alwaysRun',
+  'wholeSuites',
+  'inputs'
+] as const
 const TRIGGERS: readonly ScannerTrigger[] = ['tree-shape', 'process-start', 'listed-files', 'content']
 
 type Json = Record<string, unknown>
@@ -87,6 +97,15 @@ export function parseConsumerConfig(document: unknown): ConsumerConfig {
         binary: stringAt(value.binary, `${at}.binary`),
         entrypoint: stringAt(value.entrypoint, `${at}.entrypoint`)
       }
+    })
+  if ('pathAliases' in document)
+    policy.pathAliases = listAt(document.pathAliases, 'pathAliases', (entry, at): PathAlias => {
+      const value = objectAt(entry, at, ['prefix', 'directory'], ['prefix', 'directory'])
+      const prefix = stringAt(value.prefix, `${at}.prefix`)
+      const directory = stringAt(value.directory, `${at}.directory`)
+      if (!prefix.endsWith('/')) fail(`${at}.prefix`, 'does not end in "/"')
+      if (!directory.endsWith('/')) fail(`${at}.directory`, 'does not end in "/"')
+      return { prefix, directory }
     })
   if ('dataFolders' in document) policy.dataFolders = stringsAt(document.dataFolders, 'dataFolders')
   if ('alwaysRun' in document)

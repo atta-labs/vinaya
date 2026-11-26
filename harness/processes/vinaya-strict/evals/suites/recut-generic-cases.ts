@@ -40,6 +40,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join, posix } from 'node:path'
 import ts from 'typescript'
+import { type PathAliasTable, resolveAliasedSpecifier } from '@attalabs/test-selection'
+import { BASE_CONFIG_PATH, parseAliasTable } from '@harness/kernel/imports/alias-table.js'
 import { findBannedTerms, INTERFACE_ITEM_KINDS, interfaceCodeSpan } from '../../../../kernel/evals/banned-terms'
 import { canonicalJson } from '../../../../kernel/evals/neutral-case'
 import { renderCase } from '../vinaya-renderer'
@@ -565,13 +567,25 @@ function treeOf(git: Git, commit: string): Map<string, string> {
 }
 
 /** One revision's files: whether it holds a path, and that file's text. */
-interface Revision {
+export interface Revision {
   has: (path: string) => boolean
   read: (path: string) => string | null
 }
 
+const aliasTables = new WeakMap<Revision, PathAliasTable>()
+
+/** The alias table the revision's own base config declares, read once per revision. */
+function aliasesOf(revision: Revision): PathAliasTable {
+  let table = aliasTables.get(revision)
+  if (!table) {
+    table = parseAliasTable(revision.read(BASE_CONFIG_PATH) ?? '')
+    aliasTables.set(revision, table)
+  }
+  return table
+}
+
 /** Where a module specifier imported from `importer` points: a repository path, or `null` outside it. */
-function resolveModule(
+export function resolveModule(
   specifier: string,
   importer: string,
   revision: Revision,
@@ -579,7 +593,7 @@ function resolveModule(
 ): string | null {
   const target = specifier.startsWith('.')
     ? posix.normalize(posix.join(posix.dirname(importer), specifier))
-    : (workspace.get(specifier) ?? null)
+    : (resolveAliasedSpecifier(specifier, aliasesOf(revision)) ?? workspace.get(specifier) ?? null)
   if (target === null) return null
   const stem = target.replace(/\.[cm]?[jt]sx?$/, '')
   return [target, `${stem}.ts`, `${stem}.tsx`, `${stem}/index.ts`].find(revision.has) ?? null

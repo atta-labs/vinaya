@@ -33,6 +33,7 @@ import {
   readIssueBody,
   readIssueComments
 } from '../../../../../kernel/adapters/code-host/github/forge-read'
+import { resolveAliasedPath } from '@harness/kernel/imports/alias-table.js'
 import { checkQuotedCommandsExist } from '../named-commands'
 import { checkConditionWordsNeedPremise, checkProsePathsExist } from '../prose-facts'
 import {
@@ -1413,14 +1414,25 @@ function normalizeRelative(path: string): string {
  * a path in this tree; `packageImporters` resolves a workspace package's name
  * by shared binding instead.
  */
-function resolvedSpecifiers(importerFile: string, line: string): string[] {
+function resolvedSpecifiers(importerFile: string, line: string, root: string): string[] {
   const dir = importerFile.includes('/') ? importerFile.slice(0, importerFile.lastIndexOf('/')) : ''
   const out: string[] = []
-  for (const m of line.matchAll(/['"](\.[^'"]*)['"]/g)) {
-    const spec = stripImportableExtension(m[1] as string)
-    out.push(normalizeRelative(`${dir}/${spec}`))
+  for (const m of line.matchAll(/['"]([^'"]*)['"]/g)) {
+    const resolved = resolveSpecifierPath(dir, m[1] as string, root)
+    if (resolved !== null) out.push(resolved)
   }
   return out
+}
+
+/**
+ * The repository path (extension dropped) a relative or aliased specifier names from a file in `dir`; `null` for
+ * anything else, a package name included. An alias resolves through the repository's own alias table, which is empty
+ * in a repository that declares none.
+ */
+function resolveSpecifierPath(dir: string, specifier: string, root: string): string | null {
+  if (specifier.startsWith('.')) return normalizeRelative(`${dir}/${stripImportableExtension(specifier)}`)
+  const aliased = resolveAliasedPath(root, specifier)
+  return aliased === null ? null : normalizeRelative(stripImportableExtension(aliased))
 }
 
 /** A workspace package's import specifier (`@scope/pkg`, `@scope/pkg/log`) and the tracked index file it resolves to. */
@@ -1493,15 +1505,21 @@ function ownExports(text: string): Set<string> {
  * `export { … } from './<module>'` (an alias matches by its alias) and, for
  * `export * from './<module>'`, the module's own exports.
  */
-function reexportedBindings(indexFile: string, indexText: string, target: string, pinnedText: string): Set<string> {
+function reexportedBindings(
+  indexFile: string,
+  indexText: string,
+  target: string,
+  pinnedText: string,
+  root: string
+): Set<string> {
   const dir = indexFile.includes('/') ? indexFile.slice(0, indexFile.lastIndexOf('/')) : ''
-  const resolve = (spec: string) => normalizeRelative(`${dir}/${stripImportableExtension(spec)}`)
+  const resolve = (spec: string) => resolveSpecifierPath(dir, spec, root)
   const names = new Set<string>()
-  for (const m of indexText.matchAll(/export\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"](\.[^'"]*)['"]/g)) {
+  for (const m of indexText.matchAll(/export\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g)) {
     if (resolve(m[2] as string) !== target) continue
     for (const b of bindingList(m[1] as string)) names.add(b.alias)
   }
-  for (const m of indexText.matchAll(/export\s+(?:type\s+)?\*\s*from\s*['"](\.[^'"]*)['"]/g)) {
+  for (const m of indexText.matchAll(/export\s+(?:type\s+)?\*\s*from\s*['"]([^'"]+)['"]/g)) {
     if (resolve(m[1] as string) !== target) continue
     for (const name of ownExports(pinnedText)) names.add(name)
   }
@@ -1531,7 +1549,9 @@ function packageImporters(root: string, pinned: string, target: string): string[
     }
     // A subpath whose export target is the pinned module itself exposes its own exports.
     const bindings =
-      entry.index === pinned ? ownExports(pinnedText) : reexportedBindings(entry.index, indexText, target, pinnedText)
+      entry.index === pinned
+        ? ownExports(pinnedText)
+        : reexportedBindings(entry.index, indexText, target, pinnedText, root)
     if (bindings.size === 0) continue
     const quoted = escapeForExtendedRegex(entry.specifier)
     const candidates = git(['-C', root, 'grep', '-lE', `['"]${quoted}['"]`, '--', ...IMPORT_SEARCH_PATHSPEC])
@@ -1639,7 +1659,7 @@ export function readPinnedFileImporters(body: string, root: string = repoRoot())
       const lineStart = hit.indexOf(':', cut + 1)
       const text = lineStart === -1 ? '' : hit.slice(lineStart + 1)
       const target = file.slice(0, -extension.length)
-      if (resolvedSpecifiers(importer, text).includes(target)) importers.add(importer)
+      if (resolvedSpecifiers(importer, text, root).includes(target)) importers.add(importer)
     }
     for (const importer of packageImporters(root, file, file.slice(0, -extension.length))) importers.add(importer)
     for (const reader of pathStringReaders(root, file)) importers.add(reader)

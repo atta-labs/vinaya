@@ -76,6 +76,7 @@ export {
 } from './native.js'
 export { type InventoryDeclarations, inventoryViewOf, TEST_FILE_NAME } from './memory-inventory.js'
 export { type PassKeyInput, passEntryKey, passKeys } from './pass-entries.js'
+export { type PathAlias, type PathAliasTable, resolveAliasedSpecifier } from './path-aliases.js'
 export { globRegex, globToRegex, inputCovers, underDeclaredRoot } from './path-pattern.js'
 export {
   createTraceReader,
@@ -243,6 +244,7 @@ export {
   extractOwnImportRecords,
   type ImportRecord,
   isTestFile,
+  resolveAliasedImport,
   resolveRelativeImport,
   type SelectionExplanation,
   type SelectionReasonKind,

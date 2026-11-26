@@ -5,36 +5,14 @@
  */
 import { expect, it } from 'bun:test'
 import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { join } from 'node:path'
+import { staticClosure as closureOf } from './static-closure.js'
 
 const REPO_ROOT = join(import.meta.dir, '../../../..')
 const ENTRY = join(REPO_ROOT, 'apps/cli/src/index.ts')
 
 /** Every repository file the entry point reaches through static `import` statements alone. */
-function staticClosure(entry: string): string[] {
-  const transpiler = new Bun.Transpiler({ loader: 'ts' })
-  const seen = new Set<string>()
-  const stack = [entry]
-  const resolveLocal = (from: string, specifier: string): string | null => {
-    if (!specifier.startsWith('.')) return null
-    const base = resolve(dirname(from), specifier)
-    for (const candidate of [base.replace(/\.js$/, '.ts'), base.replace(/\.js$/, '.tsx'), `${base}.ts`, base])
-      if (/\.(ts|tsx|js)$/.test(candidate) && existsSync(candidate)) return candidate
-    return null
-  }
-  while (stack.length > 0) {
-    const file = stack.pop() as string
-    if (seen.has(file)) continue
-    seen.add(file)
-    const source = readFileSync(file, 'utf8').replace(/^#!.*/, '')
-    for (const found of transpiler.scanImports(source)) {
-      if (found.kind !== 'import-statement') continue
-      const next = resolveLocal(file, found.path)
-      if (next) stack.push(next)
-    }
-  }
-  return [...seen].map((file) => relative(REPO_ROOT, file)).sort()
-}
+const staticClosure = (entry: string): string[] => closureOf(entry, REPO_ROOT)
 
 it('the entry point imports no command module statically', () => {
   const closure = staticClosure(ENTRY)

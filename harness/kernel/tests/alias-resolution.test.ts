@@ -23,6 +23,11 @@ const FOLDERS = [
 ]
 const probeOf = (dir: string): string => join(dir, 'tests', 'fixtures', 'alias-probe.ts')
 const PROBE_OUTPUT = { kernel: 'pull.json', workflow: 6 }
+/** What each folder's probe prints: the kernel's imports through the kernel alias only, since kernel code imports no process. */
+const probeOutputOf = (name: string): Record<string, unknown> =>
+  name === 'kernel' ? { kernel: 'pull.json' } : PROBE_OUTPUT
+// The workflow module the scratch test imports through its alias, held as data: this folder's own sources import none.
+const WORKFLOW_MODULE = '@harness/workflow/checks/ci-shard-membership'
 
 /**
  * Inside the repository, in its git-ignored `out/` folder: Node finds the packages a bundle leaves external, `tsc` finds
@@ -149,7 +154,7 @@ describe.each(FOLDERS)('the $name folder', (folder) => {
         [
           "import { expect, test } from 'bun:test'",
           "import { PULL_FILE } from '@harness/kernel/adapters/code-host/github/forge-snapshot'",
-          "import { CI_SHARD_COUNT } from '@harness/workflow/checks/ci-shard-membership'",
+          `import { CI_SHARD_COUNT } from '${WORKFLOW_MODULE}'`,
           "test('alias', () => { expect([PULL_FILE, CI_SHARD_COUNT]).toEqual(['pull.json', 6]) })"
         ].join('\n')
       )
@@ -160,7 +165,7 @@ describe.each(FOLDERS)('the $name folder', (folder) => {
         expect({ where, code: ran.exitCode, out: JSON.parse(ran.stdout.trim() || 'null') }).toEqual({
           where,
           code: 0,
-          out: PROBE_OUTPUT
+          out: probeOutputOf(folder.name)
         })
 
         const tested = await run(['bun', 'test', join(dir, 'alias.test.ts')], cwd)
@@ -182,7 +187,7 @@ describe.each(FOLDERS)('the $name folder', (folder) => {
         expect({ where, code: underNode.exitCode, out: JSON.parse(underNode.stdout.trim() || 'null') }).toEqual({
           where,
           code: 0,
-          out: PROBE_OUTPUT
+          out: probeOutputOf(folder.name)
         })
       }
     },

@@ -1,7 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import type { GateRow } from '../tools/registry-parse'
-import { extractImportRecords, resolveRelativeImport, walkFiles } from '../integration/repository-verification.js'
+import { readAliasTable } from '@harness/kernel/imports/alias-table.js'
+import {
+  extractImportRecords,
+  resolveAliasedImport,
+  resolveRelativeImport,
+  walkFiles
+} from '../integration/repository-verification.js'
 
 /**
  * The inputs of the registry gates' seventh rule — anything able to block a
@@ -70,10 +76,13 @@ export function gatherLogProducerGraph(root: string): { producers: Set<string>; 
   // The run's Log handle is a producer: the file that holds it, and every file that takes it to write through it.
   if (known.has(recorder)) producers.add(RUN_RECORDER_PATH)
   const imports = new Map<string, string[]>()
+  const aliases = readAliasTable(root)
   for (const file of files) {
     const deps: string[] = []
     for (const record of extractImportRecords(readFileSync(file, 'utf8'))) {
-      const target = resolveRelativeImport(file, record.specifier, known)
+      const target =
+        resolveRelativeImport(file, record.specifier, known) ??
+        resolveAliasedImport(root, record.specifier, aliases, known)
       if (target === null) continue
       deps.push(relative(root, target))
       if (

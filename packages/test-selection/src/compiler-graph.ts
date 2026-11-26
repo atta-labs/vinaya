@@ -49,6 +49,7 @@
  */
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
+import { type PathAliasTable, resolveAliasedSpecifier } from './path-aliases.js'
 
 export type TypeScriptApi = typeof import('typescript')
 
@@ -133,6 +134,8 @@ export type GraphInput = {
    * the code being analyzed.
    */
   entrypoints: ReadonlyMap<string, string>
+  /** Specifier prefixes that name repository folders; handed to the compiler as `paths`. Absent or empty, no specifier is an alias. */
+  pathAliases?: PathAliasTable
 }
 
 export type CompilerGraph = {
@@ -146,6 +149,7 @@ export type CompilerGraph = {
 function graphCompilerOptions(ts: TypeScriptApi, input: GraphInput): import('typescript').CompilerOptions {
   const paths: Record<string, string[]> = {}
   for (const [specifier, entry] of input.entrypoints) paths[specifier] = [entry]
+  for (const alias of input.pathAliases ?? []) paths[`${alias.prefix}*`] = [join(input.repoRoot, alias.directory, '*')]
   return {
     baseUrl: input.repoRoot,
     paths,
@@ -309,6 +313,9 @@ export function buildCompilerGraph(ts: TypeScriptApi, input: GraphInput): Compil
     const file = sourceFile.fileName
     if (!fileSet.has(file)) continue
     const ownPackage = packageOfFile(file)
+    /** A relative specifier or an aliased one: both name a file of this repository, never a package. */
+    const isPathLike = (specifier: string): boolean =>
+      specifier.startsWith('.') || resolveAliasedSpecifier(specifier, input.pathAliases) !== null
 
     // Two edge lists per file. `moduleScope` is what running this module runs —
     // its `import` statements, side effects and dynamic specifiers. `reexport`
@@ -330,8 +337,9 @@ export function buildCompilerGraph(ts: TypeScriptApi, input: GraphInput): Compil
      */
     const resolveWithLiteral = (specifier: string, into: string[]): string | null => {
       const target = resolveToWorkspaceFile(specifier, file)
-      if (specifier.startsWith('.')) {
-        const literal = resolve(dirname(file), specifier)
+      const aliased = resolveAliasedSpecifier(specifier, input.pathAliases)
+      if (specifier.startsWith('.') || aliased !== null) {
+        const literal = aliased !== null ? resolve(input.repoRoot, aliased) : resolve(dirname(file), specifier)
         if (literal !== target && fileSet.has(literal)) into.push(`${ALL_PREFIX}${literal}`)
       }
       return target
@@ -353,7 +361,7 @@ export function buildCompilerGraph(ts: TypeScriptApi, input: GraphInput): Compil
      * specifier is never a changed workspace file.
      */
     const coarse = (specifier: string, target: string | null, into: string[]): void => {
-      if (!specifier.startsWith('.')) {
+      if (!isPathLike(specifier)) {
         const pkg = packageOfBareSpecifier(specifier)
         if (pkg) into.push(`${EXTERNAL_PREFIX}${pkg}`)
         return
@@ -438,7 +446,7 @@ export function buildCompilerGraph(ts: TypeScriptApi, input: GraphInput): Compil
       if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
         const specifier = statement.moduleSpecifier.text
         const target = resolveWithLiteral(specifier, moduleScope)
-        if (!target && specifier.startsWith('.')) continue
+        if (!target && isPathLike(specifier)) continue
         const clause = statement.importClause
         // `import '<spec>'` — no bindings at all, the module simply runs.
         if (!clause) {
@@ -463,7 +471,7 @@ export function buildCompilerGraph(ts: TypeScriptApi, input: GraphInput): Compil
         if (!statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)) continue
         const specifier = statement.moduleSpecifier.text
         const target = resolveWithLiteral(specifier, reexport)
-        if (!target && specifier.startsWith('.')) continue
+        if (!target && isPathLike(specifier)) continue
         // `export * from` / `export * as ns from` — every name at once.
         if (!statement.exportClause || !ts.isNamedExports(statement.exportClause)) {
           coarse(specifier, target, reexport)

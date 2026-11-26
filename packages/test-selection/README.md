@@ -511,6 +511,12 @@ refused naming the key:
   entrypoint's imports (`SpawnProgram`).
 - `dataFolders` — folder names whose files are data, not code (`fixtures`
   when absent).
+- `pathAliases` — specifier prefixes that name repository folders, each a
+  `PathAlias` (`prefix` and `directory`, both ending in `/`): an import of
+  `<prefix>x` is followed to `<directory>x` as a relative import is. The
+  library reads no configuration file for them; the caller hands the table in
+  (`SelectionPolicy.pathAliases`, `FileSelectionOptions.pathAliases`). Absent
+  or empty, no specifier is an alias.
 - `alwaysRun` — always-run obligations: an `id`, a `reason`, and `tests`
   (globs), `suites`, or both. Each is a `SelectionObligation` of kind
   `policy`.

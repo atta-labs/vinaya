@@ -56,6 +56,7 @@ import {
   stableHash,
   type WholeSuitePolicy
 } from '@attalabs/test-selection'
+import { readAliasTable } from '@harness/kernel/imports/alias-table.js'
 import { cleanMergeOnto, resolveRemoteBase } from '../../harness/kernel/connectors/git/remote-base.js'
 import { CLI_SPAWN_BINARY } from '../../harness/kernel/gates/ring0-hooks/pre-push/cli-spawn-tests.js'
 import {
@@ -259,8 +260,10 @@ export function repositoryPolicy(repoRoot: string, head: string, view: Inventory
   const hoisted =
     statSync(modules, { throwIfNoEntry: false })?.isDirectory() &&
     !statSync(join(modules, '.bun'), { throwIfNoEntry: false })?.isDirectory()
+  const pathAliases = readAliasTable(repoRoot)
   return {
     depth: 'one',
+    ...(pathAliases.length > 0 ? { pathAliases } : {}),
     ...(hoisted ? { installLayout: 'hoisted' as const } : {}),
     scanners: scannerDeclarations(repoRoot, head),
     spawnPrograms: [

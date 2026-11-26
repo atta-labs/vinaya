@@ -140,6 +140,7 @@ import {
   stableJson,
   validateInventory
 } from './inventory.js'
+import { type PathAliasTable, resolveAliasedSpecifier } from './path-aliases.js'
 import { globToRegex, inputCovers, underDeclaredRoot } from './path-pattern.js'
 import { changedLockPackages, readBunLockIdentity, readRawBunLock } from './lockfile-identity.js'
 import {
@@ -619,6 +620,20 @@ function resolveFileCandidate(base: string, knownFiles: Set<string>): string | n
 export function resolveRelativeImport(fromFile: string, specifier: string, knownFiles: Set<string>): string | null {
   if (!specifier.startsWith('.')) return null
   return resolveFileCandidate(resolve(dirname(fromFile), specifier), knownFiles)
+}
+
+/**
+ * Resolves an aliased specifier against the real files in `knownFiles`, absolute under `root`, the way
+ * {@link resolveRelativeImport} resolves a relative one. `null` when the specifier is not aliased or nothing matches.
+ */
+export function resolveAliasedImport(
+  root: string,
+  specifier: string,
+  table: PathAliasTable | undefined,
+  knownFiles: Set<string>
+): string | null {
+  const path = resolveAliasedSpecifier(specifier, table)
+  return path === null ? null : resolveFileCandidate(join(root, path), knownFiles)
 }
 
 export type WorkspacePackage = {
@@ -1151,6 +1166,10 @@ type GraphContext = {
   knownFilesByPkgDir: Map<string, Set<string>>
   /** A bare specifier to the workspace package it names plus the entrypoint file for its subpath (`entry` null when the manifest maps no such subpath). `null` for a third-party specifier no workspace package owns. */
   packageOfBareSpecifier: (specifier: string) => { name: string; entry: string | null } | null
+  /** The source file an aliased specifier names, or `null` when it is not aliased or names no known file. */
+  resolveAlias: (specifier: string) => string | null
+  /** Whether the specifier begins with an alias prefix, whether or not it names a known file. */
+  isAliased: (specifier: string) => boolean
 }
 
 /** Resolves a re-export/import specifier from `fromFile` to a real source file: a relative specifier against `fromFile`'s own package, a bare specifier to the matching workspace package's entrypoint. `null` when it points nowhere resolvable. */
@@ -1160,6 +1179,7 @@ function resolveSpecifierToFile(ctx: GraphContext, fromFile: string, specifier: 
     const knownFiles = pkgDir ? ctx.knownFilesByPkgDir.get(pkgDir) : undefined
     return knownFiles ? resolveRelativeImport(fromFile, specifier, knownFiles) : null
   }
+  if (ctx.isAliased(specifier)) return ctx.resolveAlias(specifier)
   return ctx.packageOfBareSpecifier(specifier)?.entry ?? null
 }
 
@@ -1251,7 +1271,7 @@ function resolveThroughTable(
   const ownHopDeps = (): Set<string> => {
     const out = new Set<string>()
     for (const record of table.ownImports) {
-      if (record.specifier.startsWith('.')) {
+      if (record.specifier.startsWith('.') || ctx.isAliased(record.specifier)) {
         const resolved = resolveSpecifierToFile(ctx, file, record.specifier)
         if (resolved) out.add(resolved)
         continue
@@ -1404,6 +1424,8 @@ type GraphOptions = {
   spawnPrograms: readonly SpawnProgram[]
   /** Which absolute files are tests, for the scanner and spawn classifiers. */
   isTest: (file: string) => boolean
+  /** Specifier prefixes that name repository folders. */
+  pathAliases?: PathAliasTable
   /** Also model the source files no workspace package owns. */
   includeUnpackaged?: boolean
   /** Further edges, by test file (absolute) — inputs a test runs that it does not import. */
@@ -1493,6 +1515,8 @@ function buildSelectionGraph(tree: SourceTree, options: GraphOptions): Selection
     resultCache,
     knownFilesByPkgDir,
     packageDirOf: (file) => sortedPkgDirs.find((d) => file.startsWith(`${d}/`)) ?? null,
+    isAliased: (specifier) => resolveAliasedSpecifier(specifier, options.pathAliases) !== null,
+    resolveAlias: (specifier) => resolveAliasedImport(repoRoot, specifier, options.pathAliases, allSourceFiles),
     packageOfBareSpecifier: (specifier) => {
       const m = matchPackage(specifier)
       return m ? { name: m.pkg.name, entry: m.pkg.entrypoints.get(m.subpath) ?? null } : null
@@ -1526,6 +1550,7 @@ function buildSelectionGraph(tree: SourceTree, options: GraphOptions): Selection
       packageOfFile: (f) => fileToPackage.get(f) ?? null,
       packageOfBareSpecifier: (specifier) => matchPackage(specifier)?.pkg.name ?? null,
       entrypoints,
+      ...(options.pathAliases ? { pathAliases: options.pathAliases } : {}),
       ...(tree.host ? { host: tree.host } : {})
     })
     for (const [node, deps] of graph.edges) edges.set(node, deps)
@@ -1554,6 +1579,12 @@ function buildSelectionGraph(tree: SourceTree, options: GraphOptions): Selection
         const specifier = record.specifier
         if (specifier.startsWith('.')) {
           const resolved = resolveRelativeImport(file, specifier, knownFiles)
+          if (resolved) deps.push(resolved)
+          continue
+        }
+        if (ctx.isAliased(specifier)) {
+          // An alias names a file of this repository, possibly in another package: resolved against every source file.
+          const resolved = ctx.resolveAlias(specifier)
           if (resolved) deps.push(resolved)
           continue
         }
@@ -1756,6 +1787,8 @@ function changeFactsFor(
 // ── The file-list selection ─────────────────────────────────────────────────
 
 export type FileSelectionOptions = {
+  /** Specifier prefixes that name repository folders, from the caller; absent, no specifier is an alias. */
+  pathAliases?: PathAliasTable
   /**
    * Glob patterns (matched against a test file's root-relative path,
    * `globToRegex`'s grammar) naming test files that run whatever changed —
@@ -1839,7 +1872,8 @@ export function selectAffectedFiles(
     repoTreeScanners: options.repoTreeScanners ?? depthOneDefault,
     spawnDetection: options.spawnDetection ?? depthOneDefault,
     spawnPrograms: options.spawnPrograms ?? [],
-    isTest: isTestFile
+    isTest: isTestFile,
+    ...(options.pathAliases ? { pathAliases: options.pathAliases } : {})
   })
   const { packages, pkgFiles, edges, readSource } = graph
   const changeFacts = changeFactsFor(graph, absChanged, options.affectedNames ?? new Map())
@@ -2412,6 +2446,7 @@ function selectChange(input: SelectTestsInput): ChangePlan {
       spawnPrograms: policy.spawnPrograms ?? [],
       isTest: (file) => testAbs.has(file),
       includeUnpackaged: true,
+      ...(policy.pathAliases ? { pathAliases: policy.pathAliases } : {}),
       extraEdges
     })
     programMs += graph.programMs

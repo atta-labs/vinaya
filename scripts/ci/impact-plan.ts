@@ -45,9 +45,12 @@ import {
   shardFileRelPath
 } from '../../harness/processes/vinaya-strict/checks/ci-shard-membership.ts'
 import type { CiDecision } from '../../harness/processes/vinaya-strict/integration/ci-test-selection.ts'
+import { BASE_CONFIG_PATH, parseAliasTable } from '@harness/kernel/imports/alias-table.js'
 import {
   DEFAULT_CONFIGURATION,
   type NativeProblem,
+  type PathAliasTable,
+  resolveAliasedSpecifier,
   type SelectionPlan,
   type SelectionRecords,
   plannedTests,
@@ -227,8 +230,13 @@ export function workspaceDirs(tree: TreeReader): { dir: string; name: string; ma
     .sort((a, b) => compare(a.dir, b.dir))
 }
 
-/** The relative module specifiers of every source file in the tree, by file — one `git grep` over the commit. */
-function relativeImports(repoRoot: string, revision: string): Map<string, string[]> {
+/**
+ * The relative and the aliased module specifiers of every source file in the tree, by file — one `git grep` over the
+ * commit. An aliased specifier is one that begins with a prefix of `aliases`, the table the commit's own base config
+ * declares.
+ */
+function relativeImports(repoRoot: string, revision: string, aliases: PathAliasTable): Map<string, string[]> {
+  const starts = ['\\.\\.?/', ...aliases.map((alias) => alias.prefix.replace(/[.+?^${}()|[\]\\*]/g, '\\$&'))]
   let out = ''
   try {
     out = git(repoRoot, [
@@ -236,7 +244,7 @@ function relativeImports(repoRoot: string, revision: string): Map<string, string
       '-I',
       '-E',
       '-e',
-      `(from|import|require)[[:space:]]*\\(?[[:space:]]*['"]\\.\\.?/`,
+      `(from|import|require)[[:space:]]*\\(?[[:space:]]*['"](${starts.join('|')})`,
       revision,
       '--',
       '*.ts',
@@ -259,14 +267,24 @@ function relativeImports(repoRoot: string, revision: string): Map<string, string
     const rest = line.slice(prefix.length)
     const colon = rest.indexOf(':')
     const file = rest.slice(0, colon)
-    for (const m of rest.slice(colon + 1).matchAll(/(?:from|import|require)\s*\(?\s*(['"])(\.\.?\/[^'"]+)\1/g))
-      imports.set(file, [...(imports.get(file) ?? []), m[2] as string])
+    for (const m of rest.slice(colon + 1).matchAll(/(?:from|import|require)\s*\(?\s*(['"])([^'"]+)\1/g)) {
+      const specifier = m[2] as string
+      if (!/^\.\.?\//.test(specifier) && resolveAliasedSpecifier(specifier, aliases) === null) continue
+      imports.set(file, [...(imports.get(file) ?? []), specifier])
+    }
   }
   return imports
 }
 
-function resolveRelative(from: string, specifier: string, exists: (path: string) => boolean): string | null {
-  const target = posix.normalize(posix.join(posix.dirname(from), specifier))
+/** The file a relative or aliased specifier names, among the files `exists` accepts; `null` when none. */
+function resolveRelative(
+  from: string,
+  specifier: string,
+  exists: (path: string) => boolean,
+  aliases: PathAliasTable
+): string | null {
+  const aliased = resolveAliasedSpecifier(specifier, aliases)
+  const target = aliased ?? posix.normalize(posix.join(posix.dirname(from), specifier))
   const stem = target.replace(/\.(m|c)?js$/, '')
   const tries = [
     target,
@@ -310,9 +328,10 @@ export function typecheckScope(repoRoot: string, tree: TreeReader, changed: read
   const link = (from: string, to: string) => {
     if (from !== to) edges.set(from, new Set([...(edges.get(from) ?? []), to]))
   }
-  for (const [file, specifiers] of relativeImports(repoRoot, tree.revision))
+  const aliases = parseAliasTable(tree.read(BASE_CONFIG_PATH) ?? '')
+  for (const [file, specifiers] of relativeImports(repoRoot, tree.revision, aliases))
     for (const specifier of specifiers) {
-      const target = resolveRelative(file, specifier, exists)
+      const target = resolveRelative(file, specifier, exists, aliases)
       if (target) link(nodeOf(file), nodeOf(target))
     }
   for (const m of members)

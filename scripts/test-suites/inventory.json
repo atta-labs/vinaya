@@ -106,6 +106,7 @@
         "scripts/ci/mutate-changes.test.ts",
         "scripts/ci/safety-check.test.ts",
         "scripts/test-suites/real-replay.test.ts",
+        "scripts/test-suites/alias-readers.test.ts",
         "scripts/marker-rewrite/rewrite-open-threads.test.ts",
         "harness/processes/minimal/minimal-process.test.ts"
       ]

@@ -30,6 +30,15 @@
       ],
       "@attalabs/vinaya-log-sdk": [
         "../../packages/log-sdk/src/index.ts"
+      ],
+      "@attalabs/test-selection": [
+        "../../packages/test-selection/src/index.ts"
+      ],
+      "@harness/kernel/*": [
+        "../../harness/kernel/*"
+      ],
+      "@harness/workflow/*": [
+        "../../harness/processes/vinaya-strict/*"
       ]
     }
   },

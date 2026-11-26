@@ -67,6 +67,7 @@ export const GUARDED_ROOT_FILES: readonly string[] = [
   'biome.json',
   'bunfig.toml',
   'tsconfig.json',
+  'packages/typescript-config/base.json',
   'vinaya.config.json'
 ]
 
@@ -117,6 +118,53 @@ export function relativeSpecifiers(text: string): string[] {
   return [...withoutComments(text).matchAll(SPECIFIER)].map((m) => m[2] as string)
 }
 
+/** Where the shared base config declares the import aliases at the base. */
+const BASE_CONFIG = 'packages/typescript-config/base.json'
+
+const ANY_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)(['"])([^'"]+)\1/gm
+
+/** One alias: a specifier prefix and the repository folder it names, both ending in `/`. */
+export type BaseAlias = { prefix: string; directory: string }
+
+/**
+ * The alias table the base config declares, read through the same base reader as every other file here. This guard
+ * imports nothing but the runtime, so it keeps its own small reading and its own matching rule; a missing or
+ * unparseable config is an empty table.
+ */
+export function baseAliases(read: BaseReader): BaseAlias[] {
+  let paths: unknown
+  try {
+    paths = (JSON.parse(read(BASE_CONFIG) ?? '') as { compilerOptions?: { paths?: unknown } } | null)?.compilerOptions
+      ?.paths
+  } catch {
+    return []
+  }
+  if (!paths || typeof paths !== 'object' || Array.isArray(paths)) return []
+  const out: BaseAlias[] = []
+  for (const [key, targets] of Object.entries(paths)) {
+    const target = Array.isArray(targets) && targets.length === 1 ? targets[0] : null
+    if (!key.endsWith('/*') || typeof target !== 'string' || !target.endsWith('/*')) continue
+    const directory = posix.normalize(posix.join(posix.dirname(BASE_CONFIG), target.slice(0, -1))).replace(/\/$/, '')
+    if (directory === '' || directory === '.' || directory.startsWith('..')) continue
+    out.push({ prefix: key.slice(0, -1), directory: `${directory}/` })
+  }
+  return out
+}
+
+/** The repository paths the aliased specifiers of a source text's code name (extension not applied). */
+export function aliasedPaths(text: string, aliases: readonly BaseAlias[]): string[] {
+  const out: string[] = []
+  for (const m of withoutComments(text).matchAll(ANY_SPECIFIER)) {
+    const specifier = m[2] as string
+    let best: BaseAlias | null = null
+    for (const alias of aliases)
+      if (specifier.startsWith(alias.prefix) && specifier.length > alias.prefix.length)
+        if (!best || alias.prefix.length > best.prefix.length) best = alias
+    if (best) out.push(`${best.directory}${specifier.slice(best.prefix.length)}`)
+  }
+  return out
+}
+
 /** The files a relative specifier can resolve to, in the order a TypeScript resolver tries them. */
 function candidates(from: string, specifier: string): string[] {
   const target = posix.normalize(posix.join(posix.dirname(from), specifier))
@@ -135,6 +183,7 @@ export function guardedClosure(
 ): { files: string[]; unresolved: string[] } {
   const seen = new Set<string>()
   const unresolved: string[] = []
+  const aliases = baseAliases(read)
   const queue = [...entrypoints]
   while (queue.length > 0) {
     const file = queue.shift() as string
@@ -151,6 +200,11 @@ export function guardedClosure(
       const hit = candidates(file, specifier).find((path) => read(path) !== null)
       if (hit) queue.push(hit)
       else unresolved.push(`${file} → ${specifier}`)
+    }
+    for (const path of aliasedPaths(text, aliases)) {
+      const hit = candidates('.', path).find((candidate) => read(candidate) !== null)
+      if (hit) queue.push(hit)
+      else unresolved.push(`${file} → ${path}`)
     }
   }
   return { files: [...seen].sort(), unresolved }

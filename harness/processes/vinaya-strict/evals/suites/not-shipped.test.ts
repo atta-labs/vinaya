@@ -3,9 +3,10 @@
 // read by the TypeScript compiler's own pre-processor (static imports,
 // re-exports, `import()` and `require`), not by a text pattern.
 import { describe, expect, it } from 'bun:test'
-import { readdirSync, readFileSync } from 'node:fs'
-import { dirname, join, relative, resolve, sep } from 'node:path'
-import ts from 'typescript'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, relative, resolve, sep } from 'node:path'
+import { importedPaths } from './not-shipped-imports.js'
 
 const REPO_ROOT = resolve(import.meta.dir, '..', '..', '..', '..', '..')
 const HARNESS_DIRS = [
@@ -45,11 +46,7 @@ function isTest(path: string): boolean {
 
 /** True when `file` imports, re-exports or loads any module inside the harness directory. */
 function importsHarness(file: string): boolean {
-  const info = ts.preProcessFile(readFileSync(file, 'utf8'), true, true)
-  return info.importedFiles.some(({ fileName }) => {
-    if (!fileName.startsWith('.')) return false
-    return inHarness(resolve(dirname(file), fileName))
-  })
+  return importedPaths(file, REPO_ROOT).some(inHarness)
 }
 
 describe('the evaluation harness is not shipped', () => {
@@ -61,6 +58,36 @@ describe('the evaluation harness is not shipped', () => {
       .filter(importsHarness)
       .map((file) => relative(REPO_ROOT, file))
     expect(offenders).toEqual([])
+  })
+
+  it('sees an aliased import of the harness, as it sees a relative one', () => {
+    const root = mkdtempSync(join(tmpdir(), 'not-shipped-alias-'))
+    try {
+      mkdirSync(join(root, 'packages/typescript-config'), { recursive: true })
+      writeFileSync(
+        join(root, 'packages/typescript-config/base.json'),
+        JSON.stringify({ compilerOptions: { paths: { '@harness/kernel/*': ['../../harness/kernel/*'] } } })
+      )
+      mkdirSync(join(root, 'apps/cli/src'), { recursive: true })
+      const aliased = join(root, 'apps/cli/src/aliased.ts')
+      writeFileSync(
+        aliased,
+        "import { estimate } from '@harness/kernel/evals/estimators.js'\nexport const x = estimate\n"
+      )
+      const relativeImport = join(root, 'apps/cli/src/relative.ts')
+      writeFileSync(
+        relativeImport,
+        "import { estimate } from '../../../harness/kernel/evals/estimators.js'\nexport const x = estimate\n"
+      )
+      const expected = join(root, 'harness/kernel/evals/estimators.js')
+      expect(importedPaths(aliased, root)).toEqual([expected])
+      expect(importedPaths(relativeImport, root)).toEqual([expected])
+      // A repository with no base config reads exactly as before: the aliased specifier names no path.
+      rmSync(join(root, 'packages'), { recursive: true })
+      expect(importedPaths(aliased, root)).toEqual([])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('the scan sees the harness tests import it — the check above is not vacuous', () => {

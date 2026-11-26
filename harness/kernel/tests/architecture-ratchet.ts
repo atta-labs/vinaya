@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, posix, relative, sep } from 'node:path'
+import { type PathAliasTable, resolveAliasedSpecifier } from '@attalabs/test-selection'
+import { BASE_CONFIG_PATH, parseAliasTable, readAliasTable } from '@harness/kernel/imports/alias-table.js'
 
 // The counted ratchet. The kernel side of the repository — every scope root
 // below, outside any process — is meant to name no process and no role. Today
@@ -110,19 +112,40 @@ export const ROLE_PATTERN = new RegExp(
 // A module specifier inside `from '…'`, `import '…'`, `import('…')` or `require('…')`.
 const SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)(['"`])([^'"`\n]+)\1/g
 
-const namesAProcess = (specifier: string): boolean =>
-  specifier.startsWith('@attalabs/process-') || specifier.split('/').includes('processes')
+/**
+ * Whether a specifier names a process. An aliased specifier is judged by the path it resolves to, never by its own
+ * text: `@harness/workflow/…` has no `processes` segment and still names one. `aliases` is the repository's alias
+ * table; with none, no specifier is an alias.
+ */
+const namesAProcess = (specifier: string, aliases: PathAliasTable = []): boolean =>
+  specifier.startsWith('@attalabs/process-') ||
+  (resolveAliasedSpecifier(specifier, aliases) ?? specifier).split('/').includes('processes')
 
-export function importsOfAProcess(source: string): string[] {
+export function importsOfAProcess(source: string, aliases: PathAliasTable = []): string[] {
   const offending: string[] = []
   for (const match of source.matchAll(SPECIFIER)) {
     const specifier = match[2] ?? ''
-    if (namesAProcess(specifier)) offending.push(specifier)
+    if (namesAProcess(specifier, aliases)) offending.push(specifier)
   }
   return offending
 }
 
-const isCountedImport = (specifier: string): boolean => namesAProcess(specifier)
+/**
+ * The specifiers of `source` that reach into an application (`apps/`), by a relative path or an alias whose target
+ * resolves into one — the harness is generic machinery and depends on no product's code.
+ */
+export function importsOfAnApp(source: string, aliases: PathAliasTable = []): string[] {
+  const offending: string[] = []
+  for (const match of source.matchAll(SPECIFIER)) {
+    const specifier = match[2] ?? ''
+    const aliased = resolveAliasedSpecifier(specifier, aliases)
+    const path = aliased ?? specifier
+    if ((specifier.startsWith('.') || aliased !== null) && path.split('/').includes('apps')) offending.push(specifier)
+  }
+  return offending
+}
+
+const isCountedImport = (specifier: string, aliases: PathAliasTable = []): boolean => namesAProcess(specifier, aliases)
 
 type Span = { start: number; end: number }
 type Unit = Span & { kind: 'import' | 'process' | 'role' }
@@ -134,12 +157,12 @@ const overlaps = (a: Span, b: Span): boolean => a.start < b.end && b.start < a.e
  * specifier, and the names inside a counted specifier are not counted again.
  * Text inside an `excluded` span (a pure forwarding statement) counts nothing.
  */
-export function countedUnits(source: string, excluded: Span[] = []): Unit[] {
+export function countedUnits(source: string, excluded: Span[] = [], aliases: PathAliasTable = []): Unit[] {
   const units: Unit[] = []
   const importSpans: Span[] = []
   for (const match of source.matchAll(SPECIFIER)) {
     const specifier = match[2] ?? ''
-    if (!isCountedImport(specifier)) continue
+    if (!isCountedImport(specifier, aliases)) continue
     const end = (match.index ?? 0) + match[0].length - 1
     const span = { start: end - specifier.length, end }
     if (excluded.some((e) => within(span, e))) continue
@@ -170,7 +193,8 @@ export function countedUnits(source: string, excluded: Span[] = []): Unit[] {
   return units.sort((a, b) => a.start - b.start)
 }
 
-export const countSource = (source: string, excluded: Span[] = []): number => countedUnits(source, excluded).length
+export const countSource = (source: string, excluded: Span[] = [], aliases: PathAliasTable = []): number =>
+  countedUnits(source, excluded, aliases).length
 
 // ── Paths: resolving a specifier or path string to a file in a tree ─────────
 
@@ -258,7 +282,13 @@ const COMMENT_PATH = /[A-Za-z0-9_@.-]+(?:\/[A-Za-z0-9_@.-]+)+/g
  * how many counted units it carries. A claim anchor's or a comment's path is located like a quoted path string, so
  * re-pointing it to a moved file is a relocation.
  */
-function locatedStrings(source: string, file: string, tree: Tree, units: Unit[]): Located[] {
+function locatedStrings(
+  source: string,
+  file: string,
+  tree: Tree,
+  units: Unit[],
+  aliases: PathAliasTable = []
+): Located[] {
   const located: Located[] = []
   const quoted = new Set<number>()
   for (const match of source.matchAll(/(['"`])([^'"`\n]*)\1/g)) {
@@ -266,7 +296,7 @@ function locatedStrings(source: string, file: string, tree: Tree, units: Unit[])
     const span = { start: (match.index ?? 0) + 1, end: (match.index ?? 0) + 1 + text.length }
     quoted.add(span.start)
     const target =
-      (isCountedImport(text) || /^@attalabs\/[^/]+$/.test(text)) && !text.startsWith('.')
+      (isCountedImport(text, aliases) || /^@attalabs\/[^/]+$/.test(text)) && !text.startsWith('.')
         ? text
         : resolvePath(text, file, tree)
     if (target === null) continue
@@ -393,6 +423,7 @@ const isProcessPath = (path: string): boolean => path.startsWith('processes/') |
 export function importsThroughForwarding(root: string, map: OwnershipMap = readOwnershipMap(root)): string[] {
   const tree = workingTree(root)
   const offending: string[] = []
+  const aliases = readAliasTable(root)
   const harness = join(root, 'harness')
   if (!existsSync(harness)) return offending
   for (const absolute of sourceFiles(harness)) {
@@ -400,8 +431,10 @@ export function importsThroughForwarding(root: string, map: OwnershipMap = readO
     if (isProcessPath(file)) continue
     for (const match of readFileSync(absolute, 'utf8').matchAll(SPECIFIER)) {
       const specifier = match[2] ?? ''
-      if (!specifier.startsWith('.')) continue
-      let target = resolvePath(specifier, file, tree, true)
+      const aliased = resolveAliasedSpecifier(specifier, aliases)
+      if (!specifier.startsWith('.') && aliased === null) continue
+      let target =
+        aliased === null ? resolvePath(specifier, file, tree, true) : resolvePath(aliased, 'repository-root', tree)
       const seen = new Set<string>()
       while (target !== null && map[target] !== undefined && !seen.has(target)) {
         seen.add(target)
@@ -422,10 +455,11 @@ export type Baseline = Record<string, number>
 /** Each scanned file's count, for files that count above zero, keyed by repository-relative path. */
 export function countTree(root: string, map: OwnershipMap = readOwnershipMap(root)): Baseline {
   const tree = workingTree(root)
+  const aliases = readAliasTable(root)
   const counts: Baseline = {}
   for (const path of scannedFiles(root)) {
     const source = readFileSync(join(root, path), 'utf8')
-    const count = countSource(source, excludedSpans(path, source, map, tree))
+    const count = countSource(source, excludedSpans(path, source, map, tree), aliases)
     if (count > 0) counts[path] = count
   }
   return counts
@@ -688,17 +722,27 @@ type RelocationInput = {
  */
 function relocatedUnits(
   input: RelocationInput,
-  env: { headTree: Tree; baseTree: Tree; changes: Renames; sources: Sources; folders?: ReadonlyMap<string, string> }
+  env: {
+    headTree: Tree
+    baseTree: Tree
+    changes: Renames
+    sources: Sources
+    folders?: ReadonlyMap<string, string>
+    aliases?: PathAliasTable
+    baseAliases?: PathAliasTable
+  }
 ): number {
   const { headTree, baseTree, changes } = env
-  const pending = locatedStrings(input.baseSource, input.basePath, baseTree, input.baseUnits).map((l) => ({
-    ...l,
-    mapped: mapTarget(l.target, changes.to),
-    taken: false
-  }))
+  const pending = locatedStrings(input.baseSource, input.basePath, baseTree, input.baseUnits, env.baseAliases).map(
+    (l) => ({
+      ...l,
+      mapped: mapTarget(l.target, changes.to),
+      taken: false
+    })
+  )
   let adjustment = 0
   const unmatched: Located[] = []
-  for (const located of locatedStrings(input.source, input.path, headTree, input.units)) {
+  for (const located of locatedStrings(input.source, input.path, headTree, input.units, env.aliases)) {
     const match = pending.find((p) => !p.taken && p.mapped === located.target)
     if (match === undefined) {
       unmatched.push(located)
@@ -744,6 +788,9 @@ export function compareBase(root: string, base: string): BaseComparison {
   const map = readOwnershipMap(root)
   const baseMapText = gitShow(root, base, OWNERSHIP_MAP_PATH)
   const baseMap = baseMapText === null ? {} : (JSON.parse(baseMapText) as OwnershipMap)
+  // Each side is read with its own alias table: the base commit may declare none.
+  const aliases = readAliasTable(root)
+  const baseAliases = parseAliasTable(gitShow(root, base, BASE_CONFIG_PATH) ?? '')
   const changes = renames(root, base)
   const folders = packageFolders(root, base)
   const { from, to } = changes
@@ -764,13 +811,13 @@ export function compareBase(root: string, base: string): BaseComparison {
   let carriedIn = 0
   for (const path of scannedFiles(root)) {
     const source = readHead(path) ?? ''
-    const units = countedUnits(source, excludedSpans(path, source, map, headTree))
+    const units = countedUnits(source, excludedSpans(path, source, map, headTree), aliases)
     const basePath = baseTree.isFile(path) ? path : from.get(path)
     let effective = units.length
     let allowance = (basePath === undefined ? 0 : (baseBaseline[basePath] ?? 0)) + (inherited.get(path) ?? 0)
     if (basePath !== undefined) {
       const baseSource = gitShow(root, base, basePath) ?? ''
-      const baseUnits = countedUnits(baseSource, excludedSpans(basePath, baseSource, baseMap, baseTree))
+      const baseUnits = countedUnits(baseSource, excludedSpans(basePath, baseSource, baseMap, baseTree), baseAliases)
       if (basePath !== path && !isScanned(basePath)) {
         allowance += baseUnits.length
         carriedIn += baseUnits.length
@@ -778,7 +825,7 @@ export function compareBase(root: string, base: string): BaseComparison {
       if (units.length > 0)
         effective += relocatedUnits(
           { source, path, baseSource, basePath, units, baseUnits },
-          { headTree, baseTree, changes, sources, folders }
+          { headTree, baseTree, changes, sources, folders, aliases, baseAliases }
         )
     }
     headTotal += effective
