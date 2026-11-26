@@ -2,7 +2,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { captureRefusal, makeCheckError, refuse } from '../../../tools/task-contract/forge/forge-write'
+import {
+  captureRefusal,
+  makeCheckError,
+  objectivesVersionMarkerPrefixes,
+  refuse
+} from '../../../tools/task-contract/forge/forge-write'
 import {
   type ObjectivesDeps,
   type PlannerForge,
@@ -249,6 +254,26 @@ describe('editObjectives with a stubbed forge', () => {
   }
 
   const addArgs = ['7', '--add', 'Second thing.', '--part', 'Part 2 (O2) — does more', '--reason', 'because']
+
+  it('skips the frozen-section check for its own write and posts the next comment on an Issue already carrying one', async () => {
+    const skips: boolean[] = []
+    const prior = {
+      body: `${objectivesVersionMarkerPrefixes()[0]}1 -->\nVersion: old`,
+      url: 'https://example.test/c/1',
+      author: 'someone'
+    }
+    const deps = stubDeps({
+      fetchIssue: () => ({ number: 7, body: issueBody, title: '[demo] 1 — A task', labels: [], comments: [prior] })
+    })
+    deps.forgeStub.frozenSectionChange = (_ref, _body, _retry, skip) => {
+      skips.push(skip === true)
+      return skip === true ? [] : [finding('issue-objectives-edit')]
+    }
+    const out = await editObjectives(addArgs, {}, deps)
+    expect(out).toMatchObject({ ok: true, url: 'https://example.test/comment' })
+    expect(skips).toEqual([true])
+    expect(deps.posted).toEqual([`${objectivesVersionMarkerPrefixes()[0]}2 -->`])
+  })
 
   it('passes: writes the Issue, posts the audit comment and returns the link', async () => {
     const deps = stubDeps()
