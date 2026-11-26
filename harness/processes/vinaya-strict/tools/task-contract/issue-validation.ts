@@ -37,6 +37,7 @@ import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from '..
 import { globsOverlap } from './derive-section7'
 import { DOCTRINE_PATH_PATTERN_SOURCE } from '../doctrine/doctrine-map'
 import { objectivesOf, objectivesVersion } from './objectives'
+import { isPrincipal } from './waiver-label'
 import {
   DOCUMENTATION_SOURCE_SCHEME_RE,
   documentationSourcePath,
@@ -3943,4 +3944,57 @@ export function frozenSectionsChanged(oldBody: string, newBody: string): FrozenS
   }
 
   return changed
+}
+
+/** A comment as the objectives-edit decision reads it: its body and its author login (`null` for a deleted account). */
+export type ObjectivesEditCandidate = { body: string; author: string | null }
+
+/**
+ * The `Version:` line of the newest principal-authored objectives-edit comment,
+ * or `null` when the Issue carries none. `markerPrefixes` are the opening of
+ * the objectives-version marker in every spelling (the writer owns them);
+ * `comments` are in posting order, so the last match is the newest, the same
+ * comment the review loop takes a task's objectives from. A matching comment
+ * with no readable `Version:` line yields an empty string, which no body
+ * version equals.
+ */
+export function newestObjectivesEditVersion(
+  comments: readonly ObjectivesEditCandidate[],
+  allowlist: readonly string[],
+  markerPrefixes: readonly string[]
+): string | null {
+  let newest: string | null = null
+  for (const c of comments) {
+    if (!isPrincipal(c.author, allowlist as string[])) continue
+    const firstLine = c.body.split('\n')[0] ?? ''
+    if (!markerPrefixes.some((p) => firstLine.startsWith(p))) continue
+    newest = /^Version:[ \t]*(\S+)[ \t]*$/m.exec(c.body)?.[1] ?? ''
+  }
+  return newest
+}
+
+/**
+ * Decides whether an edit of a not-yet-frozen task Issue may change
+ * `## Objectives` once the Issue carries a principal objectives-edit comment.
+ * The loop takes objectives from that comment and the review gate from the
+ * body, so a plain body edit that moves them apart is refused; the sanctioned
+ * path is `task_objectives_edit`, which writes both. Returns the refusal
+ * message, or `null` when the edit may proceed: no edit comment, `## Objectives`
+ * unchanged, the current body's `## Objectives` unparsable (a by-hand repair),
+ * or the new body's objectives equal to the newest comment's `Version:`.
+ */
+export function objectivesEditCommentRefusal(
+  oldBody: string,
+  newBody: string,
+  comments: readonly ObjectivesEditCandidate[],
+  allowlist: readonly string[],
+  markerPrefixes: readonly string[]
+): string | null {
+  const recorded = newestObjectivesEditVersion(comments, allowlist, markerPrefixes)
+  if (recorded === null) return null
+  if (!objectivesOf(oldBody).ok) return null
+  if (!frozenSectionsChanged(oldBody, newBody).includes('Objectives')) return null
+  const next = objectivesOf(newBody)
+  if (next.ok && objectivesVersion(next.objectives) === recorded) return null
+  return "This task Issue carries an objectives-edit comment, and the loop takes the task's objectives from it. This edit changes `## Objectives`, which would leave the Issue body and that comment on different versions. Use `task_objectives_edit` to change objectives; it writes the body and the comment together."
 }

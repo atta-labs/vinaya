@@ -83,6 +83,7 @@ import {
   frozenSectionsChanged,
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
+  objectivesEditCommentRefusal,
   parseIssueSurface,
   type ProjectPath,
   type TaskFileFacts,
@@ -2302,17 +2303,39 @@ export function frozenSectionChangeOutcome(
   issueRef: string,
   newBody: string | null,
   retryCommand: string,
-  skipCheck = false
+  skipCheck = false,
+  readContext: (
+    issueRef: string,
+    retryCommand: string
+  ) => { body: string; comments: FrozenBriefCandidateWithUrl[] } = fetchForgeIssueContext,
+  readAllowlist: (check: string, retryCommand: string) => string[] = resolvePrincipalsOrRefuse
 ): CheckError[] {
   if (skipCheck || newBody === null) return []
   const read = captureRefusalSync(() => ({
-    context: fetchForgeIssueContext(issueRef, retryCommand),
-    allowlist: resolvePrincipalsOrRefuse('issue-frozen-brief', retryCommand)
+    context: readContext(issueRef, retryCommand),
+    allowlist: readAllowlist('issue-frozen-brief', retryCommand)
   }))
   if (!read.ok) return read.errors
   const { context, allowlist } = read.value
   const frozen = resolveNewestFrozenBrief(context.comments, allowlist)
-  if (frozen === null) return []
+  if (frozen === null) {
+    // Not frozen yet: `## Objectives` stays tied to the newest objectives-edit comment, if any.
+    const refusal = objectivesEditCommentRefusal(
+      context.body,
+      newBody,
+      context.comments,
+      allowlist,
+      objectivesVersionMarkerPrefixes()
+    )
+    if (refusal === null) return []
+    return [
+      makeCheckError(
+        'issue-objectives-edit',
+        refusal,
+        `Use \`task_objectives_edit\` for the Objectives change, or revert \`## Objectives\` in the body, then re-run \`${retryCommand}\`.`
+      )
+    ]
+  }
   const changed = frozenSectionsChanged(context.body, newBody)
   if (changed.length === 0) return []
   const sections = changed.map((s) => `\`## ${s}\``).join(', ')
