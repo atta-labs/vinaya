@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,9 +9,9 @@ import {
   type EscalationInput,
   readResolution,
   writeEscalation
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
-import type { AgentVendor } from '../../../loops/dev-review/dispatch/dispatch.js'
-import type { CallerContext } from '../../../integration/server.js'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import type { AgentVendor } from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
+import type { CallerContext } from '@harness/workflow/integration/server.js'
 import {
   createTaskResumeHandler,
   defaultResumeLaunch,
@@ -20,19 +20,19 @@ import {
   type LaunchResult,
   type ResumeClaimStore,
   type ResumeRecord
-} from '../../../loops/dev-review/run-control/resume.js'
+} from '@harness/workflow/loops/dev-review/run-control/resume.js'
 import {
   isDriverPidAlive,
   readDriverLock,
   resolveEscalation,
   writePauseState
-} from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import { writeTurnResultRecord } from '../../../loops/dev-review/standalone/dev-review-loop/turn-result.js'
-import { readEscalationPacket } from '../../../loops/dev-review/run-control/read.js'
-import { programFile } from '../../../tools/programs.js'
-import { type CommandRecord, type RecordScope, writeCommand } from '../../../../../kernel/log/outside-log'
-import { isolatedLocalCopy } from '../../../integration/log/client/local-copy-fixture'
-import { runRecorder } from '../../../../../kernel/log/run-recorder'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { writeTurnResultRecord } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/turn-result.js'
+import { readEscalationPacket } from '@harness/workflow/loops/dev-review/run-control/read.js'
+import { programFile } from '@harness/workflow/tools/programs.js'
+import { type CommandRecord, type RecordScope, writeCommand } from '@harness/kernel/log/outside-log'
+import { isolatedLocalCopy } from '@harness/workflow/integration/log/client/local-copy-fixture'
+import { runRecorder } from '@harness/kernel/log/run-recorder'
 
 /**
  * `task_resume` (task-operator-v1 4, O1) driven in-process with injected

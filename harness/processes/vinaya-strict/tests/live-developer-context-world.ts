@@ -1,6 +1,6 @@
-import { defaultControlStoreDeps } from '../../../kernel/connectors/checkpoint/control-store/index'
+import { defaultControlStoreDeps } from '@harness/kernel/connectors/checkpoint/control-store/index'
 import type { IssueSurface } from '../tools/task-contract/issue-validation'
-import { ProtectedPathError, scopeTarget } from '../../../kernel/tools/host/broker'
+import { ProtectedPathError, scopeTarget } from '@harness/kernel/tools/host/broker'
 import { authenticateWorkerInvocation, requestEffect } from '../integration/tools/host/broker/vinaya-broker'
 import type { DispatchTeeRecoveryDeps } from '../loops/dev-review/dispatch/dispatch'
 import type { LiveDeveloperContextLoopDeps } from '../loops/dev-review/actions/live-developer-context'

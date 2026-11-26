@@ -47,8 +47,8 @@ import { checkDoctrinePortability, type PortabilityFinding, type PortabilitySour
 import { loadConfig } from '../../integration/config/compose'
 import { DOCTRINE_REPO_PATHS } from '../../tools/doctrine/doctrine-map'
 import { doctrineRootLabel, doctrineShipsPrefix, doctrineSweepPaths } from '../../tools/doctrine/doctrine-sweep'
-import { findingsInThisDiff } from '../../../../../harness/kernel/connectors/git/diff-evidence'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { findingsInThisDiff } from '@harness/kernel/connectors/git/diff-evidence'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'doctrine-portability'
 

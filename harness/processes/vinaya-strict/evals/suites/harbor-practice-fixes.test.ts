@@ -34,7 +34,7 @@ import {
   VINAYA_HOME
 } from '../harbor-tasks'
 import { type HarborCaseFile, runHarborTrial } from '../harbor-trial'
-import type { NeutralCase } from '../../../../kernel/evals/neutral-case'
+import type { NeutralCase } from '@harness/kernel/evals/neutral-case'
 import {
   CLAUDE_HARNESS_INTERNAL_TOOLS,
   layerGTrace,
@@ -43,10 +43,10 @@ import {
   type VinayaProcessSteps
 } from '../step-one'
 import { renderCase, type VinayaTrialRecord } from '../vinaya-renderer'
-import { claudeDevToolName } from '../../../../kernel/tools/dev-tools-registration'
-import type { DevToolContext } from '../../../../kernel/tools/dev-tools-server'
-import { DEV_TOOL_NAMES } from '../../../../kernel/tools/tool-catalog'
-import { stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture'
+import { claudeDevToolName } from '@harness/kernel/tools/dev-tools-registration'
+import type { DevToolContext } from '@harness/kernel/tools/dev-tools-server'
+import { DEV_TOOL_NAMES } from '@harness/kernel/tools/tool-catalog'
+import { stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 import {
   loadCaseFile as loadDeveloperCaseFile,
   runTests

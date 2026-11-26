@@ -31,8 +31,8 @@ import {
   execErrorText,
   isGithubRateLimitError,
   rateLimitMessage
-} from '../../../../../harness/kernel/adapters/code-host/github/github-rate-limit'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+} from '@harness/kernel/adapters/code-host/github/github-rate-limit'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'single-plan-pr'
 

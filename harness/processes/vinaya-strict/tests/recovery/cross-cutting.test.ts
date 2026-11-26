@@ -2,18 +2,18 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { join, resolve } from 'node:path'
-import { generateCodexConfig } from '../../../../../harness/kernel/adapters/agents/codex/config'
-import { loadRoleGrants } from '../../../../../harness/kernel/adapters/agents/manifest'
+import { generateCodexConfig } from '@harness/kernel/adapters/agents/codex/config'
+import { loadRoleGrants } from '@harness/kernel/adapters/agents/manifest'
 import { VINAYA_LAUNCHED_ROLES } from '../../integration/policies/launched-roles'
-import { readEffects } from '../../../../kernel/connectors/checkpoint/control-store/index'
-import { createTestTempRun, makeFixtureDir, sweepAbandoned } from '../../../../kernel/conformance/unit/test-temp'
-import { fixtureDir } from '../../../../kernel/conformance/unit/test-temp-fixture'
+import { readEffects } from '@harness/kernel/connectors/checkpoint/control-store/index'
+import { createTestTempRun, makeFixtureDir, sweepAbandoned } from '@harness/kernel/conformance/unit/test-temp'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { checkpointFile, createWorld, expectCleanRun, leg, TASK, threadOf } from './engine-recovery-world'
 import {
   readEffectiveResumedState,
   readExecutionRound
-} from '../../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
-import { loopLogPathFor } from '../../../../kernel/log/client/loop-log'
+} from '@harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+import { loopLogPathFor } from '@harness/kernel/log/client/loop-log'
 import {
   cleanupWorlds,
   makeInProcessDeps,

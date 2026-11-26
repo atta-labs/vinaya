@@ -1,14 +1,14 @@
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { resolve } from 'node:path'
 import { MemorySaver } from '@langchain/langgraph'
 import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import {
   startProcessRun,
   type ActionRegistry,
   type ProcessRunOptions
-} from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+} from '@harness/kernel/loops/runtimes/atta-engine/run-process'
 import { ACTION_BINDINGS, createRoleLaunchers, decisions } from '../executing/actions'
 
 // A revised round continues the Developer's own vendor session, as the standalone loop resumes its

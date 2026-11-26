@@ -2,7 +2,7 @@ import { installVinayaCheckRegistry } from './registry'
 installVinayaCheckRegistry()
 import { describe, expect, it } from 'bun:test'
 import { isRunFailed } from './check'
-import type { CheckOutcome, CheckSpec } from '../../../kernel/gates/checks/contract'
+import type { CheckOutcome, CheckSpec } from '@harness/kernel/gates/checks/contract'
 
 const PRINCIPAL_OWED_SPEC: CheckSpec = {
   name: 'test-plan',

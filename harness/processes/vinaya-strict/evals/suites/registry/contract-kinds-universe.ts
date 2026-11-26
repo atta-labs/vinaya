@@ -9,10 +9,10 @@
 // the derivation refuses unless they agree.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { TASK_TOOL_NAMES } from '../../../../../kernel/tools/catalog/task-tools'
-import { DEV_TOOL_NAMES } from '../../../../../kernel/tools/dev-tools-server'
-import type { ComponentKind } from '../../../../../kernel/evals/registry'
-import { OPERATOR_EXIT_EXCLUSIONS } from '../../../../../kernel/evals/exit-check'
+import { TASK_TOOL_NAMES } from '@harness/kernel/tools/catalog/task-tools'
+import { DEV_TOOL_NAMES } from '@harness/kernel/tools/dev-tools-server'
+import type { ComponentKind } from '@harness/kernel/evals/registry'
+import { OPERATOR_EXIT_EXCLUSIONS } from '@harness/kernel/evals/exit-check'
 
 export const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', '..')
 

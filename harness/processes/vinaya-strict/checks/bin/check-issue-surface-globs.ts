@@ -18,9 +18,9 @@
  */
 
 import { checkSurfaceGlobsResolve } from '../../tools/task-contract/issue-validation'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { readIssueCheckEnv } from '../issue-check-env'
-import { expandGlob } from '../../../../../harness/processes/vinaya-strict/tools/task-contract/brief-assembly'
+import { expandGlob } from '@harness/workflow/tools/task-contract/brief-assembly'
 
 const CHECK_NAME = 'issue-surface-globs'
 

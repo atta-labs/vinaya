@@ -6,8 +6,8 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildPrincipalTestPlanWaitErrors } from '../../checks/bin/check-principal-test-plan-wait'
-import { CHECK_SCHEMA_VERSION, type CheckError } from '../../../../kernel/gates/checks/contract'
-import { sha256Hex } from '../../../../kernel/effects/effects'
+import { CHECK_SCHEMA_VERSION, type CheckError } from '@harness/kernel/gates/checks/contract'
+import { sha256Hex } from '@harness/kernel/effects/effects'
 import {
   DEFAULT_COLLISION_THRESHOLD,
   checkIntroducedCommandsCovered,
@@ -38,7 +38,7 @@ import {
 import { readFileSync } from 'node:fs'
 import { resolveMilestoneAttachTarget } from '../../tools/task-contract/forge/fetch-milestone'
 import { COMMANDS } from '../../integration/commands.js'
-import { currentRunId } from '../../../../kernel/log/log-sink'
+import { currentRunId } from '@harness/kernel/log/log-sink'
 import { isolatedLocalCopy } from '../../integration/log/client/local-copy-fixture'
 
 const CLI_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', 'apps', 'cli')

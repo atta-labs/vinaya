@@ -94,8 +94,8 @@ import { checkManifestValidity, type NoDocRule } from '../manifest-validity'
 import { DOC_OWNERS_PATH, type DocOwnersBinding, evaluateC5, parseDocOwners } from '../../tools/doc-owners'
 import { hasStatusBlock } from '../status-block'
 import { isCodeFile, isDocFile, isSpecFile } from '../../tools/file-classify'
-import { globToRegex } from '../../../../kernel/gates/glob-to-regex'
-import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point'
+import { globToRegex } from '@harness/kernel/gates/glob-to-regex'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point'
 import { readConfigPrincipals } from '../../tools/task-contract/principals-config'
 
 const DOCS_INVOCATION_CWD = process.cwd()

@@ -2,14 +2,14 @@
  * Reads one completed Harbor 0.24.0 job into one freeze-record result: a
  * practice run or a scored result, of the split, backend and adapter named.
  */
-import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'
+import { installProcess } from '@harness/kernel/dev-process-socket/contract/install-process'
 import { vinayaProcessIntegration } from '../integration/process/process-integration'
 import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join, relative, resolve, sep } from 'node:path'
-import { type Quarantine, validateQuarantine } from '../../../kernel/evals/contracts'
-import { type BootstrapMethod, separateQuarantined, suiteMean } from '../../../kernel/evals/estimators'
-import { canonicalJson } from '../../../kernel/evals/neutral-case'
+import { type Quarantine, validateQuarantine } from '@harness/kernel/evals/contracts'
+import { type BootstrapMethod, separateQuarantined, suiteMean } from '@harness/kernel/evals/estimators'
+import { canonicalJson } from '@harness/kernel/evals/neutral-case'
 import {
   STEP_ONE_ADAPTERS,
   type StepOneAdapter,

@@ -2,15 +2,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DEFAULT_REVIEW_POLICY, evaluateCodeReview } from '../../../../tools/task-contract/review-policy'
-import type { ReviewInputManifest } from '../../../../tools/task-contract/review-input-manifest'
-import {
-  defaultControlStoreDeps,
-  readManifest
-} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
-import type { DispatchHandle } from '../../../../loops/dev-review/dispatch/dispatch'
-import type { CompletedReview, ReviewResult } from '../../../../executing/code-reviewer/review-result'
-import { defaultRunSecurityScanSubprocess } from '../../../../loops/dev-review/standalone/dev-review-loop'
+import { DEFAULT_REVIEW_POLICY, evaluateCodeReview } from '@harness/workflow/tools/task-contract/review-policy'
+import type { ReviewInputManifest } from '@harness/workflow/tools/task-contract/review-input-manifest'
+import { defaultControlStoreDeps, readManifest } from '@harness/kernel/connectors/checkpoint/control-store/index'
+import type { DispatchHandle } from '@harness/workflow/loops/dev-review/dispatch/dispatch'
+import type { CompletedReview, ReviewResult } from '@harness/workflow/executing/code-reviewer/review-result'
+import { defaultRunSecurityScanSubprocess } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop'
 import {
   AGENT_CONFIG_GLOBS,
   buildManifestRecord,
@@ -39,9 +36,9 @@ import {
   securityScanPieces,
   touchesAgentConfig,
   writeHeldVerdict
-} from '../../../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
-import { reviewerCandidateInputPaths } from '../../../../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
-import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
+import { reviewerCandidateInputPaths } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
+import type { LoopDeps } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop'
 import {
   cleanupWorlds,
   makeInProcessDeps,
@@ -56,7 +53,7 @@ import type {
   ReviewerPromptFacts,
   ReviewerPromptPiece,
   SecurityScanOutcome
-} from '../../../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 
 // --- the verdict built from a structured ReviewResult ---
 

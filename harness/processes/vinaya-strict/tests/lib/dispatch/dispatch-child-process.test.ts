@@ -14,13 +14,13 @@
  * `null` (the `unresolved/` outbox bucket) every time.
  */
 
-import { programCommandLine } from '../../../tools/programs.js'
+import { programCommandLine } from '@harness/workflow/tools/programs.js'
 import { afterEach, describe, expect, it as bunIt } from 'bun:test'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { readOtlpDocument } from '@attalabs/vinaya-log-sdk'
-import { createRunRecorder } from '../../../../../kernel/log/run-recorder.js'
+import { createRunRecorder } from '@harness/kernel/log/run-recorder.js'
 import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { readdirSync, statSync } from 'node:fs'
@@ -44,8 +44,13 @@ import {
   type ProcessSnapshot,
   vendorResumeArgs,
   vendorSessionArgs
-} from '../../../loops/dev-review/dispatch/dispatch.js'
-import { claimLaunchAttribution, endLaunchTurn, startLaunchTurn, withDispatchUsage } from '../../../bin/run-engine'
+} from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
+import {
+  claimLaunchAttribution,
+  endLaunchTurn,
+  startLaunchTurn,
+  withDispatchUsage
+} from '@harness/workflow/bin/run-engine'
 import {
   CLI_ROOT,
   INDEX,

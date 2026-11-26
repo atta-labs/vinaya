@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'bun:test'
-import type { GhIssue } from '../../../kernel/adapters/code-host/github/gh'
+import type { GhIssue } from '@harness/kernel/adapters/code-host/github/gh'
 import type { TrancheMilestoneIndex } from '../tools/task-contract/forge/fetch-milestone'
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 import { evaluateLifecycleAdvisories, l4Applies } from './bin/check-coherence'
 
 const SLUG = 'fixture-tranche'

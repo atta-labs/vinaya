@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { errorClassOf } from '../../../loops/dev-review/standalone/dev-review-loop/round-assess'
+import { errorClassOf } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/round-assess'
 
 describe('errorClassOf', () => {
   it('takes the error code, else the constructor name, else unknown — never the message', () => {

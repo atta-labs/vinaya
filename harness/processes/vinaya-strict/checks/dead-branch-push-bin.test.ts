@@ -3,8 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { type CheckError, CHECK_SCHEMA_VERSION } from '../../../kernel/gates/checks/contract'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
+import { type CheckError, CHECK_SCHEMA_VERSION } from '@harness/kernel/gates/checks/contract'
+import { spawnBudgetedAsync, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 /**
  * `check-dead-branch-push.ts` spawned with a fake `gh` first on `PATH`: the

@@ -3,7 +3,7 @@
 // refused with a typed reason, and shards found by listing their directory
 // aggregate with duplicate component ids refused at both locations.
 import { describe, expect, it } from 'bun:test'
-import { OPERATOR_EXIT_EXCLUSIONS } from '../../../../kernel/evals/exit-check'
+import { OPERATOR_EXIT_EXCLUSIONS } from '@harness/kernel/evals/exit-check'
 import { LIVE_SUITE_LAYERS } from '../freeze-record'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -22,7 +22,7 @@ import {
   validateComponentRow,
   validateModuleCatalog,
   validateShard
-} from '../../../../kernel/evals/registry'
+} from '@harness/kernel/evals/registry'
 import {
   SUITE_PROCESS_LAYER as DEVELOPER_CAPABILITY_LAYER,
   SUITE as DEVELOPER_CAPABILITY

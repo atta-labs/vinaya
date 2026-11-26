@@ -12,8 +12,8 @@ import {
   defaultControlStoreDeps,
   readEffect,
   writeEffect
-} from '../../../kernel/connectors/checkpoint/control-store/index'
-import { taskToolError } from '../../../kernel/tools/catalog/task-tools'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import { taskToolError } from '@harness/kernel/tools/catalog/task-tools'
 import { COMMANDS } from '../integration/commands.js'
 import { parseFlags, rollbackFlagConflict } from '../../../../apps/cli/src/commands/task-run.js'
 import {
@@ -28,7 +28,7 @@ import {
 /** The configuration a run reads its runner from. */
 type VinayaConfig = NonNullable<ReturnType<NonNullable<RunTaskDeps['runnerConfig']>>>
 import { writeDriverLock, writePauseState } from '../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import type { EffectIdentity } from '../../../kernel/effects/effects.js'
+import type { EffectIdentity } from '@harness/kernel/effects/effects.js'
 import { CrossRunnerRefusedError, runTask, type RunTaskDeps } from '../loops/dev-review/run-control/task-run.js'
 import {
   crossRunnerInFlightText,

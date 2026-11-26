@@ -17,12 +17,12 @@
 
 import { afterEach, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { withBeyondSurfaceBlock } from '../../../../tools/task-contract/issue-validation'
+import { withBeyondSurfaceBlock } from '@harness/workflow/tools/task-contract/issue-validation'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { withDeveloperModelsLine } from '../../../../loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
-import { MAX_INFRASTRUCTURE_RETRIES } from '../../../../loops/dev-review/standalone/dev-review-loop/round-assess.js'
-import type { LoopDeps } from '../../../../loops/dev-review/standalone/dev-review-loop.js'
+import { withDeveloperModelsLine } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
+import { MAX_INFRASTRUCTURE_RETRIES } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/round-assess.js'
+import type { LoopDeps } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 import {
   developerPublishesViaToolsDeps,
   cleanupWorlds,

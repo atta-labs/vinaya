@@ -22,7 +22,7 @@
  * the role starts.
  */
 
-import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'
+import { installProcess } from '@harness/kernel/dev-process-socket/contract/install-process'
 import { vinayaProcessIntegration } from '../integration/process/process-integration'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -30,7 +30,7 @@ import type { DeveloperCapabilityCase } from '../executing/developer/evals/devel
 import type { PatchRecord, ReviewCase } from '../executing/evals/reviewer-quality-suite'
 import type { SourceCitationCase } from '../executing/evals/source-citation-suite'
 import type { ReviewerRole } from '../executing/code-reviewer/review-result'
-import type { NeutralCase } from '../../../kernel/evals/neutral-case'
+import type { NeutralCase } from '@harness/kernel/evals/neutral-case'
 import {
   type LoadedDevelopment,
   PRODUCTION_VINAYA_PROCESS_STEPS,

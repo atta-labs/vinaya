@@ -4,17 +4,17 @@
  * module holds no state that outlives one test.
  */
 
-import { programCommandLine } from '../../../../tools/programs.js'
+import { programCommandLine } from '@harness/workflow/tools/programs.js'
 import { it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../../../kernel/isolation/dispatch/fake-sandbox-probe.js'
-import { DEFAULT_REVIEW_POLICY } from '../../../../tools/task-contract/review-policy'
-import { policyDigest } from '../../../../tools/task-contract/review-input-manifest'
-import { checkReviewGate } from '../../../../tools/review-gate'
+import { FAKE_CLAUDE_PROBE_ANSWER } from '@harness/kernel/isolation/dispatch/fake-sandbox-probe.js'
+import { DEFAULT_REVIEW_POLICY } from '@harness/workflow/tools/task-contract/review-policy'
+import { policyDigest } from '@harness/workflow/tools/task-contract/review-input-manifest'
+import { checkReviewGate } from '@harness/workflow/tools/review-gate'
 
 export const CLI_ROOT = join(
   dirname(fileURLToPath(import.meta.url)),

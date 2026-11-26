@@ -4,7 +4,7 @@ import {
   DispatchSandboxRefused,
   DispatchSignInRefused,
   DispatchUsageLimit
-} from '../../../../loops/dev-review/standalone/dev-review-loop/round-assess'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/round-assess'
 import {
   CI_PARENT_WAIT_MAX_MS,
   classifyDriverError,
@@ -15,8 +15,8 @@ import {
   uncaughtErrorDetail,
   type DriverErrorClass,
   type StopEvent
-} from '../../../../loops/dev-review/standalone/dev-review-loop/stop-decision'
-import { BLOCKER_KINDS } from '../../../../executing/developer/developer-turn-result'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/stop-decision'
+import { BLOCKER_KINDS } from '@harness/workflow/executing/developer/developer-turn-result'
 
 const timeout = (): Error =>
   Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT', hostname: 'api.github.com' })

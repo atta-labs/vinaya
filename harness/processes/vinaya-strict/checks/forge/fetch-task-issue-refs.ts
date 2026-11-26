@@ -21,7 +21,7 @@
 
 import { graphql } from '@octokit/graphql'
 import type { TaskIssueRef } from '../../tools/task-contract/tranche-types'
-import { resolveGithubToken } from '../../../../kernel/adapters/code-host/github/github-token'
+import { resolveGithubToken } from '@harness/kernel/adapters/code-host/github/github-token'
 import { resolveTaskIssueRef } from '../../tools/task-contract/forge/list-tasks'
 
 export async function fetchTaskIssueRefs(

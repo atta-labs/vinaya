@@ -2,7 +2,7 @@
 // refuses a missing or foreign field by name, and the digest identifies a case
 // whatever its key order. An answer case changes nothing, so its scope is empty.
 import { describe, expect, it } from 'bun:test'
-import type { ContractRefusalCode, Validated } from '../../../../kernel/evals/contracts'
+import type { ContractRefusalCode, Validated } from '@harness/kernel/evals/contracts'
 import {
   intentVersion,
   KIND_FIELDS,
@@ -10,7 +10,7 @@ import {
   NEUTRAL_CASE_KINDS,
   neutralCaseDigest,
   validateNeutralCase
-} from '../../../../kernel/evals/neutral-case'
+} from '@harness/kernel/evals/neutral-case'
 
 const D = (c: string) => c.repeat(64)
 const BASE = 'a'.repeat(40)

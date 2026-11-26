@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import type { VinayaConfig } from '../../../../integration/config/compose.js'
-import { resolveTrustAnchorSecurityScanCommand } from '../../../../loops/dev-review/standalone/dev-review-loop/security-scan-command.js'
+import type { VinayaConfig } from '@harness/workflow/integration/config/compose.js'
+import { resolveTrustAnchorSecurityScanCommand } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/security-scan-command.js'
 
 describe('resolveTrustAnchorSecurityScanCommand', () => {
   test('returns the argv the trust anchor configures', () => {

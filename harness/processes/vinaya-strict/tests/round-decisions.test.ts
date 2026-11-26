@@ -1,4 +1,4 @@
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -7,11 +7,11 @@ import { compileFlow, type StepsFlow } from '@atta/engine'
 import { parse } from 'yaml'
 import { DEFAULT_REVIEW_POLICY, type ReviewPolicy } from '../tools/task-contract/review-policy'
 import { objectivesVersion } from '../tools/task-contract/objectives'
-import { readManifest } from '../../../kernel/connectors/checkpoint/control-store/index'
+import { readManifest } from '@harness/kernel/connectors/checkpoint/control-store/index'
 import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import { keepLogLocal, QUIET_FORGE_GATES, SCENARIO_ENV_KEYS, testForge, useRuntimeDir } from './round-fakes'
-import type { ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+import type { ActionRegistry } from '@harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   clearDriverLock,
   pauseMarker,

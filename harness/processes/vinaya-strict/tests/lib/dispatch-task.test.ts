@@ -24,7 +24,7 @@ import {
 } from '../../tools/task-contract/dispatch-task.js'
 import { checkPinnedFileImportersCovered, boundaryPinnedFiles } from '../../tools/task-contract/issue-validation'
 import { DEPENDENCY_WAIT_BOUND_MS } from '../../tools/task-contract/plan-repair'
-import type { CheckError } from '../../../../kernel/gates/checks/contract'
+import type { CheckError } from '@harness/kernel/gates/checks/contract'
 
 /** The default branch's `vinaya.config.json` the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`) is served, base64-encoded as the contents API returns it. */
 const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')

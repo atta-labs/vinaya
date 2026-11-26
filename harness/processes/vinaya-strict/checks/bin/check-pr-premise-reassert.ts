@@ -34,8 +34,8 @@
  * scope: diff — reads the PR body alone, no live forge state.
  */
 
-import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
-import { emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point'
+import { emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { reassertPrBodyPremise } from '../../tools/premise-reassert-logic'
 
 function main(): void {

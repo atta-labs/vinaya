@@ -8,7 +8,7 @@ import {
   readUnpushedWorkDetail,
   unpushedFailureMessage,
   unpushedWorkResumeDetail
-} from '../../../../loops/dev-review/standalone/dev-review-loop/unpushed-work.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/unpushed-work.js'
 
 const roots: string[] = []
 afterEach(() => {

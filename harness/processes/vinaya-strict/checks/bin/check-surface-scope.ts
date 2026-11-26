@@ -63,11 +63,8 @@ import {
 } from '../../tools/task-contract/issue-validation'
 import { parseTaskBranchIdentity } from '../../tools/task-contract/task-branch-identity'
 import { createForgeSource } from '../../tools/sources/forge-adapter.js'
-import {
-  exitOnIncompleteForgeSnapshot,
-  snapshotIssue
-} from '../../../../../harness/kernel/adapters/code-host/github/forge-snapshot'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { exitOnIncompleteForgeSnapshot, snapshotIssue } from '@harness/kernel/adapters/code-host/github/forge-snapshot'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'surface-scope'
 

@@ -9,8 +9,8 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture.js'
-import { createVinayaLogSink, resolveVinayaLogAppendPath } from '../../../integration/log/log-sink-factory.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture.js'
+import { createVinayaLogSink, resolveVinayaLogAppendPath } from '@harness/workflow/integration/log/log-sink-factory.js'
 
 const DISPATCHED = {
   kind: 'dispatch' as const,

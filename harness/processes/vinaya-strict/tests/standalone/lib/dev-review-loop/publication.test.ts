@@ -17,25 +17,25 @@ import {
   briefHash,
   policyDigest,
   type ReviewInputManifest
-} from '../../../../tools/task-contract/review-input-manifest'
+} from '@harness/workflow/tools/task-contract/review-input-manifest'
 import {
   consequentialFindings,
   DEFAULT_REVIEW_POLICY,
   evaluateCodeReview,
   evaluateSecurityReview,
   type ReviewPolicy
-} from '../../../../tools/task-contract/review-policy'
+} from '@harness/workflow/tools/task-contract/review-policy'
 import {
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict
-} from '../../../../tools/task-contract/verdict-extraction'
-import { checkReviewGate } from '../../../../tools/review-gate'
-import type { VerdictExtraction } from '../../../../tools/task-contract/verdict-extraction'
+} from '@harness/workflow/tools/task-contract/verdict-extraction'
+import { checkReviewGate } from '@harness/workflow/tools/review-gate'
+import type { VerdictExtraction } from '@harness/workflow/tools/task-contract/verdict-extraction'
 import {
   bindingOfPosted,
   publicationComment,
   unboundFields
-} from '../../../../loops/dev-review/standalone/dev-review-loop/publication'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/publication'
 
 const HEAD = 'a'.repeat(40)
 const BASE = 'f'.repeat(40)

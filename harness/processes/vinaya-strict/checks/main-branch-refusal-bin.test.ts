@@ -4,8 +4,8 @@ import { mkdirSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { coreCheckRegistry } from './registry'
-import { runChecks } from '../../../kernel/gates/checks/runner'
-import { spawnSyncBudgeted } from '../../../kernel/conformance/unit/process-fixture'
+import { runChecks } from '@harness/kernel/gates/checks/runner'
+import { spawnSyncBudgeted } from '@harness/kernel/conformance/unit/process-fixture'
 
 // Bin-level tests for check-main-branch-refusal.ts: scratch repositories with
 // no network and an isolated git configuration, so the developer's own

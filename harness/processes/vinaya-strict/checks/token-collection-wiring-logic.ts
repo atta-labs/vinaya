@@ -31,8 +31,8 @@
 import {
   isTokenCollectionWiringBroken,
   type MeteringCapability
-} from '../../../kernel/adapters/agents/claude-code/claude-code-transcript'
-import { CHECK_SCHEMA_VERSION, type CheckError } from '../../../kernel/gates/checks/contract'
+} from '@harness/kernel/adapters/agents/claude-code/claude-code-transcript'
+import { CHECK_SCHEMA_VERSION, type CheckError } from '@harness/kernel/gates/checks/contract'
 
 export type TokenCollectionWiringResult = { pass: true } | { pass: false; error: CheckError }
 

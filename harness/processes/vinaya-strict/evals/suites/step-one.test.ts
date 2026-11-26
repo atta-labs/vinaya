@@ -3,11 +3,11 @@ import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { type CloneStaging, git } from '../../../../kernel/evals/staging'
-import type { DevToolContext } from '../../../../kernel/tools/dev-tools-server'
-import { DEV_TOOLS_MCP_SERVER_NAME } from '../../../../kernel/tools/dev-tools-names'
-import { spawnBudgetedAsync } from '../../../../kernel/conformance/unit/process-fixture'
-import { fixtureDir } from '../../../../kernel/conformance/unit/test-temp-fixture'
+import { type CloneStaging, git } from '@harness/kernel/evals/staging'
+import type { DevToolContext } from '@harness/kernel/tools/dev-tools-server'
+import { DEV_TOOLS_MCP_SERVER_NAME } from '@harness/kernel/tools/dev-tools-names'
+import { spawnBudgetedAsync } from '@harness/kernel/conformance/unit/process-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import {
   renderDeveloperDoctrineBlock,
   resolveDeveloperDoctrineText
@@ -17,7 +17,7 @@ import {
   roleDoctrinePieces
 } from '../../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import { resolveRoleDoctrineText } from '../../integration/roles/plan'
-import type { NeutralCase } from '../../../../kernel/evals/neutral-case'
+import type { NeutralCase } from '@harness/kernel/evals/neutral-case'
 import {
   commitInWorkingTree,
   commitTrialInSandbox,

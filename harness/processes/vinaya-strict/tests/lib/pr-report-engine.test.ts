@@ -21,7 +21,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildPrincipalTestPlanWaitErrors } from '../../checks/bin/check-principal-test-plan-wait'
 import { compareEvidenceBlock, EVIDENCE_PLACEHOLDER_TEXT } from '../../checks/evidence-fresh-logic'
-import { resolveAnchoredRegion, ScanContext } from '../../../../kernel/gates/checks/scan-context'
+import { resolveAnchoredRegion, ScanContext } from '@harness/kernel/gates/checks/scan-context'
 import { agentCommandText, extractAgentCommandLines } from '../../tools/pr-report/bin/pr-report'
 import { checkBareDigits } from '../../tools/body-bare-digits-logic'
 import {
@@ -51,7 +51,7 @@ import {
   isNativeRunCommand,
   nativeRunCommand,
   REPOSITORY_LOCAL_RUN
-} from '../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..', 'apps', 'cli')
 const ALWAYS_REFUSE_BODY_CHECK = join(

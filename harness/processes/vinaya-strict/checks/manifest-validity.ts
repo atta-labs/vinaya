@@ -4,7 +4,7 @@
  */
 
 import { DOC_OWNERS_PATH, isUrlPointer, parseDocOwners, pointerToPath } from '../tools/doc-owners'
-import { globToRegex } from '../../../kernel/gates/glob-to-regex'
+import { globToRegex } from '@harness/kernel/gates/glob-to-regex'
 
 export type NoDocRule = { glob: string; reason: string }
 

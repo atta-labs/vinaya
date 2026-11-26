@@ -1,4 +1,4 @@
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { programCommandLine } from '../tools/programs.js'
 import { REGION_PREFIX } from '../tools/legacy-markers.js'
 import { afterAll, describe, expect, test } from 'bun:test'
@@ -7,7 +7,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loopLogPathFor, narrateDriverEvent } from '../../../kernel/log/client/loop-log'
+import { loopLogPathFor, narrateDriverEvent } from '@harness/kernel/log/client/loop-log'
 import {
   cleanupWorlds,
   makeInProcessDeps,
@@ -15,8 +15,8 @@ import {
   runLoopInProcess,
   taskRunDir
 } from './standalone/lib/dev-review-loop-harness'
-import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
-import type { ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
+import type { ActionRegistry } from '@harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   classifyDeveloperOutput,
   classifyGateResult,

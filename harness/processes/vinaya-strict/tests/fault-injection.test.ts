@@ -1,10 +1,10 @@
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { EscalationRecord, ResolutionRecord } from '../../../kernel/connectors/checkpoint/control-store/index'
+import type { EscalationRecord, ResolutionRecord } from '@harness/kernel/connectors/checkpoint/control-store/index'
 import { recordedBeyondSurfacePaths, renderBeyondSurfaceBlock } from '../tools/task-contract/issue-validation'
 import { createRunControl } from '@atta/executor-agent-spawn'
 import {
@@ -20,7 +20,7 @@ import {
   usageLimitResetFromDetail,
   usageLimitWaitMs
 } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
-import { loopLogPathFor } from '../../../kernel/log/client/loop-log'
+import { loopLogPathFor } from '@harness/kernel/log/client/loop-log'
 import { BRANCH, fakeDeps, makeWorld, OUTSIDE, OWN } from './live-developer-context-world'
 import { checkpointPath, engineLiveDevToolsContext, runDirectory } from '../bin/run-engine'
 import { liveResumeDeps, type ResumeDeps, type RulingWatch, USAGE_LIMIT_WAIT_SLICE_MS } from '../bin/run-lifecycle'

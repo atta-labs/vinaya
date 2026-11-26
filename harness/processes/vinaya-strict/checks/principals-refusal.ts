@@ -4,7 +4,7 @@ import {
   type CheckError,
   type CheckSeverity,
   emitCheckError
-} from '../../../kernel/gates/checks/contract'
+} from '@harness/kernel/gates/checks/contract'
 
 /**
  * How a check turns `resolveTrustedPrincipals`'s refusal into its one

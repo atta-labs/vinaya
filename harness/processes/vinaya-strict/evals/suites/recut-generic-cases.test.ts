@@ -6,8 +6,8 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'bun:test'
-import { findBannedTerms } from '../../../../kernel/evals/banned-terms'
-import { validateNeutralCase } from '../../../../kernel/evals/neutral-case'
+import { findBannedTerms } from '@harness/kernel/evals/banned-terms'
+import { validateNeutralCase } from '@harness/kernel/evals/neutral-case'
 import {
   type DeveloperCapabilityCase,
   loadCaseFile as loadDeveloperCaseFile

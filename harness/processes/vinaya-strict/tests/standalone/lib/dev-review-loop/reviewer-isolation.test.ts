@@ -36,7 +36,7 @@ import {
   reviewerCandidateInputPaths,
   reviewerScratchDir,
   writeReviewerCandidateInputs
-} from '../../../../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
 
 const tempDirs: string[] = []
 afterEach(() => {

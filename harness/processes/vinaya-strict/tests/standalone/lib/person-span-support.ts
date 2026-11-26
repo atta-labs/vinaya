@@ -1,10 +1,10 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { storedEvents, storedSpans } from '../../../../../kernel/gates/checks/runner/local-copy-probe'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
-import type { EscalationFacts } from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume'
+import { storedEvents, storedSpans } from '@harness/kernel/gates/checks/runner/local-copy-probe'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
+import type { EscalationFacts } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { type LoopWorld, outboxLines } from './dev-review-loop-harness'
-import { runRecorder } from '../../../../../kernel/log/run-recorder'
+import { runRecorder } from '@harness/kernel/log/run-recorder'
 
 const PAUSE_RESUME = join(import.meta.dir, '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.ts')
 

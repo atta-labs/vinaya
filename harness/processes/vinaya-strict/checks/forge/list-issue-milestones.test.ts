@@ -1,11 +1,11 @@
 import type { Mock } from 'bun:test'
 import { describe, expect, it, mock } from 'bun:test'
 
-mock.module('../../../../kernel/adapters/code-host/github/gh', () => ({
+mock.module('@harness/kernel/adapters/code-host/github/gh', () => ({
   ghIssueListByAnyLabel: mock()
 }))
 
-const { ghIssueListByAnyLabel } = await import('../../../../kernel/adapters/code-host/github/gh')
+const { ghIssueListByAnyLabel } = await import('@harness/kernel/adapters/code-host/github/gh')
 const { issueMilestonesFromIssues, listIssueMilestonesForSlug } = await import('./list-issue-milestones')
 
 describe('listIssueMilestonesForSlug', () => {

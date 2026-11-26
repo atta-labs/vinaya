@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { checkDispatchReadiness, type DispatchGateInput } from '../tools/dispatch-gate'
 import { clearEdgeCache, dependsOnFactFromEdge, edgeFromIssueJson, resolveEdge } from '../tools/edge-resolve'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
+import { spawnBudgetedAsync, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 import { LEGACY_TRANCHES_DIR } from '../tools/legacy-paths'
 
 const REPO_ROOT = join(import.meta.dir, '../../../..')

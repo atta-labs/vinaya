@@ -45,7 +45,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
-import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
+import { resolveRepo } from '@harness/kernel/adapters/code-host/github/resolve-repo'
 import { checkBriefSections, isTaskBranch } from '../../tools/task-contract/brief-validation'
 import { checkIssueRationale } from '../../tools/task-contract/issue-validation'
 import { checkPremises, parsePremiseBlock, type PremiseAssertion } from '../../tools/task-contract/premise-check'

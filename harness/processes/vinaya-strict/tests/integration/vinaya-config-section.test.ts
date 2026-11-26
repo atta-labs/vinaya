@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { z } from 'zod'
-import { KERNEL_CONFIG_KEYS } from '../../../../kernel/config/schema/config-schema'
+import { KERNEL_CONFIG_KEYS } from '@harness/kernel/config/schema/config-schema'
 import { CONFIG_KEY_ORDER, VinayaConfigSchema, VinayaConfigShape } from '../../integration/config/compose'
 import {
   decisionRecordsPathIssue,

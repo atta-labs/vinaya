@@ -10,7 +10,7 @@
  * `~/.vinaya/control-store/`, the same isolation `effects/executor.test.ts`
  * already uses for the identical reason.
  */
-import type { PauseReason } from '../../../../tools/dev-review-policy/types'
+import type { PauseReason } from '@harness/workflow/tools/dev-review-policy/types'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
@@ -21,8 +21,11 @@ import {
   defaultControlStoreDeps,
   readEffect,
   writeEffect
-} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
-import { newestPrincipalRulingOrdinal, principalRulingMarker } from '../../../../tools/task-contract/ruling-ordinal'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import {
+  newestPrincipalRulingOrdinal,
+  principalRulingMarker
+} from '@harness/workflow/tools/task-contract/ruling-ordinal'
 
 import {
   type DriverWatchDeps,
@@ -32,14 +35,14 @@ import {
   readResolutionRecord,
   driverCarryArgs,
   runDriverLoop
-} from '../../../../loops/dev-review/standalone/dev-review-loop'
-import { MAX_AUTOMATIC_CONFLICT_REENTRIES } from '../../../../loops/dev-review/standalone/dev-review-loop/gate-reading'
-import type { DispatchHandle } from '../../../../loops/dev-review/dispatch/dispatch'
-import { storedEvents, storedSpans } from '../../../../../../kernel/gates/checks/runner/local-copy-probe'
-import { MAX_INFRASTRUCTURE_RETRIES } from '../../../../loops/dev-review/standalone/dev-review-loop/round-assess'
-import { readEscalationPacket } from '../../../../loops/dev-review/run-control/read'
-import { type RunTaskDeps, runTask } from '../../../../loops/dev-review/run-control/task-run'
-import { LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV } from '../../../../../../kernel/isolation/worker-boundary'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop'
+import { MAX_AUTOMATIC_CONFLICT_REENTRIES } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/gate-reading'
+import type { DispatchHandle } from '@harness/workflow/loops/dev-review/dispatch/dispatch'
+import { storedEvents, storedSpans } from '@harness/kernel/gates/checks/runner/local-copy-probe'
+import { MAX_INFRASTRUCTURE_RETRIES } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/round-assess'
+import { readEscalationPacket } from '@harness/workflow/loops/dev-review/run-control/read'
+import { type RunTaskDeps, runTask } from '@harness/workflow/loops/dev-review/run-control/task-run'
+import { LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV } from '@harness/kernel/isolation/worker-boundary'
 import {
   cleanupWorlds,
   controlDir,
@@ -52,11 +55,11 @@ import {
   taskRunDir,
   withWorldEnv
 } from '../dev-review-loop-harness'
-import { buildReexecArgs } from '../../../../loops/dev-review/standalone/dev-review-loop/driver-helpers'
+import { buildReexecArgs } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/driver-helpers'
 import { spawnSync } from 'node:child_process'
 import { raiseInAnotherProcess } from '../person-span-support'
-import { runRecorder } from '../../../../../../kernel/log/run-recorder'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture'
+import { runRecorder } from '@harness/kernel/log/run-recorder'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 import {
   consumeHostRepairPauseOnStart,
   effortForRun,
@@ -79,7 +82,7 @@ import {
   resolveEscalation,
   writeEscalationRecord,
   writePauseState
-} from '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume'
 
 let dir: string
 let deps: ControlStoreDeps

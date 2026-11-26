@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { failedCheckLogsOnHead } from '../../../loops/dev-review/standalone/dev-review-loop'
+import { failedCheckLogsOnHead } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop'
 import {
   attributeDriverToolCalls,
   commitAndPushPrompt,
@@ -14,7 +14,7 @@ import {
   mergeInProgress,
   publishDeveloperTurn,
   pushedCommitRangeBase
-} from '../../../loops/dev-review/actions/live-developer-context'
+} from '@harness/workflow/loops/dev-review/actions/live-developer-context'
 import {
   BASE,
   BRANCH,

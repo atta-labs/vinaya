@@ -33,8 +33,8 @@
  * changes the sha without changing the patch and must not void the block.
  */
 
-import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../../kernel/connectors/git/numstat'
-import { type ResolvedRegion, summaryLineIndex } from '../../../kernel/gates/checks/scan-context'
+import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '@harness/kernel/connectors/git/numstat'
+import { type ResolvedRegion, summaryLineIndex } from '@harness/kernel/gates/checks/scan-context'
 
 export type EvidenceCompareResult = { status: 'pass' } | { status: 'fail'; errors: string[] }
 

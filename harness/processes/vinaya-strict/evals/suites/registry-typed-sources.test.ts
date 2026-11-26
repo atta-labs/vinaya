@@ -11,7 +11,7 @@ import {
   loadRegistry,
   type ModuleCatalog,
   type RegistryOwner
-} from '../../../../kernel/evals/registry'
+} from '@harness/kernel/evals/registry'
 import {
   ENGINE_STATES,
   ENGINE_TRANSITIONS,

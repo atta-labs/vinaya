@@ -18,7 +18,7 @@
 import { execFileSync } from 'node:child_process'
 import { checkBranchTopology, taskBranchTopologyFields } from '../branch-topology-gate'
 import { createForgeSource } from '../../tools/sources/forge-adapter.js'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'branch-topology'
 

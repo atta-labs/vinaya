@@ -36,7 +36,7 @@ mock.module('../../tools/task-contract/forge/fetch-milestone', () => {
   }
 })
 
-mock.module('../../../../kernel/adapters/code-host/github/github-token', () => ({
+mock.module('@harness/kernel/adapters/code-host/github/github-token', () => ({
   resolveGithubToken: async () => 'fake-token-for-a-test'
 }))
 mock.module('../../tools/task-contract/forge/fetch-forge-facts', () => ({

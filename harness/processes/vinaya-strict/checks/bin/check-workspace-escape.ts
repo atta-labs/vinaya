@@ -57,15 +57,12 @@
  * which files this bin ever hands the scanner, not in the scanner itself.
  */
 
-import { isEntryPoint } from '../../../../../harness/kernel/gates/checks/entry-point'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  findWorkspaceEscapes,
-  type WorkspaceEscapeSourceFile
-} from '../../../../../harness/kernel/gates/checks/workspace-escape'
-import { findingsInThisDiff } from '../../../../../harness/kernel/connectors/git/diff-evidence'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { findWorkspaceEscapes, type WorkspaceEscapeSourceFile } from '@harness/kernel/gates/checks/workspace-escape'
+import { findingsInThisDiff } from '@harness/kernel/connectors/git/diff-evidence'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'workspace-escape'
 const WORKSPACE_DIRS = ['apps', 'packages']

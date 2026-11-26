@@ -3,15 +3,15 @@
  * validation, pause details and the Surface-opened agent configuration paths. Each runs without a loop.
  */
 
-import type { DevReviewLoopEventInput } from '../../../../tools/dev-review-policy/types'
+import type { DevReviewLoopEventInput } from '@harness/workflow/tools/dev-review-policy/types'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { hostname } from 'node:os'
-import { rateLimitPauseDetail } from '../../../../loops/dev-review/standalone/dev-review-loop/round-assess.js'
+import { rateLimitPauseDetail } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/round-assess.js'
 import {
   renderNoPushStopComment,
   renderPauseComment
-} from '../../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 import {
   assertValidLoopEvent,
   buildReexecArgs,
@@ -33,10 +33,10 @@ import {
   routeCompletionEvents,
   turnResultInstruction,
   surfaceOpenedAgentConfigPaths
-} from '../../../../loops/dev-review/standalone/dev-review-loop.js'
-import { DEFAULT_REVIEW_POLICY } from '../../../../tools/task-contract/review-policy'
-import { objectivesVersion } from '../../../../tools/task-contract/objectives'
-import { policyDigest } from '../../../../tools/task-contract/review-input-manifest'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
+import { DEFAULT_REVIEW_POLICY } from '@harness/workflow/tools/task-contract/review-policy'
+import { objectivesVersion } from '@harness/workflow/tools/task-contract/objectives'
+import { policyDigest } from '@harness/workflow/tools/task-contract/review-input-manifest'
 
 import { cleanupWorlds } from '../dev-review-loop-harness.js'
 import {

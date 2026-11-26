@@ -8,7 +8,7 @@
  */
 
 import { checkPrReportDensity } from '../pr-report-density'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 
 const CHECK_NAME = 'pr-report-density'
 

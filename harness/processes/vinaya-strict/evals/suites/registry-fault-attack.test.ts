@@ -13,8 +13,8 @@ import {
   loadRegistry,
   type ModuleCatalog,
   suiteId
-} from '../../../../kernel/evals/registry'
-import { engineEvidenceOf, OPERATOR_EXIT_EXCLUSIONS } from '../../../../kernel/evals/exit-check'
+} from '@harness/kernel/evals/registry'
+import { engineEvidenceOf, OPERATOR_EXIT_EXCLUSIONS } from '@harness/kernel/evals/exit-check'
 import {
   CONTAINMENT_PROBES,
   CONTAINMENT_ROW_IDS,

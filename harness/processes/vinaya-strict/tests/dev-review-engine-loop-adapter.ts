@@ -18,15 +18,15 @@ import { objectivesVersion } from '../tools/task-contract/objectives'
 import {
   type ControlStoreDeps,
   defaultControlStoreDeps
-} from '../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../kernel/dev-process-socket/loader/load-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import { setEngineLogIdentity } from '../bin/engine-log-identity'
 import { LOG_IDENTITY_ENV_KEYS } from '../loops/dev-review/dispatch/dispatch'
 import { createActions } from '../executing/actions'
 import type { DeveloperPromptFacts } from '../executing/developer-prompt'
-import { probeAgentSandbox, type SandboxProbeRun } from '../../../kernel/isolation/worker-boundary'
-import type { DevToolContext } from '../../../kernel/tools/dev-tools-server'
+import { probeAgentSandbox, type SandboxProbeRun } from '@harness/kernel/isolation/worker-boundary'
+import type { DevToolContext } from '@harness/kernel/tools/dev-tools-server'
 import {
   liveDeveloperFacts,
   liveTaskInput,
@@ -58,22 +58,22 @@ import {
   LOG_FOLDER_ONLY_ENV,
   resetDefaultLogSinkContext,
   type LogSinkDeps
-} from '../../../kernel/log/log-sink'
+} from '@harness/kernel/log/log-sink'
 import { createVinayaLogSink } from '../integration/log/log-sink-factory'
 import { writeRunLifecycleEvent } from '../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
-import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, tasksExecutionRoot } from '../../../kernel/run-paths'
+import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, tasksExecutionRoot } from '@harness/kernel/run-paths'
 import {
   createEffectExecutor,
   type EffectIdentity,
   type EffectReconciler,
   sha256Hex
-} from '../../../kernel/effects/effects'
+} from '@harness/kernel/effects/effects'
 import { createTaskCancelHandler } from '../loops/dev-review/run-control/cancel'
 import { readTaskRunner } from '../loops/dev-review/run-control/task-run-engine'
 import { cleanupAllReviewerIsolationArtifacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-isolation'
 import { heldVerdictPath } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
 import { handoffIdsInPrompt, OWNED_ENV_KEYS } from './standalone/lib/dev-review-loop-harness'
-import { FIXTURE_REPO } from '../../../kernel/conformance/unit/process-fixture'
+import { FIXTURE_REPO } from '@harness/kernel/conformance/unit/process-fixture'
 import type { Observation } from '../integration/conformance/unit/dev-review-current-loop-adapter'
 
 /**

@@ -7,21 +7,18 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import type { SpawnedProcessLike, StepNodeResult } from '@atta/executor-agent-spawn'
-import type {
-  ActionContext,
-  ActionRegistry
-} from '../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
-import type { AgentCheckpointProvenance } from '../../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
-import { loadProcess } from '../../../../../harness/kernel/dev-process-socket/loader/load-process'
+import type { ActionContext, ActionRegistry } from '@harness/kernel/loops/runtimes/atta-engine/run-process'
+import type { AgentCheckpointProvenance } from '@harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import {
   createDispatchCapabilityTable,
   startDevToolsHost,
   startReplaceableDevToolsHost
-} from '../../../../kernel/tools/host/dev-tools-host'
+} from '@harness/kernel/tools/host/dev-tools-host'
 import { readPauseState } from '../../loops/dev-review/standalone/dev-review-loop/pause-resume'
-import { devToolsSocketPath } from '../../../../kernel/tools/dev-tools-registration'
-import { READ_SOURCE_NOTICE } from '../../../../kernel/tools/read-source'
-import { DISPATCH_CAPABILITY_ARGUMENT, type DevToolContext } from '../../../../kernel/tools/dev-tools-server'
+import { devToolsSocketPath } from '@harness/kernel/tools/dev-tools-registration'
+import { READ_SOURCE_NOTICE } from '@harness/kernel/tools/read-source'
+import { DISPATCH_CAPABILITY_ARGUMENT, type DevToolContext } from '@harness/kernel/tools/dev-tools-server'
 import {
   ACTION_BINDINGS,
   classifyGateResult,

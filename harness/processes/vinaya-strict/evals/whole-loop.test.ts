@@ -1,4 +1,4 @@
-import { parseIssueDocumentation } from '../../../kernel/issue-documentation'
+import { parseIssueDocumentation } from '@harness/kernel/issue-documentation'
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
@@ -11,7 +11,7 @@ import {
   parseIssueStopConditions,
   parseIssueTestPlan
 } from '../tools/task-contract/issue-validation'
-import type { NeutralCase } from '../../../kernel/evals/neutral-case'
+import type { NeutralCase } from '@harness/kernel/evals/neutral-case'
 import { renderCase } from './vinaya-renderer'
 import {
   BACKEND_FLOWS,
@@ -33,7 +33,7 @@ import {
   type WholeLoopForge,
   type WholeLoopOptions
 } from './whole-loop'
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 
 const SANDBOX = 'example-owner/whole-loop-sandbox'
 const LOGIN = 'trial-bot'

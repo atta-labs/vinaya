@@ -59,7 +59,7 @@ import {
   objectivesOf
 } from '../../tools/task-contract/objectives'
 import { readTierFromPrBody } from '../../tools/task-contract/pr-tier'
-import { extractIssue } from '../../../../kernel/adapters/code-host/github/extract-issue'
+import { extractIssue } from '@harness/kernel/adapters/code-host/github/extract-issue'
 import { REGION_PREFIXES } from '../../tools/legacy-markers'
 import { readConfigObjectivesSinceIssue } from '../../tools/task-contract/objectives-cutover-config'
 import { readConfigPrincipals } from '../../tools/task-contract/principals-config'

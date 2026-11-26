@@ -5,8 +5,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { runDirectory, type Agent, type RunTrace } from '../bin/run-engine.js'
-import { engineEvidenceOf } from '../../../kernel/evals/exit-check.js'
-import { loadRegistry } from '../../../kernel/evals/registry.js'
+import { engineEvidenceOf } from '@harness/kernel/evals/exit-check.js'
+import { loadRegistry } from '@harness/kernel/evals/registry.js'
 import {
   isAutomaticRecoveryPause,
   isHostRepairPause,

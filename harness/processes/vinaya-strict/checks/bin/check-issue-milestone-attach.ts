@@ -18,7 +18,7 @@
  */
 
 import { checkMilestoneAttach } from '../../tools/task-contract/issue-validation'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { readIssueCheckEnv } from '../issue-check-env'
 
 const CHECK_NAME = 'issue-milestone-attach'

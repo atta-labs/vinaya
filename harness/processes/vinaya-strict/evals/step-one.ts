@@ -12,8 +12,8 @@ import {
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { beyondSurfacePaths, withBeyondSurfaceBlock } from '../tools/task-contract/issue-validation'
-import { redact } from '../../../kernel/log/redact'
-import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'
+import { redact } from '@harness/kernel/log/redact'
+import { installProcess } from '@harness/kernel/dev-process-socket/contract/install-process'
 import { vinayaProcessIntegration } from '../integration/process/process-integration'
 import {
   addCodexWritableDirs,
@@ -31,11 +31,11 @@ import {
   joinReviewerPromptPieces,
   roleDoctrinePieces
 } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
-import { runtimeDirForThisRepo } from '../../../kernel/run-paths'
-import { startDevToolsHost } from '../../../kernel/tools/host/dev-tools-host'
-import { devToolsSocketPath, driverDevBridgeInvocation } from '../../../kernel/tools/dev-tools-registration'
+import { runtimeDirForThisRepo } from '@harness/kernel/run-paths'
+import { startDevToolsHost } from '@harness/kernel/tools/host/dev-tools-host'
+import { devToolsSocketPath, driverDevBridgeInvocation } from '@harness/kernel/tools/dev-tools-registration'
 import { programFile } from '../tools/programs.js'
-import { buildWorkerEnv, containerClaudeLogin, stageCodexPolicyHome } from '../../../kernel/isolation/worker-boundary'
+import { buildWorkerEnv, containerClaudeLogin, stageCodexPolicyHome } from '@harness/kernel/isolation/worker-boundary'
 import { resolveRoleDoctrineText } from '../integration/roles/plan'
 import { vinayaToolGrantPolicy } from '../integration/policies/vinaya-policies'
 import {
@@ -43,13 +43,13 @@ import {
   testContamination,
   type Attribution,
   type HiddenInputs
-} from '../../../kernel/evals/contamination'
+} from '@harness/kernel/evals/contamination'
 import { ENGINE_SPAWN, runEngineRoleStep, type SpawnFn, usageOfStream } from './engine-role-step'
-import { suiteMean, type BootstrapMethod } from '../../../kernel/evals/estimators'
-import { GENERIC_GRADERS } from '../../../kernel/evals/generic-graders'
-import type { NeutralCase } from '../../../kernel/evals/neutral-case'
-import type { TestResult as NeutralTestResult } from '../../../kernel/evals/neutral-outcomes'
-import { type CloneStaging, git, stageTrial } from '../../../kernel/evals/staging'
+import { suiteMean, type BootstrapMethod } from '@harness/kernel/evals/estimators'
+import { GENERIC_GRADERS } from '@harness/kernel/evals/generic-graders'
+import type { NeutralCase } from '@harness/kernel/evals/neutral-case'
+import type { TestResult as NeutralTestResult } from '@harness/kernel/evals/neutral-outcomes'
+import { type CloneStaging, git, stageTrial } from '@harness/kernel/evals/staging'
 import {
   extractOutcomes,
   renderCase,
@@ -1192,7 +1192,7 @@ const NO_USAGE: StepOneUsage = {
  * the base commit, its prepared source entry and the controller's receipt.
  */
 async function injectedSources(repository: string, baseCommit: string, sourceIds: readonly string[]) {
-  const sourceManifest = await import('../../../kernel/source-manifest')
+  const sourceManifest = await import('@harness/kernel/source-manifest')
   const preparedAt = new Date(0).toISOString()
   const sources = sourceIds.map((sourceId) => {
     const content = fileAt(repository, baseCommit, sourceId)
@@ -1659,7 +1659,7 @@ async function executeDeveloper(
   const brief = context.developerBriefs.get(item.pullRequest)
   if (brief === undefined || suite.sha256(brief) !== item.brief.digest.replace(/^sha256:/, ''))
     throw new Error(`developer brief for pull request ${item.pullRequest} is absent or differs from its pinned digest`)
-  const sourceManifest = await import('../../../kernel/source-manifest')
+  const sourceManifest = await import('@harness/kernel/source-manifest')
   const delivered = await injectedSources(context.repository, item.baseCommit, item.requiredSources)
   const manifestBody = {
     schemaVersion: 1 as const,
@@ -2220,7 +2220,7 @@ async function runAnswerCase(
   const doctrine = await trialDoctrineBlock(steps, doctrineRoleOf(request))
   if (!doctrine.ok) return { ok: false, unavailableReason: doctrine.unavailableReason, usage: NO_USAGE }
   const citation = await import('../executing/evals/source-citation-suite')
-  const sourceManifest = await import('../../../kernel/source-manifest')
+  const sourceManifest = await import('@harness/kernel/source-manifest')
   const { manifest, receipts } = citation.evidenceFor(item)
   const required = new Set(input.sources.filter((source) => source.required).map((source) => source.sourceId))
   const alsoDelivered = manifest.sources.filter((source) => !required.has(source.sourceId))

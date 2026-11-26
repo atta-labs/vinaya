@@ -1,4 +1,4 @@
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -6,8 +6,8 @@ import { join, resolve } from 'node:path'
 import { DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 import { objectivesVersion } from '../tools/task-contract/objectives'
 import type { SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
-import type { ActionRegistry } from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
+import type { ActionRegistry } from '@harness/kernel/loops/runtimes/atta-engine/run-process'
 import { defaultRebaseOntoDefaultTip, publishingInstructionLine } from '../loops/dev-review/standalone/dev-review-loop'
 import {
   CI_PARENT_WAIT_MAX_MS,

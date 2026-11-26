@@ -25,24 +25,24 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { generateClaudeSettings } from '../../../kernel/adapters/agents/claude-code/settings'
-import { generateCodexConfig } from '../../../kernel/adapters/agents/codex/config'
-import { loadRoleContract, resolveRoleGrants, withModel } from '../../../kernel/adapters/agents/manifest'
-import type { GeneratedAgentConfig } from '../../../kernel/isolation/policy'
-import { grantVariables } from '../../../kernel/adapters/agents/variables'
+import { generateClaudeSettings } from '@harness/kernel/adapters/agents/claude-code/settings'
+import { generateCodexConfig } from '@harness/kernel/adapters/agents/codex/config'
+import { loadRoleContract, resolveRoleGrants, withModel } from '@harness/kernel/adapters/agents/manifest'
+import type { GeneratedAgentConfig } from '@harness/kernel/isolation/policy'
+import { grantVariables } from '@harness/kernel/adapters/agents/variables'
 import {
   createRoleLauncher,
   type ProcessRunOptions,
   startProcessRun
-} from '../../../kernel/loops/runtimes/atta-engine/run-process'
-import { SqliteCheckpointer } from '../../../kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
-import type { LoadedProcess } from '../../../kernel/dev-process-socket/loader/load-process'
+} from '@harness/kernel/loops/runtimes/atta-engine/run-process'
+import { SqliteCheckpointer } from '@harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
+import type { LoadedProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import type { DispatchHandle } from '../loops/dev-review/dispatch/dispatch'
 import { readClaudeTurnOutput, readCodexTurnOutput } from '../loops/dev-review/standalone/dev-review-loop/turn-result'
-import { DEV_TOOLS_MCP_SERVER_NAME } from '../../../kernel/tools/dev-tools-names'
-import type { BridgeInvocation } from '../../../kernel/tools/dev-tools-registration'
-import { containerClaudeLogin } from '../../../kernel/isolation/worker-boundary'
-import { git } from '../../../kernel/evals/staging'
+import { DEV_TOOLS_MCP_SERVER_NAME } from '@harness/kernel/tools/dev-tools-names'
+import type { BridgeInvocation } from '@harness/kernel/tools/dev-tools-registration'
+import { containerClaudeLogin } from '@harness/kernel/isolation/worker-boundary'
+import { git } from '@harness/kernel/evals/staging'
 import { capabilitiesForCase } from './vinaya-renderer'
 
 /**

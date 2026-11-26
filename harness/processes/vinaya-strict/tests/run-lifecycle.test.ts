@@ -1,7 +1,7 @@
 import { initialLoopState } from '../tools/dev-review-policy/types'
 import type { ReconstructedJournal } from '../tools/dev-review-policy/journal-reconstruction'
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
-import { encodeExecutionRound } from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
+import { encodeExecutionRound } from '@harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import { describe, expect, test } from 'bun:test'
 import { recordedHandoff } from './handoff-fakes'
 import { handoffHaltReason } from '../executing/log-events'
@@ -15,13 +15,13 @@ import { DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 import { objectivesVersion } from '../tools/task-contract/objectives'
 import { createRunControl, type RunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { MemorySaver } from '@langchain/langgraph'
-import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import {
   startProcessRun,
   type ActionRegistry,
   type ProcessAction,
   type ProcessRunOptions
-} from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+} from '@harness/kernel/loops/runtimes/atta-engine/run-process'
 import { DEFAULT_REVIEWER_TIMEOUT_MS, DEFAULT_TIMEOUT_MS } from '../loops/dev-review/dispatch/dispatch'
 import type { LaunchRecord, ParsedLaunch } from '../loops/dev-review/dispatch/dispatch'
 import {
@@ -43,7 +43,7 @@ import {
   latestHeldCleanVerdict,
   writeHeldVerdict
 } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
-import { loopLogPathFor } from '../../../kernel/log/client/loop-log'
+import { loopLogPathFor } from '@harness/kernel/log/client/loop-log'
 import { parseReviewResult } from '../executing/code-reviewer/review-result'
 import { manifestDigest } from '../executing/code-reviewer/review-result'
 import {
@@ -618,9 +618,7 @@ describe('resuming on code that moved', () => {
       actions: { 'harness.run-gates': () => haltThen(control, 'x') }
     })
     await runEngine(first.options)
-    const { SqliteCheckpointer } = await import(
-      '../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
-    )
+    const { SqliteCheckpointer } = await import('@harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer')
     const saver = new SqliteCheckpointer({
       path: join(first.runtimeDir, 'engine-runs', String(TASK), 'checkpoints.sqlite'),
       revision: 'rev-new'
@@ -1434,7 +1432,7 @@ describe('the Engine ruling watch ends the person span an earlier process asked'
           }
         }
         const watched = await watchForRuling(world.runtimeDir, facts.task, watch, new AbortController().signal)
-        await (await import('../../../kernel/log/run-recorder')).runRecorder().drain()
+        await (await import('@harness/kernel/log/run-recorder')).runRecorder().drain()
         return watched
       })
       expect(result).toMatchObject({ kind: 'ruled', escalationId })

@@ -34,8 +34,8 @@ import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CHANGESET_RELEASE_BRANCH } from '../../tools/review-gate'
-import { repoRoot, resolveDiff } from '../../../../../harness/kernel/connectors/git/diff-evidence'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../../harness/kernel/gates/checks/contract'
+import { repoRoot, resolveDiff } from '@harness/kernel/connectors/git/diff-evidence'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import {
   evaluateChangesetCoverage,
   evaluateIgnoredChangesets,

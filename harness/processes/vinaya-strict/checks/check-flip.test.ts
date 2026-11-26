@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { duplicateIdFailures } from './check'
 import { coreCheckRegistry } from './registry'
-import { runsUnderAll } from '../../../kernel/gates/checks/registry'
+import { runsUnderAll } from '@harness/kernel/gates/checks/registry'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', 'apps', 'cli')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')

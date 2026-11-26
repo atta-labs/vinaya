@@ -2,17 +2,17 @@ import {
   initialLoopState,
   type DevReviewLoopEventInput,
   type LoopState
-} from '../../../../tools/dev-review-policy/types'
+} from '@harness/workflow/tools/dev-review-policy/types'
 import {
   reconstructRounds,
   type ReconstructedJournal
-} from '../../../../tools/dev-review-policy/journal-reconstruction'
+} from '@harness/workflow/tools/dev-review-policy/journal-reconstruction'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import * as lifecycle from '../../../../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
+import * as lifecycle from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
 import {
   createDriverExitRecorder,
   keepDriverLock,
@@ -20,9 +20,14 @@ import {
   taskRunId,
   writeRunLifecycleEvent,
   type DriverExitReason
-} from '../../../../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
-import type { RunRecorder } from '../../../../../../kernel/log/run-recorder'
-import { attributeOf, createRunLifecycleWorld, eventNameOf, type RunLifecycleWorld } from '../../../run-lifecycle-world'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
+import type { RunRecorder } from '@harness/kernel/log/run-recorder'
+import {
+  attributeOf,
+  createRunLifecycleWorld,
+  eventNameOf,
+  type RunLifecycleWorld
+} from '@harness/workflow/tests/run-lifecycle-world'
 
 const scratch: string[] = []
 afterEach(() => {

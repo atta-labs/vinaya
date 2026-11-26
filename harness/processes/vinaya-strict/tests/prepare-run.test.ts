@@ -1,26 +1,26 @@
 import { initialLoopState } from '../tools/dev-review-policy/types'
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { createRunControl, type RunControl } from '@atta/executor-agent-spawn'
 import { MemorySaver } from '@langchain/langgraph'
-import { loadProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import {
   resumeProcessRun,
   startProcessRun,
   type ProcessAction,
   type ProcessRunOptions
-} from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+} from '@harness/kernel/loops/runtimes/atta-engine/run-process'
 import { isHostRepairPause, readPauseState } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
 import { DispatchSandboxRefused } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
-import type { EnforcementControl } from '../../../kernel/gates/enforcement-controls'
-import type { PreparedSource, RequiredSourceManifest } from '../../../kernel/source-manifest'
-import { sourceReceiptsPath } from '../../../kernel/source-manifest'
-import { SourceReaderUnavailable } from '../../../kernel/tools/source-provider'
-import type { FetchDocumentationDeps } from '../../../kernel/tools/fetch-documentation'
-import type { SandboxProbePlan } from '../../../kernel/isolation/worker-boundary'
+import type { EnforcementControl } from '@harness/kernel/gates/enforcement-controls'
+import type { PreparedSource, RequiredSourceManifest } from '@harness/kernel/source-manifest'
+import { sourceReceiptsPath } from '@harness/kernel/source-manifest'
+import { SourceReaderUnavailable } from '@harness/kernel/tools/source-provider'
+import type { FetchDocumentationDeps } from '@harness/kernel/tools/fetch-documentation'
+import type { SandboxProbePlan } from '@harness/kernel/isolation/worker-boundary'
 import { BRANCH, fakeDeps, makeWorld } from './live-developer-context-world'
 import {
   createActions,
