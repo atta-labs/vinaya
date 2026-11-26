@@ -53,7 +53,7 @@
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { PROGRAMS, programInvocation } from '../../../tools/programs.js'
+import { PROGRAMS, programInvocation } from '@harness/workflow/tools/programs.js'
 
 /** The serve program's source, repository-relative as the registration names it. */
 const SERVE_SOURCE = PROGRAMS.get('task-tools-serve')?.source ?? ''
@@ -70,8 +70,8 @@ import {
   acquireOwnership,
   consumeResolutionOnce,
   defaultControlStoreDeps
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
-import { tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import { tasksExecutionRoot } from '@harness/kernel/run-paths.js'
 import { claudeMcpJsonFile } from '../../adapters.js'
 
 const ISSUE = 9301

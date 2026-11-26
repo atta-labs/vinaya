@@ -12,8 +12,8 @@ import {
   customHooksPath,
   detectGitRepo,
   ghAuthStatus
-} from '../../../../../kernel/connectors/git/detect.js'
-import type { LabelGateway } from '../../../../../kernel/gates/ops.js'
+} from '@harness/kernel/connectors/git/detect.js'
+import type { LabelGateway } from '@harness/kernel/gates/ops.js'
 
 // `gh api repos/<owner>/<repo>/branches/main/protection` exits non-zero for
 // three genuinely different reasons — only two of them are KNOWN, real

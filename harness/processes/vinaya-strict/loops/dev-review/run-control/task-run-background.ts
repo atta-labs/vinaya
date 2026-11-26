@@ -32,7 +32,7 @@
 import { closeSync, constants as fsConstants, mkdirSync, openSync } from 'node:fs'
 import { hostname as osHostname } from 'node:os'
 import { dirname } from 'node:path'
-import { resolveRepo as realResolveRepo } from '../../../../../kernel/adapters/code-host/github/resolve-repo'
+import { resolveRepo as realResolveRepo } from '@harness/kernel/adapters/code-host/github/resolve-repo'
 import {
   acquireOwnership,
   appendTransition,
@@ -44,10 +44,10 @@ import {
   type RunRecord,
   writeInput,
   writeRun
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 import { launchSelfDetached } from './detached-launch.js'
-import { controlStoreRoot } from '../../../../../kernel/effects/effects.js'
-import { markProcessUnattended } from '../../../../../kernel/run-paths.js'
+import { controlStoreRoot } from '@harness/kernel/effects/effects.js'
+import { markProcessUnattended } from '@harness/kernel/run-paths.js'
 import {
   type AgentVendor,
   captureSettledChildSnapshot,
@@ -57,7 +57,7 @@ import {
   terminateChildWithGrace
 } from '../dispatch/dispatch.js'
 import { fenceStartedEffectsAsUncertain } from '../standalone/dev-review-loop/pause-resume.js'
-import { loopLogPathFor } from '../../../../../kernel/log/client/loop-log.js'
+import { loopLogPathFor } from '@harness/kernel/log/client/loop-log.js'
 import { defaultRunTaskDeps, resolveIssueForRunTask, type RunTaskInput } from './task-run.js'
 
 /** `bg-<task>-<epoch>` — a single path-safe segment (`control-store/local.ts`'s `SAFE_ID_SEGMENT`), unique per epoch so a restart's fresh `writeRun` never collides with a prior, now-stale attempt's own record. */

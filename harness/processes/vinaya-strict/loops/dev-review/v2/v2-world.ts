@@ -1,28 +1,28 @@
-import { fixtureDir } from '../../../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { execFileSync } from 'node:child_process'
 import {
   chooseTests,
   type FailedTestsRecord,
   recordFromRun
-} from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import {
   DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
   DEFAULT_REVIEW_POLICY,
   type ReviewPolicy
-} from '../../../tools/task-contract/review-policy'
-import { objectivesVersion } from '../../../tools/task-contract/objectives'
+} from '@harness/workflow/tools/task-contract/review-policy'
+import { objectivesVersion } from '@harness/workflow/tools/task-contract/objectives'
 import { createRunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
-import { loadProcess } from '../../../../../../harness/kernel/dev-process-socket/loader/load-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import {
   keepLogLocal,
   QUIET_FORGE_GATES,
   SCENARIO_ENV_KEYS,
   testForge,
   useRuntimeDir
-} from '../../../tests/round-fakes'
-import type { ActionRegistry } from '../../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+} from '@harness/workflow/tests/round-fakes'
+import type { ActionRegistry } from '@harness/kernel/loops/runtimes/atta-engine/run-process'
 import { clearDriverLock, pauseMarker, writePauseState } from '../standalone/dev-review-loop/pause-resume'
 import { cleanupAllReviewerIsolationArtifacts } from '../standalone/dev-review-loop/reviewer-isolation'
 import { parseMergeTreeConflictFiles } from '../standalone/dev-review-loop/gate-reading'
@@ -33,8 +33,8 @@ import {
   type EngineForge,
   type EngineRunOptions,
   type RunTrace
-} from '../../../bin/run-engine'
-import { createActions } from '../../../executing/actions'
+} from '@harness/workflow/bin/run-engine'
+import { createActions } from '@harness/workflow/executing/actions'
 import {
   createV2Actions,
   type ExplicitCommandsResult,
@@ -43,8 +43,8 @@ import {
   type V2Functions
 } from './v2-actions'
 import type { RequiredCiRead } from './ci-recovery'
-import type { DeveloperPromptFacts } from '../../../executing/developer-prompt'
-import { liveHandoffDeps, type HandoffDeps } from '../../../executing/handoff'
+import type { DeveloperPromptFacts } from '@harness/workflow/executing/developer-prompt'
+import { liveHandoffDeps, type HandoffDeps } from '@harness/workflow/executing/handoff'
 
 // A world for version 2 of the developer-review Flow (review locally, push once), driven end to end on the real
 // runner, the real v2 Flow and its real bound actions: a real git repository and worktree, a stand-in local check

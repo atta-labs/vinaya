@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { installedCheckRegistry } from '../../../../harness/kernel/gates/checks/registry'
-import { isValidNamespacedKey } from '../../../../harness/kernel/gates/checks/resolver.js'
+import { installedCheckRegistry } from '@harness/kernel/gates/checks/registry'
+import { isValidNamespacedKey } from '@harness/kernel/gates/checks/resolver.js'
 import { packageRoot } from '../lib/package-root.js'
 
 const TEMPLATE_PATH = join(packageRoot(import.meta.url), 'templates', 'custom-check.template.ts')

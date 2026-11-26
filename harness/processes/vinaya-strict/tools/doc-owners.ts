@@ -1,4 +1,4 @@
-import { globToRegex } from '../../../kernel/gates/glob-to-regex'
+import { globToRegex } from '@harness/kernel/gates/glob-to-regex'
 /**
  * The `.vinaya/doc-owners` manifest parser and the C5 code→doc
  * coverage evaluator (state-machine.md Section 15). Pure — I/O (reading the

@@ -5,7 +5,7 @@ import {
   editMilestone,
   deleteMilestone,
   adoptMilestone
-} from '../../../tools/milestone/milestone-operations'
+} from '@harness/workflow/tools/milestone/milestone-operations'
 import {
   milestoneHandler,
   milestoneEntry,
@@ -14,7 +14,7 @@ import {
   numberSchema,
   textSchema,
   validateOnlySchema
-} from '../../../tools/milestone/milestone-tools'
+} from '@harness/workflow/tools/milestone/milestone-tools'
 
 export const ARCHITECT_TOOL_NAMES = [
   'milestone_create',

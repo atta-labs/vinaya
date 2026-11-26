@@ -8,8 +8,8 @@
  * The six states and the rules that pick one are in `./README.md`.
  */
 
-import type { NarrationKind } from '../../../../kernel/log/client/narration'
-import type { NormalizedLine } from '../../../../kernel/log/sync/row'
+import type { NarrationKind } from '@harness/kernel/log/client/narration'
+import type { NormalizedLine } from '@harness/kernel/log/sync/row'
 
 /** The six states, in the order a screen lists them: the first needs a person most. */
 export const TASK_STATES = [

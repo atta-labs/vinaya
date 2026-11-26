@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
-import type { CheckSpec } from '../../../../../kernel/gates/checks/contract'
-import { coreCheckRegistry } from '../../../checks/registry'
-import { runChecks } from '../../../../../kernel/gates/checks/runner'
+import type { CheckSpec } from '@harness/kernel/gates/checks/contract'
+import { coreCheckRegistry } from '@harness/workflow/checks/registry'
+import { runChecks } from '@harness/kernel/gates/checks/runner'
 
 /**
  * The no-privileged-API proof. This test must fail if someone later adds

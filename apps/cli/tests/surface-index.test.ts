@@ -3,8 +3,8 @@ import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import ts from 'typescript'
-import { COMMANDS } from '../../../harness/processes/vinaya-strict/integration/commands.js'
-import type { SurfaceExemption } from '../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
+import { COMMANDS } from '@harness/workflow/integration/commands.js'
+import type { SurfaceExemption } from '@harness/workflow/tools/pr-report/surface-exemption'
 
 /**
  * Enforces the layering rule against the real source tree — no hand-maintained

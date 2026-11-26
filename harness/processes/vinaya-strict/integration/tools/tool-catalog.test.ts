@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { validatesJsonSchema } from '../../../../kernel/tools/json-schema-check.js'
+import { validatesJsonSchema } from '@harness/kernel/tools/json-schema-check.js'
 import {
   AGENT_TOOL_CATALOG,
   DEV_TOOL_CATALOG,
@@ -8,8 +8,8 @@ import {
   TOOL_ERROR_FIELDS_SCHEMA,
   TOOL_INFRASTRUCTURE_ERROR_SCHEMA,
   TOOL_REFUSAL_SCHEMA
-} from '../../../../kernel/tools/tool-catalog.js'
-import { createDevToolsMcpServer, type DevToolContext } from '../../../../kernel/tools/dev-tools-server.js'
+} from '@harness/kernel/tools/tool-catalog.js'
+import { createDevToolsMcpServer, type DevToolContext } from '@harness/kernel/tools/dev-tools-server.js'
 import { projectPrChecks, projectPrReviews } from '../../loops/dev-review/standalone/dev-review-loop.js'
 import { vinayaToolGrantPolicy } from '../policies/vinaya-policies.js'
 

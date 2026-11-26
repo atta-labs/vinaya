@@ -1,5 +1,5 @@
-import { isEntryPoint } from '../../../../../kernel/gates/checks/entry-point.js'
-import { forgeSnapshotCommand } from '../../../../../kernel/adapters/code-host/github/forge-snapshot'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
+import { forgeSnapshotCommand } from '@harness/kernel/adapters/code-host/github/forge-snapshot'
 import { REGION_PREFIXES } from '../../legacy-markers.js'
 
 /**

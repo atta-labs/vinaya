@@ -25,7 +25,7 @@ import { VERDICT_MARKER_SOURCE } from '../tools/task-contract/verdict-extraction
 import { WAIVER_LABEL_REVIEW } from '../tools/task-contract/waiver-label'
 import { DOC_OWNERS_PATH } from '../tools/doc-owners'
 import { resolveDoctrineRoot } from '../tools/doctrine/resolve-doctrine'
-import type { AgentVendor } from '../../../kernel/adapters/agents/agent-vendors.js'
+import type { AgentVendor } from '@harness/kernel/adapters/agents/agent-vendors.js'
 import { buildAgentsSkillsOps, discoverRoleNames } from './agents-skills-emitter.js'
 import { claudeMcpJsonFile } from './adapters.js'
 import {
@@ -33,25 +33,25 @@ import {
   CHECKS_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
   REVIEW_WORKFLOW_PATH
-} from '../../../kernel/gates/ring1-ci/workflows/managed-workflow-paths.js'
+} from '@harness/kernel/gates/ring1-ci/workflows/managed-workflow-paths.js'
 import { buildClaudeCommandOps } from './claude-command-emitter.js'
 import { buildClaudeStopHookOps } from './claude-stop-hook-emitter.js'
 import type { VinayaConfig } from './config/compose.js'
 import { buildGeminiCommandOp } from './gemini-command-emitter.js'
-import { type HookDir, TRACKED_HOOK_DIR } from '../../../kernel/gates/ring0-hooks/init-hook-paths.js'
-import type { CreateLabelOp, Op } from '../../../kernel/gates/ops.js'
+import { type HookDir, TRACKED_HOOK_DIR } from '@harness/kernel/gates/ring0-hooks/init-hook-paths.js'
+import type { CreateLabelOp, Op } from '@harness/kernel/gates/ops.js'
 import { ownVersion } from '../tools/own-version.js'
 import { REVIEW_GATE_WORKFLOW_NAME } from '../tools/review-gate-check-name.js'
 import {
   ADOPTER_TEST_RUNNER,
   NO_LOCAL_TESTS_MARKER,
   REPOSITORY_LOCAL_RUN
-} from '../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.js'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.js'
 import { READY_TESTS_DEFERRED_LINE } from '../tools/pre-push-ready-policy.js'
 import type { VendoredVinaya } from '../tools/self-host.js'
 import { type Program, PROGRAMS, programForWords } from '../tools/programs.js'
 
-export { type HookDir, TRACKED_HOOK_DIR } from '../../../kernel/gates/ring0-hooks/init-hook-paths.js'
+export { type HookDir, TRACKED_HOOK_DIR } from '@harness/kernel/gates/ring0-hooks/init-hook-paths.js'
 
 export type InitContext = {
   owner: string

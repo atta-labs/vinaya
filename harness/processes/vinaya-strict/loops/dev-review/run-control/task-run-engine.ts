@@ -3,9 +3,9 @@ import { accessSync, constants, existsSync, readFileSync, renameSync, statSync, 
 import { delimiter, dirname, join } from 'node:path'
 import type { AgentVendor } from '../dispatch/dispatch.js'
 import { isDriverPidAlive, readDriverLock } from '../standalone/dev-review-loop/pause-resume.js'
-import { programFile } from '../../../tools/programs.js'
-import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../../kernel/run-paths.js'
-import type { TaskRunner } from '../../../integration/config/compose.js'
+import { programFile } from '@harness/workflow/tools/programs.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo } from '@harness/kernel/run-paths.js'
+import type { TaskRunner } from '@harness/workflow/integration/config/compose.js'
 
 export type EngineRunInput = { task: number; agent: AgentVendor; model?: string; effort?: string; flow?: string }
 

@@ -5,8 +5,8 @@
  * caller hands it another reader.
  */
 
-import type { LaunchRecordVerifier } from '../../../../kernel/tools/host/broker.js'
-import type { Role } from '../../../../kernel/log/schema'
+import type { LaunchRecordVerifier } from '@harness/kernel/tools/host/broker.js'
+import type { Role } from '@harness/kernel/log/schema'
 import {
   type DispatchTeeRecoveryDeps,
   launchRecordMatchesRun,

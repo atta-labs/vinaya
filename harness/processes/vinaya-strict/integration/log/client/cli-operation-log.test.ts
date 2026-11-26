@@ -11,9 +11,9 @@ import {
   DRAIN_TARGET,
   recordCliOperationAtExit,
   UNKNOWN_CLI_TARGET
-} from '../../../../../kernel/log/client/cli-operation-log.js'
-import { storedEvents } from '../../../../../kernel/gates/checks/runner/local-copy-probe.js'
-import { isolatedConfigFixture, spawnSyncBudgeted } from '../../../../../kernel/conformance/unit/process-fixture.js'
+} from '@harness/kernel/log/client/cli-operation-log.js'
+import { storedEvents } from '@harness/kernel/gates/checks/runner/local-copy-probe.js'
+import { isolatedConfigFixture, spawnSyncBudgeted } from '@harness/kernel/conformance/unit/process-fixture.js'
 
 type CommandRecord = NonNullable<ReturnType<typeof cliOperationRecord>>
 

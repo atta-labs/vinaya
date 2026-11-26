@@ -7,7 +7,7 @@
 // the trap was in place before any signal arrived and can check that this
 // exact process is gone afterwards.
 import { appendFileSync } from 'node:fs'
-import { identityOf } from '../../../conformance/unit/process-registry'
+import { identityOf } from '@harness/kernel/conformance/unit/process-registry'
 
 process.on('SIGTERM', () => {})
 const ms = Number(process.argv[2] ?? '0')

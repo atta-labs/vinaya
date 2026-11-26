@@ -10,8 +10,8 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
-import { assembleAndRenderBrief } from '../../../tools/task-contract/brief-assembly.js'
-import type { TaskRunner } from '../../../integration/config/compose.js'
+import { assembleAndRenderBrief } from '@harness/workflow/tools/task-contract/brief-assembly.js'
+import type { TaskRunner } from '@harness/workflow/integration/config/compose.js'
 import { type AgentVendor, type DispatchEffort, isDispatchEffort } from '../dispatch/dispatch.js'
 import {
   developerBranchAndTitleFor,
@@ -27,7 +27,7 @@ import {
   writePauseState
 } from '../standalone/dev-review-loop/pause-resume.js'
 import { runtimeDir as thisRepoRuntimeDir } from '../standalone/dev-review-loop/reviewer-dispatch.js'
-import { appendDriverLine, loopLogPathFor } from '../../../../../kernel/log/client/loop-log.js'
+import { appendDriverLine, loopLogPathFor } from '@harness/kernel/log/client/loop-log.js'
 import { engineRunDirectory, readTaskRunner } from './task-run-engine.js'
 import { startBackgroundRun } from './task-run-background.js'
 

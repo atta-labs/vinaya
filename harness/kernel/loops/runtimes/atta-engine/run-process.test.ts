@@ -9,8 +9,8 @@ import {
   type SpawnFn,
   type SpawnedProcessLike
 } from '@atta/executor-agent-spawn'
-import type { GeneratedAgentConfig } from '../../../isolation/policy'
-import { loadProcess } from '../../../dev-process-socket/loader/load-process'
+import type { GeneratedAgentConfig } from '@harness/kernel/isolation/policy'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import {
   createRoleLauncher,
   resumeProcessRun,

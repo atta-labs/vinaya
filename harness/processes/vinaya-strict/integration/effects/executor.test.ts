@@ -17,15 +17,15 @@ import {
   defaultControlStoreDeps,
   readEffect,
   StaleEpochWriteError
-} from '../../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 import {
   createEffectExecutor,
   EffectExecutor,
   EffectRetryRefusedError,
   type EffectReconcileResult,
   sha256Hex
-} from '../../../../kernel/effects/effects'
-import type { ActionRecord } from '../../../../kernel/log/outside-log'
+} from '@harness/kernel/effects/effects'
+import type { ActionRecord } from '@harness/kernel/log/outside-log'
 import { isolatedLocalCopy } from '../log/client/local-copy-fixture'
 
 let dir: string

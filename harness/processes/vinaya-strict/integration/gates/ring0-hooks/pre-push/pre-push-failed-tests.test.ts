@@ -40,8 +40,8 @@ import {
   FAILED_TESTS_RECORD,
   gitPath,
   writeJsonUnderGit
-} from '../../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
-import { prePushSelection } from '../../../pre-push-selection'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
+import { prePushSelection } from '@harness/workflow/integration/pre-push-selection'
 import {
   addedOrRenamedFilesSinceRemoteBase,
   changedFileDiffsSinceRemoteBase,
@@ -49,9 +49,9 @@ import {
   cleanMergeOnto,
   type ReadFailure,
   removedFilesSinceRemoteBase
-} from '../../../../../../kernel/connectors/git/remote-base'
-import { ROOT_CONFIG_FILENAME } from '../../../repository-verification'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture'
+} from '@harness/kernel/connectors/git/remote-base'
+import { ROOT_CONFIG_FILENAME } from '@harness/workflow/integration/repository-verification'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 const RECORDER = join(import.meta.dir, '../../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-record-tests.ts')
 

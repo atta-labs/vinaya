@@ -30,7 +30,7 @@ import {
   runPath,
   UNATTENDED_ENV_KEY,
   type RunPathsRepo
-} from '../../../kernel/run-paths'
+} from '@harness/kernel/run-paths'
 import type { VinayaConfig } from './config/compose'
 
 const REPO: RunPathsRepo = { owner: 'atta-labs', repo: 'vinaya' }

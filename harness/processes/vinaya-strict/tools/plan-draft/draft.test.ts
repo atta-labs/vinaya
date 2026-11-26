@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PLAN_DRAFTS_DIRNAME } from '../../../../kernel/run-paths'
+import { PLAN_DRAFTS_DIRNAME } from '@harness/kernel/run-paths'
 import { readStoredPlanDraft, submitPlanDraft } from '../../thinking/planner/tools/planner-operations'
 import {
   canonicalDraft,

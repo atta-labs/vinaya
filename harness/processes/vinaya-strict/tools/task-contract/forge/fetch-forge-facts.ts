@@ -32,7 +32,7 @@ import type {
   RawTaskFacts,
   TaskRef
 } from '../tranche-types'
-import { resolveGithubToken } from '../../../../../kernel/adapters/code-host/github/github-token'
+import { resolveGithubToken } from '@harness/kernel/adapters/code-host/github/github-token'
 import { trancheLabel } from './labels'
 import { mapForgeFacts } from './map-forge-facts'
 

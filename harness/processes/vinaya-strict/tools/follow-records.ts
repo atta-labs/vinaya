@@ -11,11 +11,11 @@ import {
   SPAN_NAMES as S,
   spanIdFor
 } from '@attalabs/vinaya-log-sdk'
-import { isProgressLine } from '../../../kernel/gates/ring0-hooks/pre-push/push-progress.js'
-import { type AgentLineMark, renderNarratedUpdate } from '../../../kernel/adapters/agents/agent-line.js'
-import type { ActionKind } from '../../../kernel/adapters/agents/claude-code/loop-narration-claude.js'
-import { lookupRole, registeredRoles } from '../../../kernel/log/roles.js'
-import type { Role } from '../../../kernel/log/schema.js'
+import { isProgressLine } from '@harness/kernel/gates/ring0-hooks/pre-push/push-progress.js'
+import { type AgentLineMark, renderNarratedUpdate } from '@harness/kernel/adapters/agents/agent-line.js'
+import type { ActionKind } from '@harness/kernel/adapters/agents/claude-code/loop-narration-claude.js'
+import { lookupRole, registeredRoles } from '@harness/kernel/log/roles.js'
+import type { Role } from '@harness/kernel/log/schema.js'
 import {
   createFollowRenderer,
   type DriverLogLine,

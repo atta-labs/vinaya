@@ -1,4 +1,8 @@
-import { FIELD_LABEL, NEXT_HEADER, SECTION_HEADER } from '../../../tools/task-contract/forge/parse-rationale-deps'
+import {
+  FIELD_LABEL,
+  NEXT_HEADER,
+  SECTION_HEADER
+} from '@harness/workflow/tools/task-contract/forge/parse-rationale-deps'
 
 /**
  * Input to {@link amendRationaleDeps}. A field left `undefined` is untouched;

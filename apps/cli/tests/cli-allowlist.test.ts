@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { PROGRAMS } from '../../../harness/processes/vinaya-strict/tools/programs.js'
+import { PROGRAMS } from '@harness/workflow/tools/programs.js'
 
 // The command line's allow list: `ownership.json` classifies every tracked file under `apps/cli` by what it is,
 // and names every route the router dispatches as a command a person types.

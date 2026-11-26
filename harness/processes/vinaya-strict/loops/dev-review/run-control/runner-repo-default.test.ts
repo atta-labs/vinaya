@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { CONFIG_REFERENCE } from '../../../integration/config-reference.js'
-import { loadConfigChecked, resolveTaskRunner, type VinayaConfig } from '../../../integration/config/compose'
+import { CONFIG_REFERENCE } from '@harness/workflow/integration/config-reference.js'
+import { loadConfigChecked, resolveTaskRunner, type VinayaConfig } from '@harness/workflow/integration/config/compose'
 import { cancelDevReviewLoop, taskFromPrBody } from '../standalone/dev-review-loop'
 import { readDriverLock, readPauseState, writeDriverLock } from '../standalone/dev-review-loop/pause-resume'
 import { runnerReadingFor } from './task-status'
@@ -11,13 +11,13 @@ import { runTask, type RunTaskDeps } from './task-run'
 import { readTaskRunner, recordTaskRunner, taskRunnerRecordPath } from './task-run-engine'
 import { createTaskCancelHandler } from './cancel'
 import { resumeContinuation } from './resume'
-import { programInvocation } from '../../../tools/programs'
+import { programInvocation } from '@harness/workflow/tools/programs'
 import {
   makeWorld,
   runLoopInProcess,
   withWorldEnv,
   type RoleOutcome
-} from '../../../tests/standalone/lib/dev-review-loop-harness'
+} from '@harness/workflow/tests/standalone/lib/dev-review-loop-harness'
 
 const REPO_ROOT = resolve(import.meta.dir, '../../../../../..')
 

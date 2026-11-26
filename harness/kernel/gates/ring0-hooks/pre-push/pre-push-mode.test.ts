@@ -2,7 +2,7 @@
 // while no pull request is open, and a forge read that fails refuses them.
 import { describe, expect, it } from 'bun:test'
 import { resolvePushMode, storageMarkerText } from './pre-push-mode-logic'
-import { resolveRemoteBase } from '../../../connectors/git/remote-base'
+import { resolveRemoteBase } from '@harness/kernel/connectors/git/remote-base'
 
 const never = () => {
   throw new Error('the forge must not be asked outside a storage push')

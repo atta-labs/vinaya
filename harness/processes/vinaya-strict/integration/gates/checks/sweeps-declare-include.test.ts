@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { coreCheckRegistry } from '../../../checks/registry'
-import { DOCTRINE_REPO_PATHS } from '../../../tools/doctrine/doctrine-map'
+import { coreCheckRegistry } from '@harness/workflow/checks/registry'
+import { DOCTRINE_REPO_PATHS } from '@harness/workflow/tools/doctrine/doctrine-map'
 
 /**
  * Pins task 12's (#387) cost-savings claim: every `scope: 'full'` registry

@@ -100,12 +100,12 @@
  * carve-out from reopening that exact class.
  */
 
-import { anchoredRegionBounds } from '../../../kernel/gates/checks/anchored-region'
+import { anchoredRegionBounds } from '@harness/kernel/gates/checks/anchored-region'
 import { REGION_PREFIXES } from './legacy-markers'
 import { objectivesSectionBounds } from './task-contract/objectives'
 import { TIER_FIELD } from './task-contract/pr-tier'
 import { PROJECT_SLUG, unwrapValue } from './task-contract/forge/list-tasks'
-import { ScanContext } from '../../../kernel/gates/checks/scan-context'
+import { ScanContext } from '@harness/kernel/gates/checks/scan-context'
 
 export type BareDigitViolation = { line: number; text: string }
 export type BareDigitScanResult = { violations: BareDigitViolation[] }

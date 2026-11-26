@@ -7,15 +7,15 @@ import {
   agentDispatchControls,
   describeInactiveControls,
   enforcementControlsActive
-} from '../../../../kernel/gates/enforcement-controls.js'
+} from '@harness/kernel/gates/enforcement-controls.js'
 import {
   hookRoutingRepairLine,
   installedHookDir,
   localGateControl,
   realLocalGateControl,
   repairLocalGateControl
-} from '../../../../kernel/gates/local-gate-control.js'
-import { fixtureDir } from '../../../../kernel/conformance/unit/test-temp-fixture'
+} from '@harness/kernel/gates/local-gate-control.js'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { checkTaskDispatchReadiness } from '../../loops/dev-review/standalone/dev-review-loop/developer-dispatch.js'
 
 const roots: string[] = []

@@ -43,7 +43,7 @@ describe('stageCodexAuth', () => {
 
 describe('createRoleLauncher stages the Codex login', () => {
   test('a Codex launch whose CODEX_HOME is the generated dir gets auth.json; without the opt-in it does not', async () => {
-    const { createRoleLauncher } = await import('../../../loops/runtimes/atta-engine/run-process')
+    const { createRoleLauncher } = await import('@harness/kernel/loops/runtimes/atta-engine/run-process')
     const opHome = mkdtempSync(join(tmpdir(), 'op-codex-'))
     writeFileSync(join(opHome, 'auth.json'), 'login')
     const saved = process.env.CODEX_HOME
@@ -73,7 +73,7 @@ describe('createRoleLauncher stages the Codex login', () => {
 
 describe('createRoleLauncher stageCodexLogin guard', () => {
   const launch = async (config: Record<string, unknown>, generatedDir: string) => {
-    const { createRoleLauncher } = await import('../../../loops/runtimes/atta-engine/run-process')
+    const { createRoleLauncher } = await import('@harness/kernel/loops/runtimes/atta-engine/run-process')
     return createRoleLauncher({ launch: ['x'], files: {}, executableFiles: [], ...config } as never, {
       generatedDir,
       allowedPermissions: [],

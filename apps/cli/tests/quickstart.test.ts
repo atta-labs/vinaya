@@ -1,4 +1,4 @@
-import { installVinayaCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry'
+import { installVinayaCheckRegistry } from '@harness/workflow/checks/registry'
 installVinayaCheckRegistry()
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
@@ -6,14 +6,14 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DOC_OWNERS_PATH } from '../../../harness/processes/vinaya-strict/tools/doc-owners'
+import { DOC_OWNERS_PATH } from '@harness/workflow/tools/doc-owners'
 import type { DoctorDeps } from '../src/commands/doctor.js'
 import type { InitDeps } from '../src/commands/init.js'
 import type { QuickstartDeps } from '../src/commands/quickstart.js'
 import { runQuickstart } from '../src/commands/quickstart.js'
-import { PROJECTS_REGISTRY_PATH } from '../../../harness/processes/vinaya-strict/artifacts/registry-write.js'
-import type { LabelGateway } from '../../../harness/kernel/gates/ops.js'
-import { programFile } from '../../../harness/processes/vinaya-strict/tools/programs.js'
+import { PROJECTS_REGISTRY_PATH } from '@harness/workflow/artifacts/registry-write.js'
+import type { LabelGateway } from '@harness/kernel/gates/ops.js'
+import { programFile } from '@harness/workflow/tools/programs.js'
 import { FIXTURE_HOOK_PARALLEL, HOOK_TEST_BOUND_MS, stripAmbientFixtureEnv } from './fixture-env.js'
 
 // The real CLI source, invoked directly by `bun` — same technique

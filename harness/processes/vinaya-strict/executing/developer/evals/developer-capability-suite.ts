@@ -8,7 +8,7 @@
  * trees. Development tooling reads only the development cases and the public
  * held-out index; only an approved run opens the held-out file.
  */
-import { parseIssueDocumentation } from '../../../../../kernel/issue-documentation'
+import { parseIssueDocumentation } from '@harness/kernel/issue-documentation'
 import { createHash } from 'node:crypto'
 import {
   appendFileSync,
@@ -27,12 +27,15 @@ import {
   beyondSurfacePaths,
   globCoversPath,
   recordedBeyondSurfacePaths
-} from '../../../tools/task-contract/issue-validation'
-import { defaultControlStoreDeps } from '../../../../../kernel/connectors/checkpoint/control-store/index'
-import { TASK_TOOL_NAMES } from '../../../../../kernel/tools/catalog/task-tools'
+} from '@harness/workflow/tools/task-contract/issue-validation'
+import { defaultControlStoreDeps } from '@harness/kernel/connectors/checkpoint/control-store/index'
+import { TASK_TOOL_NAMES } from '@harness/kernel/tools/catalog/task-tools'
 
-import { ProtectedPathError, scopeTarget } from '../../../../../kernel/tools/host/broker'
-import { authenticateWorkerInvocation, requestEffect } from '../../../integration/tools/host/broker/vinaya-broker'
+import { ProtectedPathError, scopeTarget } from '@harness/kernel/tools/host/broker'
+import {
+  authenticateWorkerInvocation,
+  requestEffect
+} from '@harness/workflow/integration/tools/host/broker/vinaya-broker'
 import {
   type CodeGraderIdentity,
   createSuite,
@@ -40,20 +43,20 @@ import {
   type Suite,
   type Task,
   validateTask
-} from '../../../../../kernel/evals/contracts'
+} from '@harness/kernel/evals/contracts'
 import { validateDeveloperTurnResult, type DeveloperTurnResult } from '../developer-turn-result'
 import {
   manifestDigest,
   sha256Digest,
   type RequiredSourceManifest,
   type SourceDeliveryReceipt
-} from '../../../../../kernel/source-manifest'
-import { documentationSourceId } from '../../../../../kernel/tools/fetch-documentation'
-import { ROLE_TOOL_GRANTS } from '../../../integration/policies/roles'
-import { AGENT_TOOL_CATALOG } from '../../../../../kernel/tools/tool-catalog'
-import { selectAffectedTestFiles } from '../../../integration/repository-verification'
-import { agentOwnConfigSubpaths } from '../../../../../kernel/isolation/worker-boundary'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
+} from '@harness/kernel/source-manifest'
+import { documentationSourceId } from '@harness/kernel/tools/fetch-documentation'
+import { ROLE_TOOL_GRANTS } from '@harness/workflow/integration/policies/roles'
+import { AGENT_TOOL_CATALOG } from '@harness/kernel/tools/tool-catalog'
+import { selectAffectedTestFiles } from '@harness/workflow/integration/repository-verification'
+import { agentOwnConfigSubpaths } from '@harness/kernel/isolation/worker-boundary'
+import { spawnBudgetedAsync, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 import {
   type CallPredicate,
   canonicalJson,

@@ -10,7 +10,7 @@
  * below under the same path it always had.
  */
 
-import type { VerdictObservation } from '../../../../tools/dev-review-policy/types'
+import type { VerdictObservation } from '@harness/workflow/tools/dev-review-policy/types'
 import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import {
@@ -22,23 +22,23 @@ import {
   isProseLocation,
   SECURITY_SEVERITY_ORDER,
   type ReviewPolicy
-} from '../../../../tools/task-contract/review-policy'
+} from '@harness/workflow/tools/task-contract/review-policy'
 import {
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict
-} from '../../../../tools/task-contract/verdict-extraction'
-import { globCoversPath, type IssueSurface } from '../../../../tools/task-contract/issue-validation'
-import type { Objective } from '../../../../tools/task-contract/objectives'
-import type { ReviewInputManifest } from '../../../../tools/task-contract/review-input-manifest'
+} from '@harness/workflow/tools/task-contract/verdict-extraction'
+import { globCoversPath, type IssueSurface } from '@harness/workflow/tools/task-contract/issue-validation'
+import type { Objective } from '@harness/workflow/tools/task-contract/objectives'
+import type { ReviewInputManifest } from '@harness/workflow/tools/task-contract/review-input-manifest'
 
 import {
   defaultControlStoreDeps,
   type ManifestInput,
   type ManifestRecord,
   writeManifest
-} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
-import { redact } from '../../../../../../kernel/log/redact'
-import { REVIEW_FINDING_DESCRIPTION_MAX_LENGTH } from '../../../../../../kernel/log/schema'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import { redact } from '@harness/kernel/log/redact'
+import { REVIEW_FINDING_DESCRIPTION_MAX_LENGTH } from '@harness/kernel/log/schema'
 import {
   checkDocCorrectnessSearch,
   checkObjectiveIdCoverage,
@@ -58,9 +58,9 @@ import type { AgentVendor, DispatchHandle } from '../../dispatch/dispatch.js'
 import {
   manifestDigest as reviewManifestDigest,
   type ReviewResult
-} from '../../../../executing/code-reviewer/review-result.js'
+} from '@harness/workflow/executing/code-reviewer/review-result.js'
 import { isStagedPrBodyFile, type ReviewerCandidateInputPaths } from './reviewer-isolation.js'
-import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../../../../../../kernel/run-paths.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '@harness/kernel/run-paths.js'
 
 // --- reviewer prompt (facts only) -----------------------------------------
 

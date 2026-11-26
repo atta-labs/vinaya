@@ -14,7 +14,7 @@ import { describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 import {
   exemptPrefixes,
   isLogCacheReaderIndex,
@@ -24,15 +24,15 @@ import {
   realRuntimeDir,
   SANCTIONED_APPEND_STREAMS,
   touchedSince
-} from '../../../../../kernel/conformance/unit/real-runtime-guard-core'
-import { TEST_TEMP_ROOT_ENV } from '../../../../../kernel/conformance/unit/test-temp'
-import { GATE_STREAM } from '../../../../../kernel/gates/checks/runner'
+} from '@harness/kernel/conformance/unit/real-runtime-guard-core'
+import { TEST_TEMP_ROOT_ENV } from '@harness/kernel/conformance/unit/test-temp'
+import { GATE_STREAM } from '@harness/kernel/gates/checks/runner'
 import {
   JUNIT_CONFIGURED_ENV,
   JUNIT_REPORT_ENV,
   junitRunConfig
-} from '../../../../../kernel/gates/ring0-hooks/pre-push/junit-store'
-import { CLI_OPERATION_STREAM } from '../../../../../kernel/log/client/cli-operation-log'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/junit-store'
+import { CLI_OPERATION_STREAM } from '@harness/kernel/log/client/cli-operation-log'
 
 /** The CLI's own entry point, run from source as the shipped program runs it. */
 const CLI_ENTRY = join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'apps', 'cli', 'src', 'index.ts')
@@ -469,7 +469,7 @@ describe('real runtime directory guard', () => {
         )
       expect(preload).not.toContain("'../../gates/")
       writeFileSync(join(work, 'test-env-preload.ts'), preload)
-      const kernelImport = "import '../../../kernel/conformance/unit/test-env-preload.ts'"
+      const kernelImport = "import '@harness/kernel/conformance/unit/test-env-preload.ts'"
       const processPreload = readFileSync(join(integration, 'test-preload.ts'), 'utf-8')
       expect(processPreload).toContain(kernelImport)
       writeFileSync(
@@ -477,7 +477,7 @@ describe('real runtime directory guard', () => {
         processPreload
           .replace(kernelImport, "import './test-env-preload.ts'")
           .replace(
-            "import('../../../kernel/dev-process-socket/contract/install-process.js')",
+            "import('@harness/kernel/dev-process-socket/contract/install-process.js')",
             `import(${JSON.stringify(join(kernelRoot, 'dev-process-socket', 'contract', 'install-process.ts'))})`
           )
           .replace(

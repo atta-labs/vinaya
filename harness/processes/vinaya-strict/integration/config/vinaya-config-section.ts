@@ -24,9 +24,9 @@ import {
   NO_TRUST_ANCHOR_REPO_MESSAGE,
   readLocalOverrideFile,
   type TrustAnchorFetcher
-} from '../../../../kernel/config/loader/config-loader.js'
-import { isSafeRepoRelPath, type KernelConfig } from '../../../../kernel/config/schema/config-schema.js'
-import type { GlobalOnlyKey, ProcessConfigSection } from '../../../../kernel/config/schema/process-config-section.js'
+} from '@harness/kernel/config/loader/config-loader.js'
+import { isSafeRepoRelPath, type KernelConfig } from '@harness/kernel/config/schema/config-schema.js'
+import type { GlobalOnlyKey, ProcessConfigSection } from '@harness/kernel/config/schema/process-config-section.js'
 import {
   outsideRepositoryReason,
   ProseRulesSchema,

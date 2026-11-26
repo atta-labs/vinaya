@@ -1,12 +1,15 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { programCommandLine } from '../../../tools/programs.js'
+import { programCommandLine } from '@harness/workflow/tools/programs.js'
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DEFAULT_REVIEW_POLICY, type ReviewPolicy } from '../../../tools/task-contract/review-policy'
-import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '../../../tools/task-contract/verdict-extraction'
-import { OBJECTIVES_SINCE_ISSUE } from '../../../tools/task-contract/issue-validation'
+import { DEFAULT_REVIEW_POLICY, type ReviewPolicy } from '@harness/workflow/tools/task-contract/review-policy'
+import {
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict
+} from '@harness/workflow/tools/task-contract/verdict-extraction'
+import { OBJECTIVES_SINCE_ISSUE } from '@harness/workflow/tools/task-contract/issue-validation'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import {
   checkDocCorrectnessSearch,
@@ -37,7 +40,7 @@ import {
   verifyPostedEscalation,
   verifyPostedSecurity
 } from './review-post'
-import { parseChangedLineRanges } from '../../../../../kernel/connectors/git/changed-line-ranges'
+import { parseChangedLineRanges } from '@harness/kernel/connectors/git/changed-line-ranges'
 
 /** The default branch's `vinaya.config.json` every `gh` stub here serves to the Principal read (`gh api repos/<owner>/<repo>/contents/vinaya.config.json`), base64-encoded as the contents API returns it. */
 const PRINCIPALS_CONFIG_B64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')

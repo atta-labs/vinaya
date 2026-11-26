@@ -23,7 +23,7 @@ import {
   semanticErrors,
   type DeveloperTurnResult
 } from '../developer/developer-turn-result'
-import { passHatK } from '../../../../kernel/evals/estimators'
+import { passHatK } from '@harness/kernel/evals/estimators'
 import {
   readClaudeTurnOutput,
   readCodexTurnOutput
@@ -38,19 +38,19 @@ import {
   type PreparedSource,
   type RequiredSourceManifest,
   type SourceDeliveryReceipt
-} from '../../../../kernel/source-manifest'
-import { startDevToolsHost } from '../../../../kernel/tools/host/dev-tools-host'
-import type { DevToolContext } from '../../../../kernel/tools/dev-tools-server'
+} from '@harness/kernel/source-manifest'
+import { startDevToolsHost } from '@harness/kernel/tools/host/dev-tools-host'
+import type { DevToolContext } from '@harness/kernel/tools/dev-tools-server'
 import {
   CLAUDE_DEV_TOOLS_ENV,
   devToolsSocketPath,
   driverDevBridgeInvocation
-} from '../../../../kernel/tools/dev-tools-registration'
+} from '@harness/kernel/tools/dev-tools-registration'
 import { generatedRoleConfig, withStandaloneToolNames } from '../../evals/engine-role-step'
-import { type GeneratedAgentConfig, RESUME_SESSION_PLACEHOLDER } from '../../../../kernel/isolation/policy'
+import { type GeneratedAgentConfig, RESUME_SESSION_PLACEHOLDER } from '@harness/kernel/isolation/policy'
 import { programFile } from '../../tools/programs'
 import { createWorld, usageOf, type ToolSelectionCase, type Usage, type World } from './tool-selection-suite'
-import { stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture'
+import { stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 import { vinayaToolGrantPolicy } from '../../integration/policies/vinaya-policies'
 
 export const ADAPTERS = ['claude-code', 'codex'] as const

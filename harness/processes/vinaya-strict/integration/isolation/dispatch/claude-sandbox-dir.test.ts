@@ -6,10 +6,10 @@ import {
   CLAUDE_SANDBOX_PREFIX,
   mintClaudeScratchDir,
   releaseClaudeScratchDir
-} from '../../../loops/dev-review/dispatch/dispatch'
-import type { StopReport } from '../../../../../kernel/conformance/unit/process-registry'
-import { currentOwner, readOwnerMarker, writeOwnerMarker } from '../../../../../kernel/conformance/unit/test-temp'
-import { fixtureDir } from '../../../../../kernel/conformance/unit/test-temp-fixture'
+} from '@harness/workflow/loops/dev-review/dispatch/dispatch'
+import type { StopReport } from '@harness/kernel/conformance/unit/process-registry'
+import { currentOwner, readOwnerMarker, writeOwnerMarker } from '@harness/kernel/conformance/unit/test-temp'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 
 const noStop = async (): Promise<StopReport> => ({ backend: 'registry', terminated: [], killed: [], alreadyGone: [] })
 

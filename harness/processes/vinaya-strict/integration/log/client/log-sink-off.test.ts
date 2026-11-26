@@ -7,11 +7,11 @@ import {
   LOG_FOLDER_ONLY_ENV,
   resolveLogDestinationFrom,
   type LogSinkOverrides
-} from '../../../../../kernel/log/log-sink.js'
+} from '@harness/kernel/log/log-sink.js'
 import { VinayaConfigSchema, type VinayaConfig } from '../../config/compose.js'
-import { configureEngineLogEnvironment, createEngineLogSink } from '../../../bin/run-engine.js'
-import { buildCheckEnv } from '../../../../../kernel/gates/checks/runner.js'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture.js'
+import { configureEngineLogEnvironment, createEngineLogSink } from '@harness/workflow/bin/run-engine.js'
+import { buildCheckEnv } from '@harness/kernel/gates/checks/runner.js'
+import { spawnBudgetedAsync, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture.js'
 
 const EVENT = {
   kind: 'dispatch' as const,

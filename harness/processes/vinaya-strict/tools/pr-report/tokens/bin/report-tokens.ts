@@ -45,8 +45,8 @@
  */
 
 import { createHash } from 'node:crypto'
-import { summarizeTranscript } from '../../../../../../kernel/adapters/agents/claude-code/claude-code-transcript'
-import { hardenedMeteringDeps } from '../../../../../../kernel/adapters/agents/claude-code/metering-io-guard'
+import { summarizeTranscript } from '@harness/kernel/adapters/agents/claude-code/claude-code-transcript'
+import { hardenedMeteringDeps } from '@harness/kernel/adapters/agents/claude-code/metering-io-guard'
 import { formatBreakdown, formatTokensLine } from '../report-tokens'
 
 /**

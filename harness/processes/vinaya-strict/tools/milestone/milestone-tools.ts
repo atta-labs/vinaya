@@ -1,8 +1,8 @@
 /** Shared Milestone status and close tools for the Architect and Tranche Archivist. */
 import { z } from 'zod'
-import { taskToolError } from '../../../../kernel/tools/catalog/task-tools'
-import type { SeatCallResult, SeatHandler } from '../../../../kernel/tools/host/seat-host.js'
-import type { McpToolListEntry } from '../../../../kernel/tools/mcp-protocol.js'
+import { taskToolError } from '@harness/kernel/tools/catalog/task-tools'
+import type { SeatCallResult, SeatHandler } from '@harness/kernel/tools/host/seat-host.js'
+import type { McpToolListEntry } from '@harness/kernel/tools/mcp-protocol.js'
 import { closeMilestone, milestoneStatus, type Refused } from './milestone-operations'
 
 export const MILESTONE_TOOL_NAMES = ['milestone_status', 'milestone_close'] as const

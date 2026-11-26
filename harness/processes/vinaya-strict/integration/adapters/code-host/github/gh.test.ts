@@ -52,8 +52,8 @@ mock.module('node:child_process', () => {
 })
 
 const freshGhPath = '../../../../../../kernel/adapters/code-host/github/gh?fresh-after-mock'
-const freshGh = (await import(freshGhPath)) as typeof import('../../../../../../kernel/adapters/code-host/github/gh')
-mock.module('../../../../../../kernel/adapters/code-host/github/gh', () => ({ ...freshGh }))
+const freshGh = (await import(freshGhPath)) as typeof import('@harness/kernel/adapters/code-host/github/gh')
+mock.module('@harness/kernel/adapters/code-host/github/gh', () => ({ ...freshGh }))
 const { ghApiGetAllPagesAsync, ghLabelIssueCountsAsync } = freshGh
 
 const items = (n: number, offset = 0): { id: number }[] => Array.from({ length: n }, (_, i) => ({ id: offset + i }))
@@ -219,7 +219,7 @@ describe('tranchesAttachedToMilestone — the real paginated, filtered fetch, en
       return full
     }
 
-    const { tranchesAttachedToMilestone } = await import('../../../../tools/task-contract/forge/fetch-milestone')
+    const { tranchesAttachedToMilestone } = await import('@harness/workflow/tools/task-contract/forge/fetch-milestone')
     const slugs = await tranchesAttachedToMilestone('o', 'r', 15)
 
     expect(slugs.sort()).toEqual(['tranche-a', 'tranche-b', 'tranche-c'])

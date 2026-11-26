@@ -5,12 +5,12 @@
  * these facts through the policies `vinaya-policies.ts` composes.
  */
 
-import type { TaskToolName } from '../../../../kernel/tools/catalog/task-tools'
+import type { TaskToolName } from '@harness/kernel/tools/catalog/task-tools'
 import { VINAYA_LOG_ROLE_NAMES } from '../log/log-roles'
-import type { BrokerRolePolicy } from '../../../../kernel/tools/host/broker.js'
-import type { ToolGrantPolicy } from '../../../../kernel/tools/role-grants.js'
-import type { RouterRolePolicy } from '../../../../kernel/tools/host/router.js'
-import type { BoundaryRolePolicy } from '../../../../kernel/isolation/worker-boundary.js'
+import type { BrokerRolePolicy } from '@harness/kernel/tools/host/broker.js'
+import type { ToolGrantPolicy } from '@harness/kernel/tools/role-grants.js'
+import type { RouterRolePolicy } from '@harness/kernel/tools/host/router.js'
+import type { BoundaryRolePolicy } from '@harness/kernel/isolation/worker-boundary.js'
 
 // --- tool grants (`harness/processes/vinaya-strict/loops/dev-review/dev-review-capabilities-contracts.md` §3) --
 

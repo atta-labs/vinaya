@@ -44,7 +44,7 @@ import {
   buildCodexExecpolicyRules,
   codexSpawnEnvExtras,
   confinedTurboCacheDir
-} from '../../../loops/dev-review/dispatch/dispatch.js'
+} from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
 import {
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
   claudeRunsCommandUnsandboxed,
@@ -54,11 +54,11 @@ import {
   resolveCodexConfinement,
   resolveGitCommonDir,
   stageCodexPolicyHome
-} from '../../../../../kernel/isolation/worker-boundary.js'
-import { sourceManifestPath, sourceReceiptsPath, sourceStoreDir } from '../../../../../kernel/source-manifest.js'
-import { grantVariables } from '../../../../../kernel/adapters/agents/variables.js'
-import { createRoleLaunchers, sandboxProbePlanFor } from '../../../executing/actions.js'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture.js'
+} from '@harness/kernel/isolation/worker-boundary.js'
+import { sourceManifestPath, sourceReceiptsPath, sourceStoreDir } from '@harness/kernel/source-manifest.js'
+import { grantVariables } from '@harness/kernel/adapters/agents/variables.js'
+import { createRoleLaunchers, sandboxProbePlanFor } from '@harness/workflow/executing/actions.js'
+import { spawnBudgetedAsync, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture.js'
 import { isSuiteInput, REPO_ROOT } from './command-sources.js'
 
 export const AGENTS = ['claude', 'codex'] as const

@@ -115,8 +115,8 @@ import {
   defaultControlStoreDeps,
   readLoopState,
   readResolution
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
-import { principalRulingMarker } from '../../../tools/task-contract/ruling-ordinal'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import { principalRulingMarker } from '@harness/workflow/tools/task-contract/ruling-ordinal'
 import {
   TaskStartInputSchema,
   type TaskResumeResult,
@@ -125,8 +125,8 @@ import {
   type TaskToolRef,
   taskStartRequestIdentity,
   taskToolError
-} from '../../../../../kernel/tools/catalog/task-tools'
-import { loadConfig } from '../../../integration/config/compose.js'
+} from '@harness/kernel/tools/catalog/task-tools'
+import { loadConfig } from '@harness/workflow/integration/config/compose.js'
 import { type LaunchResult, launchDetached, waitForLiveDriver } from './detached-launch.js'
 import {
   type AgentVendor,
@@ -152,8 +152,8 @@ import {
   fetchNewestRulingOrdinal,
   fetchRulings
 } from '../standalone/dev-review-loop/developer-dispatch.js'
-import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
-import { repoRoot as gitRepoRoot } from '../../../../../kernel/connectors/git/diff-evidence.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '@harness/kernel/run-paths.js'
+import { repoRoot as gitRepoRoot } from '@harness/kernel/connectors/git/diff-evidence.js'
 import {
   deriveLoopState,
   newestPublication,
@@ -165,7 +165,7 @@ import {
 import { describeTaskRef, readTaskIssueFacts, resolveOpenTaskIssueForRef } from './handlers.js'
 import type { TaskIssueFacts, TaskToolCallResult } from './handlers.js'
 import { defaultTaskResumeHandler } from './resume.js'
-import type { CallerContext } from '../../../integration/server.js'
+import type { CallerContext } from '@harness/workflow/integration/server.js'
 
 /** The durable claim one `task_start` request writes before it launches — the record a duplicate start (same request identity) replays instead of starting again, unless the run it names is found dead and superseded. `target` is the address the call used, so a replay answers in the same form it was asked. */
 export type StartRecord = {

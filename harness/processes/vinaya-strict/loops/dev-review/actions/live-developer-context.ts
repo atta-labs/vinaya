@@ -1,22 +1,25 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { taskControlDir } from '../../../../../kernel/isolation/worker-boundary.js'
+import { taskControlDir } from '@harness/kernel/isolation/worker-boundary.js'
 import {
   beyondSurfacePaths,
   globCoversPath,
   type IssueSurface,
   withBeyondSurfaceBlock
-} from '../../../tools/task-contract/issue-validation'
-import { carryLiveRecord } from '../../../tools/task-contract/live-record'
-import { defaultControlStoreDeps } from '../../../../../kernel/connectors/checkpoint/control-store/index'
-import { createBroker, type InvocationContext, scopeTarget } from '../../../../../kernel/tools/host/broker.js'
-import { normalizeTouchedPath } from '../../../../../kernel/tools/host/touched-path.js'
+} from '@harness/workflow/tools/task-contract/issue-validation'
+import { carryLiveRecord } from '@harness/workflow/tools/task-contract/live-record'
+import { defaultControlStoreDeps } from '@harness/kernel/connectors/checkpoint/control-store/index'
+import { createBroker, type InvocationContext, scopeTarget } from '@harness/kernel/tools/host/broker.js'
+import { normalizeTouchedPath } from '@harness/kernel/tools/host/touched-path.js'
 import { type AgentVendor, readLaunchRecord } from '../dispatch/dispatch.js'
-import { vinayaBrokerPolicies, vinayaProtectedPathPolicy } from '../../../integration/policies/vinaya-policies.js'
-import { controlStoreRoot } from '../../../../../kernel/effects/effects.js'
-import { appendDriverLine, appendRoleLine } from '../../../../../kernel/log/client/loop-log.js'
-import { addedDiffLines, findCredentialPatterns } from '../../../../../kernel/isolation/worker-boundary.js'
+import {
+  vinayaBrokerPolicies,
+  vinayaProtectedPathPolicy
+} from '@harness/workflow/integration/policies/vinaya-policies.js'
+import { controlStoreRoot } from '@harness/kernel/effects/effects.js'
+import { appendDriverLine, appendRoleLine } from '@harness/kernel/log/client/loop-log.js'
+import { addedDiffLines, findCredentialPatterns } from '@harness/kernel/isolation/worker-boundary.js'
 import {
   type DeveloperModelRun,
   readDeveloperModelRuns,
@@ -25,14 +28,10 @@ import {
 import { fastForwardedOntoDefaultTip, mergedMovedParent } from '../standalone/dev-review-loop/developer-publication.js'
 import { resolveHead } from '../standalone/dev-review-loop/gate-reading.js'
 import type { LoopDeps } from '../standalone/dev-review-loop.js'
-import {
-  sourceReceiptsPath,
-  sourceStoreDir,
-  readRequiredSourceManifest
-} from '../../../../../kernel/source-manifest.js'
-import { devToolError, type DevToolContext } from '../../../../../kernel/tools/dev-tools-server.js'
+import { sourceReceiptsPath, sourceStoreDir, readRequiredSourceManifest } from '@harness/kernel/source-manifest.js'
+import { devToolError, type DevToolContext } from '@harness/kernel/tools/dev-tools-server.js'
 import { createDeveloperDevToolContext, type DeveloperDevToolDeps } from './developer-dev-tools-context.js'
-import { createFetchDocumentationTool } from '../../../../../kernel/tools/fetch-documentation.js'
+import { createFetchDocumentationTool } from '@harness/kernel/tools/fetch-documentation.js'
 
 /** What a turn's publication carries from one tool call to the next; the loop and the Engine each own one. */
 export type LivePublicationState = {

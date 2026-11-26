@@ -3,8 +3,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { COMMANDS } from '../../../harness/processes/vinaya-strict/integration/commands'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../harness/kernel/conformance/unit/process-fixture'
+import { COMMANDS } from '@harness/workflow/integration/commands'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 // The reverse direction of `harness/processes/vinaya-strict/integration/commands.test.ts` (which
 // proves every COMMANDS row is dispatched). THIS test proves the opposite:

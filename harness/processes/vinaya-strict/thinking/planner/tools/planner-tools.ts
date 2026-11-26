@@ -20,10 +20,10 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { taskToolError, type TaskToolError } from '../../../../../kernel/tools/catalog/task-tools'
-import type { SeatCallResult, SeatHandler } from '../../../../../kernel/tools/host/seat-host.js'
-import type { McpToolListEntry } from '../../../../../kernel/tools/mcp-protocol.js'
-import type { CheckError } from '../../../../../kernel/gates/checks/contract'
+import { taskToolError, type TaskToolError } from '@harness/kernel/tools/catalog/task-tools'
+import type { SeatCallResult, SeatHandler } from '@harness/kernel/tools/host/seat-host.js'
+import type { McpToolListEntry } from '@harness/kernel/tools/mcp-protocol.js'
+import type { CheckError } from '@harness/kernel/gates/checks/contract'
 import {
   createIssue,
   editIssue,
@@ -40,7 +40,7 @@ import {
   type ObjectivesOutcome,
   type SurfaceOutcome
 } from './planner-operations'
-import { PlanDraftSchema } from '../../../tools/plan-draft/draft'
+import { PlanDraftSchema } from '@harness/workflow/tools/plan-draft/draft'
 
 // --- names ------------------------------------------------------------------
 

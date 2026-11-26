@@ -19,12 +19,12 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { REGION_PREFIXES } from '../../../tools/legacy-markers'
-import { checkBareDigits } from '../../../tools/body-bare-digits-logic'
-import { compareEvidenceBlock } from '../../../checks/evidence-fresh-logic'
-import { ScanContext, resolveAnchoredRegion, summaryLineIndex } from '../../../../../kernel/gates/checks/scan-context'
-import { DivergentEvidenceAnchorError, replaceEvidenceBlock } from '../../../tools/pr-report/bin/pr-report'
-import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../../../../kernel/connectors/git/numstat'
+import { REGION_PREFIXES } from '@harness/workflow/tools/legacy-markers'
+import { checkBareDigits } from '@harness/workflow/tools/body-bare-digits-logic'
+import { compareEvidenceBlock } from '@harness/workflow/checks/evidence-fresh-logic'
+import { ScanContext, resolveAnchoredRegion, summaryLineIndex } from '@harness/kernel/gates/checks/scan-context'
+import { DivergentEvidenceAnchorError, replaceEvidenceBlock } from '@harness/workflow/tools/pr-report/bin/pr-report'
+import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '@harness/kernel/connectors/git/numstat'
 
 // Never a literal zero-width character in this source file — the same rule
 // `ZERO_WIDTH`'s own comment states, for the same reason: an invisible

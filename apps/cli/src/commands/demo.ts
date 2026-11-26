@@ -19,9 +19,9 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
-import { TRACKED_HOOK_DIR } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
-import { resolveHookDir } from '../../../../harness/kernel/connectors/git/detect.js'
-import { resolveManagedBlockPath } from '../../../../harness/kernel/gates/ops.js'
+import { TRACKED_HOOK_DIR } from '@harness/workflow/integration/artifacts.js'
+import { resolveHookDir } from '@harness/kernel/connectors/git/detect.js'
+import { resolveManagedBlockPath } from '@harness/kernel/gates/ops.js'
 
 const DEMO_BRANCH_PREFIX = 'vinaya/demo-break-'
 const FIXTURE_PATH = '.vinaya-demo-brief.md'
@@ -326,7 +326,7 @@ export async function runDemoBreak(repoRoot: string, args: string[]): Promise<nu
   return 0
 }
 
-import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
+import type { SurfaceExemption } from '@harness/workflow/tools/pr-report/surface-exemption'
 
 /**
  * Not a routed command: `quickstart` runs this refusal-then-fix proof as its step 5 (the

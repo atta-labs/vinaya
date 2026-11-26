@@ -21,10 +21,10 @@ process.on('SIGTERM', onSignal)
 process.on('SIGINT', onSignal)
 process.on('SIGHUP', onSignal)
 
-const { installProcess } = await import('../../../kernel/dev-process-socket/contract/install-process.js')
+const { installProcess } = await import('@harness/kernel/dev-process-socket/contract/install-process.js')
 const { vinayaProcessIntegration } = await import('./process/process-integration.js')
-const { appendLoopLogLine } = await import('../../../kernel/log/client/loop-log-append.js')
-const { ProgressReader } = await import('../../../kernel/gates/ring0-hooks/pre-push/push-progress.js')
+const { appendLoopLogLine } = await import('@harness/kernel/log/client/loop-log-append.js')
+const { ProgressReader } = await import('@harness/kernel/gates/ring0-hooks/pre-push/push-progress.js')
 
 // The composition root: the driver starts this program on its own, and the loop log and run paths it reaches read
 // configuration only through the provider this installs.

@@ -16,7 +16,7 @@ import { existsSync } from 'node:fs'
 
 import { writeTurnResultRecord } from './turn-result.js'
 import { schemaValidTurnResult } from './turn-result.js'
-import type { DeveloperTurnResult } from '../../../../executing/developer/developer-turn-result.js'
+import type { DeveloperTurnResult } from '@harness/workflow/executing/developer/developer-turn-result.js'
 
 import { DeveloperTurnResultPause } from './turn-result.js'
 import { noPushPauseDetail } from './unpushed-work.js'

@@ -1,6 +1,6 @@
-import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
-import { recordCliOperationAtExit } from '../../../../kernel/log/client/cli-operation-log.js'
-import { installProcess } from '../../../../kernel/dev-process-socket/contract/install-process.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
+import { recordCliOperationAtExit } from '@harness/kernel/log/client/cli-operation-log.js'
+import { installProcess } from '@harness/kernel/dev-process-socket/contract/install-process.js'
 import { vinayaProcessIntegration } from '../../integration/process/process-integration.js'
 // `vinaya audit` — the two ring-2 detection/notification checks, callable
 // directly instead of only from the `daily-drift` and
@@ -16,17 +16,17 @@ import { vinayaProcessIntegration } from '../../integration/process/process-inte
 // second auth/repo-resolution mechanism.
 
 import { execFileSync } from 'node:child_process'
-import { checkDirectMainPush } from '../../../../kernel/gates/ring2-audits/direct-main-push'
-import { ensureLabelExists as ensureLabelExistsShared } from '../../../../kernel/gates/ring2-audits/ensure-label'
+import { checkDirectMainPush } from '@harness/kernel/gates/ring2-audits/direct-main-push'
+import { ensureLabelExists as ensureLabelExistsShared } from '@harness/kernel/gates/ring2-audits/ensure-label'
 import {
   findDeadBranchPushes,
   type DeadBranchFact,
   type DeadBranchPush
-} from '../../../../kernel/gates/ring2-audits/dead-branch-push-audit'
+} from '@harness/kernel/gates/ring2-audits/dead-branch-push-audit'
 import { label } from '../../tools/task-contract/forge/labels'
 import { loadConfig } from '../../integration/config/compose.js'
-import { detectGitRepo, type RepoInfo } from '../../../../kernel/connectors/git/detect.js'
-import { printJson } from '../../../../kernel/effects/envelope.js'
+import { detectGitRepo, type RepoInfo } from '@harness/kernel/connectors/git/detect.js'
+import { printJson } from '@harness/kernel/effects/envelope.js'
 
 // `rings.ring2_asyncAudits` means what it says: `true` (the default — an
 // absent key resolves the same way) RUNS the async audits, so

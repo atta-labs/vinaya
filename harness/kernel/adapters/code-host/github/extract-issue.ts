@@ -1,4 +1,4 @@
-import { anchoredRegion, stripCode } from '../../../gates/checks/anchored-region'
+import { anchoredRegion, stripCode } from '@harness/kernel/gates/checks/anchored-region'
 
 function closesRefs(text: string): number[] {
   return [...new Set([...text.matchAll(/Closes #(\d+)/gi)].map((m) => Number(m[1] as string)))]

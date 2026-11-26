@@ -4,7 +4,7 @@ import {
   type DeveloperTurnContext,
   developerTurnResultJsonSchema,
   validateDeveloperTurnResult
-} from '../../../executing/developer/developer-turn-result.js'
+} from '@harness/workflow/executing/developer/developer-turn-result.js'
 import {
   accountEnv,
   CASE_TIME_LIMIT_LABEL,
@@ -23,8 +23,8 @@ import {
   redactProviderText,
   shellQuote
 } from './result-proof.js'
-import { validatesJsonSchema } from '../../../../../kernel/tools/json-schema-check.js'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture.js'
+import { validatesJsonSchema } from '@harness/kernel/tools/json-schema-check.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture.js'
 
 /**
  * The structured-result proof's pure parts: the shared DeveloperTurnResult

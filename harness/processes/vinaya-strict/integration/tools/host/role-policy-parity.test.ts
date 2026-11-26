@@ -14,19 +14,19 @@ import { join } from 'node:path'
 import {
   type ControlStoreDeps,
   defaultControlStoreDeps
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
-import { TASK_TOOL_NAMES } from '../../../../../kernel/tools/catalog/task-tools'
-import type { DispatchTeeRecoveryDeps } from '../../../loops/dev-review/dispatch/dispatch'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import { TASK_TOOL_NAMES } from '@harness/kernel/tools/catalog/task-tools'
+import type { DispatchTeeRecoveryDeps } from '@harness/workflow/loops/dev-review/dispatch/dispatch'
 import { vinayaBrokerPolicies, vinayaRouterPolicies, vinayaToolGrantPolicy } from '../../policies/vinaya-policies'
 import {
   createBroker,
   ProtectedPathError,
   scopeTarget,
   UngrantedOperationError
-} from '../../../../../kernel/tools/host/broker'
-import { type DevToolContext, dispatchDevTool } from '../../../../../kernel/tools/dev-tools-server'
-import { grantedTools, isToolGranted, servedTools } from '../../../../../kernel/tools/role-grants'
-import { createTaskToolRouter } from '../../../../../kernel/tools/host/router'
+} from '@harness/kernel/tools/host/broker'
+import { type DevToolContext, dispatchDevTool } from '@harness/kernel/tools/dev-tools-server'
+import { grantedTools, isToolGranted, servedTools } from '@harness/kernel/tools/role-grants'
+import { createTaskToolRouter } from '@harness/kernel/tools/host/router'
 
 const noLog = { command: (): void => {}, action: (): void => {} }
 

@@ -3,36 +3,36 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { arch, homedir, tmpdir, type, userInfo } from 'node:os'
 import { join } from 'node:path'
-import { redact } from '../../../../../kernel/log/redact'
+import { redact } from '@harness/kernel/log/redact'
 import {
   judgeTurnOutput,
   type TurnResultControllerContext,
   turnResultCorrectionPrompt,
   turnResultInstruction
-} from '../../../loops/dev-review/standalone/dev-review-loop/turn-result.js'
-import { developerTurnResultJsonSchema } from '../../../executing/developer/developer-turn-result.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/turn-result.js'
+import { developerTurnResultJsonSchema } from '@harness/workflow/executing/developer/developer-turn-result.js'
 import {
   classifyRoleAttemptOutcome,
   type DispatchHandle,
   dispatchRole,
   vendorSessionArgs
-} from '../../../loops/dev-review/dispatch/dispatch.js'
-import { ownVersion } from '../../../tools/own-version.js'
+} from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
+import { ownVersion } from '@harness/workflow/tools/own-version.js'
 import { proofContext } from './dev-proof.js'
-import { startDevToolsHost } from '../../../../../kernel/tools/host/dev-tools-host.js'
-import { programFile } from '../../../tools/programs.js'
+import { startDevToolsHost } from '@harness/kernel/tools/host/dev-tools-host.js'
+import { programFile } from '@harness/workflow/tools/programs.js'
 import {
   type BridgeInvocation,
   devToolsSocketPath,
   driverDevBridgeInvocation
-} from '../../../../../kernel/tools/dev-tools-registration.js'
+} from '@harness/kernel/tools/dev-tools-registration.js'
 import { accountEnv, beforeStdinMarker, cliVersion, providerText, runChild } from './result-proof.js'
-import { buildWorkerEnv } from '../../../../../kernel/isolation/worker-boundary.js'
+import { buildWorkerEnv } from '@harness/kernel/isolation/worker-boundary.js'
 import {
   spawnBudgetedAsync,
   spawnSyncBudgeted,
   stripVinayaEnv
-} from '../../../../../kernel/conformance/unit/process-fixture.js'
+} from '@harness/kernel/conformance/unit/process-fixture.js'
 import {
   ADAPTER_CONTRACT_CASES,
   type ContractAdapter,

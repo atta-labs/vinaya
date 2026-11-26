@@ -18,8 +18,8 @@ import {
   type LogSink,
   type LogSinkDeps,
   resolveLogAppendPath
-} from '../../../../kernel/log/log-sink.js'
-import { registerCliVersionSource } from '../../../../kernel/log/run-identity.js'
+} from '@harness/kernel/log/log-sink.js'
+import { registerCliVersionSource } from '@harness/kernel/log/run-identity.js'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'

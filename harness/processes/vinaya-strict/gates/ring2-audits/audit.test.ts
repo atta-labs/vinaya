@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { findDeadBranchPushes } from '../../../../kernel/gates/ring2-audits/dead-branch-push-audit'
+import { findDeadBranchPushes } from '@harness/kernel/gates/ring2-audits/dead-branch-push-audit'
 import type { AuditDeps } from './audit.js'
 import { runAudit } from './audit.js'
 

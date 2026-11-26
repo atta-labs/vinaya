@@ -6,7 +6,7 @@ import { gatePollEnvOverride } from './runtime-defaults.js'
  * `LoopRunContext`; the bodies are unchanged.
  */
 
-import { appendDriverLine } from '../../../../../../kernel/log/client/loop-log.js'
+import { appendDriverLine } from '@harness/kernel/log/client/loop-log.js'
 import {
   GitHubKeptAnswering,
   GITHUB_REACHABILITY_INTERVAL_MS,

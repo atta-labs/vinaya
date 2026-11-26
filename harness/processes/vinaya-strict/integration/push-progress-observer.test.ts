@@ -17,11 +17,11 @@ import {
   beginProgressSession,
   PROGRESS_MARKER,
   type startProgressObserver
-} from '../../../kernel/gates/ring0-hooks/pre-push/push-progress'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/push-progress'
 import { withV2DevTools, stagedPullRequestStore } from '../loops/dev-review/v2/flow-v2-live'
 import { progressObserverEntry } from '../tools/programs'
-import type { DevToolContext } from '../../../kernel/tools/dev-tools-server'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
+import type { DevToolContext } from '@harness/kernel/tools/dev-tools-server'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 /**
  * A file this test runs or copies, never a tree it reads: the only directories it lists are its own registry and

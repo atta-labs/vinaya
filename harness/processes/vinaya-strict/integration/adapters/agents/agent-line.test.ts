@@ -7,10 +7,10 @@ import {
   formatAgentLine,
   logQuiet,
   renderNarratedUpdate
-} from '../../../../../kernel/adapters/agents/agent-line.js'
-import { createAgentStreamRenderer } from '../../../../../kernel/adapters/agents/agent-stream.js'
-import { renderClaudeEvent, renderCodexEvent } from '../../../loops/dev-review/dispatch/dispatch.js'
-import { appendRoleLine } from '../../../../../kernel/log/client/loop-log.js'
+} from '@harness/kernel/adapters/agents/agent-line.js'
+import { createAgentStreamRenderer } from '@harness/kernel/adapters/agents/agent-stream.js'
+import { renderClaudeEvent, renderCodexEvent } from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
+import { appendRoleLine } from '@harness/kernel/log/client/loop-log.js'
 
 describe('formatAgentLine', () => {
   const now = new Date('2026-10-08T03:04:05.678Z')

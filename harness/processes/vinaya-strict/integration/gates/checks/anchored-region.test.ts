@@ -2,20 +2,24 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { MARKER_FAMILIES, REGION_PREFIX, REGION_PREFIXES } from '../../../tools/legacy-markers'
-import { anchoredRegion } from '../../../../../kernel/gates/checks/anchored-region'
-import { buildProvenanceBlock, type MergedPrFacts } from '../../../tools/archive-task'
-import { extractIssue } from '../../../../../kernel/adapters/code-host/github/extract-issue'
+import { MARKER_FAMILIES, REGION_PREFIX, REGION_PREFIXES } from '@harness/workflow/tools/legacy-markers'
+import { anchoredRegion } from '@harness/kernel/gates/checks/anchored-region'
+import { buildProvenanceBlock, type MergedPrFacts } from '@harness/workflow/tools/archive-task'
+import { extractIssue } from '@harness/kernel/adapters/code-host/github/extract-issue'
 import {
   checkClosesNPresence as checkClosesNField,
   checkProjectField
-} from '../../../tools/task-contract/brief-validation'
-import { checkClosesNTopology, extractClosesReferences, type TrancheFile } from '../../../checks/coherence-checks'
-import { fenceShapes } from '../../../tests/fixtures/fence-shapes'
-import { readTierFromPrBody } from '../../../tools/task-contract/pr-tier'
-import { parsePremiseBlock } from '../../../tools/task-contract/premise-check'
-import { locateTestPlanSection } from '../../../tools/task-contract/test-plan-section'
-import type { Task } from '../../../tools/task-contract/types'
+} from '@harness/workflow/tools/task-contract/brief-validation'
+import {
+  checkClosesNTopology,
+  extractClosesReferences,
+  type TrancheFile
+} from '@harness/workflow/checks/coherence-checks'
+import { fenceShapes } from '@harness/workflow/tests/fixtures/fence-shapes'
+import { readTierFromPrBody } from '@harness/workflow/tools/task-contract/pr-tier'
+import { parsePremiseBlock } from '@harness/workflow/tools/task-contract/premise-check'
+import { locateTestPlanSection } from '@harness/workflow/tools/task-contract/test-plan-section'
+import type { Task } from '@harness/workflow/tools/task-contract/types'
 
 const FIXTURES = join(__dirname, './fixtures')
 

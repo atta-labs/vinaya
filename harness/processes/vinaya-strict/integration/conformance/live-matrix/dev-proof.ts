@@ -30,15 +30,15 @@
  * comes back as a ruling.
  */
 
-import { programFile } from '../../../tools/programs.js'
-import type { Role } from '../../../../../kernel/log/schema'
+import { programFile } from '@harness/workflow/tools/programs.js'
+import type { Role } from '@harness/kernel/log/schema'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ownVersion } from '../../artifacts.js'
-import { buildCodexExecpolicyRules } from '../../../loops/dev-review/dispatch/dispatch.js'
+import { buildCodexExecpolicyRules } from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
 import { vinayaToolGrantPolicy } from '../../policies/vinaya-policies.js'
 import {
   buildWorkerEnv,
@@ -46,13 +46,13 @@ import {
   resolveClaudeConfinement,
   resolveCodexConfinement,
   stageCodexPolicyHome
-} from '../../../../../kernel/isolation/worker-boundary.js'
-import { startDevToolsHost } from '../../../../../kernel/tools/host/dev-tools-host.js'
+} from '@harness/kernel/isolation/worker-boundary.js'
+import { startDevToolsHost } from '@harness/kernel/tools/host/dev-tools-host.js'
 import {
   DEV_TOOLS_MCP_SERVER_NAME,
   type DevToolContext,
   type DevToolResult
-} from '../../../../../kernel/tools/dev-tools-server.js'
+} from '@harness/kernel/tools/dev-tools-server.js'
 import {
   type BridgeInvocation,
   claudeDevToolName,
@@ -61,8 +61,8 @@ import {
   devToolsSocketPath,
   devToolsMcpConfigFileBody,
   driverDevBridgeInvocation
-} from '../../../../../kernel/tools/dev-tools-registration.js'
-import { devToolError } from '../../../../../kernel/tools/dev-tools-server.js'
+} from '@harness/kernel/tools/dev-tools-registration.js'
+import { devToolError } from '@harness/kernel/tools/dev-tools-server.js'
 
 /** The one allowlisted tool the proof session may call — a read-only check, no publish, no forge write. */
 const PROOF_TOOL = 'run_checks'

@@ -9,24 +9,20 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  AGENT_VENDORS,
-  type AgentVendor,
-  isAgentVendor
-} from '../../../../harness/kernel/adapters/agents/agent-vendors.js'
+import { AGENT_VENDORS, type AgentVendor, isAgentVendor } from '@harness/kernel/adapters/agents/agent-vendors.js'
 import {
   buildInitOps,
   CONFIG_PATH,
   type HookDir,
   type InitContext,
   TRACKED_HOOK_DIR
-} from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
-import { detectVendoredVinaya } from '../../../../harness/processes/vinaya-strict/tools/self-host.js'
+} from '@harness/workflow/integration/artifacts.js'
+import { detectVendoredVinaya } from '@harness/workflow/tools/self-host.js'
 import {
   type ManagedManifest,
   readRepoCiSetup,
   VinayaConfigSchema
-} from '../../../../harness/processes/vinaya-strict/integration/config/compose.js'
+} from '@harness/workflow/integration/config/compose.js'
 import {
   checkGhAuth,
   customHooksPath,
@@ -35,14 +31,9 @@ import {
   type RepoInfo,
   resolveHookDir,
   setCoreHooksPath
-} from '../../../../harness/kernel/connectors/git/detect.js'
-import {
-  applyInstall,
-  type LabelGateway,
-  planInstall,
-  renderInstallDiff
-} from '../../../../harness/kernel/gates/ops.js'
-import { closeStdin, promptYesNo } from '../../../../harness/kernel/effects/prompt.js'
+} from '@harness/kernel/connectors/git/detect.js'
+import { applyInstall, type LabelGateway, planInstall, renderInstallDiff } from '@harness/kernel/gates/ops.js'
+import { closeStdin, promptYesNo } from '@harness/kernel/effects/prompt.js'
 import {
   applyConfigProjectEntry,
   applyRegistryRow,
@@ -50,7 +41,7 @@ import {
   planRegistryRow,
   renderConfigProjectEntryDiffLine,
   renderRegistryRowDiffLine
-} from '../../../../harness/processes/vinaya-strict/artifacts/registry-write.js'
+} from '@harness/workflow/artifacts/registry-write.js'
 
 export type InitDeps = {
   detectRepo: () => Promise<RepoInfo | null>
@@ -371,7 +362,7 @@ export async function initProductCommand(args: string[]): Promise<void> {
   process.exit(await runInitProduct(args, realDeps()))
 }
 
-import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
+import type { SurfaceExemption } from '@harness/workflow/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   init: { date: '2026-09-05', callsToday: 9, retiresVia: 'sharedCommandShell' },

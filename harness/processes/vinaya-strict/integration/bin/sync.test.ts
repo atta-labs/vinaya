@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 const OWNER_REPO_DIR = 'test-owner-test-repo'
 const COMMAND_PATH = join(import.meta.dir, 'sync.ts')

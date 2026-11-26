@@ -19,8 +19,8 @@
  * attempt alike.
  */
 
-import { taskToolError, type TaskToolError } from '../../../../kernel/tools/catalog/task-tools'
-import { routeTaskToolIntent } from '../../../../kernel/tools/host/router.js'
+import { taskToolError, type TaskToolError } from '@harness/kernel/tools/catalog/task-tools'
+import { routeTaskToolIntent } from '@harness/kernel/tools/host/router.js'
 import type { OperatorGrantedTool } from '../../integration/policies/roles.js'
 
 export type ContextPacketRole = 'operator' | 'developer' | 'reviewer'

@@ -12,7 +12,7 @@ import {
   type ReadFailure,
   removedFilesSinceRemoteBaseAbsolute,
   resolveRemoteBase
-} from '../../../kernel/connectors/git/remote-base.js'
+} from '@harness/kernel/connectors/git/remote-base.js'
 import { type SelectionOptions, type SelectionResult, selectAffectedTestFiles } from './repository-verification.js'
 import { loadTypeScript } from '@attalabs/test-selection'
 

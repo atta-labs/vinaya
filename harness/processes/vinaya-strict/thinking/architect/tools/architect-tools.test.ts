@@ -1,6 +1,10 @@
 import { expect, it } from 'bun:test'
 import { architectToolHandlers, type ArchitectOperations } from './architect-tools'
-import { deleteMilestone, realMilestoneForge, type MilestoneForge } from '../../../tools/milestone/milestone-operations'
+import {
+  deleteMilestone,
+  realMilestoneForge,
+  type MilestoneForge
+} from '@harness/workflow/tools/milestone/milestone-operations'
 
 it('each Architect tool passes input to its library operation and preserves the outcome', async () => {
   const seen: unknown[] = []

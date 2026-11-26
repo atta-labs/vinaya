@@ -27,21 +27,21 @@ import { bestEffortInputVersions } from './run-state.js'
  * `LoopRunContext`; the body is unchanged.
  */
 
-import { assessRound } from '../../../../tools/dev-review-policy/assess-round'
-import type { Observations } from '../../../../tools/dev-review-policy/types'
+import { assessRound } from '@harness/workflow/tools/dev-review-policy/assess-round'
+import type { Observations } from '@harness/workflow/tools/dev-review-policy/types'
 import { randomUUID } from 'node:crypto'
 import {
   buildReviewInputManifest,
   compareManifest,
   manifestAsEchoed,
   type ReviewInputManifest
-} from '../../../../tools/task-contract/review-input-manifest'
-import type { EscalationRecord } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/workflow/tools/task-contract/review-input-manifest'
+import type { EscalationRecord } from '@harness/kernel/connectors/checkpoint/control-store/index'
 import { keepDriverLock } from './driver-lifecycle.js'
-import { narrateAgentRecord } from '../../../../../../kernel/log/client/agent-record-line.js'
-import { appendDriverLine, appendRoleLine } from '../../../../../../kernel/log/client/loop-log.js'
-import { registeredSeatNames } from '../../../../executing/seat-names.js'
-import { runRecorder } from '../../../../../../kernel/log/run-recorder.js'
+import { narrateAgentRecord } from '@harness/kernel/log/client/agent-record-line.js'
+import { appendDriverLine, appendRoleLine } from '@harness/kernel/log/client/loop-log.js'
+import { registeredSeatNames } from '@harness/workflow/executing/seat-names.js'
+import { runRecorder } from '@harness/kernel/log/run-recorder.js'
 import { checkPremiseAtHead, pollMergeableState, renderConflictPrompt } from './gate-reading.js'
 import { noPushPauseDetail, unpushedWorkResumeDetail } from './unpushed-work.js'
 import { describeObjectivesEdit } from './developer-dispatch.js'
@@ -64,7 +64,7 @@ import {
   writeReviewerCandidateInputs
 } from './reviewer-isolation.js'
 import { driverDecidedPauseEvents, MAX_GATE_STALLED_TURNS, pollUntil, routeCompletionEvents } from './round-assess.js'
-import type { PremiseReassertResult } from '../../../../tools/premise-reassert-logic.js'
+import type { PremiseReassertResult } from '@harness/workflow/tools/premise-reassert-logic.js'
 import { renderLiveWithdrawal, withdrawApprovedRound } from './live-check.js'
 import { writeEscalationRecord, writePauseState } from './pause-resume.js'
 import { absorbRateLimitedRed, withRateLimitWait } from './rate-limit-waits.js'

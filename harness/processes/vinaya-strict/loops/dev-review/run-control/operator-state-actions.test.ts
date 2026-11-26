@@ -1,4 +1,4 @@
-import type { PauseReason } from '../../../tools/dev-review-policy/types'
+import type { PauseReason } from '@harness/workflow/tools/dev-review-policy/types'
 import { afterAll, describe, expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -8,13 +8,13 @@ import {
   acquireOwnership,
   defaultControlStoreDeps,
   writeEscalation
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 
-import { TASK_NEXT_ACTIONS, TASK_TOOL_NAMES } from '../../../../../kernel/tools/catalog/task-tools'
+import { TASK_NEXT_ACTIONS, TASK_TOOL_NAMES } from '@harness/kernel/tools/catalog/task-tools'
 import { escalationIdFor } from '../standalone/dev-review-loop/pause-resume'
 import { MAX_INFRASTRUCTURE_RETRIES } from '../standalone/dev-review-loop/round-assess'
 import { taskPrReadHandler } from './pr-read'
-import { appendRoleLine, loopLogPathFor } from '../../../../../kernel/log/client/loop-log'
+import { appendRoleLine, loopLogPathFor } from '@harness/kernel/log/client/loop-log'
 import {
   deriveLoopState,
   NEXT_ACTION_BY_PAUSE_DISPOSITION,
@@ -33,7 +33,7 @@ import {
   type PauseRulingDeps,
   resolvePauseDisposition
 } from './start'
-import type { CallerContext } from '../../../integration/server'
+import type { CallerContext } from '@harness/workflow/integration/server'
 
 /**
  * The conformance test between the Operator's doctrine and the Operator's

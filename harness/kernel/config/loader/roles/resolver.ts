@@ -23,7 +23,7 @@
  * additive entry they never are (`acme/qa-lead` registers under that whole
  * namespaced key, but renders as `qa-lead`).
  */
-import { isValidNamespacedKey } from '../../../gates/checks/resolver'
+import { isValidNamespacedKey } from '@harness/kernel/gates/checks/resolver'
 import type { RoleContract, RoleContractValidation } from './contract'
 
 export type RoleResolutionState = 'default' | 'overridden' | 'additive'

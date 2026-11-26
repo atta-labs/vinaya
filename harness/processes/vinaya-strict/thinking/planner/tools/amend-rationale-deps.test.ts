@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { amendRationaleDeps } from './amend-rationale-deps'
-import { parseRationaleDeps } from '../../../tools/task-contract/forge/parse-rationale-deps'
-import { COMMENT_MARKER_PREFIX } from '../../../tools/legacy-markers'
+import { parseRationaleDeps } from '@harness/workflow/tools/task-contract/forge/parse-rationale-deps'
+import { COMMENT_MARKER_PREFIX } from '@harness/workflow/tools/legacy-markers'
 
 const FIXTURES = join(__dirname, '../../../tools/task-contract/forge/fixtures')
 

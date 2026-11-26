@@ -1,11 +1,11 @@
-import { installVinayaCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry'
+import { installVinayaCheckRegistry } from '@harness/workflow/checks/registry'
 installVinayaCheckRegistry()
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DOC_OWNERS_PATH } from '../../../harness/processes/vinaya-strict/tools/doc-owners'
+import { DOC_OWNERS_PATH } from '@harness/workflow/tools/doc-owners'
 import type { DoctorDeps, Finding } from '../src/commands/doctor.js'
 import { runDoctor } from '../src/commands/doctor.js'
 import type { InitDeps } from '../src/commands/init.js'
@@ -28,14 +28,14 @@ import {
   RETIRED_DOCTRINE_POINTER_PATH,
   REVIEW_WORKFLOW_PATH,
   TASK_LOG_COLLECTOR_WORKFLOW_PATH
-} from '../../../harness/processes/vinaya-strict/integration/artifacts.js'
-import { CLAUDE_COMMAND_PATH } from '../../../harness/processes/vinaya-strict/integration/claude-command-emitter.js'
+} from '@harness/workflow/integration/artifacts.js'
+import { CLAUDE_COMMAND_PATH } from '@harness/workflow/integration/claude-command-emitter.js'
 import {
   CLAUDE_SETTINGS_PATH,
   CLAUDE_STOP_HOOK_SCRIPT_PATH
-} from '../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
-import { GEMINI_COMMAND_PATH } from '../../../harness/processes/vinaya-strict/integration/gemini-command-emitter.js'
-import type { LabelGateway } from '../../../harness/kernel/gates/ops.js'
+} from '@harness/workflow/integration/claude-stop-hook-emitter.js'
+import { GEMINI_COMMAND_PATH } from '@harness/workflow/integration/gemini-command-emitter.js'
+import type { LabelGateway } from '@harness/kernel/gates/ops.js'
 
 let root: string
 

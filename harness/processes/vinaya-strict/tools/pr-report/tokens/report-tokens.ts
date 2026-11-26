@@ -1,7 +1,4 @@
-import type {
-  UsageComponents,
-  TranscriptSummary
-} from '../../../../../kernel/adapters/agents/claude-code/transcript-summary'
+import type { UsageComponents, TranscriptSummary } from '@harness/kernel/adapters/agents/claude-code/transcript-summary'
 
 export type TokensLineInput = {
   phase: string

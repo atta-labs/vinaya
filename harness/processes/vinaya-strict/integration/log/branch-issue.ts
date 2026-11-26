@@ -11,7 +11,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { resolveTaskIssueRef } from '../../tools/task-contract/forge/list-tasks'
-import { LOG_CONTEXT_LOOKUP_DEADLINE_MS } from '../../../../kernel/log/log-sink.js'
+import { LOG_CONTEXT_LOOKUP_DEADLINE_MS } from '@harness/kernel/log/log-sink.js'
 
 const execFileAsync = promisify(execFile)
 

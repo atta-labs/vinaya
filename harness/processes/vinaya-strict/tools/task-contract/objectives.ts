@@ -15,7 +15,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { maskCode, maskDetailsBlocks } from '../../../../kernel/adapters/code-host/github/strip-code'
+import { maskCode, maskDetailsBlocks } from '@harness/kernel/adapters/code-host/github/strip-code'
 
 export type Objective = { id: string; text: string }
 

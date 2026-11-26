@@ -18,22 +18,22 @@ import { readLiveRecord, withLiveRecord } from '../tools/task-contract/live-reco
 import type { ReviewInputManifest } from '../tools/task-contract/review-input-manifest'
 import type { PostedVerdictBodies } from '../tools/review-gate'
 import type { RoleBinaryConfig, StepNodeResult } from '@atta/executor-agent-spawn'
-import { generateClaudeSettings } from '../../../../harness/kernel/adapters/agents/claude-code/settings'
-import { generateCodexConfig } from '../../../../harness/kernel/adapters/agents/codex/config'
-import { loadRoleGrants, withEffort, withModel } from '../../../../harness/kernel/adapters/agents/manifest'
+import { generateClaudeSettings } from '@harness/kernel/adapters/agents/claude-code/settings'
+import { generateCodexConfig } from '@harness/kernel/adapters/agents/codex/config'
+import { loadRoleGrants, withEffort, withModel } from '@harness/kernel/adapters/agents/manifest'
 import { VINAYA_LAUNCHED_ROLES } from '../integration/policies/launched-roles'
-import { sessionIdOf, structuredResult } from '../../../../harness/kernel/adapters/agents/structured-result'
+import { sessionIdOf, structuredResult } from '@harness/kernel/adapters/agents/structured-result'
 import { pullRequestCheckEnv, type PullRequestView } from './pull-request-env'
 import type { Handoff, InputVersions, PauseRequest } from './handoff'
 import type { RepairReview } from './review-input'
 import type { StagedPullRequest, V2Functions } from '../loops/dev-review/v2/v2-actions'
-import { encodeExecutionRound } from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
-import { runCliChecks } from '../../../../harness/kernel/gates/checks/run-checks'
+import { encodeExecutionRound } from '@harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+import { runCliChecks } from '@harness/kernel/gates/checks/run-checks'
 import { processFolderFor, programForWords } from '../tools/programs'
 import { refreshPrEvidence } from './refresh-evidence'
 import { guardedSpawnSync } from '../loops/dev-review/standalone/driver-tool-guard'
-import { agentEnvAllowlist } from '../../../../harness/kernel/adapters/agents/launch-env'
-import type { GeneratedAgentConfig, GeneratorPaths } from '../../../../harness/kernel/isolation/policy'
+import { agentEnvAllowlist } from '@harness/kernel/adapters/agents/launch-env'
+import type { GeneratedAgentConfig, GeneratorPaths } from '@harness/kernel/isolation/policy'
 import {
   createRoleLauncher,
   type ActionContext,
@@ -41,7 +41,7 @@ import {
   type DecisionRegistry,
   type ProcessAction,
   type RoleLauncher
-} from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+} from '@harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   checkTaskDispatchReadiness,
   type DispatchReadinessCheckResult,
@@ -71,22 +71,22 @@ import {
   describeInactiveControls,
   enforcementControlsActive,
   type EnforcementControl
-} from '../../../kernel/gates/enforcement-controls'
-import { hookRoutingRepairLine, repairLocalGateControl } from '../../../kernel/gates/local-gate-control'
-import { appendDriverLine, loopLogPathFor } from '../../../kernel/log/client/loop-log'
+} from '@harness/kernel/gates/enforcement-controls'
+import { hookRoutingRepairLine, repairLocalGateControl } from '@harness/kernel/gates/local-gate-control'
+import { appendDriverLine, loopLogPathFor } from '@harness/kernel/log/client/loop-log'
 import {
   countedSourceIds,
   readSourceDeliveryReceipts,
   sourceReceiptsPath,
   sourceStoreDir
-} from '../../../kernel/source-manifest'
+} from '@harness/kernel/source-manifest'
 import {
   prepareSources,
   RequiredSourcesUnavailable,
   type PrepareSourcesResult
-} from '../../../kernel/tools/source-provider'
-import { probeAgentSandbox, type SandboxProbePlan } from '../../../kernel/isolation/worker-boundary'
-import { ensureRunDir, runPath } from '../../../kernel/run-paths'
+} from '@harness/kernel/tools/source-provider'
+import { probeAgentSandbox, type SandboxProbePlan } from '@harness/kernel/isolation/worker-boundary'
+import { ensureRunDir, runPath } from '@harness/kernel/run-paths'
 import {
   postForgeEffectOnce,
   publishRound,
@@ -161,7 +161,7 @@ import {
 } from '../loops/dev-review/standalone/dev-review-loop/round-assess'
 import { resolveTrustAnchorSecurityScanCommand } from '../loops/dev-review/standalone/dev-review-loop/security-scan-command'
 import { fetchPrBody } from '../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
-import { runRecorder } from '../../../kernel/log/run-recorder'
+import { runRecorder } from '@harness/kernel/log/run-recorder'
 import {
   postMarkedComment,
   upsertDeferredFindingsIssue,

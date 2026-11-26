@@ -17,18 +17,18 @@ import {
 import { hostname, tmpdir } from 'node:os'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { promisify } from 'node:util'
-import { type AnchorField, anchoredRegionBounds } from '../../../../kernel/gates/checks/anchored-region'
+import { type AnchorField, anchoredRegionBounds } from '@harness/kernel/gates/checks/anchored-region'
 import { extractFencedBlocks } from '../task-contract/brief-validation'
 import { locateTestPlanSection } from '../task-contract/test-plan-section'
 import { coreCheckRegistry } from '../../checks/registry'
-import { buildCheckEnv, CHECK_EXCLUDE_ENV } from '../../../../kernel/gates/checks/runner'
-import { ScanContext } from '../../../../kernel/gates/checks/scan-context'
+import { buildCheckEnv, CHECK_EXCLUDE_ENV } from '@harness/kernel/gates/checks/runner'
+import { ScanContext } from '@harness/kernel/gates/checks/scan-context'
 import { REGION_PREFIX_CURRENT, REGION_PREFIXES } from '../legacy-markers'
 import { loadConfig } from '../../integration/config/compose'
 import { collectBodyCheckErrors } from '../task-contract/forge/forge-write.js'
-import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '../../../../kernel/connectors/git/numstat'
+import { EVIDENCE_SUMMARY_PREFIX, summariseNumstat } from '@harness/kernel/connectors/git/numstat'
 import { programFile } from '../programs.js'
-import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../kernel/run-paths.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo } from '@harness/kernel/run-paths.js'
 import {
   type DeferredTestsRecord,
   isReadyCiCommand,
@@ -40,7 +40,7 @@ import {
 import {
   isNativeRunCommand,
   parseNativeRunCommand
-} from '../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.js'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.js'
 
 /**
  * The `VINAYA:EVIDENCE` engine — every function that computes, or writes, the

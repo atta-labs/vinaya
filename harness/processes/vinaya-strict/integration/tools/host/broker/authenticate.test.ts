@@ -5,11 +5,11 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import type { DispatchTeeRecoveryDeps } from '../../../../loops/dev-review/dispatch/dispatch'
-import { authenticateOperatorInvocation, ForgedInvocationError } from '../../../../../../kernel/tools/host/broker'
+import type { DispatchTeeRecoveryDeps } from '@harness/workflow/loops/dev-review/dispatch/dispatch'
+import { authenticateOperatorInvocation, ForgedInvocationError } from '@harness/kernel/tools/host/broker'
 import { authenticateWorkerInvocation } from './vinaya-broker'
-import type { CommandRecord } from '../../../../../../kernel/log/outside-log'
-import { isolatedLocalCopy } from '../../../log/client/local-copy-fixture'
+import type { CommandRecord } from '@harness/kernel/log/outside-log'
+import { isolatedLocalCopy } from '@harness/workflow/integration/log/client/local-copy-fixture'
 
 /** An in-memory `DispatchTeeRecoveryDeps` naming exactly one launch record — `records` is `[runId, role, task]` triples, mirroring what `dispatchRole` would have durably written before spawning this child. */
 function fakeDispatchDeps(records: readonly [string, string, number][]): DispatchTeeRecoveryDeps {

@@ -8,7 +8,7 @@
  * scratch `HOME`, a scratch non-git `cwd`).
  */
 
-import { programCommandLine } from '../../../../tools/programs.js'
+import { programCommandLine } from '@harness/workflow/tools/programs.js'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'

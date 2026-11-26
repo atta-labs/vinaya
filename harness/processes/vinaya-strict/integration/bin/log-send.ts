@@ -19,10 +19,10 @@
 // was already accepted creates no duplicate. Running it twice is therefore
 // harmless — the second run finds the folder emptied and the queue drained.
 
-import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
 import { existsSync, readFileSync, readdirSync, realpathSync, unlinkSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
+import { resolveRepo } from '@harness/kernel/adapters/code-host/github/resolve-repo'
 import { loadConfig, loadTrustAnchorConfigAsync, resolveCiTrustAnchorProbeRef } from '../config/compose.js'
 import {
   defaultRuntimeDir,
@@ -30,7 +30,7 @@ import {
   resolveSettings,
   sendLocalCopy
 } from '@attalabs/vinaya-log-sdk'
-import { printJson } from '../../../../kernel/effects/envelope.js'
+import { printJson } from '@harness/kernel/effects/envelope.js'
 import {
   appendHardenedLine,
   describeFolderFallback,
@@ -40,15 +40,10 @@ import {
   resolveLogDestinationFrom,
   telemetryOutboxRoot,
   withDeadline
-} from '../../../../kernel/log/log-sink.js'
-import { drainOutboxToWebhook, type WebhookDrainOutcome } from '../../../../kernel/log/client/log-webhook-drain.js'
-import {
-  isInsideRepo,
-  isUnattendedProcess,
-  repoRootSync,
-  runtimeDirForRepoAsync
-} from '../../../../kernel/run-paths.js'
-import { resolveOtlpAddress } from '../../../../kernel/log/otlp-address.js'
+} from '@harness/kernel/log/log-sink.js'
+import { drainOutboxToWebhook, type WebhookDrainOutcome } from '@harness/kernel/log/client/log-webhook-drain.js'
+import { isInsideRepo, isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '@harness/kernel/run-paths.js'
+import { resolveOtlpAddress } from '@harness/kernel/log/otlp-address.js'
 
 type RepoRef = { owner: string; repo: string } | null
 

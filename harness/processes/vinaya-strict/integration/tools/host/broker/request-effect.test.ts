@@ -14,8 +14,8 @@ import {
   defaultControlStoreDeps,
   readEffect,
   StaleEpochWriteError
-} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
-import type { DispatchTeeRecoveryDeps } from '../../../../loops/dev-review/dispatch/dispatch'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import type { DispatchTeeRecoveryDeps } from '@harness/workflow/loops/dev-review/dispatch/dispatch'
 import {
   acquireOwnership,
   LeasePushTargetError,
@@ -24,10 +24,10 @@ import {
   scopeTarget,
   UnboundTargetError,
   UngrantedOperationError
-} from '../../../../../../kernel/tools/host/broker'
+} from '@harness/kernel/tools/host/broker'
 import { authenticateWorkerInvocation, requestEffect } from './vinaya-broker'
-import type { ActionRecord, CommandRecord } from '../../../../../../kernel/log/outside-log'
-import { isolatedLocalCopy } from '../../../log/client/local-copy-fixture'
+import type { ActionRecord, CommandRecord } from '@harness/kernel/log/outside-log'
+import { isolatedLocalCopy } from '@harness/workflow/integration/log/client/local-copy-fixture'
 
 let dir: string
 let deps: ControlStoreDeps

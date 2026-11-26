@@ -31,12 +31,12 @@ import {
   credentialDenyRead,
   credentialReadRules,
   generateClaudeSettings
-} from '../../../../../kernel/adapters/agents/claude-code/settings'
-import { CREDENTIAL_ENV_EXCLUDES, generateCodexConfig } from '../../../../../kernel/adapters/agents/codex/config'
-import { loadRoleGrants } from '../../../../../kernel/adapters/agents/manifest'
+} from '@harness/kernel/adapters/agents/claude-code/settings'
+import { CREDENTIAL_ENV_EXCLUDES, generateCodexConfig } from '@harness/kernel/adapters/agents/codex/config'
+import { loadRoleGrants } from '@harness/kernel/adapters/agents/manifest'
 import { VINAYA_LAUNCHED_ROLES } from '../../policies/launched-roles'
-import type { GeneratedAgentConfig } from '../../../../../kernel/isolation/policy'
-import { createRoleLaunchers } from '../../../executing/actions'
+import type { GeneratedAgentConfig } from '@harness/kernel/isolation/policy'
+import { createRoleLaunchers } from '@harness/workflow/executing/actions'
 import { AGENTS, type Agent, ENGINE_PROBE_CANARY } from './sandbox-launch.js'
 
 export const CREDENTIAL_ROW_PREFIX = 'fault-attack:'

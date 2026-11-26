@@ -89,7 +89,7 @@ The TARGET state model those guarantees migrate into — states, transitions, te
 
 ## Driver module map
 
-The public driver file keeps the compatibility exports and the short per-run orchestrator. Every phase reads the same per-run context; helper calls are direct imports. Initialization, effect ordering, prompts and log events are unchanged.
+The public driver file keeps the compatibility exports and the short per-run orchestrator. Every phase reads the same per-run context; helper calls are direct imports, and the loop's modules import kernel and workflow files through the `@harness/kernel/<path>` and `@harness/workflow/<path>` aliases rather than long relative paths. Initialization, effect ordering, prompts and log events are unchanged.
 
 | Module in `standalone/dev-review-loop/` | Phase |
 | --- | --- |

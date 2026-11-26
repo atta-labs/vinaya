@@ -8,9 +8,9 @@
 // first argument names a file, handed on to the sleeping check, which appends
 // its own identity (pid and start time) to it once it is running.
 import { join } from 'node:path'
-import { installVinayaLogSinkFactory } from '../../../log/log-sink-factory'
-import { runChecks } from '../../../../../../kernel/gates/checks/runner'
-import { installVinayaConfigProvider } from '../../../config/compose'
+import { installVinayaLogSinkFactory } from '@harness/workflow/integration/log/log-sink-factory'
+import { runChecks } from '@harness/kernel/gates/checks/runner'
+import { installVinayaConfigProvider } from '@harness/workflow/integration/config/compose'
 
 // This program is its own composition root: the runner's log sink reads
 // configuration only through the provider one installs.

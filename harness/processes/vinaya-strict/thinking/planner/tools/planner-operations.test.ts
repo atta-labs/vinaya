@@ -7,7 +7,7 @@ import {
   makeCheckError,
   objectivesVersionMarkerPrefixes,
   refuse
-} from '../../../tools/task-contract/forge/forge-write'
+} from '@harness/workflow/tools/task-contract/forge/forge-write'
 import {
   type ObjectivesDeps,
   type PlannerForge,

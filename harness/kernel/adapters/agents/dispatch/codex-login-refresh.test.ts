@@ -16,7 +16,7 @@ import {
   refreshStagedCodexLogin,
   reuseStagedCodexHome,
   stageCodexPolicyHome
-} from '../../../isolation/worker-boundary.js'
+} from '@harness/kernel/isolation/worker-boundary.js'
 
 const roots: string[] = []
 afterEach(() => {

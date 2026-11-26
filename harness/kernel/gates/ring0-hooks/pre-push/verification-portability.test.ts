@@ -15,7 +15,7 @@ import {
   plannedTests,
   type SelectionPlan
 } from '@attalabs/test-selection'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../conformance/unit/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 import { globToRegex as coreGlobToRegex } from '../../glob-to-regex'
 
 const REPO_ROOT = join(import.meta.dir, '../../../../..')

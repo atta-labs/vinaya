@@ -18,7 +18,7 @@
 // exists while the hook runs — so that is what is checked, resolved with
 // `git rev-parse --git-path` because `.git` is a file in a linked worktree.
 
-import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { COMMIT_TYPE_STYLE, COMMIT_TYPES } from '../../tools/task-contract/brief-validation'

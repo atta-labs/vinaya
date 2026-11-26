@@ -20,7 +20,7 @@ import {
   writeCodexHookFiles
 } from '../../loops/dev-review/dispatch/dispatch.js'
 import { createDeveloperDevToolContext } from '../../loops/dev-review/actions/developer-dev-tools-context.js'
-import { createDevToolsMcpServer, DEV_TOOL_CATALOG, DEV_TOOL_NAMES } from '../../../../kernel/tools/dev-tools-server.js'
+import { createDevToolsMcpServer, DEV_TOOL_CATALOG, DEV_TOOL_NAMES } from '@harness/kernel/tools/dev-tools-server.js'
 import {
   buildRequest,
   createFetchDocumentationTool,
@@ -40,8 +40,8 @@ import {
   type ResolvedAddress,
   whyNotCountedAsRead,
   UNTRUSTED_PAGE_NOTICE
-} from '../../../../kernel/tools/fetch-documentation.js'
-import { describeTool } from '../../../../kernel/tools/tool-catalog.js'
+} from '@harness/kernel/tools/fetch-documentation.js'
+import { describeTool } from '@harness/kernel/tools/tool-catalog.js'
 import {
   manifestDigest,
   type PreparedSource,
@@ -49,14 +49,14 @@ import {
   sha256Digest,
   sourceReceiptsPath,
   sourceStoreDir
-} from '../../../../kernel/source-manifest.js'
+} from '@harness/kernel/source-manifest.js'
 import {
   buildCodexSandboxConfigToml,
   createWorkerBoundary,
   DOCUMENTATION_HOSTS,
   startTurnWriteAttribution,
   taskControlDir
-} from '../../../../kernel/isolation/worker-boundary.js'
+} from '@harness/kernel/isolation/worker-boundary.js'
 import { vinayaToolGrantPolicy, vinayaWorkerBoundaryPolicies } from '../policies/vinaya-policies.js'
 import {
   cleanupWorlds,
@@ -65,7 +65,7 @@ import {
   makeWorld,
   runLoopInProcess
 } from '../../tests/standalone/lib/dev-review-loop-harness.js'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 const { protectedPathsForTurn } = createWorkerBoundary(vinayaWorkerBoundaryPolicies())
 

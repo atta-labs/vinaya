@@ -1,6 +1,6 @@
 import { DEFAULT_COLLISION_THRESHOLD, type TaskFileFacts } from '../issue-validation'
 import { describe, expect, it } from 'bun:test'
-import { resolveCollisionThreshold, type VinayaConfig } from '../../../integration/config/compose'
+import { resolveCollisionThreshold, type VinayaConfig } from '@harness/workflow/integration/config/compose'
 import { buildCollisionPeers, pinnedFilesOf, validateIssueContent } from './forge-write'
 
 // The forced-companion gates are dormant here — this file exercises only the

@@ -20,7 +20,7 @@ import { join } from 'node:path'
 import {
   type ControlStoreDeps,
   defaultControlStoreDeps
-} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 import {
   authenticateOperatorInvocation,
   ForgedInvocationError,
@@ -29,7 +29,7 @@ import {
   ReplayedInputVersionError,
   scopeTarget,
   UngrantedOperationError
-} from '../../../../../../kernel/tools/host/broker'
+} from '@harness/kernel/tools/host/broker'
 import { authenticateWorkerInvocation, requestEffect } from './vinaya-broker'
 
 let dir: string

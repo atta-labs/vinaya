@@ -3,13 +3,13 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadProcess } from '../../../../../kernel/dev-process-socket/loader/load-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import {
   credentialDenyRead,
   credentialReadRules,
   generateClaudeSettings
-} from '../../../../../kernel/adapters/agents/claude-code/settings'
-import { CREDENTIAL_ENV_EXCLUDES, generateCodexConfig } from '../../../../../kernel/adapters/agents/codex/config'
+} from '@harness/kernel/adapters/agents/claude-code/settings'
+import { CREDENTIAL_ENV_EXCLUDES, generateCodexConfig } from '@harness/kernel/adapters/agents/codex/config'
 import {
   claudeBuiltins,
   claudeEffective,
@@ -18,11 +18,11 @@ import {
   codexEffective,
   generatedFile,
   offeredBeyondGrants
-} from '../../../../../kernel/adapters/agents/fixtures/generated-capabilities'
-import { CLAUDE_BUILTINS, loadRoleGrants, mcpRule } from '../../../../../kernel/adapters/agents/manifest'
-import { grantVariables } from '../../../../../kernel/adapters/agents/variables'
-import { resolveGrantValues, type GeneratedAgentConfig } from '../../../../../kernel/isolation/policy'
-import { evaluateShellGuards } from '../../../../../kernel/isolation/shell-eval'
+} from '@harness/kernel/adapters/agents/fixtures/generated-capabilities'
+import { CLAUDE_BUILTINS, loadRoleGrants, mcpRule } from '@harness/kernel/adapters/agents/manifest'
+import { grantVariables } from '@harness/kernel/adapters/agents/variables'
+import { resolveGrantValues, type GeneratedAgentConfig } from '@harness/kernel/isolation/policy'
+import { evaluateShellGuards } from '@harness/kernel/isolation/shell-eval'
 
 // Vinaya's own launched roles, run through the kernel's agent adapters: every role this process declares with a
 // grants file and an output schema. The process folder is this file's own process, loaded as the harness loads it.

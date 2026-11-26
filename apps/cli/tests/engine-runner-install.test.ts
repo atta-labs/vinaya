@@ -12,14 +12,9 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parse } from 'yaml'
-import { loadProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../harness/kernel/conformance/unit/process-fixture'
-import {
-  BUILT_PROCESS_FOLDER,
-  PROGRAMS,
-  processFolderFor,
-  programFile
-} from '../../../harness/processes/vinaya-strict/tools/programs'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
+import { BUILT_PROCESS_FOLDER, PROGRAMS, processFolderFor, programFile } from '@harness/workflow/tools/programs'
 
 // The Engine runner, run from an installed package: the package's programs built into a temporary folder (never the
 // package's own `dist/`, which other tests read and rewrite), assembled there as an installed package — its

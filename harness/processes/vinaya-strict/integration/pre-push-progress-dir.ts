@@ -20,8 +20,8 @@ import {
   isProgressStreamName,
   type ProgressRecord,
   resolveProgressDirLive
-} from '../../../kernel/gates/ring0-hooks/pre-push/push-progress.js'
-import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process.js'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/push-progress.js'
+import { installProcess } from '@harness/kernel/dev-process-socket/contract/install-process.js'
 import { vinayaProcessIntegration } from './process/process-integration.js'
 
 /** How often the copier looks at the capture. */

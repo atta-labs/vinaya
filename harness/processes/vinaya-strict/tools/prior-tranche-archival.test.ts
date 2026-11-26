@@ -1,12 +1,12 @@
 import type { Mock } from 'bun:test'
 import { describe, expect, it, mock } from 'bun:test'
-import type { GhIssue } from '../../../kernel/adapters/code-host/github/gh'
+import type { GhIssue } from '@harness/kernel/adapters/code-host/github/gh'
 import { createGhMock } from './test-support/mock-gh'
 
-mock.module('../../../kernel/adapters/code-host/github/gh', () => createGhMock())
+mock.module('@harness/kernel/adapters/code-host/github/gh', () => createGhMock())
 
 const { ghApiGetAllPagesAsync, ghIssueListByLabelAsync, ghLabelIssueCountsAsync } = await import(
-  '../../../kernel/adapters/code-host/github/gh'
+  '@harness/kernel/adapters/code-host/github/gh'
 )
 const { defaultPriorTrancheArchivalDeps, resolvePriorTrancheArchival } = await import('./prior-tranche-archival')
 type PriorTrancheArchivalDeps = import('./prior-tranche-archival').PriorTrancheArchivalDeps

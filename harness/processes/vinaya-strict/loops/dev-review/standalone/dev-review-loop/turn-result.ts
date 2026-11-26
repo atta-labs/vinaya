@@ -24,11 +24,11 @@
  * context, never evidence, and never read by a transition guard.
  */
 
-import type { Confidence, PauseReason } from '../../../../tools/dev-review-policy/types'
+import type { Confidence, PauseReason } from '@harness/workflow/tools/dev-review-policy/types'
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
-import { CONFIDENCE_REASON_MAX_LENGTH } from '../../../../../../kernel/log/schema'
+import { CONFIDENCE_REASON_MAX_LENGTH } from '@harness/kernel/log/schema'
 import {
   BLOCKER_KINDS,
   DEVELOPER_TURN_RESULT_SCHEMA_VERSION,
@@ -36,8 +36,8 @@ import {
   type DeveloperTurnSchemaContext,
   parseDeveloperTurnResult,
   semanticErrors
-} from '../../../../executing/developer/developer-turn-result.js'
-import { runPath } from '../../../../../../kernel/run-paths.js'
+} from '@harness/workflow/executing/developer/developer-turn-result.js'
+import { runPath } from '@harness/kernel/run-paths.js'
 import { decideStop } from './stop-decision.js'
 
 // --- adapter ----------------------------------------------------------------

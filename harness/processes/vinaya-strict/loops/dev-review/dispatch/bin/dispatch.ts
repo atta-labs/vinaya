@@ -9,10 +9,10 @@
  * trailing step.
  */
 
-import { isEntryPoint } from '../../../../../../kernel/gates/checks/entry-point.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
 import { readFileSync } from 'node:fs'
-import type { Role } from '../../../../../../kernel/log/schema'
-import { VINAYA_LOG_ROLE_NAMES } from '../../../../integration/log/log-roles'
+import type { Role } from '@harness/kernel/log/schema'
+import { VINAYA_LOG_ROLE_NAMES } from '@harness/workflow/integration/log/log-roles'
 import {
   AGENT_VENDOR_NAMES,
   dispatchRole,
@@ -23,8 +23,8 @@ import {
   parseDispatchEffort,
   type AgentVendor
 } from '../dispatch.js'
-import { loadConfig } from '../../../../integration/config/compose.js'
-import { printJson } from '../../../../../../kernel/effects/envelope.js'
+import { loadConfig } from '@harness/workflow/integration/config/compose.js'
+import { printJson } from '@harness/kernel/effects/envelope.js'
 
 // The process's Log sink factory, for the entry point to install before any command runs.
 export { installVinayaLogSinkFactory, installVinayaCheckRegistry }
@@ -209,7 +209,7 @@ export async function dispatchCommand(args: string[]): Promise<void> {
 
 // Run as a program (`vinaya-dispatch`): started through the shared program entry.
 if (isEntryPoint(import.meta.url, 'dispatch')) {
-  const { runProgram } = await import('../../../../tools/program-entry.js')
+  const { runProgram } = await import('@harness/workflow/tools/program-entry.js')
   await runProgram('dispatch', async (argv: string[]) => {
     await dispatchCommand(argv)
   })

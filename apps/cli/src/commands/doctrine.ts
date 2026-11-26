@@ -12,9 +12,9 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import matter from 'gray-matter'
-import { printJson } from '../../../../harness/kernel/effects/envelope.js'
+import { printJson } from '@harness/kernel/effects/envelope.js'
 import { cliPackageRoot } from '../lib/package-root.js'
-import { resolveRoleFile } from '../../../../harness/processes/vinaya-strict/integration/roles/plan.js'
+import { resolveRoleFile } from '@harness/workflow/integration/roles/plan.js'
 import {
   ENTRY_SEGMENTS,
   listTemplateNames,
@@ -22,7 +22,7 @@ import {
   ROLE_ALIASES,
   resolveDoctrineRoot,
   templatePath
-} from '../../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
+} from '@harness/workflow/tools/doctrine/resolve-doctrine.js'
 
 export async function doctrineCommand(args: string[]): Promise<void> {
   const root = resolveDoctrineRoot(cliPackageRoot())
@@ -126,7 +126,7 @@ export async function doctrineCommand(args: string[]): Promise<void> {
   process.stdout.write(`${entry}\n`)
 }
 
-import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
+import type { SurfaceExemption } from '@harness/workflow/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   doctrine: { date: '2026-09-05', callsToday: 4, retiresVia: 'sharedCommandShell' }

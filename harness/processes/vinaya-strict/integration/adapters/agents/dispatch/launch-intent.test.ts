@@ -11,7 +11,7 @@
  * the test inspects. If that record already exists — status `launched` — by
  * the time the child runs, the parent must have written it before spawning.
  */
-import { programCommandLine } from '../../../../tools/programs.js'
+import { programCommandLine } from '@harness/workflow/tools/programs.js'
 import { afterEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'

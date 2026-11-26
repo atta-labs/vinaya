@@ -10,7 +10,7 @@ import {
   parseDocOwners,
   pointerToPath
 } from './doc-owners'
-import { globToRegex } from '../../../kernel/gates/glob-to-regex'
+import { globToRegex } from '@harness/kernel/gates/glob-to-regex'
 
 /**
  * `verify-dispatch --surfaces` must distinguish a repo that never configured

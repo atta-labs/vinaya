@@ -1,10 +1,10 @@
 import type { LoopRunContext } from './run-context.js'
-import type { DevReviewLoopEventInput } from '../../../../tools/dev-review-policy/types'
+import type { DevReviewLoopEventInput } from '@harness/workflow/tools/dev-review-policy/types'
 import { assertValidLoopEvent } from './git-defaults.js'
 import { sizeOfSafe } from './round-assess.js'
 import { waitForOwnLoopLine } from './round-assess.js'
-import { narrateDriverEvent } from '../../../../../../kernel/log/client/loop-log.js'
-import { drainLogSink } from '../../../../../../kernel/log/log-sink.js'
+import { narrateDriverEvent } from '@harness/kernel/log/client/loop-log.js'
+import { drainLogSink } from '@harness/kernel/log/log-sink.js'
 
 export function announcePr(c: LoopRunContext): void {
   if (c.prNumber > 0) process.env.VINAYA_PR = String(c.prNumber)

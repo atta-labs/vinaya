@@ -1,22 +1,22 @@
 import type { LoopRunContext } from './run-context.js'
-import type { Role } from '../../../../../../kernel/log/schema'
-import { configPath } from '../../../../integration/config/compose.js'
-import { createWorkerBoundary } from '../../../../../../kernel/isolation/worker-boundary.js'
-import { vinayaWorkerBoundaryPolicies } from '../../../../integration/policies/vinaya-policies.js'
+import type { Role } from '@harness/kernel/log/schema'
+import { configPath } from '@harness/workflow/integration/config/compose.js'
+import { createWorkerBoundary } from '@harness/kernel/isolation/worker-boundary.js'
+import { vinayaWorkerBoundaryPolicies } from '@harness/workflow/integration/policies/vinaya-policies.js'
 
-import { startTurnWriteAttribution } from '../../../../../../kernel/isolation/worker-boundary.js'
-import { taskControlDir } from '../../../../../../kernel/isolation/worker-boundary.js'
+import { startTurnWriteAttribution } from '@harness/kernel/isolation/worker-boundary.js'
+import { taskControlDir } from '@harness/kernel/isolation/worker-boundary.js'
 import { documentationReceiptsPathForTask } from './developer-context.js'
-import type { CredentialFinding } from '../../../../../../kernel/isolation/worker-boundary.js'
-import { findCredentialPatterns } from '../../../../../../kernel/isolation/worker-boundary.js'
+import type { CredentialFinding } from '@harness/kernel/isolation/worker-boundary.js'
+import { findCredentialPatterns } from '@harness/kernel/isolation/worker-boundary.js'
 
 import type { DispatchHandle } from '../../dispatch/dispatch.js'
-import { runPath } from '../../../../../../kernel/run-paths.js'
+import { runPath } from '@harness/kernel/run-paths.js'
 import { readIfExists } from './reviewer-dispatch.js'
 import { developerWrittenTextFromVendorOutput } from '../../dispatch/dispatch.js'
 import { worktreePathForBranch } from './developer-prompts.js'
 import { existsSync } from 'node:fs'
-import { addedDiffLines } from '../../../../../../kernel/isolation/worker-boundary.js'
+import { addedDiffLines } from '@harness/kernel/isolation/worker-boundary.js'
 
 /**
  * O11 (round 2 review, MAJOR): whether THIS prompt carries the context

@@ -34,22 +34,28 @@
 
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
-import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '../../../tools/task-contract/verdict-extraction'
-import { COMMENT_MARKER_PREFIX_PATTERN } from '../../../tools/legacy-markers'
-import { isPrincipal } from '../../../tools/task-contract/waiver-label'
-import { parseDeveloperRoundMarker } from '../../../tools/task-contract/review-status'
+import {
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict
+} from '@harness/workflow/tools/task-contract/verdict-extraction'
+import { COMMENT_MARKER_PREFIX_PATTERN } from '@harness/workflow/tools/legacy-markers'
+import { isPrincipal } from '@harness/workflow/tools/task-contract/waiver-label'
+import { parseDeveloperRoundMarker } from '@harness/workflow/tools/task-contract/review-status'
 import {
   MAX_RETURNED_TEXT_CHARS,
   type TaskPrCheck,
   type TaskPrReviewRecord,
   type TaskPrVerdict
-} from '../../../../../kernel/tools/catalog/task-tools'
-import { redact } from '../../../../../kernel/log/redact'
-import type { FailedCheckLog } from '../../../../../kernel/tools/failed-check-log.js'
+} from '@harness/kernel/tools/catalog/task-tools'
+import { redact } from '@harness/kernel/log/redact'
+import type { FailedCheckLog } from '@harness/kernel/tools/failed-check-log.js'
 import { markerComments } from '../standalone/dev-review-loop/developer-dispatch.js'
 import { judgeWorkflowRuns, type RestWorkflowRun, sh } from '../standalone/dev-review-loop/gate-reading.js'
 import { PRINCIPAL_TEST_PLAN_WAIT_CHECK_RUN_NAME } from '../principal-test-plan-wait-check-name.js'
-import { REVIEW_GATE_CHECK_RUN_NAME, REVIEW_GATE_WORKFLOW_NAME } from '../../../tools/review-gate-check-name.js'
+import {
+  REVIEW_GATE_CHECK_RUN_NAME,
+  REVIEW_GATE_WORKFLOW_NAME
+} from '@harness/workflow/tools/review-gate-check-name.js'
 
 /**
  * The ceiling on one `gh` read made for a status row, in time and in output.

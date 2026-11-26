@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { VendoredVinaya } from '../../../tools/self-host.js'
+import type { VendoredVinaya } from '@harness/workflow/tools/self-host.js'
 import { claudeMcpJsonConfig } from '../../adapters.js'
 import {
   ARCHITECT_TOOLS_MCP_SERVER_NAME,

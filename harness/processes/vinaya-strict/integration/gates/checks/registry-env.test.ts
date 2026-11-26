@@ -1,13 +1,10 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, join, relative } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import type { CheckSpec } from '../../../../../kernel/gates/checks/contract'
-import { coreCheckRegistry } from '../../../checks/registry'
+import type { CheckSpec } from '@harness/kernel/gates/checks/contract'
+import { coreCheckRegistry } from '@harness/workflow/checks/registry'
 import { VinayaConfigSchema } from '../../config/compose'
-import {
-  FORGE_SNAPSHOT_DIR_ENV,
-  forgeSnapshotDir
-} from '../../../../../kernel/adapters/code-host/github/forge-snapshot'
+import { FORGE_SNAPSHOT_DIR_ENV, forgeSnapshotDir } from '@harness/kernel/adapters/code-host/github/forge-snapshot'
 
 /**
  * Proves the task 2 (#775) audit actually landed: every registered core

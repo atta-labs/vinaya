@@ -12,9 +12,9 @@
  * already in it. Every other family is read past.
  */
 
-import { narrate, reasonWaitsOn } from '../../../../kernel/log/client/narration'
+import { narrate, reasonWaitsOn } from '@harness/kernel/log/client/narration'
 import '../../integration/log/log-roles'
-import type { DatasetRow } from '../../../../kernel/log/sync/row'
+import type { DatasetRow } from '@harness/kernel/log/sync/row'
 import {
   AMBER_AFTER_MS,
   type FeedLine,

@@ -57,7 +57,7 @@
 import { basename, join, relative } from 'node:path'
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { runPath } from '../../../../../../kernel/run-paths.js'
+import { runPath } from '@harness/kernel/run-paths.js'
 
 export type ReviewerRole = 'reviewer' | 'security'
 

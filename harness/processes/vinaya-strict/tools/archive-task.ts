@@ -1,4 +1,4 @@
-import { extractIssue } from '../../../kernel/adapters/code-host/github/extract-issue'
+import { extractIssue } from '@harness/kernel/adapters/code-host/github/extract-issue'
 /**
  * Post-merge Archivist provenance assembly. Pure — no `fs`, no `fetch`, no `process.env`. The CLI shim
  * (`bin/archive-task.ts`) resolves the merged PR via `gh`, gathers
@@ -14,7 +14,7 @@ import { extractIssue } from '../../../kernel/adapters/code-host/github/extract-
 
 import { hasLabel } from './task-contract/forge/labels'
 import { PROVENANCE_HEADING, PROVENANCE_HEADINGS, REGION_PREFIXES } from './legacy-markers'
-import { type AnchorField, anchoredRegion, stripCode } from '../../../kernel/gates/checks/anchored-region'
+import { type AnchorField, anchoredRegion, stripCode } from '@harness/kernel/gates/checks/anchored-region'
 import { headerRegion } from './task-contract/brief-validation'
 import { readTierFromPrBody } from './task-contract/pr-tier'
 import { parseTaskBranchIdentity } from './task-contract/task-branch-identity'

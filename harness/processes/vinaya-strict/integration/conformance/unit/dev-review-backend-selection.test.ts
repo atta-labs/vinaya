@@ -10,22 +10,26 @@
 // The live L6 rehearsal reads a real rehearsal record, and runs only when
 // VINAYA_ROLLBACK_REHEARSAL names the rehearsed task.
 import { afterAll, describe, expect, it } from 'bun:test'
-import { readEffect } from '../../../../../kernel/connectors/checkpoint/control-store/index'
+import { readEffect } from '@harness/kernel/connectors/checkpoint/control-store/index'
 import {
   endEngineRunThrough,
   readRollbackRehearsals,
   type RollbackRehearsalRecord,
   terminateAndRestart
-} from '../../../loops/dev-review/run-control/backend-rollback.js'
+} from '@harness/workflow/loops/dev-review/run-control/backend-rollback.js'
 /** The configuration a run reads its runner from. */
 type VinayaConfig = NonNullable<ReturnType<NonNullable<RunTaskDeps['runnerConfig']>>>
 import {
   isDriverPidAlive,
   readDriverLock,
   readPauseState
-} from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import { runtimeDir as runtimeDirForThisRepo } from '../../../loops/dev-review/standalone/dev-review-loop.js'
-import { CrossRunnerRefusedError, runTask, type RunTaskDeps } from '../../../loops/dev-review/run-control/task-run.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { runtimeDir as runtimeDirForThisRepo } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
+import {
+  CrossRunnerRefusedError,
+  runTask,
+  type RunTaskDeps
+} from '@harness/workflow/loops/dev-review/run-control/task-run.js'
 import {
   crossRunnerInFlightText,
   crossRunnerRefusalReason,
@@ -33,17 +37,21 @@ import {
   engineRunnerScriptPath,
   readTaskRunner,
   recordTaskRunner
-} from '../../../loops/dev-review/run-control/task-run-engine.js'
-import { runnerReadingFor } from '../../../loops/dev-review/run-control/task-status.js'
-import { resumeContinuation } from '../../../loops/dev-review/run-control/resume.js'
-import { cleanupWorlds, makeWorld, runLoopInProcess } from '../../../tests/standalone/lib/dev-review-loop-harness.js'
+} from '@harness/workflow/loops/dev-review/run-control/task-run-engine.js'
+import { runnerReadingFor } from '@harness/workflow/loops/dev-review/run-control/task-status.js'
+import { resumeContinuation } from '@harness/workflow/loops/dev-review/run-control/resume.js'
+import {
+  cleanupWorlds,
+  makeWorld,
+  runLoopInProcess
+} from '@harness/workflow/tests/standalone/lib/dev-review-loop-harness.js'
 import {
   IN_FLIGHT_KINDS,
   type InFlightEngineRun,
   type InFlightKind,
   PUBLICATION_EFFECT_KEY,
   runInFlightEngineRun
-} from '../../../tests/dev-review-engine-loop-adapter.js'
+} from '@harness/workflow/tests/dev-review-engine-loop-adapter.js'
 import type { Observation } from './dev-review-current-loop-adapter.js'
 
 afterAll(() => cleanupWorlds())

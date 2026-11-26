@@ -1,7 +1,7 @@
 import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '../../../tools/host/dev-tools'
+import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '@harness/kernel/tools/host/dev-tools'
 import { mcpRule, type RoleGrants } from '../manifest'
 import {
   normalizedCapabilities,
@@ -12,7 +12,7 @@ import {
   type GeneratorPaths,
   type HookPolicy,
   scratchCacheEnv
-} from '../../../isolation/policy'
+} from '@harness/kernel/isolation/policy'
 
 /**
  * The credential routes every role is denied, relative to the home directory: SSH keys, cloud and forge

@@ -30,16 +30,16 @@ import {
   SANDBOX_PROBE_MARKER,
   type SandboxProbeRun,
   type SandboxProbeRunner
-} from '../../../../../kernel/isolation/worker-boundary.js'
+} from '@harness/kernel/isolation/worker-boundary.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from '../sandbox-conformance/driver-socket-reach.js'
 import {
   agentTurnsOf,
   commandRecordsOf,
   earlierOperationLinesOf,
   localCopyFolderOf
-} from '../../../tests/lib/dispatch/dispatch-fixtures.js'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture.js'
-import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../../kernel/isolation/dispatch/fake-sandbox-probe.js'
+} from '@harness/workflow/tests/lib/dispatch/dispatch-fixtures.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture.js'
+import { FAKE_CLAUDE_PROBE_ANSWER } from '@harness/kernel/isolation/dispatch/fake-sandbox-probe.js'
 
 const SECCOMP_ERROR =
   'apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted; caller must provide CAP_SYS_ADMIN): Permission denied'

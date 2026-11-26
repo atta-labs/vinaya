@@ -16,10 +16,10 @@
 // `apps/vinaya/specs/vinaya-spec.md`'s shared-credential caveat), this
 // command structurally cannot prove which of them ran it — `--print-only`
 // exists for exactly that gap: print the commands, let the human run them.
-import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
 import { execFileSync } from 'node:child_process'
 import { WAIVER_LABEL, WAIVER_LABEL_REVIEW } from '../../tools/task-contract/waiver-label'
-import { closeStdin, prompt } from '../../../../kernel/effects/prompt.js'
+import { closeStdin, prompt } from '@harness/kernel/effects/prompt.js'
 
 type WaiverKind = 'docs' | 'review'
 

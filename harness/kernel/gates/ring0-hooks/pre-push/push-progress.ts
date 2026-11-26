@@ -46,8 +46,8 @@ import {
   type ProcessIdentity,
   registerProcess,
   stopRegistered
-} from '../../../conformance/unit/process-registry.js'
-import { runtimeDirForThisRepo } from '../../../run-paths.js'
+} from '@harness/kernel/conformance/unit/process-registry.js'
+import { runtimeDirForThisRepo } from '@harness/kernel/run-paths.js'
 
 /** The reserved progress directory's name under the task's run directory. */
 export const PROGRESS_DIRNAME = 'progress'

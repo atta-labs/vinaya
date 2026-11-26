@@ -15,7 +15,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { createConnection, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { devToolsSocketPath, devToolsSocketRoot } from '../../../../../kernel/tools/dev-tools-registration.js'
+import { devToolsSocketPath, devToolsSocketRoot } from '@harness/kernel/tools/dev-tools-registration.js'
 import {
   CLAUDE_SANDBOX_ALLOWED_DOMAINS,
   type ClaudeSandboxSettings,
@@ -23,9 +23,9 @@ import {
   LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
   linuxUnixSocketFilterOptIn,
   resolveClaudeConfinement
-} from '../../../../../kernel/isolation/worker-boundary.js'
+} from '@harness/kernel/isolation/worker-boundary.js'
 import { SANDBOX_RUNTIME_PACKAGE } from './sandbox-launch.js'
-import { spawnBudgetedAsync } from '../../../../../kernel/conformance/unit/process-fixture.js'
+import { spawnBudgetedAsync } from '@harness/kernel/conformance/unit/process-fixture.js'
 
 export type DriverSocketReach = {
   /** The settings the driver resolved with the opt-in set. */

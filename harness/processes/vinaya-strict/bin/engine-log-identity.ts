@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import enginePackage from '@atta/engine/package.json' with { type: 'json' }
 import { parse } from 'yaml'
-import type { LoadedProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
+import type { LoadedProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 
 /**
  * The Engine's version, from a static import of its manifest the bundler inlines: an installed package carries the

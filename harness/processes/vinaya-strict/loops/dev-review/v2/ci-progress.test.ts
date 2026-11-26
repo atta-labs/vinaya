@@ -1,8 +1,8 @@
-import { initialLoopState } from '../../../tools/dev-review-policy/types'
+import { initialLoopState } from '@harness/workflow/tools/dev-review-policy/types'
 import { describe, expect, test } from 'bun:test'
 
-import type { ActionContext } from '../../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
-import type { TaskInput } from '../../../executing/actions'
+import type { ActionContext } from '@harness/kernel/loops/runtimes/atta-engine/run-process'
+import type { TaskInput } from '@harness/workflow/executing/actions'
 import { readCiOnce, type V2Functions } from './v2-actions'
 import {
   type CiJob,

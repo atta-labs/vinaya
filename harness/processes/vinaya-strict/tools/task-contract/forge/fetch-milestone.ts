@@ -5,10 +5,10 @@ import {
   ghIssueListByLabel,
   ghIssueListByLabelAsync,
   ghLabelIssueCountsAsync
-} from '../../../../../kernel/adapters/code-host/github/gh'
+} from '@harness/kernel/adapters/code-host/github/gh'
 import { trancheLabel, trancheSlugOf } from './labels'
 import { unwrapValue } from './list-tasks'
-import { stripCode } from '../../../../../kernel/adapters/code-host/github/strip-code'
+import { stripCode } from '@harness/kernel/adapters/code-host/github/strip-code'
 import type { Lifecycle } from '../tranche-types'
 
 export type MilestoneFacts = {

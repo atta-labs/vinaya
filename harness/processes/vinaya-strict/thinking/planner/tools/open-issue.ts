@@ -48,31 +48,35 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { installProcess } from '../../../../../kernel/dev-process-socket/contract/install-process.js'
-import { recordCliOperationAtExit } from '../../../../../kernel/log/client/cli-operation-log.js'
-import { vinayaProcessIntegration } from '../../../integration/process/process-integration.js'
+import { installProcess } from '@harness/kernel/dev-process-socket/contract/install-process.js'
+import { recordCliOperationAtExit } from '@harness/kernel/log/client/cli-operation-log.js'
+import { vinayaProcessIntegration } from '@harness/workflow/integration/process/process-integration.js'
 import { amendRationaleDeps } from './amend-rationale-deps'
 import {
   findMilestoneAttachTargetForSlug,
   hasExplicitMilestoneFlag,
   type MilestoneAttachTarget
-} from '../../../tools/task-contract/forge/fetch-milestone'
-import { findTrancheSlug, trancheLabel, trancheSlugLengthError } from '../../../tools/task-contract/forge/labels'
-import { parseRationaleDeps } from '../../../tools/task-contract/forge/parse-rationale-deps'
+} from '@harness/workflow/tools/task-contract/forge/fetch-milestone'
+import {
+  findTrancheSlug,
+  trancheLabel,
+  trancheSlugLengthError
+} from '@harness/workflow/tools/task-contract/forge/labels'
+import { parseRationaleDeps } from '@harness/workflow/tools/task-contract/forge/parse-rationale-deps'
 import {
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
   parsePnpmWorkspaceYaml
-} from '../../../tools/task-contract/blast-radius-domains'
-import { validateTaskIssueOutcome } from '../../../tools/task-contract/forge/forge-write'
+} from '@harness/workflow/tools/task-contract/blast-radius-domains'
+import { validateTaskIssueOutcome } from '@harness/workflow/tools/task-contract/forge/forge-write'
 import {
   checkConflictCompleteness,
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   type TaskIssueFacts
-} from '../../../tools/task-contract/issue-validation'
-import { classifyLeftover } from '../../../tools/task-contract/bin/leftover-detection'
-import type { CheckError } from '../../../../../kernel/gates/checks/contract'
+} from '@harness/workflow/tools/task-contract/issue-validation'
+import { classifyLeftover } from '@harness/workflow/tools/task-contract/bin/leftover-detection'
+import type { CheckError } from '@harness/kernel/gates/checks/contract'
 
 const REPO_ROOT = join(import.meta.dirname, '../../../../../..')
 

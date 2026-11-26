@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
-import { loadProcess } from '../../../../kernel/dev-process-socket/loader/load-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import { vinayaProcessIntegration } from './process-integration'
 
 const processDir = join(import.meta.dir, '..', '..')

@@ -13,8 +13,8 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { detectGitRepo } from '../../../../kernel/connectors/git/detect.js'
-import type { CheckError } from '../../../../kernel/gates/checks/contract'
+import { detectGitRepo } from '@harness/kernel/connectors/git/detect.js'
+import type { CheckError } from '@harness/kernel/gates/checks/contract'
 import {
   declaredTranches,
   milestoneCloseDecision,

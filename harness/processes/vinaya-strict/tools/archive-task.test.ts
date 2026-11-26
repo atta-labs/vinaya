@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { PROVENANCE_HEADING, PROVENANCE_HEADINGS, REGION_PREFIXES } from './legacy-markers'
 import { buildProvenanceBlock, hasProvenance, isEligibleForProvenance, taskRefFromBranch } from './archive-task'
-import { extractIssue } from '../../../kernel/adapters/code-host/github/extract-issue'
+import { extractIssue } from '@harness/kernel/adapters/code-host/github/extract-issue'
 import type { MergedPrFacts } from './archive-task'
 
 function facts(overrides: Partial<MergedPrFacts> = {}): MergedPrFacts {

@@ -40,7 +40,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join, posix, relative } from 'node:path'
 import { prePushSelection } from './pre-push-selection.js'
-import { changedFilesSinceRemoteBase, removedFilesSinceRemoteBase } from '../../../kernel/connectors/git/remote-base.js'
+import { changedFilesSinceRemoteBase, removedFilesSinceRemoteBase } from '@harness/kernel/connectors/git/remote-base.js'
 import { discoverWorkspaceDirs, type SelectionExplanation } from './repository-verification.js'
 
 /** The test preload every `apps/cli` test runs under, which no test imports. */

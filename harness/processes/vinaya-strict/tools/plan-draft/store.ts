@@ -9,7 +9,7 @@
  */
 
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { ensureRunDir, runPath } from '../../../../kernel/run-paths'
+import { ensureRunDir, runPath } from '@harness/kernel/run-paths'
 import { type PlanDraft, parsePlanDraft } from './draft'
 
 const DRAFT_FILE = 'draft.json'

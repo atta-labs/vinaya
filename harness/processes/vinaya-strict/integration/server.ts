@@ -40,7 +40,7 @@ import {
   type TaskToolDefinition,
   type TaskToolError,
   type TaskToolName
-} from '../../../kernel/tools/catalog/task-tools'
+} from '@harness/kernel/tools/catalog/task-tools'
 import {
   createSeatHost,
   dispatchSeatCall,
@@ -50,14 +50,14 @@ import {
   type Seat,
   selectSeat,
   validateSeatTable
-} from '../../../kernel/tools/host/seat-host.js'
+} from '@harness/kernel/tools/host/seat-host.js'
 import { Writable } from 'node:stream'
 import { defaultTaskCancelHandler } from '../loops/dev-review/run-control/cancel.js'
 import type { TaskToolCallResult } from '../loops/dev-review/run-control/handlers.js'
 import { taskEscalationReadHandler, taskStatusHandler } from '../loops/dev-review/run-control/handlers.js'
-import { createMcpServerCore, MCP_PROTOCOL_VERSION, type McpServerCore } from '../../../kernel/tools/mcp-protocol.js'
+import { createMcpServerCore, MCP_PROTOCOL_VERSION, type McpServerCore } from '@harness/kernel/tools/mcp-protocol.js'
 import { taskPrReadHandler } from '../loops/dev-review/run-control/pr-read.js'
-import { createTaskToolRouter } from '../../../kernel/tools/host/router.js'
+import { createTaskToolRouter } from '@harness/kernel/tools/host/router.js'
 import { vinayaRouterPolicies } from './policies/vinaya-policies.js'
 import {
   VINAYA_ARCHITECT_ROUTER_ROLES,

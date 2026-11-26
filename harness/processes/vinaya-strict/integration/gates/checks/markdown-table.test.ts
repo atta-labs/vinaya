@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { findHeadingLine, findTable, rowToRecord } from '../../../../../kernel/gates/checks/markdown-table'
+import { findHeadingLine, findTable, rowToRecord } from '@harness/kernel/gates/checks/markdown-table'
 
 const REPO_ROOT = join(import.meta.dirname, '../../../../../..')
 const ENFORCEMENT_PATH = join(REPO_ROOT, 'harness/processes/vinaya-strict/doctrine/enforcement.md')

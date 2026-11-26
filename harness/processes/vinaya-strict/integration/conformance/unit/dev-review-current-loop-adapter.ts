@@ -1,26 +1,26 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { DEFAULT_REVIEW_POLICY } from '../../../tools/task-contract/review-policy'
+import { DEFAULT_REVIEW_POLICY } from '@harness/workflow/tools/task-contract/review-policy'
 import {
   type Objective,
   objectivesOf,
   objectivesVersion,
   renderObjectives
-} from '../../../tools/task-contract/objectives'
+} from '@harness/workflow/tools/task-contract/objectives'
 import {
   cancelDevReviewLoop,
   type LoopDeps,
   type LoopInput,
   type LoopResult,
   taskFromPrBody
-} from '../../../loops/dev-review/standalone/dev-review-loop.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 import {
   readDriverLock,
   readPauseState,
   writeDriverLock
-} from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import type { LogSinkDeps } from '../../../../../kernel/log/log-sink.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import type { LogSinkDeps } from '@harness/kernel/log/log-sink.js'
 import {
   CLEAN_REVIEWER,
   CLEAN_SECURITY,
@@ -34,7 +34,7 @@ import {
   type RoleOutcome,
   runLoopInProcess,
   withWorldEnv
-} from '../../../tests/standalone/lib/dev-review-loop-harness.js'
+} from '@harness/workflow/tests/standalone/lib/dev-review-loop-harness.js'
 
 /**
  * The thin adapter between the normalized behavioral corpus

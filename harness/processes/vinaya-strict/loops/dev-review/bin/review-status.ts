@@ -1,7 +1,7 @@
-import { isEntryPoint } from '../../../../../kernel/gates/checks/entry-point.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
 import { execFileSync } from 'node:child_process'
-import { deriveReviewStatus, renderReviewStatus } from '../../../tools/task-contract/review-status'
-import { resolveTrustedPrincipals } from '../../../integration/config/compose'
+import { deriveReviewStatus, renderReviewStatus } from '@harness/workflow/tools/task-contract/review-status'
+import { resolveTrustedPrincipals } from '@harness/workflow/integration/config/compose'
 import { reviewPolicy } from '../standalone/dev-review-loop/developer-dispatch.js'
 
 /**
@@ -103,7 +103,7 @@ export async function reviewStatusCommand(args: string[]): Promise<void> {
 
 // Run as a program (`vinaya-review-status`): started through the shared program entry.
 if (isEntryPoint(import.meta.url, 'review-status')) {
-  const { runProgram } = await import('../../../tools/program-entry.js')
+  const { runProgram } = await import('@harness/workflow/tools/program-entry.js')
   await runProgram('review-status', async (argv: string[]) => {
     await reviewStatusCommand(argv)
   })

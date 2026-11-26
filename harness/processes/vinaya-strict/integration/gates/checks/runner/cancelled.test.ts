@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
-import { storedEvents } from '../../../../../../kernel/gates/checks/runner/local-copy-probe'
-import { isolatedConfigFixture } from '../../../../../../kernel/conformance/unit/process-fixture'
+import { storedEvents } from '@harness/kernel/gates/checks/runner/local-copy-probe'
+import { isolatedConfigFixture } from '@harness/kernel/conformance/unit/process-fixture'
 
 const FIXTURES = join(import.meta.dir, '..', 'fixtures')
 const RUN_AND_HANG = join(FIXTURES, 'run-and-hang.ts')

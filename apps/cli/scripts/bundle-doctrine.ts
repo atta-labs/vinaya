@@ -33,13 +33,9 @@
  */
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
-import { loadProcess, PROCESS_FILE } from '../../../harness/kernel/dev-process-socket/loader/load-process'
-import {
-  BUNDLED_DOCTRINE_DIR,
-  DOCTRINE_MAP,
-  DOCTRINE_TREE
-} from '../../../harness/processes/vinaya-strict/tools/doctrine/doctrine-map'
-import { BUILT_PROCESS_FOLDER } from '../../../harness/processes/vinaya-strict/tools/programs'
+import { loadProcess, PROCESS_FILE } from '@harness/kernel/dev-process-socket/loader/load-process'
+import { BUNDLED_DOCTRINE_DIR, DOCTRINE_MAP, DOCTRINE_TREE } from '@harness/workflow/tools/doctrine/doctrine-map'
+import { BUILT_PROCESS_FOLDER } from '@harness/workflow/tools/programs'
 
 const pkgRoot = join(import.meta.dir, '..')
 const monorepoRoot = join(pkgRoot, '..', '..')

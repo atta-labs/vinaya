@@ -7,7 +7,7 @@
  * Vinaya's declared integration: the configuration provider and the Log sink
  * factory (registered deferred, so the sink loads the first time a test logs).
  */
-import '../../../kernel/conformance/unit/test-env-preload.ts'
+import '@harness/kernel/conformance/unit/test-env-preload.ts'
 
 /**
  * The composition root a test process has: kernel code (`run-paths.ts`,
@@ -18,6 +18,6 @@ import '../../../kernel/conformance/unit/test-env-preload.ts'
  * cleaned, so nothing the composition loads reads the variables the kernel
  * preload removes.
  */
-const { installProcess } = await import('../../../kernel/dev-process-socket/contract/install-process.js')
+const { installProcess } = await import('@harness/kernel/dev-process-socket/contract/install-process.js')
 const { vinayaProcessIntegration } = await import('./process/process-integration.js')
 installProcess(vinayaProcessIntegration, ['config', 'log'])

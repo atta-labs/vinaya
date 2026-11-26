@@ -1,7 +1,7 @@
-import { assessRound } from '../../../tools/dev-review-policy/assess-round'
-import type { DevReviewLoopEventInput, PauseReason } from '../../../tools/dev-review-policy/types'
-import type { ActionContext } from '../../../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
-import { runCli } from '../../../../../../harness/kernel/gates/checks/run-checks'
+import { assessRound } from '@harness/workflow/tools/dev-review-policy/assess-round'
+import type { DevReviewLoopEventInput, PauseReason } from '@harness/workflow/tools/dev-review-policy/types'
+import type { ActionContext } from '@harness/kernel/loops/runtimes/atta-engine/run-process'
+import { runCli } from '@harness/kernel/gates/checks/run-checks'
 import { ciResultReadEvent, failedTestsRerunEvent, prOpenedEvent, readyPushEvent } from '../flow-v2-events'
 import { discardHeldVerdicts } from '../standalone/dev-review-loop/reviewer-dispatch'
 import {
@@ -18,21 +18,21 @@ import {
   renderFailureExcerpt,
   sanitizeForgeText
 } from '../run-control/pr-facts'
-import type { SelectionNote } from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
-import { PROGRESS_SUMMARY_INTERVAL_MS } from '../../../../../kernel/gates/ring0-hooks/pre-push/push-progress'
-import { manifestDigest } from '../../../executing/code-reviewer/review-result'
+import type { SelectionNote } from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
+import { PROGRESS_SUMMARY_INTERVAL_MS } from '@harness/kernel/gates/ring0-hooks/pre-push/push-progress'
+import { manifestDigest } from '@harness/workflow/executing/code-reviewer/review-result'
 import {
   ADOPTER_TEST_RUNNER,
   isNativeRunCommand,
   readyTestCommand
-} from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
 import {
   isReadyCiCommand,
   readyCiPlanCommand,
   type ReadyTestsPolicy,
   type RequiredCiPolicy
-} from '../../../tools/pre-push-ready-policy'
-import { agentCommandText, extractAgentCommandLines } from '../../../tools/pr-report/pr-report-engine'
+} from '@harness/workflow/tools/pre-push-ready-policy'
+import { agentCommandText, extractAgentCommandLines } from '@harness/workflow/tools/pr-report/pr-report-engine'
 import {
   type CiProgress,
   type ClassifiedFailure,
@@ -49,9 +49,9 @@ import {
   DEFAULT_READY_PUSH_TIMEOUT_MINUTES,
   DEFAULT_REVIEW_POLICY,
   type ReviewPolicy
-} from '../../../tools/task-contract/review-policy'
-import { decideApprovalCarry, type PostedVerdictBodies } from '../../../tools/review-gate'
-import { ownPatchIdAt, ownPatchInterdiff } from '../../../../../kernel/connectors/git/patch-id'
+} from '@harness/workflow/tools/task-contract/review-policy'
+import { decideApprovalCarry, type PostedVerdictBodies } from '@harness/workflow/tools/review-gate'
+import { ownPatchIdAt, ownPatchInterdiff } from '@harness/kernel/connectors/git/patch-id'
 import {
   fetchConflictingFiles,
   fetchMergeableState,
@@ -97,7 +97,7 @@ import {
   withDeveloperContext,
   worktreeHeadOf,
   worktreeStats
-} from '../../../executing/actions'
+} from '@harness/workflow/executing/actions'
 
 // Review locally, push once: the actions only version 2 of the developer-review Flow binds. The Developer pushes
 // every commit to its task branch as a storage push (cheap checks, no tests) while no pull request is open; each

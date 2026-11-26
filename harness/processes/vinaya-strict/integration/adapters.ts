@@ -35,8 +35,8 @@
 
 import { ownVersion } from './artifacts.js'
 import type { VendoredVinaya } from '../tools/self-host.js'
-import { MCP_PROTOCOL_VERSION } from '../../../kernel/tools/mcp-protocol.js'
-import { seatLaunchArguments } from '../../../kernel/tools/host/seat-host.js'
+import { MCP_PROTOCOL_VERSION } from '@harness/kernel/tools/mcp-protocol.js'
+import { seatLaunchArguments } from '@harness/kernel/tools/host/seat-host.js'
 import { VINAYA_SEAT_NAMES } from './seat-names.js'
 import { type Program, PROGRAMS } from '../tools/programs.js'
 

@@ -1,11 +1,6 @@
 import type { DevReviewLoopEventInput, LoopConfig } from '../tools/dev-review-policy/types'
-import type {
-  LogEventInput,
-  LogProducers,
-  RecordedSteps,
-  RunEndContext
-} from '../../../../harness/kernel/log/client/translate'
-import { decodeExecutionRound } from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+import type { LogEventInput, LogProducers, RecordedSteps, RunEndContext } from '@harness/kernel/log/client/translate'
+import { decodeExecutionRound } from '@harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import type { DriverExitReason } from '../loops/dev-review/standalone/dev-review-loop/driver-lifecycle'
 import { localChecksRunEvent, phaseOfStep, phaseTimeEvent } from '../loops/dev-review/flow-v2-events'
 

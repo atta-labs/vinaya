@@ -14,12 +14,12 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { parse } from 'yaml'
-import { LABELS } from '../../../harness/processes/vinaya-strict/tools/task-contract/forge/labels'
-import { parseRegistry } from '../../../harness/processes/vinaya-strict/tools/task-contract/parse-registry'
-import { VERDICT_MARKER_SOURCE } from '../../../harness/processes/vinaya-strict/tools/task-contract/verdict-extraction'
-import { WAIVER_LABEL_REVIEW } from '../../../harness/processes/vinaya-strict/tools/task-contract/waiver-label'
-import { DOC_OWNERS_PATH } from '../../../harness/processes/vinaya-strict/tools/doc-owners'
-import { AGENT_VENDORS, type AgentVendor } from '../../../harness/kernel/adapters/agents/agent-vendors.js'
+import { LABELS } from '@harness/workflow/tools/task-contract/forge/labels'
+import { parseRegistry } from '@harness/workflow/tools/task-contract/parse-registry'
+import { VERDICT_MARKER_SOURCE } from '@harness/workflow/tools/task-contract/verdict-extraction'
+import { WAIVER_LABEL_REVIEW } from '@harness/workflow/tools/task-contract/waiver-label'
+import { DOC_OWNERS_PATH } from '@harness/workflow/tools/doc-owners'
+import { AGENT_VENDORS, type AgentVendor } from '@harness/kernel/adapters/agents/agent-vendors.js'
 import {
   ARCHIVIST_WORKFLOW_PATH,
   BODY_CHECKS_WORKFLOW_PATH,
@@ -39,27 +39,24 @@ import {
   REVIEW_VERDICT_WORKFLOW_PATH,
   SETUP_BUN_SHA,
   starterConfig
-} from '../../../harness/processes/vinaya-strict/integration/artifacts.js'
-import {
-  agentSkillPath,
-  discoverRoleNames
-} from '../../../harness/processes/vinaya-strict/integration/agents-skills-emitter.js'
-import { CLAUDE_COMMAND_PATH } from '../../../harness/processes/vinaya-strict/integration/claude-command-emitter.js'
+} from '@harness/workflow/integration/artifacts.js'
+import { agentSkillPath, discoverRoleNames } from '@harness/workflow/integration/agents-skills-emitter.js'
+import { CLAUDE_COMMAND_PATH } from '@harness/workflow/integration/claude-command-emitter.js'
 import {
   CLAUDE_SETTINGS_PATH,
   CLAUDE_STOP_HOOK_SCRIPT_PATH
-} from '../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
-import { GEMINI_COMMAND_PATH } from '../../../harness/processes/vinaya-strict/integration/gemini-command-emitter.js'
-import { resolveDoctrineRoot } from '../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
-import type { VendoredVinaya } from '../../../harness/processes/vinaya-strict/tools/self-host.js'
-import { detectVendoredVinaya } from '../../../harness/processes/vinaya-strict/tools/self-host.js'
+} from '@harness/workflow/integration/claude-stop-hook-emitter.js'
+import { GEMINI_COMMAND_PATH } from '@harness/workflow/integration/gemini-command-emitter.js'
+import { resolveDoctrineRoot } from '@harness/workflow/tools/doctrine/resolve-doctrine.js'
+import type { VendoredVinaya } from '@harness/workflow/tools/self-host.js'
+import { detectVendoredVinaya } from '@harness/workflow/tools/self-host.js'
 import type { InitDeps } from '../src/commands/init.js'
 import { parseAgentsFlag, runInit, runInitProduct } from '../src/commands/init.js'
 import { runEject } from '../src/commands/eject.js'
 import type { EjectDeps } from '../src/commands/eject.js'
-import { planInstall, renderInstallDiff } from '../../../harness/kernel/gates/ops.js'
-import type { LabelGateway } from '../../../harness/kernel/gates/ops.js'
-import { PROGRAMS } from '../../../harness/processes/vinaya-strict/tools/programs.js'
+import { planInstall, renderInstallDiff } from '@harness/kernel/gates/ops.js'
+import type { LabelGateway } from '@harness/kernel/gates/ops.js'
+import { PROGRAMS } from '@harness/workflow/tools/programs.js'
 
 let root: string
 let createdLabels: string[]

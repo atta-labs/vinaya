@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ts from 'typescript'
-import { spawnSyncBudgeted } from '../../../../kernel/conformance/unit/process-fixture.js'
+import { spawnSyncBudgeted } from '@harness/kernel/conformance/unit/process-fixture.js'
 
 const RECORDING = join(import.meta.dir, 'fixtures', 'recorded-headers.json')
 const REPOSITORY_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..')

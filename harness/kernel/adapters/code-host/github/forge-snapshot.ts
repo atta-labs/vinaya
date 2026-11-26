@@ -35,7 +35,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { extractIssue } from './extract-issue'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../gates/checks/contract'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import {
   type ForgeComment,
   type ForgeRunner,

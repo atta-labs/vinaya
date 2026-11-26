@@ -15,7 +15,7 @@
  * spend, and the event that reports that bound spent decides today's pause.
  */
 
-import type { PauseReason } from '../../../../tools/dev-review-policy/types'
+import type { PauseReason } from '@harness/workflow/tools/dev-review-policy/types'
 import {
   DispatchSandboxRefused,
   DispatchSignInRefused,

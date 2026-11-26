@@ -64,26 +64,23 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { TASK_TOOL_NAMES } from '../../../harness/kernel/tools/catalog/task-tools'
-import { trancheLabel } from '../../../harness/processes/vinaya-strict/tools/task-contract/forge/labels'
-import { COMMANDS } from '../../../harness/processes/vinaya-strict/integration/commands.js'
-import { PROGRAMS } from '../../../harness/processes/vinaya-strict/tools/programs.js'
-import { LEGACY_PUBLISHED_DOCTRINE_LAYOUT } from '../../../harness/processes/vinaya-strict/tools/legacy-paths'
+import { TASK_TOOL_NAMES } from '@harness/kernel/tools/catalog/task-tools'
+import { trancheLabel } from '@harness/workflow/tools/task-contract/forge/labels'
+import { COMMANDS } from '@harness/workflow/integration/commands.js'
+import { PROGRAMS } from '@harness/workflow/tools/programs.js'
+import { LEGACY_PUBLISHED_DOCTRINE_LAYOUT } from '@harness/workflow/tools/legacy-paths'
 // Current source's registry, read to derive the expectation the published
 // artifact is measured against — the same "derive, never hand-maintain"
 // discipline this script already applies to the command coverage set.
-import { coreCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry.js'
-import { runsUnderAll } from '../../../harness/kernel/gates/checks/registry'
+import { coreCheckRegistry } from '@harness/workflow/checks/registry.js'
+import { runsUnderAll } from '@harness/kernel/gates/checks/registry'
 // Same discipline again for the `init` exercise below (Issue #183): the
 // core-artifact expectation is read back from the manifest `init` itself
 // writes, via the same schema and filename `init.ts` uses, rather than a
 // hand-maintained list that can silently fall behind what `init` grows to
 // write.
-import {
-  LOCAL_CONFIG_FILENAME,
-  VinayaConfigSchema
-} from '../../../harness/processes/vinaya-strict/integration/config/compose.js'
-import { resolveHookDir } from '../../../harness/kernel/connectors/git/detect.js'
+import { LOCAL_CONFIG_FILENAME, VinayaConfigSchema } from '@harness/workflow/integration/config/compose.js'
+import { resolveHookDir } from '@harness/kernel/connectors/git/detect.js'
 import { proveInstalledStudio } from './verify-studio-install'
 
 // `..` from `apps/cli/scripts/` is the package root — the same derivation

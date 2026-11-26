@@ -16,14 +16,14 @@
  * failed.
  */
 
-import type { DevReviewLoopEventInput, LoopState } from '../../../../tools/dev-review-policy/types'
+import type { DevReviewLoopEventInput, LoopState } from '@harness/workflow/tools/dev-review-policy/types'
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { LiveRecordEntry, LiveRecordLine } from '../../../../tools/task-contract/live-record'
-import { buildCheckEnv } from '../../../../../../kernel/gates/checks/runner.js'
+import type { LiveRecordEntry, LiveRecordLine } from '@harness/workflow/tools/task-contract/live-record'
+import { buildCheckEnv } from '@harness/kernel/gates/checks/runner.js'
 import { AGENT_VENDOR_NAMES, type AgentVendor } from '../../dispatch/dispatch.js'
 import { sanitizeForgeLogTail } from '../../run-control/pr-facts.js'
 import { clearGitReadMemo } from '../../v2/git-read-memo.js'
@@ -32,7 +32,7 @@ import {
   CODEX_KEYCHAIN_SERVICE,
   codexKeychainAccount,
   resolveOAuthConfigSourceDir
-} from '../../../../../../kernel/isolation/worker-boundary.js'
+} from '@harness/kernel/isolation/worker-boundary.js'
 
 /** How long one `[live]` line may run before the loop stops it and reads the round red. */
 export const LIVE_RUN_TIMEOUT_MS = 20 * 60_000

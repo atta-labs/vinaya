@@ -6,7 +6,7 @@
  * Mission Control's reading can bundle it.
  */
 
-import { registerRole, registerTitle } from '../../../../kernel/log/roles'
+import { registerRole, registerTitle } from '@harness/kernel/log/roles'
 
 export const VINAYA_LOG_ROLES = [
   { name: 'planner', reading: 'planner', title: 'Planner', reviews: false },

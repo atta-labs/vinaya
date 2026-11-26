@@ -19,7 +19,7 @@
  * start, naming the seats it does declare.
  */
 
-import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
 import { ownVersion } from '../artifacts.js'
 import { serveTaskToolsStdio } from '../server.js'
 

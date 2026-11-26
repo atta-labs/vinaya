@@ -14,7 +14,7 @@ import {
   type ProtectedPathEntry,
   startTurnWriteAttribution,
   taskControlDir
-} from '../../../../../kernel/isolation/worker-boundary.js'
+} from '@harness/kernel/isolation/worker-boundary.js'
 import {
   cleanupWorlds,
   controlDir,
@@ -23,7 +23,7 @@ import {
   makeInProcessDeps,
   makeWorld,
   runLoopInProcess
-} from '../../../tests/standalone/lib/dev-review-loop-harness.js'
+} from '@harness/workflow/tests/standalone/lib/dev-review-loop-harness.js'
 
 const tempDirs: string[] = []
 

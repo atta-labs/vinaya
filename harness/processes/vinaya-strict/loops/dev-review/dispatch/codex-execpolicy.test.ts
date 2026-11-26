@@ -24,7 +24,7 @@ import {
   spawnSyncBudgeted,
   stripVinayaEnv,
   PROCESS_FIXTURE_BUDGET_MS
-} from '../../../../../kernel/conformance/unit/process-fixture.js'
+} from '@harness/kernel/conformance/unit/process-fixture.js'
 
 /** The `codex` binary on PATH, or `null` when the host carries none. */
 function findCodex(): string | null {

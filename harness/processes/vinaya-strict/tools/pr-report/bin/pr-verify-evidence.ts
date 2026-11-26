@@ -15,9 +15,9 @@
  * uninteresting, so the head is printed for the reader to confirm.
  */
 
-import { isEntryPoint } from '../../../../../kernel/gates/checks/entry-point.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
 import { execFileSync } from 'node:child_process'
-import { ScanContext, resolveAnchoredRegion } from '../../../../../kernel/gates/checks/scan-context.js'
+import { ScanContext, resolveAnchoredRegion } from '@harness/kernel/gates/checks/scan-context.js'
 import { REGION_PREFIXES } from '../../legacy-markers.js'
 import { buildReport } from './pr-report.js'
 import { compareEvidence, renderVerdict } from '../pr-verify-evidence-logic.js'

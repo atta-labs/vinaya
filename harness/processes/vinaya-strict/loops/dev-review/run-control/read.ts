@@ -25,13 +25,13 @@
  * which stays inside the value for a caller that wants it.
  */
 
-import { defaultControlStoreDeps } from '../../../../../kernel/connectors/checkpoint/control-store/index'
+import { defaultControlStoreDeps } from '@harness/kernel/connectors/checkpoint/control-store/index'
 import type {
   Freshness,
   TaskConfidence,
   TaskEscalationPacket,
   TaskPhaseHistory
-} from '../../../../../kernel/tools/catalog/task-tools'
+} from '@harness/kernel/tools/catalog/task-tools'
 import {
   escalationIdFor,
   noPushResumeCommandFor,
@@ -53,7 +53,7 @@ import {
   type TaskLoopState,
   type TaskStatusRow
 } from './task-status.js'
-import { tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
+import { tasksExecutionRoot } from '@harness/kernel/run-paths.js'
 import { widenSurfaceContinuationFor } from './task-run.js'
 import { engineContinuationCommand, readTaskRunner } from './task-run-engine.js'
 import { describeUsageLimitPause } from '../standalone/dev-review-loop/round-assess.js'

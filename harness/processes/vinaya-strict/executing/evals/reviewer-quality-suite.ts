@@ -12,7 +12,7 @@ import {
   validateReport,
   validateTask,
   validateTrialSet
-} from '../../../../kernel/evals/contracts'
+} from '@harness/kernel/evals/contracts'
 import {
   REVIEWER_SEVERITIES,
   type ReviewBinding,

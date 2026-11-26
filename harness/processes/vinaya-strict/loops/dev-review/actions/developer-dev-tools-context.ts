@@ -26,17 +26,10 @@ import {
   type PublicationCheckInput,
   validateCommitHeader
 } from '../standalone/dev-review-loop/developer-publication.js'
-import {
-  devToolError,
-  type DevPullRequestView,
-  type DevToolResult
-} from '../../../../../kernel/tools/dev-tools-server.js'
-import { addEvidenceSection, realEvidenceBlock } from '../../../tools/pr-report/evidence-section.js'
-import type { DevToolContext } from '../../../../../kernel/tools/dev-tools-server.js'
-import type {
-  FetchDocumentationInput,
-  FetchDocumentationResult
-} from '../../../../../kernel/tools/fetch-documentation.js'
+import { devToolError, type DevPullRequestView, type DevToolResult } from '@harness/kernel/tools/dev-tools-server.js'
+import { addEvidenceSection, realEvidenceBlock } from '@harness/workflow/tools/pr-report/evidence-section.js'
+import type { DevToolContext } from '@harness/kernel/tools/dev-tools-server.js'
+import type { FetchDocumentationInput, FetchDocumentationResult } from '@harness/kernel/tools/fetch-documentation.js'
 
 /** A validation verdict for a PR body — the driver's own PR-body gate, injected so the loop supplies the real one. */
 export type BodyValidation = { ok: true } | { ok: false; reason: string }

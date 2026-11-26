@@ -6,8 +6,8 @@
  * below under the same path it always had.
  */
 
-import type { PauseReason } from '../../../../tools/dev-review-policy/types'
-import { COMMENT_MARKER_PREFIX_CURRENT } from '../../../../tools/legacy-markers'
+import type { PauseReason } from '@harness/workflow/tools/dev-review-policy/types'
+import { COMMENT_MARKER_PREFIX_CURRENT } from '@harness/workflow/tools/legacy-markers'
 import { DEFAULT_DISPATCH_EFFORT, type DispatchEffort, isDispatchEffort } from '../../dispatch/dispatch.js'
 import { unlinkSync, writeFileSync } from 'node:fs'
 import { hostname } from 'node:os'
@@ -28,24 +28,24 @@ import {
   type RoundHeadIdentity,
   StaleEpochWriteError,
   writeEscalation
-} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
-import { parseTaskBranchIdentity } from '../../../../tools/task-contract/task-branch-identity'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import { parseTaskBranchIdentity } from '@harness/workflow/tools/task-contract/task-branch-identity'
 
-import { principalRulingMarker } from '../../../../tools/task-contract/ruling-ordinal'
-import type { RequestedAuthority } from '../../../../../../kernel/tools/catalog/task-tools'
+import { principalRulingMarker } from '@harness/workflow/tools/task-contract/ruling-ordinal'
+import type { RequestedAuthority } from '@harness/kernel/tools/catalog/task-tools'
 import {
   controlStoreRoot,
   createEffectExecutor,
   type EffectIdentity,
   type EffectReconciler,
   sha256Hex
-} from '../../../../../../kernel/effects/effects.js'
+} from '@harness/kernel/effects/effects.js'
 import {
   markedCommentBody,
   postMarkedCommentOrThrow,
   reconcileGhComment
-} from '../../../../tools/task-contract/forge/forge-write.js'
-import { writePersonAnswered, writePersonAsked } from '../../../../../../kernel/log/outside-log.js'
+} from '@harness/workflow/tools/task-contract/forge/forge-write.js'
+import { writePersonAnswered, writePersonAsked } from '@harness/kernel/log/outside-log.js'
 import { spanIdFor } from '@attalabs/vinaya-log-sdk'
 import {
   isRateLimitPauseDetail,
@@ -54,8 +54,8 @@ import {
   MAX_INFRASTRUCTURE_RETRIES
 } from './round-assess.js'
 import { readIfExists } from './reviewer-dispatch.js'
-import { DRIVER_LOCK_FILENAME, ensureRunDir, runPath } from '../../../../../../kernel/run-paths.js'
-import { LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV } from '../../../../../../kernel/isolation/worker-boundary.js'
+import { DRIVER_LOCK_FILENAME, ensureRunDir, runPath } from '@harness/kernel/run-paths.js'
+import { LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV } from '@harness/kernel/isolation/worker-boundary.js'
 
 /** O1 — the bound `postWithRetry`, below, retries a failed pause/escalation comment post against, in real usage; env-overridable for a fixture that wants sub-millisecond backoff. */
 export const PAUSE_COMMENT_RETRY_ATTEMPTS = 5

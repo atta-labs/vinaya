@@ -15,8 +15,8 @@
  * the first time something logs.
  */
 
-import type { ProcessIntegration } from '../../../../kernel/dev-process-socket/contract/process-integration.js'
-import { registerCliVersionSource } from '../../../../kernel/log/run-identity.js'
+import type { ProcessIntegration } from '@harness/kernel/dev-process-socket/contract/process-integration.js'
+import { registerCliVersionSource } from '@harness/kernel/log/run-identity.js'
 import { coreCheckRegistry } from '../../checks/registry.js'
 import { vinayaConfigProvider } from '../config/compose.js'
 

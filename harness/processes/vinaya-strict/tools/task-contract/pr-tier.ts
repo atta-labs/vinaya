@@ -7,7 +7,7 @@
  */
 
 import { hasLabel, label } from './forge/labels'
-import { anchoredRegion } from '../../../../kernel/gates/checks/anchored-region'
+import { anchoredRegion } from '@harness/kernel/gates/checks/anchored-region'
 import { REGION_PREFIXES } from '../legacy-markers'
 import { isDocFile, isSpecFile } from '../file-classify'
 

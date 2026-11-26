@@ -22,10 +22,10 @@
  * carries it; none of them is ever estimated.
  */
 
-import { isPublishedSummaryComment } from '../../../tools/dev-review-policy/journal-reconstruction'
-import { parseSummaryConfidenceRows } from '../../../tools/dev-review-policy/render-summary'
-import type { PauseReason } from '../../../tools/dev-review-policy/types'
-import { FROZEN_BRIEF_MARKER, markerSpellings } from '../../../tools/legacy-markers'
+import { isPublishedSummaryComment } from '@harness/workflow/tools/dev-review-policy/journal-reconstruction'
+import { parseSummaryConfidenceRows } from '@harness/workflow/tools/dev-review-policy/render-summary'
+import type { PauseReason } from '@harness/workflow/tools/dev-review-policy/types'
+import { FROZEN_BRIEF_MARKER, markerSpellings } from '@harness/workflow/tools/legacy-markers'
 import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { hostname } from 'node:os'
@@ -34,23 +34,23 @@ import {
   type TaskConfidence,
   type TaskNextAction,
   type TaskPhaseHistory
-} from '../../../../../kernel/tools/catalog/task-tools'
+} from '@harness/kernel/tools/catalog/task-tools'
 import {
   defaultControlStoreDeps,
   readEffects,
   readLoopState
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
-import { isPrincipal } from '../../../tools/task-contract/waiver-label'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import { isPrincipal } from '@harness/workflow/tools/task-contract/waiver-label'
 
-import { resolveNewestFrozenBrief } from '../../../tools/task-contract/brief-validation'
-import { taskPhaseLabel } from '../../../tools/task-phase-history'
-import { resolveTaskIssueRef } from '../../../tools/task-contract/forge/list-tasks'
-import { resolveTrustedPrincipals, type TaskRunner } from '../../../integration/config/compose.js'
+import { resolveNewestFrozenBrief } from '@harness/workflow/tools/task-contract/brief-validation'
+import { taskPhaseLabel } from '@harness/workflow/tools/task-phase-history'
+import { resolveTaskIssueRef } from '@harness/workflow/tools/task-contract/forge/list-tasks'
+import { resolveTrustedPrincipals, type TaskRunner } from '@harness/workflow/integration/config/compose.js'
 import { readEngineRun, readTaskRunner, type EngineRunReading } from './task-run-engine.js'
 import { findOpenPrForBranch, runtimeDir } from '../standalone/dev-review-loop.js'
-import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
-import { loopLogPathFor, loopsRoot, type LoopLogRepo } from '../../../../../kernel/log/client/loop-log.js'
-import { newestStage, OVER_TYPICAL_MARK, PAUSED_STAGE_ACTOR, STAGES } from '../../../tools/follow-view.js'
+import { DRIVER_LOCK_FILENAME, runPath, tasksExecutionRoot } from '@harness/kernel/run-paths.js'
+import { loopLogPathFor, loopsRoot, type LoopLogRepo } from '@harness/kernel/log/client/loop-log.js'
+import { newestStage, OVER_TYPICAL_MARK, PAUSED_STAGE_ACTOR, STAGES } from '@harness/workflow/tools/follow-view.js'
 import { confidenceFromRecords, readTurnResultRecords } from '../standalone/dev-review-loop/turn-result.js'
 import {
   phaseHistoryLookup,

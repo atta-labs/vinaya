@@ -1,10 +1,10 @@
 import { processHasLogDestination } from '../../../../apps/cli/src/lib/log-destination.js'
 
-type InstallProcessModule = typeof import('../../../kernel/dev-process-socket/contract/install-process.js')
+type InstallProcessModule = typeof import('@harness/kernel/dev-process-socket/contract/install-process.js')
 type IntegrationModule = typeof import('./process/process-integration.js')
-type ConfigProviderModule = typeof import('../../../kernel/config/loader/config-provider.js')
-type OutsideLogModule = typeof import('../../../kernel/log/outside-log.js')
-type OperationLogModule = typeof import('../../../kernel/log/client/cli-operation-log.js')
+type ConfigProviderModule = typeof import('@harness/kernel/config/loader/config-provider.js')
+type OutsideLogModule = typeof import('@harness/kernel/log/outside-log.js')
+type OperationLogModule = typeof import('@harness/kernel/log/client/cli-operation-log.js')
 
 let servicesInstalled = false
 
@@ -17,7 +17,7 @@ let servicesInstalled = false
 export function installServices(): void {
   if (servicesInstalled) return
   servicesInstalled = true
-  const kernel = require('../../../kernel/dev-process-socket/contract/install-process.js') as InstallProcessModule
+  const kernel = require('@harness/kernel/dev-process-socket/contract/install-process.js') as InstallProcessModule
   const { vinayaProcessIntegration } = require('./process/process-integration.js') as IntegrationModule
   kernel.installProcess(vinayaProcessIntegration, ['log', 'config', 'checks'])
 }
@@ -29,16 +29,16 @@ export function installServices(): void {
  */
 export function registerOperationRecord(argv: readonly string[]): void {
   if (!processHasLogDestination(process.env)) return
-  const operationLog = require('../../../kernel/log/client/cli-operation-log.js') as OperationLogModule
+  const operationLog = require('@harness/kernel/log/client/cli-operation-log.js') as OperationLogModule
   operationLog.recordCliOperationAtExit(argv, {
     on: (event, handler) => process.on(event, handler),
     record: (record) => {
       installServices()
       // The invocation's settings are read as the process reads them, so a setting it ignores is reported once.
-      ;(require('../../../kernel/config/loader/config-provider.js') as ConfigProviderModule)
+      ;(require('@harness/kernel/config/loader/config-provider.js') as ConfigProviderModule)
         .configProvider()
         .loadConfig()
-      ;(require('../../../kernel/log/outside-log.js') as OutsideLogModule).writeCommand(record)
+      ;(require('@harness/kernel/log/outside-log.js') as OutsideLogModule).writeCommand(record)
     }
   })
 }

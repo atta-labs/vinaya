@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'bun:test'
-import { programCommandLine } from '../../../tools/programs.js'
-import { COMMENT_MARKER_PREFIX } from '../../../tools/legacy-markers.js'
-import { LEGACY_DOCTRINE_ROOT } from '../../../tools/legacy-paths.js'
+import { programCommandLine } from '@harness/workflow/tools/programs.js'
+import { COMMENT_MARKER_PREFIX } from '@harness/workflow/tools/legacy-markers.js'
+import { LEGACY_DOCTRINE_ROOT } from '@harness/workflow/tools/legacy-paths.js'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { coreCheckRegistry } from '../../../checks/registry.js'
+import { coreCheckRegistry } from '@harness/workflow/checks/registry.js'
 import { packageRoot } from '../../../../../../apps/cli/src/lib/package-root.js'
 
 // vinaya-cli-v1 task 7, Correction 2 — regression coverage for all three root

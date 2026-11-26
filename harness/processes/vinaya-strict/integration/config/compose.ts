@@ -1,7 +1,7 @@
-import { CustomEventDeclarationsSchema } from '../../../../kernel/log/custom'
+import { CustomEventDeclarationsSchema } from '@harness/kernel/log/custom'
 import { z } from 'zod'
-import { CHECK_SCHEMA_VERSION, emitCheckError } from '../../../../kernel/gates/checks/contract.js'
-import { AGENT_VENDORS, type AgentVendor } from '../../../../kernel/adapters/agents/agent-vendors.js'
+import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract.js'
+import { AGENT_VENDORS, type AgentVendor } from '@harness/kernel/adapters/agents/agent-vendors.js'
 import {
   type ConfigLoadResult as KernelConfigLoadResult,
   createConfigLoader,
@@ -10,8 +10,8 @@ import {
   type TrustAnchorFetcher,
   trustAnchorRepo,
   trustAnchorRepoAsync
-} from '../../../../kernel/config/loader/config-loader.js'
-import { type ConfigProvider, installConfigProvider } from '../../../../kernel/config/loader/config-provider.js'
+} from '@harness/kernel/config/loader/config-loader.js'
+import { type ConfigProvider, installConfigProvider } from '@harness/kernel/config/loader/config-provider.js'
 import {
   hookBlockPathRule,
   KERNEL_CHECK_ENTRY_FIELDS,
@@ -30,8 +30,8 @@ import {
   resolveTrustAnchorLogsDestination as kernelResolveTrustAnchorLogsDestination,
   resolveTrustAnchorRuntimeDir as kernelResolveTrustAnchorRuntimeDir,
   type TaskRunner
-} from '../../../../kernel/config/schema/config-schema.js'
-import { orderedShape } from '../../../../kernel/config/schema/process-config-section.js'
+} from '@harness/kernel/config/schema/config-schema.js'
+import { orderedShape } from '@harness/kernel/config/schema/process-config-section.js'
 import {
   BRIEF_BUILTINS,
   type BriefBuiltin,
@@ -401,7 +401,7 @@ export type {
 // ── The provider kernel code reads through ─────────────────────────────────
 
 // Kernel readers in a program that holds this composition return `VinayaConfig`.
-declare module '../../../../kernel/config/loader/config-provider.js' {
+declare module '@harness/kernel/config/loader/config-provider.js' {
   interface ComposedConfigRegistry {
     config: VinayaConfig
   }

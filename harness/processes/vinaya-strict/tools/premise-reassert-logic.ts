@@ -19,8 +19,8 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { sep } from 'node:path'
 import { checkPremises, declaresNewFilesOnly, parsePremiseBlock } from './task-contract/premise-check'
-import { CHECK_SCHEMA_VERSION, type CheckError } from '../../../kernel/gates/checks/contract'
-import { containedAbs } from '../../../kernel/gates/ops'
+import { CHECK_SCHEMA_VERSION, type CheckError } from '@harness/kernel/gates/checks/contract'
+import { containedAbs } from '@harness/kernel/gates/ops'
 
 const CHECK_NAME = 'pr-premise-reassert'
 

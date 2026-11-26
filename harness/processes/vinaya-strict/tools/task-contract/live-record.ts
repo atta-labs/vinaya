@@ -21,12 +21,8 @@
  * digit sits inside a code span, so the body's bare-digit rule never sees one.
  */
 
-import { maskCode } from '../../../../kernel/adapters/code-host/github/strip-code'
-import {
-  anchoredRegion,
-  anchoredRegionBounds,
-  prefixAlternation
-} from '../../../../kernel/gates/checks/anchored-region'
+import { maskCode } from '@harness/kernel/adapters/code-host/github/strip-code'
+import { anchoredRegion, anchoredRegionBounds, prefixAlternation } from '@harness/kernel/gates/checks/anchored-region'
 import { REGION_PREFIX_CURRENT, REGION_PREFIXES } from '../legacy-markers'
 import { locateTestPlanSection } from './test-plan-section'
 

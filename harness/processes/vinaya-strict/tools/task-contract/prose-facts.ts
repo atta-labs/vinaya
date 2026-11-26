@@ -1,4 +1,4 @@
-import { stripCode } from '../../../../kernel/adapters/code-host/github/strip-code'
+import { stripCode } from '@harness/kernel/adapters/code-host/github/strip-code'
 import { topLevelSectionText } from '@attalabs/harness/issue-documentation'
 import { parseRationaleFields } from './brief-render'
 import { type IssueSectionResult, parseIssueParts, parseIssuePremises } from './issue-validation'

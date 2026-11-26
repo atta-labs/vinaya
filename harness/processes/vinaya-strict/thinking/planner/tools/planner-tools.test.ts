@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { TaskToolErrorSchema } from '../../../../../kernel/tools/catalog/task-tools'
-import { makeCheckError } from '../../../tools/task-contract/forge/forge-write'
+import { TaskToolErrorSchema } from '@harness/kernel/tools/catalog/task-tools'
+import { makeCheckError } from '@harness/workflow/tools/task-contract/forge/forge-write'
 import { PLANNER_TOOL_ENTRIES, PLANNER_TOOL_NAMES, plannerToolHandlers, type PlannerOperations } from './planner-tools'
 
 const finding = (check: string) => makeCheckError(check, `${check} message`, `${check} recovery`)

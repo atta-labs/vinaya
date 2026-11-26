@@ -13,7 +13,7 @@
  * instead, which runs this same supersede and then starts the run in order.
  */
 
-import { isEntryPoint } from '../../../../../kernel/gates/checks/entry-point.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
 import { prepareTaskOrIssue } from '../dispatch-task.js'
 
 /** Parses `--supersede`/`--reason`/`--surface-in` — shared by the `<tranche> <n>` and `--issue <n>` forms of `task brief`. */

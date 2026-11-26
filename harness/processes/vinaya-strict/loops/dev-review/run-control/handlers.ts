@@ -34,9 +34,9 @@ import {
   type TaskStatusResult,
   type TaskToolError,
   type TaskToolRef
-} from '../../../../../kernel/tools/catalog/task-tools'
-import { findTrancheSlug } from '../../../tools/task-contract/forge/labels'
-import { resolveTaskIssueRef } from '../../../tools/task-contract/forge/list-tasks'
+} from '@harness/kernel/tools/catalog/task-tools'
+import { findTrancheSlug } from '@harness/workflow/tools/task-contract/forge/labels'
+import { resolveTaskIssueRef } from '@harness/workflow/tools/task-contract/forge/list-tasks'
 import { runtimeDir } from '../standalone/dev-review-loop.js'
 import {
   gatherTaskStatusList,

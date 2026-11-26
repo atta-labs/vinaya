@@ -1,0 +1,277 @@
+[
+  {
+    "file": "apps/log-server/src/log-sdk-contract.ts",
+    "specifier": "../../../packages/log-sdk/src/contract/custom.js",
+    "reason": "The Worker's bundle and test pool resolve the Log SDK contract files by this relative path, so it names a package file with no alias."
+  },
+  {
+    "file": "apps/log-server/src/log-sdk-contract.ts",
+    "specifier": "../../../packages/log-sdk/src/contract/redact.js",
+    "reason": "The Worker's bundle and test pool resolve the Log SDK contract files by this relative path, so it names a package file with no alias."
+  },
+  {
+    "file": "apps/log-server/src/log-sdk-contract.ts",
+    "specifier": "../../../packages/log-sdk/src/contract/schema.js",
+    "reason": "The Worker's bundle and test pool resolve the Log SDK contract files by this relative path, so it names a package file with no alias."
+  },
+  {
+    "file": "apps/log-server/src/log-sdk-contract.ts",
+    "specifier": "../../../packages/log-sdk/src/contract/store.js",
+    "reason": "The Worker's bundle and test pool resolve the Log SDK contract files by this relative path, so it names a package file with no alias."
+  },
+  {
+    "file": "apps/vinaya-portal/src/app/(site)/docs/(guide)/[group]/[[...slug]]/page.tsx",
+    "specifier": "../../../_components/MarkdownDoc",
+    "reason": "The target is a sibling folder of the same app; no alias covers the portal app."
+  },
+  {
+    "file": "apps/vinaya-portal/src/app/(site)/docs/(guide)/[group]/[[...slug]]/page.tsx",
+    "specifier": "../../../_lib/portal-docs",
+    "reason": "The target is a sibling folder of the same app; no alias covers the portal app."
+  },
+  {
+    "file": "apps/vinaya-portal/src/app/(site)/docs/(guide)/process/checks/page.tsx",
+    "specifier": "../../../_components/PortalDoc",
+    "reason": "The target is a sibling folder of the same app; no alias covers the portal app."
+  },
+  {
+    "file": "apps/vinaya-portal/src/app/vinaya-process/demo/_lib/chrome.tsx",
+    "specifier": "../../../(site)/docs/_components/DocsSearch",
+    "reason": "The target is a sibling folder of the same app; no alias covers the portal app."
+  },
+  {
+    "file": "apps/vinaya-portal/src/app/vinaya-process/demo/_lib/chrome.tsx",
+    "specifier": "../../../(site)/docs/_lib/search-index",
+    "reason": "The target is a sibling folder of the same app; no alias covers the portal app."
+  },
+  {
+    "file": "apps/vinaya-studio/scripts/verify-installed.ts",
+    "specifier": "../../../harness/kernel/log/fixtures/executions.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/scripts/verify-installed.ts",
+    "specifier": "../../../harness/kernel/log/sync/contracts.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/scripts/verify-installed.ts",
+    "specifier": "../../../harness/kernel/log/sync/measured.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/live-socket.test.ts",
+    "specifier": "../../../../harness/processes/vinaya-strict/tools/mission-control/picture.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/picture-service.test.ts",
+    "specifier": "../../../../harness/kernel/log/fixtures/executions.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/picture-service.test.ts",
+    "specifier": "../../../../harness/kernel/log/sync/contracts.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/picture-service.test.ts",
+    "specifier": "../../../../harness/kernel/log/sync/measured.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/picture-service.test.ts",
+    "specifier": "../../../../harness/kernel/log/client/log-sync-server-source.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/picture-service.ts",
+    "specifier": "../../../../harness/kernel/log/client/log-sync-server-source.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/picture-service.ts",
+    "specifier": "../../../../harness/kernel/log/sync/contracts.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/picture-service.ts",
+    "specifier": "../../../../harness/kernel/log/sync/normalize.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/picture-service.ts",
+    "specifier": "../../../../harness/kernel/log/sync/row.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/picture-service.ts",
+    "specifier": "../../../../harness/processes/vinaya-strict/tools/mission-control/picture.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/picture-service.ts",
+    "specifier": "../../../../harness/processes/vinaya-strict/tools/mission-control/reading.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/projection.test.ts",
+    "specifier": "../../../../harness/processes/vinaya-strict/tools/mission-control/picture.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/projection.ts",
+    "specifier": "../../../../harness/processes/vinaya-strict/tools/mission-control/picture.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/repositories.ts",
+    "specifier": "../../../../harness/kernel/config/loader/config-loader.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/repositories.ts",
+    "specifier": "../../../../harness/kernel/config/schema/config-schema.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/repositories.ts",
+    "specifier": "../../../../harness/kernel/log/client/log-sync-server-source.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/repositories.ts",
+    "specifier": "../../../../harness/kernel/run-paths.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "apps/vinaya-studio/src/server/repositories.ts",
+    "specifier": "../../../../harness/processes/vinaya-strict/integration/config/compose.ts",
+    "reason": "The Studio app's own sources keep their relative imports; they are outside the alias rewrite."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/checks/registry.ts",
+    "specifier": "../../../../apps/cli/src/lib/package-root.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/integration/bin/log-selftest.ts",
+    "specifier": "../../../../../apps/cli/src/lib/package-root.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/integration/cli-services.ts",
+    "specifier": "../../../../apps/cli/src/lib/log-destination.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/integration/config/config-local-override.test.ts",
+    "specifier": "../../../../../apps/cli/src/commands/doctor.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/integration/connectors/git/detect.test.ts",
+    "specifier": "../../../../../../apps/cli/src/commands/init.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/integration/connectors/git/detect.test.ts",
+    "specifier": "../../../../../../apps/cli/src/commands/init.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/integration/doctrine-pointer.test.ts",
+    "specifier": "../../../../apps/cli/src/lib/package-root.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/integration/doctrine-pointer.test.ts",
+    "specifier": "../../../../apps/cli/src/lib/package-root.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/integration/doctrine-pointer.test.ts",
+    "specifier": "../../../../apps/cli/src/lib/package-root.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/integration/gates/checks/repo-root-resolution.test.ts",
+    "specifier": "../../../../../../apps/cli/src/lib/package-root.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/integration/log/log-sink-factory.ts",
+    "specifier": "../../../../../apps/cli/src/lib/package-root.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/integration/roles/bin/operator-role.test.ts",
+    "specifier": "../../../../../../apps/cli/src/commands/doctrine.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/integration/verification-scanner-policy-static.test.ts",
+    "specifier": "../../../../scripts/test-suites/inventory-check",
+    "reason": "The target is a root script; no alias covers the root scripts folder."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-helpers.ts",
+    "specifier": "../../../../../../../apps/cli/src/lib/package-root.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/tests/backend-rollback.test.ts",
+    "specifier": "../../../../apps/cli/src/commands/task-run.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/tests/commands/task-run.test.ts",
+    "specifier": "../../../../../apps/cli/src/commands/task-status.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/tests/commands/task-run.test.ts",
+    "specifier": "../../../../../apps/cli/src/commands/task-run.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/tests/lib/detached-launch.test.ts",
+    "specifier": "../../../../../apps/cli/src/commands/task-run.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/tests/lib/task-switch.test.ts",
+    "specifier": "../../../../../apps/cli/src/commands/task-switch",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/tests/task-run-engine.test.ts",
+    "specifier": "../../../../apps/cli/src/commands/task-run.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.ts",
+    "specifier": "../../../../../apps/cli/src/lib/package-root",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/tools/own-version.ts",
+    "specifier": "../../../../apps/cli/src/lib/package-root.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/tools/program-entry.ts",
+    "specifier": "../../../../apps/cli/src/lib/package-root.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/tools/programs.ts",
+    "specifier": "../../../../apps/cli/src/lib/package-root.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  },
+  {
+    "file": "harness/processes/vinaya-strict/tools/task-contract/brief-assembly.ts",
+    "specifier": "../../../../../apps/cli/src/lib/package-root.js",
+    "reason": "The target is a CLI package file; no alias covers the CLI package."
+  }
+]

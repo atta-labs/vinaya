@@ -2,14 +2,14 @@ import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { ensureRunDir, runPath, runtimeDirForThisRepo } from '../../../../../../kernel/run-paths.js'
-import { runRecorder } from '../../../../../../kernel/log/run-recorder.js'
-import type { DevReviewLoopEventInput, LoopState } from '../../../../tools/dev-review-policy/types'
+import { ensureRunDir, runPath, runtimeDirForThisRepo } from '@harness/kernel/run-paths.js'
+import { runRecorder } from '@harness/kernel/log/run-recorder.js'
+import type { DevReviewLoopEventInput, LoopState } from '@harness/workflow/tools/dev-review-policy/types'
 import {
   isConcludedJournal,
   type ReconstructedJournal
-} from '../../../../tools/dev-review-policy/journal-reconstruction'
-import { appendRoleLine } from '../../../../../../kernel/log/client/loop-log.js'
+} from '@harness/workflow/tools/dev-review-policy/journal-reconstruction'
+import { appendRoleLine } from '@harness/kernel/log/client/loop-log.js'
 import { errorClassOf, isHandleEvent } from './round-assess.js'
 
 // What a task driver does around its rounds, shared by the standalone review

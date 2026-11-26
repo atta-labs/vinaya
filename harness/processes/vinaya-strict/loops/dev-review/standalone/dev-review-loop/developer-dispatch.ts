@@ -17,26 +17,26 @@ import {
   normalizeOutcome,
   type NormalizedOutcome,
   type OutcomeSignals
-} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
-import { COMMENT_MARKER_PREFIX_PATTERN } from '../../../../tools/legacy-markers'
-import { isPrincipal } from '../../../../tools/task-contract/waiver-label'
-import { issueBranchName, parseTaskBranchIdentity } from '../../../../tools/task-contract/task-branch-identity'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import { COMMENT_MARKER_PREFIX_PATTERN } from '@harness/workflow/tools/legacy-markers'
+import { isPrincipal } from '@harness/workflow/tools/task-contract/waiver-label'
+import { issueBranchName, parseTaskBranchIdentity } from '@harness/workflow/tools/task-contract/task-branch-identity'
 import {
   newestPrincipalRulingAuthor,
   newestPrincipalRulingOrdinal,
   parseRulingIdentity,
   principalRulingTextById
-} from '../../../../tools/task-contract/ruling-ordinal'
-import { type Objective, objectivesOf, objectivesVersion } from '../../../../tools/task-contract/objectives'
-import { extractSourceRevision } from '../../../../tools/task-contract/brief-render'
-import { resolveNewestFrozenBrief } from '../../../../tools/task-contract/brief-validation'
-import type { ReviewPolicy } from '../../../../tools/task-contract/review-policy'
-import { extractShortVersion } from '../../../../tools/docs/published-prose'
-import { hasLabel } from '../../../../tools/task-contract/forge/labels'
-import { type GateStep, resolveGateStep } from '../../../../checks/registry.js'
-import { resolveDoctrineRoot } from '../../../../tools/doctrine/resolve-doctrine.js'
-import { doctrineSource } from '../../../../tools/doctrine/doctrine-map.js'
-import { buildRolePlan } from '../../../../integration/roles/plan.js'
+} from '@harness/workflow/tools/task-contract/ruling-ordinal'
+import { type Objective, objectivesOf, objectivesVersion } from '@harness/workflow/tools/task-contract/objectives'
+import { extractSourceRevision } from '@harness/workflow/tools/task-contract/brief-render'
+import { resolveNewestFrozenBrief } from '@harness/workflow/tools/task-contract/brief-validation'
+import type { ReviewPolicy } from '@harness/workflow/tools/task-contract/review-policy'
+import { extractShortVersion } from '@harness/workflow/tools/docs/published-prose'
+import { hasLabel } from '@harness/workflow/tools/task-contract/forge/labels'
+import { type GateStep, resolveGateStep } from '@harness/workflow/checks/registry.js'
+import { resolveDoctrineRoot } from '@harness/workflow/tools/doctrine/resolve-doctrine.js'
+import { doctrineSource } from '@harness/workflow/tools/doctrine/doctrine-map.js'
+import { buildRolePlan } from '@harness/workflow/integration/roles/plan.js'
 import {
   configPath,
   resolveLocalPacingOverride,
@@ -46,7 +46,7 @@ import {
   resolveReviewPolicy,
   resolveTrustedPrincipals,
   type VinayaConfig
-} from '../../../../integration/config/compose.js'
+} from '@harness/workflow/integration/config/compose.js'
 import {
   type AgentVendor,
   getProcessSnapshot,
@@ -61,17 +61,17 @@ import {
   describeInactiveControls,
   type EnforcementControl,
   enforcementControlsActive
-} from '../../../../../../kernel/gates/enforcement-controls.js'
-import { hookRoutingRepairLine, repairLocalGateControl } from '../../../../../../kernel/gates/local-gate-control.js'
-import { appendDriverLine, loopLogPathFor } from '../../../../../../kernel/log/client/loop-log.js'
-import { ensureRunDir, runPath } from '../../../../../../kernel/run-paths.js'
+} from '@harness/kernel/gates/enforcement-controls.js'
+import { hookRoutingRepairLine, repairLocalGateControl } from '@harness/kernel/gates/local-gate-control.js'
+import { appendDriverLine, loopLogPathFor } from '@harness/kernel/log/client/loop-log.js'
+import { ensureRunDir, runPath } from '@harness/kernel/run-paths.js'
 import { sh } from './gate-reading.js'
 import { decideStop } from './stop-decision.js'
 import {
   type ForgeComment,
   isForgeReadOversize,
   readIssueComments
-} from '../../../../../../kernel/adapters/code-host/github/forge-read.js'
+} from '@harness/kernel/adapters/code-host/github/forge-read.js'
 
 /** A ruling marker line in either spelling — a ruling posted before the rename still reaches the Developer. */
 const RULING_MARKER = new RegExp(`^<!-- ${COMMENT_MARKER_PREFIX_PATTERN}:principal:ruling:\\d+-\\d+ -->$`)
