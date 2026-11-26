@@ -39,21 +39,21 @@ import {
   type ControlStoreDeps,
   readEffect,
   writeEffect
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
-import type { TaskCancelResult } from '../../../../../kernel/tools/catalog/task-tools'
-import type { TaskRunner } from '../../../integration/config/compose.js'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import type { TaskCancelResult } from '@harness/kernel/tools/catalog/task-tools'
+import type { TaskRunner } from '@harness/workflow/integration/config/compose.js'
 import {
   fenceStartedEffectsAsUncertain,
   isDriverPidAlive,
   readDriverLock,
   readPauseState
 } from '../standalone/dev-review-loop/pause-resume.js'
-import type { EffectIdentity, EffectReconciler, EffectReconcileResult } from '../../../../../kernel/effects/effects.js'
-import { reconcileGhComment } from '../../../tools/task-contract/forge/forge-write.js'
-import { ensureRunDir, runPath } from '../../../../../kernel/run-paths.js'
+import type { EffectIdentity, EffectReconciler, EffectReconcileResult } from '@harness/kernel/effects/effects.js'
+import { reconcileGhComment } from '@harness/workflow/tools/task-contract/forge/forge-write.js'
+import { ensureRunDir, runPath } from '@harness/kernel/run-paths.js'
 import { engineRunInFlight } from './task-run-engine.js'
 import type { TaskToolCallResult } from './handlers.js'
-import type { CallerContext } from '../../../integration/server.js'
+import type { CallerContext } from '@harness/workflow/integration/server.js'
 
 /** Why the procedure refused, with the facts that decided it. */
 export type BackendRollbackRefusalReason =

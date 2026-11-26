@@ -4,8 +4,8 @@ import {
   restoreRoleRegistry,
   saveRoleRegistry,
   type RoleRegistrySnapshot
-} from '../../../../kernel/log/roles'
-import { LogEventSchema } from '../../../../kernel/log/schema'
+} from '@harness/kernel/log/roles'
+import { LogEventSchema } from '@harness/kernel/log/schema'
 import { spawnSync } from 'node:child_process'
 import {
   existsSync,
@@ -24,7 +24,7 @@ import {
   spawnBudgetedAsync,
   spawnSyncBudgeted,
   stripVinayaEnv
-} from '../../../../kernel/conformance/unit/process-fixture.js'
+} from '@harness/kernel/conformance/unit/process-fixture.js'
 import {
   createDefaultLogSinkSlot,
   createLogSink,
@@ -41,8 +41,8 @@ import {
   type LogSinkFactory,
   type LogSink,
   type LogSinkOverrides
-} from '../../../../kernel/log/log-sink.js'
-import { registerDeferredLogSinkFactory } from '../../../../kernel/log/deferred-sink-factory.js'
+} from '@harness/kernel/log/log-sink.js'
+import { registerDeferredLogSinkFactory } from '@harness/kernel/log/deferred-sink-factory.js'
 import { vinayaProcessIntegration } from '../process/process-integration.js'
 
 // The sink attributes only a registered role; this file registers the one it uses and puts the registry back.

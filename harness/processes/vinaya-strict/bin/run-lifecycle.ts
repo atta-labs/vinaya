@@ -15,7 +15,7 @@ import {
   readEffects,
   readExecutionRoundMirror,
   writeExecutionRoundMirror
-} from '../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 import {
   compareManifest,
   manifestAsEchoed,
@@ -34,13 +34,13 @@ import type { BaseCheckpointSaver } from '@langchain/langgraph'
 import {
   type EffectiveResumedState,
   readExecutionRound
-} from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+} from '@harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import {
   CheckpointCorruptError,
   type CheckpointProvenance,
   type CheckpointRefusal,
   checkpointRefusal
-} from '../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
+} from '@harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import {
   DEFAULT_DISPATCH_EFFORT,
   detectUsageLimit,

@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '../../../tools/host/dev-tools'
+import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '@harness/kernel/tools/host/dev-tools'
 import type { RoleGrants } from '../manifest'
 import {
   normalizedCapabilities,
@@ -11,7 +11,7 @@ import {
   type GeneratorPaths,
   type HookPolicy,
   scratchCacheEnv
-} from '../../../isolation/policy'
+} from '@harness/kernel/isolation/policy'
 
 const quote = (value: string): string => JSON.stringify(value)
 

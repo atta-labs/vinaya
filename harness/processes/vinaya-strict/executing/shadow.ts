@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { devToolError, type DevToolContext } from '../../../kernel/tools/dev-tools-server'
+import { devToolError, type DevToolContext } from '@harness/kernel/tools/dev-tools-server'
 import type { BoundFunctions } from './actions'
 import type { HandoffDeps } from './handoff'
 

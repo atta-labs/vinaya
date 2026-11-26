@@ -9,26 +9,26 @@ import {
   defaultControlStoreDeps,
   type EscalationInput,
   writeEscalation
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 import {
   ReplayedResolutionError,
   resolveEscalation,
   writePauseState
-} from '../../../loops/dev-review/standalone/dev-review-loop/pause-resume.js'
-import { tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
-import { createTaskCancelHandler } from '../../../loops/dev-review/run-control/cancel.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+import { tasksExecutionRoot } from '@harness/kernel/run-paths.js'
+import { createTaskCancelHandler } from '@harness/workflow/loops/dev-review/run-control/cancel.js'
 import {
   createTaskResumeHandler,
   type ResumeClaimStore,
   type ResumeRecord
-} from '../../../loops/dev-review/run-control/resume.js'
+} from '@harness/workflow/loops/dev-review/run-control/resume.js'
 import {
   createTaskToolsMcpServer,
   defaultTaskToolHandlers,
   dispatchToolCall,
   type TaskToolHandlers
 } from '../../server.js'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 /**
  * Part 2 (O2): the nine two-runtime fixture scenarios shared verbatim by

@@ -23,7 +23,7 @@
  * their contracts until their integrations opt into it.
  */
 import { readAliasTable } from '@harness/kernel/imports/alias-table.js'
-import { CLI_SPAWN_BINARY } from '../../../kernel/gates/ring0-hooks/pre-push/cli-spawn-tests.js'
+import { CLI_SPAWN_BINARY } from '@harness/kernel/gates/ring0-hooks/pre-push/cli-spawn-tests.js'
 import { SCANNER_DECLARATIONS, type ScannerDeclaration } from './verification-scanner-policy.js'
 import {
   diskTree,

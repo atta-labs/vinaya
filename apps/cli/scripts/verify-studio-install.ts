@@ -15,7 +15,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { delimiter, join, relative, sep } from 'node:path'
 // The route and frame come from the host itself, so the proof cannot drift from what Studio serves.
-import { buildExecution } from '../../../harness/kernel/log/fixtures/executions'
+import { buildExecution } from '@harness/kernel/log/fixtures/executions'
 import { LIVE_ROUTE } from '../../vinaya-studio/src/server/live-protocol'
 import { BOOTSTRAP_ROUTE } from '../src/commands/studio'
 

@@ -19,10 +19,13 @@ import {
   CHECKS_WORKFLOW_PATH,
   REVIEW_VERDICT_WORKFLOW_PATH,
   REVIEW_WORKFLOW_PATH
-} from '../../../../../../kernel/gates/ring1-ci/workflows/managed-workflow-paths.js'
-import { REVIEW_GATE_CHECK_RUN_NAME, REVIEW_GATE_WORKFLOW_NAME } from '../../../../tools/review-gate-check-name.js'
-import { reassertPrBodyPremise } from '../../../../tools/premise-reassert-logic.js'
-import type { PremiseReassertResult } from '../../../../tools/premise-reassert-logic.js'
+} from '@harness/kernel/gates/ring1-ci/workflows/managed-workflow-paths.js'
+import {
+  REVIEW_GATE_CHECK_RUN_NAME,
+  REVIEW_GATE_WORKFLOW_NAME
+} from '@harness/workflow/tools/review-gate-check-name.js'
+import { reassertPrBodyPremise } from '@harness/workflow/tools/premise-reassert-logic.js'
+import type { PremiseReassertResult } from '@harness/workflow/tools/premise-reassert-logic.js'
 import { pollUntil } from './round-assess.js'
 import { clearGitReadMemo, runGit } from '../../v2/git-read-memo.js'
 

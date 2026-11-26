@@ -1,4 +1,4 @@
-import { installVinayaCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry'
+import { installVinayaCheckRegistry } from '@harness/workflow/checks/registry'
 installVinayaCheckRegistry()
 // Tracked hooks (atta-labs/attalabs#927) — ring 0 must survive a clone.
 //
@@ -26,9 +26,9 @@ import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
 import type { UpgradeDeps } from '../src/commands/upgrade.js'
 import { runUpgrade, translateHookPaths } from '../src/commands/upgrade.js'
-import { CONFIG_PATH, TRACKED_HOOK_DIR } from '../../../harness/processes/vinaya-strict/integration/artifacts.js'
-import { CLAUDE_STOP_HOOK_SCRIPT_PATH } from '../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
-import type { ManagedManifest } from '../../../harness/processes/vinaya-strict/integration/config/compose.js'
+import { CONFIG_PATH, TRACKED_HOOK_DIR } from '@harness/workflow/integration/artifacts.js'
+import { CLAUDE_STOP_HOOK_SCRIPT_PATH } from '@harness/workflow/integration/claude-stop-hook-emitter.js'
+import type { ManagedManifest } from '@harness/workflow/integration/config/compose.js'
 import {
   activeRawHooks,
   customHooksPath,
@@ -38,9 +38,9 @@ import {
   resolveHookDir,
   setCoreHooksPath,
   unsetCoreHooksPath
-} from '../../../harness/kernel/connectors/git/detect.js'
-import type { LabelGateway } from '../../../harness/kernel/gates/ops.js'
-import { programFile } from '../../../harness/processes/vinaya-strict/tools/programs.js'
+} from '@harness/kernel/connectors/git/detect.js'
+import type { LabelGateway } from '@harness/kernel/gates/ops.js'
+import { programFile } from '@harness/workflow/tools/programs.js'
 
 // The real CLI source, invoked directly by `bun` instead of the hook's real
 // `npx --yes @attalabs/vinaya` body — same technique quickstart.test.ts uses,

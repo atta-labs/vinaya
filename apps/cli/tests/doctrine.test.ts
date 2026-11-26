@@ -4,14 +4,8 @@ import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import matter from 'gray-matter'
 import { doctrineCommand } from '../src/commands/doctrine.js'
-import {
-  ENTRY_SEGMENTS,
-  resolveDoctrineRoot
-} from '../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
-import {
-  doctrineSource,
-  ROLE_KEY_ENTRIES
-} from '../../../harness/processes/vinaya-strict/tools/doctrine/doctrine-map.js'
+import { ENTRY_SEGMENTS, resolveDoctrineRoot } from '@harness/workflow/tools/doctrine/resolve-doctrine.js'
+import { doctrineSource, ROLE_KEY_ENTRIES } from '@harness/workflow/tools/doctrine/doctrine-map.js'
 
 /** Every role id the doctrine map lists under the logical `roles/` folder, sorted. */
 const MAP_ROLE_NAMES = ROLE_KEY_ENTRIES.map((entry) => entry.key.slice('roles/'.length, -'.md'.length)).sort()

@@ -12,7 +12,7 @@ import {
   runDeterministicCase,
   sessionRuleViolations
 } from './adapter-contract.js'
-import { programFile } from '../../../tools/programs.js'
+import { programFile } from '@harness/workflow/tools/programs.js'
 import {
   caseOutcome,
   LIVE_PROOF_COMMANDS,

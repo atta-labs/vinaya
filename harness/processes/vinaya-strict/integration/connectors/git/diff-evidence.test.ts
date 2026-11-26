@@ -3,12 +3,8 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import {
-  changedLineRanges,
-  resolveAddedFiles,
-  resolveChangedFiles
-} from '../../../../../kernel/connectors/git/diff-evidence'
-import { coreCheckRegistry } from '../../../checks/registry'
+import { changedLineRanges, resolveAddedFiles, resolveChangedFiles } from '@harness/kernel/connectors/git/diff-evidence'
+import { coreCheckRegistry } from '@harness/workflow/checks/registry'
 
 // Code review, PR #290:
 //   BLOCKER — resolveChangedFiles() fell open on a shallow-clone/orphan-

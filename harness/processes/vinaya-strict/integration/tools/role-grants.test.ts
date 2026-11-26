@@ -3,14 +3,14 @@ import net from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { startDevToolsHost } from '../../../../kernel/tools/host/dev-tools-host.js'
+import { startDevToolsHost } from '@harness/kernel/tools/host/dev-tools-host.js'
 import {
   createDevToolsMcpServer,
   DEV_TOOL_NAMES,
   dispatchDevTool,
   type DevToolContext
-} from '../../../../kernel/tools/dev-tools-server.js'
-import { servedTools } from '../../../../kernel/tools/role-grants.js'
+} from '@harness/kernel/tools/dev-tools-server.js'
+import { servedTools } from '@harness/kernel/tools/role-grants.js'
 import type { GrantedRole } from '../policies/roles.js'
 import { vinayaToolGrantPolicy } from '../policies/vinaya-policies.js'
 

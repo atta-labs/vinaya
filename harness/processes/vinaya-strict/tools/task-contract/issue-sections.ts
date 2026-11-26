@@ -1,4 +1,4 @@
-import { stripCode } from '../../../../kernel/gates/checks/anchored-region'
+import { stripCode } from '@harness/kernel/gates/checks/anchored-region'
 
 /**
  * The one list of level-two sections a task Issue may carry. The Issue write

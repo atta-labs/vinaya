@@ -10,91 +10,91 @@
     "loopSurface": [
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/bin/dev-review-loop.ts",
-        "sha256": "fe7bb8d4ee8c6e819865c2261192e82212d81fa89e219d49a4b3384878589432"
+        "sha256": "544cbf306111cac5b829f7f959928d3b00c88e9d6b5cd5c4899be994aa695323"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop.ts",
-        "sha256": "780dd1823b5c35451f5687678d49dc5577ff4af266d86f1605a03dadfbcfcd24"
+        "sha256": "895a0ad17de5d7feb9661ce8758db3aea863a8a21fd1501494721b96731df179"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/ci-gate.ts",
-        "sha256": "8370f053b827bdcf897f1eaffc3afb9da2735c6cbd7e76af745ad97d2ef6b10a"
+        "sha256": "43039deb8f4bbec3d3c0653a714d8f631c431eab03bb7c956f6ddb9331fffdcd"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-dispatch.ts",
-        "sha256": "0577a59061b17f6e1c6f6f244bee52838945026ed920e6774b2f8b3dd68158ef"
+        "sha256": "d99c801445b47f3c081a29357bf9c47bc406ed79ffd73b724926001f8c64cd5f"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-publication.ts",
-        "sha256": "2ba2dbe58fc0c7f49b8391e17b70d079748995a0521214fad0326f03f5854818"
+        "sha256": "94ff37c7477623952b68e1f46528f1c8791cb59fc0a9940f1fc643a7a69e1746"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-lifecycle.ts",
-        "sha256": "f1d6d8901fca898f02d2e89054fae126458d2ad6e4a696902831bddc31559734"
+        "sha256": "e0cc42d272987dd7cd74e499e0f24b5665d7384b563bf0edea007d396d1eb498"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/gate-reading.ts",
-        "sha256": "eee8df30e40b9f1d87837bd01f7a793052900f093aa258f04e7620cd3465888b"
+        "sha256": "81a9bca3fa84fec303944250267d943dd2ffa2d38e8fc2db6241a34122056ffd"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/journal-history.ts",
-        "sha256": "6e853f82e556dbe441eb3f22fefb389e5a6e95d73092b7fee24efa1e9be7f1de"
+        "sha256": "12ee5ddd0b417ac2bb385119b8ea37e5a70bf450520613b209f57d00397fe668"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/live-check.ts",
-        "sha256": "f23c3f0c988e418021c591a914e9a76e6a8e25bf9e92b1871e11a8fcf30f69bf"
+        "sha256": "68a67b995be321de33657058618be3cdaa28d1098d29e23b018d0245cb9c625a"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.ts",
-        "sha256": "887be32a7f671d24fa3ef9f3bd64e4b66fb02032a9247c091eea6c1c9c013d5f"
+        "sha256": "a51b4c273b2b2c994b2be5385e9a9b1cf19a1925aa0508341be2c64ad7518885"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/publication.ts",
-        "sha256": "f77c2c3bcae7e8055a25d7f547978f33f5d3ba16d894a2bb4d796c83e0661a69"
+        "sha256": "f2aecfcffe8afa486d6ec6115cb489c9511738a6f940548d164b228c500dffd4"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/rate-limit-waits.ts",
-        "sha256": "d0c357219bf9f96ce6c32034097d4488527ad7c6847e2463548882a5b88e3fdf"
+        "sha256": "0b74d859b6412f3dd779d0b35c8e6a66954942a0111dc286dbd064aee8820be9"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-dispatch.ts",
-        "sha256": "30f0281da2a434b2902220d44bea121a04b1cf9291a43ed11a4a44dfa599b95a"
+        "sha256": "6309a1b368df4fca50c8c553bb9873a1334b410a02c6d67e78fb75375b88f1d0"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-isolation.ts",
-        "sha256": "1fe13e4bc59675175f63d1c8c22ea016bbd88e22e835d336f0561dfb11b48c19"
+        "sha256": "5dee39393488b60dbef7c744de85a74cf0953febaf609e06fc680d76f1493c3a"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/reviewer-turn.ts",
-        "sha256": "74a70883770ae1b655d18b70733907776b7c0a72718a97fe89f5f55f0278fe3e"
+        "sha256": "7940b7f6b2fb0ff043e52dfa82ded4885f049fad72818bd4a13ce91accbfd9ce"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-assess.ts",
-        "sha256": "bb3f7c114c616b5daa58ebb5c22ef2c9024390a9e67db390e1b07ac41e9581ee"
+        "sha256": "765769debd7c33d795171ce51e0b375981c666202abba9944472199c880fdd3e"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-loop.ts",
-        "sha256": "a96a25cbb500ea01c606be73038afec906408a5c6ade2e5800c9111f325b1c5f"
+        "sha256": "5cdb4a5fc7ad29b879bde2dafeb639e97750d5707861788ec2e670f53a58841e"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/round-report.ts",
-        "sha256": "0ffe4e1643ed14c05b393894c1019afab9a33f4b895bcf2071cde836d1a8a6f4"
+        "sha256": "4be75fa87501c65790ea60a3cc33e93c2c8bf999d1a85fdbc9a1d02a28cb7f7c"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-context.ts",
-        "sha256": "be5687c37dc240a1b9bcaf7653d757e41686f541eefa25398716a692c1cca92f"
+        "sha256": "0d6e1556722a048cde41d6093a2ce1645003342dce05b01c637d10a716871ff1"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/security-scan-command.ts",
-        "sha256": "abfdea820420fcfe4cdd4aaec768e8320135a20be74267d151b13fd569753aef"
+        "sha256": "d88881745af6f440700775b87a13be22360c15b928ab1d6b43707858eff2a45c"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/stop-decision.ts",
-        "sha256": "baf6c6f2cc5ae82d44f00ab70c05be66c1e0bac1effc220884bf3bf73917d356"
+        "sha256": "4863004089da6c88fb62535377050278437be19ddda6e1ead68906d01f662abe"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-result.ts",
-        "sha256": "ff8798b8967872cf8cb5407620a05055ba6c173c9de01cc5c5d84123eed19ed9"
+        "sha256": "a20adb1b93fc0361aced410287d349c19ce800a358a273ad520ccc7aeb668f1d"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/unpushed-work.ts",
@@ -102,67 +102,67 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/cancel.ts",
-        "sha256": "2213b3df2642c34a7c0b99af6388475ed4ddbb43fe8768c137c630bb76d9e61f"
+        "sha256": "b75e3396e192f71dcf5bc48b8635e9b29fd2920e558b0b24e11e2548f0b8960f"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-context.ts",
-        "sha256": "13a5168fa763ff391ce61d45510c298aa6ea168f843d30f5a6dc07b9929ef0ad"
+        "sha256": "61755dda2649f5136091568ef5154f4d86c1219e212d482b06150ef2139a1668"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-defaults.ts",
-        "sha256": "4b99d673bf9f1ef1ef0f45c8836e4dd36045b1ec34dc9e07b76cd55b18682aec"
+        "sha256": "9e632adb721931c10e76ef491443029f6aed67ae8a675d14f7a9b63d3ee20ba0"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-prompts.ts",
-        "sha256": "45ee300ccacfb356e1374783998c1086f12d481090321146a2d04e56ff247074"
+        "sha256": "7deab13fab23b975a71135d0d9dfaa48652f4cd3f134de31539b6e085ce41d8b"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-result.ts",
-        "sha256": "c33b3dbf76ab192099df18571b6c9797011f100fe165f5ed4429f07d58b22173"
+        "sha256": "69ffcd6700817154d1e8a89f21db604cdf724263421b5be24b0b2b9879ac17cf"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/developer-turn.ts",
-        "sha256": "b60cb1b150ff196f157a65fe4b2282a73f643a506d02fdf015bf8fb13e3a70e5"
+        "sha256": "3be63933cdc5bb8bb1e98cbb051fc62c2d51738d972abe5b266ae2f6a046d203"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-deps.ts",
-        "sha256": "67fc61f6d49d1f2ba26d6aba25324692b35773e51a6ba08aae5a4b26977101fb"
+        "sha256": "f77b70b98ee313b82b0817e472092fa0d0225560de0e8dfcedd12f42bca47f7f"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-helpers.ts",
-        "sha256": "967b6b766ff97ca94c1fec45d5154cc0dbdada67be63e137948b2326f0ff5b8a"
+        "sha256": "9323b7b518bec603a40d994c361dad5186da14501fce97ad845e6963c41b5a0b"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/driver-watch.ts",
-        "sha256": "1d9267ebc832cdde0d2ad9e19ab53621250ef33318588a2a1da6b26f61202121"
+        "sha256": "57295fb5bba8960c93708081017832ca47ff7adf9b102b5807d089e2c422e4b4"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/git-defaults.ts",
-        "sha256": "53df090f174e7fe1464de689274c8544969ace6b186974ad20cab0aef2929841"
+        "sha256": "a1f2e2a4a99ef445f3390387e71aef7839af7cf20f4d5a129d1fc285ff74fcf8"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-entry.ts",
-        "sha256": "9be8fa4c529887e8e565517a1142bdc7f5a99dd5f49eb87fc0088c4a315f20e6"
+        "sha256": "fdbff3a43ef5442e63e2a29004465f0f2b519eabc2ed938e59be28d23abcfe75"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-logging.ts",
-        "sha256": "91d7551dd504bdfa71b5f577922c6218db06dcfa5e4dd1e070491f3c18e332cb"
+        "sha256": "1795d3c98212fd356f6757b2368c2d810c0274240f1835f39a27be154ab20789"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-setup.ts",
-        "sha256": "3dc892eecc93b002884091f8331faea303daf0a47870ecf8017b9d2018337465"
+        "sha256": "795d046dcc4e4f3f4b58b8374bb42a5dde89715fca5ba8492ce8deb9bf9fdfc6"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-start.ts",
-        "sha256": "68e94a61a8373c7a0d9c4de8a505bab2cc994ab0a6461f85671802722856100c"
+        "sha256": "9094aa2a46cac7229c655a7f28a01c0aed0a996896a4fafc6f5f19739b232828"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/run-state.ts",
-        "sha256": "705c378198cf456e79ac382fdc2913f3f37712e51afdb47791c4df723cf686ca"
+        "sha256": "921ac4d8bab3a1bfa2543b909ceae266083c5eb97da5cb7df5d1222e625994fb"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/runtime-defaults.ts",
-        "sha256": "83fc40ec75976c6f4c6c399d2c4270125907eaed7643b818fbfe35267bb753f5"
+        "sha256": "f3081d97e40a7ce696f5770f34d3bda8c45608d310d54ecc589ded82fa12cd6b"
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/stale-driver.ts",
@@ -170,7 +170,7 @@
       },
       {
         "path": "harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/turn-confinement.ts",
-        "sha256": "7ef4a1f947f8ab9a18a85687f5a56dfd062a1c4c9e386f51cd920a97b0050c3a"
+        "sha256": "904156584738e3df306aa27b6076698a6295f787be5037ad78e5213fb6abffaa"
       },
       {
         "path": "harness/processes/vinaya-strict/tools/dev-review-policy/assess-round.ts",

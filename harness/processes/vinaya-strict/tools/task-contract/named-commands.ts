@@ -1,4 +1,4 @@
-import { stripCode } from '../../../../kernel/adapters/code-host/github/strip-code'
+import { stripCode } from '@harness/kernel/adapters/code-host/github/strip-code'
 import { programForWords } from '../programs'
 import { extractFencedBlocks } from './brief-validation'
 import {

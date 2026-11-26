@@ -8,8 +8,8 @@ import {
   runLogSelftest,
   type SelftestReadPage
 } from './log-selftest.js'
-import { schemaDigestFromStats } from '../../../../kernel/log/client/log-schema-digest.js'
-import { logEventSchemaDigest } from '../../../../kernel/log/client/schema-digest'
+import { schemaDigestFromStats } from '@harness/kernel/log/client/log-schema-digest.js'
+import { logEventSchemaDigest } from '@harness/kernel/log/client/schema-digest'
 
 // The self-test is proved against injected seams, not a live server: every
 // FAIL reason and the one PASS are a decision over `resolveDestination` /

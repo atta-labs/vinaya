@@ -2,10 +2,10 @@ import { describe, expect, it } from 'bun:test'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createRunRecorder } from '../../../../../../kernel/log/run-recorder'
-import type { CheckSpec } from '../../../../../../kernel/gates/checks/contract'
-import { runChecks } from '../../../../../../kernel/gates/checks/runner'
-import { storedSpans } from '../../../../../../kernel/gates/checks/runner/local-copy-probe'
+import { createRunRecorder } from '@harness/kernel/log/run-recorder'
+import type { CheckSpec } from '@harness/kernel/gates/checks/contract'
+import { runChecks } from '@harness/kernel/gates/checks/runner'
+import { storedSpans } from '@harness/kernel/gates/checks/runner/local-copy-probe'
 
 const FIXTURES = join(import.meta.dir, '../../../../../../kernel/gates/checks/fixtures')
 const PASSING = join(FIXTURES, 'passing-check.ts')

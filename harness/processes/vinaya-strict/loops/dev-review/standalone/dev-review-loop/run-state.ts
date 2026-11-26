@@ -1,13 +1,13 @@
 import type { LoopRunContext } from './run-context.js'
 import { seedLoopHistory } from './driver-lifecycle.js'
 
-import type { TaskClock } from '../../../../tools/dev-review-policy/types'
-import { activeBudgetMs } from '../../../../tools/task-phase-history'
+import type { TaskClock } from '@harness/workflow/tools/dev-review-policy/types'
+import { activeBudgetMs } from '@harness/workflow/tools/task-phase-history'
 import { persistLoopState } from './round-assess.js'
 import type { DeveloperHandoff } from './round-assess.js'
-import { briefHash as briefHashOf } from '../../../../tools/task-contract/review-input-manifest'
+import { briefHash as briefHashOf } from '@harness/workflow/tools/task-contract/review-input-manifest'
 
-import { policyDigest as policyDigestOf } from '../../../../tools/task-contract/review-input-manifest'
+import { policyDigest as policyDigestOf } from '@harness/workflow/tools/task-contract/review-input-manifest'
 
 export function applyLoopHistory(c: LoopRunContext): void {
   const { d } = c

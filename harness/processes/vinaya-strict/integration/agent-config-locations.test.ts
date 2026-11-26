@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 import matter from 'gray-matter'
-import { AGENT_VENDORS } from '../../../kernel/adapters/agents/agent-vendors'
+import { AGENT_VENDORS } from '@harness/kernel/adapters/agents/agent-vendors'
 import { buildInitOps, DOCTRINE_POINTER_PATHS, type InitContext } from './artifacts'
-import type { CreateFileOp, Op } from '../../../kernel/gates/ops'
+import type { CreateFileOp, Op } from '@harness/kernel/gates/ops'
 
 /**
  * Every agent-facing file the generator writes sits where its vendor's own

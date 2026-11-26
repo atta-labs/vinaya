@@ -1,5 +1,5 @@
 /** The standalone review-loop orchestrator and compatibility exports. */
-import { markProcessUnattended } from '../../../../../kernel/run-paths.js'
+import { markProcessUnattended } from '@harness/kernel/run-paths.js'
 import { createLoopRunContext } from './dev-review-loop/run-context.js'
 import { defaultDeps } from './dev-review-loop/runtime-defaults.js'
 import { setStandaloneLogIdentity } from './dev-review-loop/driver-helpers.js'

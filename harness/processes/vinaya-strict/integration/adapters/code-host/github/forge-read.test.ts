@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fetchIssueBodyAndComments } from '../../../../thinking/planner/tools/planner-operations'
-import { resolveBriefHashForPr } from '../../../../loops/dev-review/bin/review-post'
+import { fetchIssueBodyAndComments } from '@harness/workflow/thinking/planner/tools/planner-operations'
+import { resolveBriefHashForPr } from '@harness/workflow/loops/dev-review/bin/review-post'
 import {
   FORGE_READ_CEILING_BYTES,
   ForgeReadOversizeError,
@@ -11,13 +11,13 @@ import {
   isForgeReadOversize,
   readIssueBody,
   readIssueComments
-} from '../../../../../../kernel/adapters/code-host/github/forge-read'
-import { fetchIssueComments } from '../../../../tools/task-contract/dispatch-task'
+} from '@harness/kernel/adapters/code-host/github/forge-read'
+import { fetchIssueComments } from '@harness/workflow/tools/task-contract/dispatch-task'
 import {
   fetchFrozenBrief,
   resolveIssueObjectives
-} from '../../../../loops/dev-review/standalone/dev-review-loop/developer-dispatch'
-import { fetchForgeIssueContext } from '../../../../tools/task-contract/forge/forge-write'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/developer-dispatch'
+import { fetchForgeIssueContext } from '@harness/workflow/tools/task-contract/forge/forge-write'
 
 const COUNT = 250
 const BODY_BYTES = 5 * 1024

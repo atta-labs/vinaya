@@ -52,7 +52,7 @@
  * nothing to report — never a bare `null` with no account of why.
  */
 
-import { parseIssueDocumentation, type IssueDocumentationSource } from '../../../../../kernel/issue-documentation.js'
+import { parseIssueDocumentation, type IssueDocumentationSource } from '@harness/kernel/issue-documentation.js'
 import { randomUUID } from 'node:crypto'
 import {
   accessSync,
@@ -74,16 +74,13 @@ import {
   type SweepDeps,
   sweepOwnedDirs,
   writeOwnerMarker
-} from '../../../../../kernel/conformance/unit/test-temp'
+} from '@harness/kernel/conformance/unit/test-temp'
 import { execFileSync, spawn } from 'node:child_process'
-import { resolveRepo } from '../../../../../kernel/adapters/code-host/github/resolve-repo'
+import { resolveRepo } from '@harness/kernel/adapters/code-host/github/resolve-repo'
 import { homedir, hostname as osHostname, tmpdir } from 'node:os'
-import { summarizeTranscript } from '../../../../../kernel/adapters/agents/claude-code/claude-code-transcript'
-import { redact } from '../../../../../kernel/log/redact'
-import {
-  DOCUMENTATION_READ_MIN_SIZE,
-  FETCH_DOCUMENTATION_TOOL
-} from '../../../../../kernel/tools/fetch-documentation.js'
+import { summarizeTranscript } from '@harness/kernel/adapters/agents/claude-code/claude-code-transcript'
+import { redact } from '@harness/kernel/log/redact'
+import { DOCUMENTATION_READ_MIN_SIZE, FETCH_DOCUMENTATION_TOOL } from '@harness/kernel/tools/fetch-documentation.js'
 import {
   countedSourceIds,
   readRequiredSourceManifest,
@@ -91,26 +88,22 @@ import {
   SOURCE_STORE_DIRNAME,
   sourceReceiptsPath,
   sourceStoreDir
-} from '../../../../../kernel/source-manifest.js'
-import type { TranscriptSummary } from '../../../../../kernel/adapters/agents/claude-code/transcript-summary'
-import type { Role, RoleAttemptOutcome } from '../../../../../kernel/log/schema'
-import { drainLogSpool } from '../../../../../kernel/log/log-sink.js'
+} from '@harness/kernel/source-manifest.js'
+import type { TranscriptSummary } from '@harness/kernel/adapters/agents/claude-code/transcript-summary'
+import type { Role, RoleAttemptOutcome } from '@harness/kernel/log/schema'
+import { drainLogSpool } from '@harness/kernel/log/log-sink.js'
 import type { LogHandle } from '@attalabs/vinaya-log-sdk'
-import { type AgentTurn, runRecorder } from '../../../../../kernel/log/run-recorder.js'
-import { createVinayaLogSink } from '../../../integration/log/log-sink-factory.js'
+import { type AgentTurn, runRecorder } from '@harness/kernel/log/run-recorder.js'
+import { createVinayaLogSink } from '@harness/workflow/integration/log/log-sink-factory.js'
 // The command line installs the process's sink factory through the dispatch module it already loads.
-export { installVinayaLogSinkFactory } from '../../../integration/log/log-sink-factory.js'
-import { narrateAgentRecord } from '../../../../../kernel/log/client/agent-record-line.js'
-import { appendRoleLine } from '../../../../../kernel/log/client/loop-log.js'
-import { registeredSeatNames } from '../../../executing/seat-names.js'
-import { createAgentStreamRenderer } from '../../../../../kernel/adapters/agents/agent-stream.js'
-import {
-  formatAgentDetails,
-  formatAgentLine,
-  type AgentLineMark
-} from '../../../../../kernel/adapters/agents/agent-line.js'
-import { developerTurnResultJsonSchema } from '../../../executing/developer/developer-turn-result.js'
-import { reviewResultJsonSchema, type ReviewerRole } from '../../../executing/code-reviewer/review-result.js'
+export { installVinayaLogSinkFactory } from '@harness/workflow/integration/log/log-sink-factory.js'
+import { narrateAgentRecord } from '@harness/kernel/log/client/agent-record-line.js'
+import { appendRoleLine } from '@harness/kernel/log/client/loop-log.js'
+import { registeredSeatNames } from '@harness/workflow/executing/seat-names.js'
+import { createAgentStreamRenderer } from '@harness/kernel/adapters/agents/agent-stream.js'
+import { formatAgentDetails, formatAgentLine, type AgentLineMark } from '@harness/kernel/adapters/agents/agent-line.js'
+import { developerTurnResultJsonSchema } from '@harness/workflow/executing/developer/developer-turn-result.js'
+import { reviewResultJsonSchema, type ReviewerRole } from '@harness/workflow/executing/code-reviewer/review-result.js'
 import {
   type DeliveredDocumentation,
   type DeveloperTurnOutput,
@@ -119,7 +112,7 @@ import {
   readClaudeTurnOutput,
   readCodexTurnOutput
 } from '../standalone/dev-review-loop/turn-result.js'
-import { loadConfig } from '../../../integration/config/compose.js'
+import { loadConfig } from '@harness/workflow/integration/config/compose.js'
 import {
   RUN_AREA_DIRNAMES,
   runPath,
@@ -129,7 +122,7 @@ import {
   type RunScope,
   scopeFromSegment,
   tasksExecutionRoot
-} from '../../../../../kernel/run-paths.js'
+} from '@harness/kernel/run-paths.js'
 import { basename, dirname, join } from 'node:path'
 import {
   CLAUDE_KEYCHAIN_SERVICE,
@@ -161,9 +154,9 @@ import {
   type ConfinementPlatformDeps,
   type ConfinementRequest,
   type SandboxProbeResult
-} from '../../../../../kernel/isolation/worker-boundary.js'
-import { agentControlsRefusal } from '../../../../../kernel/gates/enforcement-controls.js'
-import { repoRoot } from '../../../../../kernel/connectors/git/diff-evidence.js'
+} from '@harness/kernel/isolation/worker-boundary.js'
+import { agentControlsRefusal } from '@harness/kernel/gates/enforcement-controls.js'
+import { repoRoot } from '@harness/kernel/connectors/git/diff-evidence.js'
 import {
   type BridgeInvocation,
   CLAUDE_DEV_TOOLS_ENV,
@@ -171,7 +164,7 @@ import {
   codexDevToolsConfigToml,
   devToolsMcpConfigFileBody,
   watchClaudeDevToolsStart
-} from '../../../../../kernel/tools/dev-tools-registration.js'
+} from '@harness/kernel/tools/dev-tools-registration.js'
 
 /**
  * Terminal colour, applied only at the point a line is written to a real
@@ -5888,4 +5881,4 @@ export async function dispatchRole(
   })
 }
 
-export { installVinayaCheckRegistry } from '../../../checks/registry.js'
+export { installVinayaCheckRegistry } from '@harness/workflow/checks/registry.js'

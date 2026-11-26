@@ -22,21 +22,21 @@
 // address by the run recorder's drain (`sendLocalCopy`), and the command
 // reports where the event went.
 
-import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
 import { EMIT_USAGE, readFields } from '@attalabs/vinaya-log-sdk'
 import { join } from 'node:path'
-import { resolveRepo } from '../../../../kernel/adapters/code-host/github/resolve-repo'
+import { resolveRepo } from '@harness/kernel/adapters/code-host/github/resolve-repo'
 import { loadConfig, loadTrustAnchorConfigAsync } from '../config/compose.js'
-import { emitCustomEvent, type EmitCustomEventResult } from '../../../../kernel/log/client/log-custom.js'
+import { emitCustomEvent, type EmitCustomEventResult } from '@harness/kernel/log/client/log-custom.js'
 import {
   LOG_DESTINATION_ANCHOR_DEADLINE_MS,
   processLocalCopyPlace,
   resolveLogDestinationFrom,
   withDeadline,
   type ResolvedLogDestination
-} from '../../../../kernel/log/log-sink.js'
-import { runRecorder } from '../../../../kernel/log/run-recorder.js'
-import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../../../../kernel/run-paths.js'
+} from '@harness/kernel/log/log-sink.js'
+import { runRecorder } from '@harness/kernel/log/run-recorder.js'
+import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '@harness/kernel/run-paths.js'
 
 export type LogEmitDeps = {
   /** Records the event through the one chokepoint every custom event goes through — `emitCustomEvent`; `repository` is the one the record is filed under. */

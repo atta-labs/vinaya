@@ -6,7 +6,7 @@ import {
   type StoredSpan,
   storedEvents,
   storedSpans
-} from '../../../../../kernel/gates/checks/runner/local-copy-probe.js'
+} from '@harness/kernel/gates/checks/runner/local-copy-probe.js'
 
 const REPOSITORY = 'atta-labs/vinaya'
 

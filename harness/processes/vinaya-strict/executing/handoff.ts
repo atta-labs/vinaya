@@ -1,5 +1,5 @@
 import type { DevReviewLoopEventInput, PauseReason } from '../tools/dev-review-policy/types'
-import type { EscalationRecord } from '../../../kernel/connectors/checkpoint/control-store/index'
+import type { EscalationRecord } from '@harness/kernel/connectors/checkpoint/control-store/index'
 import {
   bindPauseToPullRequest,
   noPushResumeCommandFor,

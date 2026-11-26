@@ -1,7 +1,7 @@
 // Readers the parity tests use to derive, from a generated Claude or Codex configuration alone, what a role can
 // effectively do on that vendor. The kernel's parity test applies them to grants it defines inline; a process
 // applies them to its own grants files.
-import type { GeneratedAgentConfig } from '../../../isolation/policy'
+import type { GeneratedAgentConfig } from '@harness/kernel/isolation/policy'
 import { claudeShellRule } from '../claude-code/capabilities'
 import { CODEX_READ_ONLY_COMMANDS } from '../codex/capabilities'
 import { CLAUDE_BUILTINS, CODEX_BUILTINS, type Decision, type RoleGrants } from '../manifest'

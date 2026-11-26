@@ -15,14 +15,14 @@ import { join } from 'node:path'
 import {
   type ControlStoreDeps,
   defaultControlStoreDeps
-} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
-import type { DispatchTeeRecoveryDeps } from '../../../../loops/dev-review/dispatch/dispatch'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import type { DispatchTeeRecoveryDeps } from '@harness/workflow/loops/dev-review/dispatch/dispatch'
 import {
   NEVER_GRANTED_OPERATIONS,
   scopeTarget,
   UngrantedOperationError,
   WORKER_OPERATIONS
-} from '../../../../../../kernel/tools/host/broker'
+} from '@harness/kernel/tools/host/broker'
 import { authenticateWorkerInvocation, requestEffect } from './vinaya-broker'
 
 let dir: string

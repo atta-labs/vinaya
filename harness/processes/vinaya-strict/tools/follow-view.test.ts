@@ -62,7 +62,7 @@ test('task follow selects local records by work reference and falls back for a t
     const driver = Buffer.from('2026-10-29T10:00:00Z  Driver narration\n')
     const follow = async (
       _path: string,
-      deps: Partial<import('../../../kernel/log/client/loop-log.js').FollowLoopLogDeps> = {}
+      deps: Partial<import('@harness/kernel/log/client/loop-log.js').FollowLoopLogDeps> = {}
     ) => {
       ;(deps.writeBacklog ?? deps.write)?.(driver)
       await deps.sleep?.(0)

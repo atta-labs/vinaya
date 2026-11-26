@@ -5,11 +5,14 @@ import { join } from 'node:path'
 import {
   defaultControlStoreDeps,
   type ControlStoreDeps
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 import type { DispatchTeeRecoveryDeps } from './dispatch'
-import { scopeTarget, WORKER_OPERATIONS } from '../../../../../kernel/tools/host/broker'
-import { authenticateWorkerInvocation, requestEffect } from '../../../integration/tools/host/broker/vinaya-broker'
-import { buildWorkerEnv } from '../../../../../kernel/isolation/worker-boundary'
+import { scopeTarget, WORKER_OPERATIONS } from '@harness/kernel/tools/host/broker'
+import {
+  authenticateWorkerInvocation,
+  requestEffect
+} from '@harness/workflow/integration/tools/host/broker/vinaya-broker'
+import { buildWorkerEnv } from '@harness/kernel/isolation/worker-boundary'
 
 /**
  * `worker-isolation-v1` task 3 (`#560`) — the Test Plan's "scoped

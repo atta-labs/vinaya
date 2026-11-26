@@ -7,10 +7,10 @@ import {
 } from '../tools/dev-review-policy/types'
 import type { PauseReason } from '../tools/dev-review-policy/types'
 import { loopStartedEvent } from '../tools/dev-review-policy/assess-round'
-import { installProcess } from '../../../kernel/dev-process-socket/contract/install-process'
+import { installProcess } from '@harness/kernel/dev-process-socket/contract/install-process'
 import { vinayaProcessIntegration } from '../integration/process/process-integration'
 import { Database } from 'bun:sqlite'
-import type { RoleName } from '../../../../harness/kernel/adapters/agents/manifest'
+import type { RoleName } from '@harness/kernel/adapters/agents/manifest'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
@@ -22,7 +22,7 @@ import {
   type ControlStoreDeps,
   defaultControlStoreDeps,
   writeExecutionRoundMirror
-} from '../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 
 import { buildReviewInputManifest, type ReviewInputManifest } from '../tools/task-contract/review-input-manifest'
 import {
@@ -38,7 +38,7 @@ import {
   readPinnedFileImporters,
   postMarkedCommentOrThrow
 } from '../tools/task-contract/forge/forge-write'
-import { readIssueComments } from '../../../kernel/adapters/code-host/github/forge-read'
+import { readIssueComments } from '@harness/kernel/adapters/code-host/github/forge-read'
 import { DEFAULT_READY_PUSH_TIMEOUT_MINUTES, DEFAULT_REVIEW_POLICY } from '../tools/task-contract/review-policy'
 import {
   createRunControl,
@@ -48,17 +48,17 @@ import {
   type SpawnFn,
   type StepNodeResult
 } from '@atta/executor-agent-spawn'
-import { sessionIdOf } from '../../../../harness/kernel/adapters/agents/structured-result'
-import { loadProcess, type LoadedProcess } from '../../../../harness/kernel/dev-process-socket/loader/load-process'
+import { sessionIdOf } from '@harness/kernel/adapters/agents/structured-result'
+import { loadProcess, type LoadedProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import {
   CheckpointCorruptError,
   type CheckpointRefusal,
   SqliteCheckpointer
-} from '../../../../harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
+} from '@harness/kernel/loops/runtimes/atta-engine/sqlite-checkpointer'
 import {
   readAgentProvenance,
   type AgentCheckpointProvenance
-} from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+} from '@harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import {
   DispatchUsageLimit,
   isUsageLimitPauseDetail,
@@ -67,7 +67,7 @@ import {
 import {
   mirrorExecutionRoundOnCommit,
   readEffectiveResumedStateFrom
-} from '../../../../harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
+} from '@harness/kernel/loops/runtimes/atta-engine/checkpoint-round'
 import {
   resumeProcessRun,
   startProcessRun,
@@ -76,14 +76,14 @@ import {
   type RoleLauncher,
   type StepPrompt,
   type AgentRedispatch
-} from '../../../../harness/kernel/loops/runtimes/atta-engine/run-process'
+} from '@harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
   createLogTranslator,
   recordingActions,
   type EmitLogEvent,
   type LegOutcome,
   type NodeLifecycle
-} from '../../../../harness/kernel/log/client/translate'
+} from '@harness/kernel/log/client/translate'
 import { createVinayaLogProducers, handoffHaltReason, STEP_FAILED } from '../executing/log-events'
 import { registeredSeatNames } from '../executing/seat-names'
 import { createHandoff, liveHandoffDeps, type Handoff, type HandoffDeps } from '../executing/handoff'
@@ -126,7 +126,7 @@ import {
   startTurnWriteAttribution,
   taskControlDir,
   type TurnWriteAttribution
-} from '../../../kernel/isolation/worker-boundary'
+} from '@harness/kernel/isolation/worker-boundary'
 import { vinayaToolGrantPolicy, vinayaWorkerBoundaryPolicies } from '../integration/policies/vinaya-policies'
 import { configPath } from '../integration/config/compose'
 import {
@@ -136,25 +136,25 @@ import {
   requiredSourcesPromptBlock,
   sourceReceiptsPath,
   sourceStoreDir
-} from '../../../kernel/source-manifest'
+} from '@harness/kernel/source-manifest'
 import {
   prepareSources,
   RequiredSourcesUnavailable,
   realSourceProviderDeps
-} from '../../../kernel/tools/source-provider'
+} from '@harness/kernel/tools/source-provider'
 import { briefHash as briefHashOf, policyDigest as policyDigestOf } from '../tools/task-contract/review-input-manifest'
 import { extractSourceRevision } from '../tools/task-contract/brief-render'
 
-import { resolveRepo } from '../../../kernel/adapters/code-host/github/resolve-repo'
-import { type AgentTurn, type RunRecorder, runRecorder } from '../../../kernel/log/run-recorder'
-import { reviewerDevToolContext, type DevToolContext, type DevToolResult } from '../../../kernel/tools/dev-tools-server'
-import { createReadSourceTool } from '../../../kernel/tools/read-source'
+import { resolveRepo } from '@harness/kernel/adapters/code-host/github/resolve-repo'
+import { type AgentTurn, type RunRecorder, runRecorder } from '@harness/kernel/log/run-recorder'
+import { reviewerDevToolContext, type DevToolContext, type DevToolResult } from '@harness/kernel/tools/dev-tools-server'
+import { createReadSourceTool } from '@harness/kernel/tools/read-source'
 import {
   drainLogSink,
   LOG_FOLDER_ONLY_ENV,
   type LogSinkDeps,
   type LaunchLogAttribution
-} from '../../../kernel/log/log-sink'
+} from '@harness/kernel/log/log-sink'
 import { createVinayaLogSink } from '../integration/log/log-sink-factory'
 import { setEngineLogIdentity } from './engine-log-identity'
 import {
@@ -205,7 +205,7 @@ import {
   PAUSE_REASON_PROFILE,
   readPauseState
 } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
-import { formatAgentLine } from '../../../kernel/adapters/agents/agent-line'
+import { formatAgentLine } from '@harness/kernel/adapters/agents/agent-line'
 import { formatStageLine, type Stage, type StageChange } from '../tools/follow-view'
 import { defaultTaskSweepAsyncDeps, sweepModernTasksAsync } from '../loops/dev-review/run-control/task-sweep'
 import {
@@ -215,13 +215,13 @@ import {
   appendRunStartMarker,
   loopLogPathFor,
   narrateDriverEvent
-} from '../../../kernel/log/client/loop-log'
-import { narrateAgentRecord } from '../../../kernel/log/client/agent-record-line'
+} from '@harness/kernel/log/client/loop-log'
+import { narrateAgentRecord } from '@harness/kernel/log/client/agent-record-line'
 import {
   type AgentStep,
   type AgentStreamRenderer,
   createAgentStreamRenderer
-} from '../../../kernel/adapters/agents/agent-stream'
+} from '@harness/kernel/adapters/agents/agent-stream'
 import { CLI_ENTRY_ENV } from '../tools/cli-entry'
 import { cliEntryFor, processFolderFor, programFile, programSourceIn } from '../tools/programs'
 import { pollMergeableState } from '../loops/dev-review/standalone/dev-review-loop/gate-reading'
@@ -252,8 +252,8 @@ import {
   startReplaceableDevToolsHost,
   type DevToolsHost,
   type ReplaceableDevToolsHost
-} from '../../../kernel/tools/host/dev-tools-host'
-import { devToolsSocketPath } from '../../../kernel/tools/dev-tools-registration'
+} from '@harness/kernel/tools/host/dev-tools-host'
+import { devToolsSocketPath } from '@harness/kernel/tools/dev-tools-registration'
 import {
   attributeDriverToolCalls,
   createLivePublicationState,
@@ -296,7 +296,7 @@ import {
   latestHeldCleanVerdict,
   persistManifestRecord
 } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
-import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, runtimeDirForRepoAsync } from '../../../kernel/run-paths'
+import { RUNTIME_DIR_ENV_KEY, resetRuntimeDirCache, runtimeDirForRepoAsync } from '@harness/kernel/run-paths'
 import {
   defaultDeps,
   defaultGitWorktreeUntrackedPaths,
@@ -306,8 +306,8 @@ import {
 } from '../loops/dev-review/standalone/dev-review-loop'
 import { parseReviewResult, type ReviewResult } from '../executing/code-reviewer/review-result'
 import type { ReviewerPromptFacts } from '../loops/dev-review/standalone/dev-review-loop/reviewer-dispatch'
-import { agentEnvAllowlist } from '../../../../harness/kernel/adapters/agents/launch-env'
-import { grantVariables } from '../../../../harness/kernel/adapters/agents/variables'
+import { agentEnvAllowlist } from '@harness/kernel/adapters/agents/launch-env'
+import { grantVariables } from '@harness/kernel/adapters/agents/variables'
 import { ghPullRequestView } from '../executing/pull-request-env'
 import {
   createVinayaReviewInputStager,
@@ -345,7 +345,7 @@ import {
   type TaskInput
 } from '../executing/actions'
 import { createV2Actions, V2_ACTION_BINDINGS, V2_DECISIONS } from '../loops/dev-review/v2/v2-actions'
-import { runCli } from '../../../../harness/kernel/gates/checks/run-checks'
+import { runCli } from '@harness/kernel/gates/checks/run-checks'
 import { checkReadyBaseline } from '../loops/dev-review/v2/ready-baseline'
 import { readTrustedReadyTestsPolicy, readTrustedRequiredCiPolicy } from '../tools/pre-push-ready-policy'
 import {
@@ -366,7 +366,7 @@ import {
   type ToolPlanRepair
 } from '../loops/dev-review/v2/flow-v2-live'
 import { readUnpushedWorkDetail, type UnpushedWork } from '../loops/dev-review/standalone/dev-review-loop/unpushed-work'
-import { hookRoutingRepairLine, repairLocalGateControl } from '../../../kernel/gates/local-gate-control'
+import { hookRoutingRepairLine, repairLocalGateControl } from '@harness/kernel/gates/local-gate-control'
 import {
   createShadowRecorder,
   refusedAttemptsPath,

@@ -10,13 +10,13 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { COMMENT_MARKER_PREFIX } from '../../../tools/legacy-markers.js'
+import { COMMENT_MARKER_PREFIX } from '@harness/workflow/tools/legacy-markers.js'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { AgentVendor } from '../../../../../kernel/adapters/agents/agent-vendors.js'
+import type { AgentVendor } from '@harness/kernel/adapters/agents/agent-vendors.js'
 import { BODY_CHECKS_WORKFLOW_PATH, buildInitOps, FORGE_SNAPSHOT_ARTIFACT_NAME } from '../../artifacts.js'
-import type { VendoredVinaya } from '../../../tools/self-host.js'
+import type { VendoredVinaya } from '@harness/workflow/tools/self-host.js'
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', '..', '..', '..')
 

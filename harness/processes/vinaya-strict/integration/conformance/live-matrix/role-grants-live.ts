@@ -4,22 +4,22 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { buildWorkerEnv } from '../../../../../kernel/isolation/worker-boundary.js'
+import { buildWorkerEnv } from '@harness/kernel/isolation/worker-boundary.js'
 import { confinedTmpEnv, resolveProofConfinement, stageProofCodexHome } from './dev-proof.js'
-import { startDevToolsHost } from '../../../../../kernel/tools/host/dev-tools-host.js'
+import { startDevToolsHost } from '@harness/kernel/tools/host/dev-tools-host.js'
 import {
   type BridgeInvocation,
   claudeDevToolsArgs,
   devToolsMcpConfigFileBody,
   devToolsSocketPath,
   driverDevBridgeInvocation
-} from '../../../../../kernel/tools/dev-tools-registration.js'
-import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext } from '../../../../../kernel/tools/dev-tools-server.js'
-import { servedTools } from '../../../../../kernel/tools/role-grants.js'
+} from '@harness/kernel/tools/dev-tools-registration.js'
+import { DEV_TOOLS_MCP_SERVER_NAME, type DevToolContext } from '@harness/kernel/tools/dev-tools-server.js'
+import { servedTools } from '@harness/kernel/tools/role-grants.js'
 import type { GrantedRole } from '../../policies/roles.js'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture.js'
+import { spawnBudgetedAsync, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture.js'
 import { vinayaToolGrantPolicy } from '../../policies/vinaya-policies.js'
-import { programFile } from '../../../tools/programs.js'
+import { programFile } from '@harness/workflow/tools/programs.js'
 
 /**
  * Live grant conformance, shared by `claude.test.ts` and `codex.test.ts`: a

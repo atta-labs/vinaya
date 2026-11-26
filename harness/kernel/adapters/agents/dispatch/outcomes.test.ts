@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeOutcome } from '../../../connectors/checkpoint/control-store/index'
+import { normalizeOutcome } from '@harness/kernel/connectors/checkpoint/control-store/index'
 
 /**
  * The parent-validated outcome vocabulary (O2), reached from the CLI's own

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
-import { coreCheckRegistry } from '../../../checks/registry'
-import { runsUnderAll } from '../../../../../kernel/gates/checks/registry'
+import { coreCheckRegistry } from '@harness/workflow/checks/registry'
+import { runsUnderAll } from '@harness/kernel/gates/checks/registry'
 
 /**
  * `check --all` must not evaluate a check that a dedicated workflow already

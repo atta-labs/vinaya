@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { programCommandLine } from '../../../../tools/programs.js'
+import { programCommandLine } from '@harness/workflow/tools/programs.js'
 import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
@@ -20,9 +20,9 @@ import {
   commandRecordsOf,
   earlierOperationLinesOf,
   localCopyFolderOf
-} from '../../../../tests/lib/dispatch/dispatch-fixtures.js'
-import { spawnSyncBudgeted } from '../../../../../../kernel/conformance/unit/process-fixture.js'
-import { FAKE_CLAUDE_PROBE_ANSWER } from '../../../../../../kernel/isolation/dispatch/fake-sandbox-probe.js'
+} from '@harness/workflow/tests/lib/dispatch/dispatch-fixtures.js'
+import { spawnSyncBudgeted } from '@harness/kernel/conformance/unit/process-fixture.js'
+import { FAKE_CLAUDE_PROBE_ANSWER } from '@harness/kernel/isolation/dispatch/fake-sandbox-probe.js'
 
 /**
  * O3: `--unattended` (`DispatchOpts.unattended`) marks a `vinaya dispatch`

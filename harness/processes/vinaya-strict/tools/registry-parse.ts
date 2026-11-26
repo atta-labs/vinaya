@@ -24,7 +24,7 @@
  * name is the only honest key. See the lookup in `parseEnforcementRegistry`.
  */
 
-import { findHeadingLine, findTable } from '../../../kernel/gates/checks/markdown-table'
+import { findHeadingLine, findTable } from '@harness/kernel/gates/checks/markdown-table'
 
 export type GateRing = 'ring0' | 'ring1' | 'ring2'
 

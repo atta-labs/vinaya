@@ -48,7 +48,7 @@
 // injection class is closed; it is reduced, not closed, until that platform
 // behavior is confirmed.
 
-import type { CreateFileOp } from '../../../kernel/gates/ops.js'
+import type { CreateFileOp } from '@harness/kernel/gates/ops.js'
 import type { VendoredVinaya } from '../tools/self-host.js'
 
 export const CLAUDE_COMMAND_GROUP = 'Claude Code command (.claude/commands/)'

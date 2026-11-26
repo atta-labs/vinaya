@@ -3,10 +3,10 @@ import {
   type GhIssue,
   ghIssueListByAnyLabel,
   ghIssueListByAnyLabelAsync
-} from '../../../../../kernel/adapters/code-host/github/gh'
+} from '@harness/kernel/adapters/code-host/github/gh'
 import { findTrancheSlug, trancheLabel } from './labels'
 import { parseRationaleDeps } from './parse-rationale-deps'
-import { hasUnterminatedFence, stripCode } from '../../../../../kernel/adapters/code-host/github/strip-code'
+import { hasUnterminatedFence, stripCode } from '@harness/kernel/adapters/code-host/github/strip-code'
 
 /** Issue title convention: `[<tranche-slug>] <task-id> — <title>`, the same
  * shape every Vinaya Issue is opened with (`open-issue.ts`, brief-authoring). */

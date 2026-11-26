@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import type { RoleBinaryConfig, SpawnFn, SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import type { RunnableConfig } from '@langchain/core/runnables'
 import type { Checkpoint, CheckpointMetadata } from '@langchain/langgraph'
-import { loadProcess } from '../../../dev-process-socket/loader/load-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import {
   type ExecutionRoundMirror,
   decodeExecutionRound,

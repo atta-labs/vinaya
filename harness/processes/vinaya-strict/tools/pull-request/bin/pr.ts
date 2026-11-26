@@ -1,7 +1,7 @@
-import { isEntryPoint } from '../../../../../kernel/gates/checks/entry-point.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
 import { execFileSync } from 'node:child_process'
 import { parsePremiseBlock } from '../../task-contract/premise-check'
-import { printJson } from '../../../../../kernel/effects/envelope'
+import { printJson } from '@harness/kernel/effects/envelope'
 import {
   type BodyResult,
   collectBodyCheckErrors,
@@ -19,7 +19,7 @@ import {
 } from '../../task-contract/forge/forge-write'
 import { checkBareDigits } from '../../body-bare-digits-logic'
 import { FROZEN_BRIEF_MARKER } from '../../legacy-markers'
-import type { CheckError } from '../../../../../kernel/gates/checks/contract'
+import type { CheckError } from '@harness/kernel/gates/checks/contract'
 
 const RETRY_CREATE = 'vinaya-pr create --validate-only …'
 const RETRY_EDIT = 'vinaya-pr edit <n> --validate-only …'

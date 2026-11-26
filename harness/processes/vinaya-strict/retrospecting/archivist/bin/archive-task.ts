@@ -28,12 +28,12 @@ import {
   hasProvenance,
   isEligibleForProvenance,
   taskRefFromBranch
-} from '../../../tools/archive-task'
-import { resolveNewestFrozenBrief } from '../../../tools/task-contract/brief-validation'
-import { extractIssue } from '../../../../../kernel/adapters/code-host/github/extract-issue'
-import { REGION_PREFIXES } from '../../../tools/legacy-markers'
-import type { MergedPrFacts } from '../../../tools/archive-task'
-import { readConfigPrincipals } from '../../../tools/task-contract/principals-config'
+} from '@harness/workflow/tools/archive-task'
+import { resolveNewestFrozenBrief } from '@harness/workflow/tools/task-contract/brief-validation'
+import { extractIssue } from '@harness/kernel/adapters/code-host/github/extract-issue'
+import { REGION_PREFIXES } from '@harness/workflow/tools/legacy-markers'
+import type { MergedPrFacts } from '@harness/workflow/tools/archive-task'
+import { readConfigPrincipals } from '@harness/workflow/tools/task-contract/principals-config'
 
 const REPO_ROOT = join(import.meta.dirname, '../../../../../..')
 process.chdir(REPO_ROOT)

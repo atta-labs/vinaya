@@ -2,15 +2,15 @@ import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { AgentVendor } from '../../../../../../kernel/adapters/agents/agent-vendors.js'
-import { buildInitOps } from '../../../artifacts.js'
-import { PROCESS_FIXTURE_BUDGET_MS, stripVinayaEnv } from '../../../../../../kernel/conformance/unit/process-fixture.js'
-import { fixtureDir } from '../../../../../../kernel/conformance/unit/test-temp-fixture.js'
+import type { AgentVendor } from '@harness/kernel/adapters/agents/agent-vendors.js'
+import { buildInitOps } from '@harness/workflow/integration/artifacts.js'
+import { PROCESS_FIXTURE_BUDGET_MS, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture.js'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture.js'
 import {
   ADOPTER_TEST_RUNNER,
   NO_LOCAL_TESTS_MARKER,
   readyTestCommand
-} from '../../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.js'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner.js'
 
 // The adopter test-runner contract, as the generated pre-push hook carries it: in its ready mode the hook runs the
 // repository's declared runner, or prints the no-local-tests line; every other push is unchanged; no toolchain is

@@ -23,7 +23,7 @@ import {
   requiredCiPolicyOf,
   resolveReadyTestsDeferral
 } from './pre-push-ready-policy.js'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture.js'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture.js'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', 'apps', 'cli')
 const REPO_ROOT = join(CLI_ROOT, '..', '..')

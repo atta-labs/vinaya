@@ -18,9 +18,9 @@ import {
   type ReviewBinding,
   type ReviewResult,
   reviewBlockerNeedsRuling
-} from '../../../../executing/code-reviewer/review-result.js'
-import { ensureRunDir, runPath } from '../../../../../../kernel/run-paths.js'
-import { appendRoleLine } from '../../../../../../kernel/log/client/loop-log.js'
+} from '@harness/workflow/executing/code-reviewer/review-result.js'
+import { ensureRunDir, runPath } from '@harness/kernel/run-paths.js'
+import { appendRoleLine } from '@harness/kernel/log/client/loop-log.js'
 import { withPromptFile } from './developer-dispatch.js'
 import {
   buildVerdictFromReview,

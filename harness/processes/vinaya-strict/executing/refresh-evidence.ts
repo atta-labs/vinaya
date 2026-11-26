@@ -1,5 +1,5 @@
 import { prReportRefreshArgs } from '../loops/dev-review/standalone/dev-review-loop'
-import type { CliRun } from '../../../../harness/kernel/gates/checks/run-checks'
+import type { CliRun } from '@harness/kernel/gates/checks/run-checks'
 import { programFile, programForWords } from '../tools/programs'
 
 /**

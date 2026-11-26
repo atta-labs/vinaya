@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { AgentVendor } from '../../../kernel/adapters/agents/agent-vendors.js'
+import type { AgentVendor } from '@harness/kernel/adapters/agents/agent-vendors.js'
 import { BODY_CHECKS_WORKFLOW_PATH, buildInitOps, CHECKS_WORKFLOW_PATH } from './artifacts.js'
 import type { VendoredVinaya } from '../tools/self-host.js'
 

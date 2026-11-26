@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runDemoBreak } from '../src/commands/demo.js'
 import { FIXTURE_HOOK_PARALLEL, HOOK_TEST_BOUND_MS, stripAmbientFixtureEnv } from './fixture-env.js'
-import { programFile } from '../../../harness/processes/vinaya-strict/tools/programs.js'
+import { programFile } from '@harness/workflow/tools/programs.js'
 
 // The real CLI source, invoked directly by `bun` rather than through a
 // published `npx vinaya` — there is nothing to `npx` resolve from a disposable

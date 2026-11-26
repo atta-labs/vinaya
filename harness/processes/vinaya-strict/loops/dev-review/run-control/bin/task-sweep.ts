@@ -4,8 +4,8 @@
  * and writer; this file calls it exactly once (`apps/cli/specs/surface.md`).
  */
 
-import { isEntryPoint } from '../../../../../../kernel/gates/checks/entry-point.js'
-import { printJson } from '../../../../../../kernel/effects/envelope.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
+import { printJson } from '@harness/kernel/effects/envelope.js'
 import { runTaskSweep } from '../task-sweep.js'
 
 function parseArgs(args: string[]): { includeLegacy: boolean; json: boolean } {
@@ -58,7 +58,7 @@ export async function taskSweepCommand(args: string[]): Promise<void> {
 
 // Run as a program (`vinaya-task-sweep`): started through the shared program entry.
 if (isEntryPoint(import.meta.url, 'task-sweep')) {
-  const { runProgram } = await import('../../../../tools/program-entry.js')
+  const { runProgram } = await import('@harness/workflow/tools/program-entry.js')
   await runProgram('task-sweep', async (argv: string[]) => {
     await taskSweepCommand(argv)
   })

@@ -1,5 +1,5 @@
 import type { Tranche } from '../tranche-types'
-import type { GhIssue } from '../../../../../kernel/adapters/code-host/github/gh'
+import type { GhIssue } from '@harness/kernel/adapters/code-host/github/gh'
 import { findMilestoneForSlug, type MilestoneFacts } from './fetch-milestone'
 import { fetchTrancheIssuesAsync, tasksFromIssues } from './list-tasks'
 

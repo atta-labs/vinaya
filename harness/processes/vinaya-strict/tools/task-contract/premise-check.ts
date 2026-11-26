@@ -18,7 +18,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { anchoredRegion } from '../../../../kernel/gates/checks/anchored-region'
+import { anchoredRegion } from '@harness/kernel/gates/checks/anchored-region'
 import { REGION_PREFIXES } from '../legacy-markers'
 
 export type PremiseAssertion =

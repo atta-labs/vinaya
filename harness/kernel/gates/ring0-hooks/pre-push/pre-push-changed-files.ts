@@ -7,6 +7,6 @@
  * computed identically for both — never a second, hand-written `git diff`
  * in the generated shell that could quietly drift from the TypeScript one.
  */
-import { changedFilesSinceRemoteBase } from '../../../connectors/git/remote-base.js'
+import { changedFilesSinceRemoteBase } from '@harness/kernel/connectors/git/remote-base.js'
 
 for (const file of changedFilesSinceRemoteBase(process.cwd())) process.stdout.write(`${file}\n`)

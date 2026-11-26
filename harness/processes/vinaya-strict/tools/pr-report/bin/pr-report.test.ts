@@ -14,7 +14,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolveMeteringCapability } from '../../../../../kernel/adapters/agents/claude-code/claude-code-transcript'
+import { resolveMeteringCapability } from '@harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import { describe, expect, it } from 'bun:test'
 import {
   agentCommandText,
@@ -48,7 +48,7 @@ import {
   testRunStateKey,
   UnresolvableMergeBaseError
 } from './pr-report'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
+import { spawnBudgetedAsync, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../../../../apps/cli')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')

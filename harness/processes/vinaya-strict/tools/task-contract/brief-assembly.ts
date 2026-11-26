@@ -11,7 +11,7 @@
  * comment already records three such copies disagreeing before consolidation.
  */
 
-import { parseIssueDocumentation, type IssueDocumentation } from '../../../../kernel/issue-documentation.js'
+import { parseIssueDocumentation, type IssueDocumentation } from '@harness/kernel/issue-documentation.js'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
@@ -67,7 +67,7 @@ import {
   resolveTrustedPrincipals
 } from '../../integration/config/compose.js'
 import { coreCheckRegistry } from '../../checks/registry'
-import { resolveChecks } from '../../../../kernel/gates/checks/resolver'
+import { resolveChecks } from '@harness/kernel/gates/checks/resolver'
 import { briefCliInvocation } from '../own-version.js'
 import { cliPackageRoot } from '../../../../../apps/cli/src/lib/package-root.js'
 import { detectVendoredVinaya } from '../self-host.js'

@@ -11,34 +11,34 @@
 import { execFileSync } from 'node:child_process'
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { delimiter, dirname, join } from 'node:path'
-import type { CheckSpec } from '../../../../harness/kernel/gates/checks/contract.js'
-import { installedCheckRegistry } from '../../../../harness/kernel/gates/checks/registry'
+import type { CheckSpec } from '@harness/kernel/gates/checks/contract.js'
+import { installedCheckRegistry } from '@harness/kernel/gates/checks/registry'
 import {
   bareKeyRejectedDiagnostic,
   overriddenReplacesCoreDiagnostic,
   resolveChecks
-} from '../../../../harness/kernel/gates/checks/resolver.js'
+} from '@harness/kernel/gates/checks/resolver.js'
 import {
   deriveBuiltinCrossCuttingDefaults,
   deriveWorkspacePackageDomains,
   LEGACY_PACKAGES_FILE,
   parsePnpmWorkspaceYaml
-} from '../../../../harness/processes/vinaya-strict/tools/task-contract/blast-radius-domains'
-import { parseRegistry } from '../../../../harness/processes/vinaya-strict/tools/task-contract/parse-registry'
+} from '@harness/workflow/tools/task-contract/blast-radius-domains'
+import { parseRegistry } from '@harness/workflow/tools/task-contract/parse-registry'
 import {
   classifyDocOwnersManifest,
   DOC_OWNERS_PATH,
   isUrlPointer,
   parseDocOwners,
   pointerToPath
-} from '../../../../harness/processes/vinaya-strict/tools/doc-owners'
-import { isCodeFile } from '../../../../harness/processes/vinaya-strict/tools/file-classify'
-import { globToRegex } from '../../../../harness/kernel/gates/glob-to-regex'
-import { hardenedMeteringDeps } from '../../../../harness/kernel/adapters/agents/claude-code/metering-io-guard'
+} from '@harness/workflow/tools/doc-owners'
+import { isCodeFile } from '@harness/workflow/tools/file-classify'
+import { globToRegex } from '@harness/kernel/gates/glob-to-regex'
+import { hardenedMeteringDeps } from '@harness/kernel/adapters/agents/claude-code/metering-io-guard'
 import {
   type MeteringCapability,
   resolveMeteringCapability
-} from '../../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
+} from '@harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import {
   buildInitOps,
   CHECKS_FOLDER_PLACEHOLDER_PATH,
@@ -53,15 +53,12 @@ import {
   ROLES_FOLDER_PLACEHOLDER_PATH,
   starterConfig,
   TRACKED_HOOK_DIR
-} from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
-import { CLAUDE_COMMAND_PATH } from '../../../../harness/processes/vinaya-strict/integration/claude-command-emitter.js'
-import { CLAUDE_SETTINGS_PATH } from '../../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
-import { GEMINI_COMMAND_PATH } from '../../../../harness/processes/vinaya-strict/integration/gemini-command-emitter.js'
-import {
-  type DoctrineSource,
-  resolveDoctrineRootInfo
-} from '../../../../harness/processes/vinaya-strict/tools/doctrine/resolve-doctrine.js'
-import { detectVendoredVinaya } from '../../../../harness/processes/vinaya-strict/tools/self-host.js'
+} from '@harness/workflow/integration/artifacts.js'
+import { CLAUDE_COMMAND_PATH } from '@harness/workflow/integration/claude-command-emitter.js'
+import { CLAUDE_SETTINGS_PATH } from '@harness/workflow/integration/claude-stop-hook-emitter.js'
+import { GEMINI_COMMAND_PATH } from '@harness/workflow/integration/gemini-command-emitter.js'
+import { type DoctrineSource, resolveDoctrineRootInfo } from '@harness/workflow/tools/doctrine/resolve-doctrine.js'
+import { detectVendoredVinaya } from '@harness/workflow/tools/self-host.js'
 import {
   type BriefSection,
   GLOBAL_CONFIG_PATH,
@@ -79,8 +76,8 @@ import {
   type VinayaConfig,
   VinayaConfigSchema,
   lintEnvDeclarations
-} from '../../../../harness/processes/vinaya-strict/integration/config/compose.js'
-import { resolveRepo } from '../../../../harness/kernel/adapters/code-host/github/resolve-repo'
+} from '@harness/workflow/integration/config/compose.js'
+import { resolveRepo } from '@harness/kernel/adapters/code-host/github/resolve-repo'
 import {
   describeFolderFallback,
   type FolderFallbackRecord,
@@ -91,14 +88,14 @@ import {
   type ResolvedLogDestination,
   resolveLogDestinationFrom,
   withDeadline
-} from '../../../../harness/kernel/log/log-sink.js'
+} from '@harness/kernel/log/log-sink.js'
 import {
   localSchemaDigest,
   schemaDigestFromStats,
   schemaDigestMismatch
-} from '../../../../harness/kernel/log/client/log-schema-digest.js'
-import { statsUrlFrom } from '../../../../harness/kernel/log/client/log-sync-server-source.js'
-import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '../../../../harness/kernel/run-paths.js'
+} from '@harness/kernel/log/client/log-schema-digest.js'
+import { statsUrlFrom } from '@harness/kernel/log/client/log-sync-server-source.js'
+import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '@harness/kernel/run-paths.js'
 import {
   branchProtectionConfigured,
   type BranchProtectionState,
@@ -110,22 +107,22 @@ import {
   readCoreHooksPath,
   type RepoInfo,
   resolveHookDir
-} from '../../../../harness/kernel/connectors/git/detect.js'
-import { localGateControl } from '../../../../harness/kernel/gates/local-gate-control.js'
-import { printJson } from '../../../../harness/kernel/effects/envelope.js'
-import { planGhPathFix } from '../../../../harness/kernel/adapters/code-host/github/gh-path.js'
-import { checksMissingEnvDeclaration, envDeclarationWarning } from '../../../../harness/kernel/gates/checks/env-lint.js'
-import { PROJECTS_REGISTRY_PATH } from '../../../../harness/processes/vinaya-strict/artifacts/registry-write.js'
-import { markerLines, renderBlock, resolveManagedBlockPath } from '../../../../harness/kernel/gates/ops.js'
+} from '@harness/kernel/connectors/git/detect.js'
+import { localGateControl } from '@harness/kernel/gates/local-gate-control.js'
+import { printJson } from '@harness/kernel/effects/envelope.js'
+import { planGhPathFix } from '@harness/kernel/adapters/code-host/github/gh-path.js'
+import { checksMissingEnvDeclaration, envDeclarationWarning } from '@harness/kernel/gates/checks/env-lint.js'
+import { PROJECTS_REGISTRY_PATH } from '@harness/workflow/artifacts/registry-write.js'
+import { markerLines, renderBlock, resolveManagedBlockPath } from '@harness/kernel/gates/ops.js'
 import { packageRoot } from '../lib/package-root.js'
-import { probeClaudeSandboxOnHost } from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
+import { probeClaudeSandboxOnHost } from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
 import {
   type ConfinementPlatformDeps,
   LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
   realConfinementPlatformDeps,
   runRealSandboxProbe,
   type SandboxProbeRunner
-} from '../../../../harness/kernel/isolation/worker-boundary.js'
+} from '@harness/kernel/isolation/worker-boundary.js'
 
 export type DoctorDeps = {
   detectRepo: () => Promise<RepoInfo | null>
@@ -1804,7 +1801,7 @@ export async function doctorCommand(args: string[]): Promise<void> {
   process.exit(await runDoctor(args, realDeps()))
 }
 
-import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
+import type { SurfaceExemption } from '@harness/workflow/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   doctor: { date: '2026-09-05', callsToday: 24, retiresVia: 'sharedCommandShell' }

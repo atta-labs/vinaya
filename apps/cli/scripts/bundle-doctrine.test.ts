@@ -3,13 +3,9 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadProcess } from '../../../harness/kernel/dev-process-socket/loader/load-process'
-import {
-  BUNDLED_DOCTRINE_DIR,
-  DOCTRINE_MAP,
-  doctrineSource
-} from '../../../harness/processes/vinaya-strict/tools/doctrine/doctrine-map'
-import { BUILT_PROCESS_FOLDER } from '../../../harness/processes/vinaya-strict/tools/programs'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
+import { BUNDLED_DOCTRINE_DIR, DOCTRINE_MAP, doctrineSource } from '@harness/workflow/tools/doctrine/doctrine-map'
+import { BUILT_PROCESS_FOLDER } from '@harness/workflow/tools/programs'
 import { pinnedProcessFiles } from './bundle-doctrine'
 
 // Regression guard for the exact miss found live: milestone-model.md and

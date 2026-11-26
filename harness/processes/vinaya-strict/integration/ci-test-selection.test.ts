@@ -10,8 +10,8 @@ import {
   readLayoutFile,
   shardFilesToRun
 } from './ci-test-selection'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 
 const ROOT = '/repo'
 const REPO_ROOT = join(import.meta.dir, '../../../..')

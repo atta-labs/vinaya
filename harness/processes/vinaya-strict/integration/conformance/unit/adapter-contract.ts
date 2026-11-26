@@ -2,17 +2,17 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { briefHash } from '../../../tools/task-contract/review-input-manifest'
-import { redact } from '../../../../../kernel/log/redact'
-import type { LoopDeps, LoopResult } from '../../../loops/dev-review/standalone/dev-review-loop.js'
-import { DeveloperTurnResultPause } from '../../../loops/dev-review/standalone/dev-review-loop/turn-result.js'
+import { briefHash } from '@harness/workflow/tools/task-contract/review-input-manifest'
+import { redact } from '@harness/kernel/log/redact'
+import type { LoopDeps, LoopResult } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
+import { DeveloperTurnResultPause } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import {
   readClaudeTurnOutput,
   readCodexTurnOutput,
   type TurnRead,
   type TurnResultAdapter,
   type TurnResultRecord
-} from '../../../loops/dev-review/standalone/dev-review-loop/turn-result.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import {
   classifyRoleAttemptOutcome,
   type DispatchFailureReason,
@@ -23,44 +23,44 @@ import {
   REVIEWER_RESUME_REFUSED_REASON,
   vendorResumeArgs,
   vendorSessionArgs
-} from '../../../loops/dev-review/dispatch/dispatch.js'
-import { developerTurnResultJsonSchema } from '../../../executing/developer/developer-turn-result.js'
-import { agentControlsRefusal } from '../../../../../kernel/gates/enforcement-controls.js'
+} from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
+import { developerTurnResultJsonSchema } from '@harness/workflow/executing/developer/developer-turn-result.js'
+import { agentControlsRefusal } from '@harness/kernel/gates/enforcement-controls.js'
 import {
   classifyReviewOutcome,
   type ReviewBinding,
   reviewResultJsonSchema
-} from '../../../executing/code-reviewer/review-result.js'
-import { runPath } from '../../../../../kernel/run-paths.js'
+} from '@harness/workflow/executing/code-reviewer/review-result.js'
+import { runPath } from '@harness/kernel/run-paths.js'
 import {
   createDevToolsMcpServer,
   type DevToolContext,
   type DevToolRefusal,
   devToolError
-} from '../../../../../kernel/tools/dev-tools-server.js'
+} from '@harness/kernel/tools/dev-tools-server.js'
 import {
   claudeDevToolsArgs,
   codexDevToolsMcpTable,
   DEV_TOOLS_TOOL_TIMEOUT_SEC,
   devToolsMcpConfig,
   driverDevBridgeInvocation
-} from '../../../../../kernel/tools/dev-tools-registration.js'
-import { DEV_TOOLS_MCP_SERVER_NAME } from '../../../../../kernel/tools/dev-tools-names.js'
-import { validatesJsonSchema } from '../../../../../kernel/tools/json-schema-check.js'
-import { programFile } from '../../../tools/programs.js'
+} from '@harness/kernel/tools/dev-tools-registration.js'
+import { DEV_TOOLS_MCP_SERVER_NAME } from '@harness/kernel/tools/dev-tools-names.js'
+import { validatesJsonSchema } from '@harness/kernel/tools/json-schema-check.js'
+import { programFile } from '@harness/workflow/tools/programs.js'
 import { type GrantedRole, ROLE_TOOL_GRANTS } from '../../policies/roles.js'
 import {
   AGENT_TOOL_CATALOG,
   TOOL_EFFECT_STATES,
   TOOL_ERROR_CLASSES,
   TOOL_RETRY_DISPOSITIONS
-} from '../../../../../kernel/tools/tool-catalog.js'
+} from '@harness/kernel/tools/tool-catalog.js'
 import {
   probeAgentSandbox,
   SANDBOX_PROBE_MARKER,
   type SandboxProbeResult,
   type SandboxProbeRun
-} from '../../../../../kernel/isolation/worker-boundary.js'
+} from '@harness/kernel/isolation/worker-boundary.js'
 import {
   CLEAN_REVIEWER,
   cleanupWorlds,
@@ -71,7 +71,7 @@ import {
   makeWorld,
   outboxLines,
   runLoopInProcess
-} from '../../../tests/standalone/lib/dev-review-loop-harness.js'
+} from '@harness/workflow/tests/standalone/lib/dev-review-loop-harness.js'
 import { vinayaToolGrantPolicy } from '../../policies/vinaya-policies.js'
 
 /**

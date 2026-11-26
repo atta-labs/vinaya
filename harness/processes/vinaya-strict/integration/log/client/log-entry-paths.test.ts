@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { parse } from 'yaml'
-import { coreCheckRegistry } from '../../../checks/registry.js'
+import { coreCheckRegistry } from '@harness/workflow/checks/registry.js'
 
 type Route = { producer: 'operation' | 'gate'; commandToken: string }
 type InventoryRow = { id: string; route?: Route; noProducer?: string }

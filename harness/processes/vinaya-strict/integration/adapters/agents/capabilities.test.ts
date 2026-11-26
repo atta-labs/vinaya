@@ -2,26 +2,26 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '../../../../../kernel/tools/host/dev-tools'
+import { DEV_TOOLS_TOOL_TIMEOUT_SEC } from '@harness/kernel/tools/host/dev-tools'
 import {
   CLAUDE_CAPABILITY_TOOLS,
   claudeShellRule,
   claudeToolDecisions
-} from '../../../../../kernel/adapters/agents/claude-code/capabilities'
+} from '@harness/kernel/adapters/agents/claude-code/capabilities'
 import {
   credentialDenyRead,
   credentialReadRules,
   generateClaudeSettings
-} from '../../../../../kernel/adapters/agents/claude-code/settings'
+} from '@harness/kernel/adapters/agents/claude-code/settings'
 import {
   CODEX_CAPABILITY_TOOLS,
   CODEX_READ_ONLY_COMMANDS,
   CODEX_READ_ONLY_FORBIDDEN,
   codexSandbox,
   codexToolDecisions
-} from '../../../../../kernel/adapters/agents/codex/capabilities'
-import { CREDENTIAL_ENV_EXCLUDES, generateCodexConfig } from '../../../../../kernel/adapters/agents/codex/config'
-import { stageCodexAuth } from '../../../../../kernel/adapters/agents/codex/auth'
+} from '@harness/kernel/adapters/agents/codex/capabilities'
+import { CREDENTIAL_ENV_EXCLUDES, generateCodexConfig } from '@harness/kernel/adapters/agents/codex/config'
+import { stageCodexAuth } from '@harness/kernel/adapters/agents/codex/auth'
 import {
   CLAUDE_BUILTINS,
   CODEX_BUILTINS,
@@ -29,9 +29,9 @@ import {
   type RoleCapabilities,
   type RoleContract,
   resolveRoleGrants
-} from '../../../../../kernel/adapters/agents/manifest'
+} from '@harness/kernel/adapters/agents/manifest'
 import { VINAYA_LAUNCHED_ROLES } from '../../policies/launched-roles'
-import type { GeneratedAgentConfig } from '../../../../../kernel/isolation/policy'
+import type { GeneratedAgentConfig } from '@harness/kernel/isolation/policy'
 
 const NONE: RoleCapabilities = {
   read_files: 'deny',

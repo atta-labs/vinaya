@@ -27,9 +27,9 @@ import {
   currentBranch,
   gitPath,
   writeJsonUnderGit
-} from '../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests.js'
-import { isTaskBranch } from '../../../kernel/gates/ring0-hooks/pre-push/pre-push-mode-logic.js'
-import { identityOf, type ProcessIdentity } from '../../../kernel/conformance/unit/process-registry.js'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests.js'
+import { isTaskBranch } from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-mode-logic.js'
+import { identityOf, type ProcessIdentity } from '@harness/kernel/conformance/unit/process-registry.js'
 
 /** The one workflow the initial opt-in supports: this repository's hand-written CI. */
 export const READY_TESTS_WORKFLOW = '.github/workflows/ci.yml'

@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { narrate } from '@attalabs/vinaya-log-sdk'
-import { narrateAgentRecord } from '../../../../../kernel/log/client/agent-record-line'
-import type { NarrationKind } from '../../../../../kernel/log/client/narration'
+import { narrateAgentRecord } from '@harness/kernel/log/client/agent-record-line'
+import type { NarrationKind } from '@harness/kernel/log/client/narration'
 import {
   appendDriverLine,
   appendLoopLogLine,
@@ -14,8 +14,8 @@ import {
   loopLogPathFor,
   marksByKind,
   narrateDriverEvent
-} from '../../../../../kernel/log/client/loop-log'
-import { devReviewLoop, type LoopDeps } from '../../../loops/dev-review/standalone/dev-review-loop.js'
+} from '@harness/kernel/log/client/loop-log'
+import { devReviewLoop, type LoopDeps } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop.js'
 import {
   cleanupWorlds,
   makeInProcessDeps,
@@ -24,7 +24,7 @@ import {
   runLoopInProcess,
   withWorldEnv,
   defaultDeveloperTurnOutput
-} from '../../../tests/standalone/lib/dev-review-loop-harness.js'
+} from '@harness/workflow/tests/standalone/lib/dev-review-loop-harness.js'
 
 const tempDirs: string[] = []
 afterEach(() => {

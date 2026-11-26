@@ -3,15 +3,15 @@ import { readFileSync } from 'node:fs'
 import {
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict
-} from '../../../../harness/processes/vinaya-strict/tools/task-contract/verdict-extraction'
-import { printJson } from '../../../../harness/kernel/effects/envelope'
+} from '@harness/workflow/tools/task-contract/verdict-extraction'
+import { printJson } from '@harness/kernel/effects/envelope'
 import {
   makeCheckError,
   postMarkedComment,
   nextRulingMarker,
   refuse,
   refuseUnlessPrincipal
-} from '../../../../harness/processes/vinaya-strict/tools/task-contract/forge/forge-write'
+} from '@harness/workflow/tools/task-contract/forge/forge-write'
 
 const RETRY = 'vinaya pr rule <pr> --file <ruling.md>'
 
@@ -152,7 +152,7 @@ export function prRuleCommand(args: string[]): void {
   else process.stdout.write(`${url}\n`)
 }
 
-import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
+import type { SurfaceExemption } from '@harness/workflow/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   'pr rule': { date: '2026-09-05', callsToday: 5, retiresVia: 'forgeWrite' }

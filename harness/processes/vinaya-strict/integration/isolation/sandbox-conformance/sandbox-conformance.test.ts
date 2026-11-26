@@ -34,28 +34,31 @@ import { execFileSync, spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { sourceManifestPath, sourceReceiptsPath } from '../../../../../kernel/source-manifest.js'
+import { sourceManifestPath, sourceReceiptsPath } from '@harness/kernel/source-manifest.js'
 import {
   createDispatchCapabilityTable,
   type DispatchCapabilityTable,
   startDevToolsHost
-} from '../../../../../kernel/tools/host/dev-tools-host.js'
-import { devToolsSocketRoot } from '../../../../../kernel/tools/dev-tools-registration.js'
+} from '@harness/kernel/tools/host/dev-tools-host.js'
+import { devToolsSocketRoot } from '@harness/kernel/tools/dev-tools-registration.js'
 import {
   type CapabilityRefusalEvent,
   type DevToolContext,
   devToolError
-} from '../../../../../kernel/tools/dev-tools-server.js'
-import { expectGradingSandboxDenies, proveGradingSandbox } from '../../../evals/suites/grading-sandbox-proof.js'
+} from '@harness/kernel/tools/dev-tools-server.js'
+import {
+  expectGradingSandboxDenies,
+  proveGradingSandbox
+} from '@harness/workflow/evals/suites/grading-sandbox-proof.js'
 import { listingRevealsSocket, reachDriverSocketUnderOptIn } from './driver-socket-reach.js'
 import { suiteImports as walkSuiteImports } from './suite-imports.js'
 import {
   spawnBudgetedAsync,
   spawnSyncBudgeted,
   stripVinayaEnv
-} from '../../../../../kernel/conformance/unit/process-fixture.js'
+} from '@harness/kernel/conformance/unit/process-fixture.js'
 import { VINAYA_LAUNCHED_ROLES } from '../../policies/launched-roles.js'
-import { createRoleLaunchers, sandboxProbePlanFor } from '../../../executing/actions.js'
+import { createRoleLaunchers, sandboxProbePlanFor } from '@harness/workflow/executing/actions.js'
 import { commandsTheTextsName, DOCTRINE_SOURCES, isSuiteInput, REPO_ROOT } from './command-sources.js'
 import {
   AGENTS,

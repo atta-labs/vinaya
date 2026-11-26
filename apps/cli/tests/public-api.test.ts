@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../harness/kernel/conformance/unit/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 const repoRoot = join(import.meta.dir, '..', '..', '..')
 
@@ -41,7 +41,7 @@ describe('the library entries', () => {
   })
 
   test('the process entry values keep their behaviour', async () => {
-    const entry = await import('../../../harness/processes/vinaya-strict/public-api')
+    const entry = await import('@harness/workflow/public-api')
     expect(entry.COMMIT_TYPE_STYLE.test('Feat(cli): A thing')).toBe(true)
     expect(entry.COMMIT_TYPE_STYLE.test('not a commit title')).toBe(false)
   })

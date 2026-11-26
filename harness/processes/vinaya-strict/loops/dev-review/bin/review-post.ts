@@ -1,5 +1,5 @@
-import { isEntryPoint } from '../../../../../kernel/gates/checks/entry-point.js'
-import { parseChangedLineRanges } from '../../../../../kernel/connectors/git/changed-line-ranges'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
+import { parseChangedLineRanges } from '@harness/kernel/connectors/git/changed-line-ranges'
 /**
  * `vinaya review post` (fix/vinaya-review-post). A Reviewer submits
  * structured data — verdict, findings, role — and this command renders
@@ -92,7 +92,7 @@ import {
   manifestAsEchoed,
   type PauseBoundRuling,
   type ReviewInputManifest
-} from '../../../tools/task-contract/review-input-manifest'
+} from '@harness/workflow/tools/task-contract/review-input-manifest'
 import { resolveFrozenPauseBoundRuling } from '../review-gate-input'
 import {
   CODE_REVIEW_SEVERITY_ORDER,
@@ -103,35 +103,39 @@ import {
   type ReviewPolicy,
   SECURITY_SEVERITY_ORDER,
   securityBlockingSeverities
-} from '../../../tools/task-contract/review-policy'
+} from '@harness/workflow/tools/task-contract/review-policy'
 import {
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
   parseFindingState,
   type VerdictExtraction
-} from '../../../tools/task-contract/verdict-extraction'
+} from '@harness/workflow/tools/task-contract/verdict-extraction'
 import {
   isIssueNotFoundError,
   type Objective,
   objectivesOf,
   objectivesVersion,
   resolveObjectivesSource
-} from '../../../tools/task-contract/objectives'
-import { isPrincipal } from '../../../tools/task-contract/waiver-label'
-import { newestPrincipalRulingOrdinal } from '../../../tools/task-contract/ruling-ordinal'
-import { resolveNewestFrozenBrief } from '../../../tools/task-contract/brief-validation'
-import type { ReviewGateComment } from '../../../tools/review-gate'
-import { extractIssue } from '../../../../../kernel/adapters/code-host/github/extract-issue'
-import { REGION_PREFIXES } from '../../../tools/legacy-markers'
+} from '@harness/workflow/tools/task-contract/objectives'
+import { isPrincipal } from '@harness/workflow/tools/task-contract/waiver-label'
+import { newestPrincipalRulingOrdinal } from '@harness/workflow/tools/task-contract/ruling-ordinal'
+import { resolveNewestFrozenBrief } from '@harness/workflow/tools/task-contract/brief-validation'
+import type { ReviewGateComment } from '@harness/workflow/tools/review-gate'
+import { extractIssue } from '@harness/kernel/adapters/code-host/github/extract-issue'
+import { REGION_PREFIXES } from '@harness/workflow/tools/legacy-markers'
 import {
   loadConfig,
   loadTrustAnchorConfig,
   resolveGateCutovers,
   resolveReviewPolicy
-} from '../../../integration/config/compose'
-import { printJson } from '../../../../../kernel/effects/envelope'
-import { isForgeReadOversize, readIssueComments } from '../../../../../kernel/adapters/code-host/github/forge-read'
-import { makeCheckError, refuse, resolvePrincipalsOrRefuse } from '../../../tools/task-contract/forge/forge-write'
+} from '@harness/workflow/integration/config/compose'
+import { printJson } from '@harness/kernel/effects/envelope'
+import { isForgeReadOversize, readIssueComments } from '@harness/kernel/adapters/code-host/github/forge-read'
+import {
+  makeCheckError,
+  refuse,
+  resolvePrincipalsOrRefuse
+} from '@harness/workflow/tools/task-contract/forge/forge-write'
 
 // --- shared finding grammar ---------------------------------------------------
 
@@ -414,7 +418,7 @@ export type CodeReviewVerdict = 'APPROVE' | 'REQUEST_CHANGES'
 
 export type CodeReviewInput = TokensInput & {
   manifestVersion?: 2
-  pauseBoundRuling?: import('../../../tools/task-contract/review-input-manifest').PauseBoundRuling | null
+  pauseBoundRuling?: import('@harness/workflow/tools/task-contract/review-input-manifest').PauseBoundRuling | null
   headSha: string
   verdict: CodeReviewVerdict
   briefConformance: string
@@ -545,7 +549,7 @@ export type SecurityVerdict = 'PASS' | 'FAIL'
 
 export type SecurityInput = TokensInput & {
   manifestVersion?: 2
-  pauseBoundRuling?: import('../../../tools/task-contract/review-input-manifest').PauseBoundRuling | null
+  pauseBoundRuling?: import('@harness/workflow/tools/task-contract/review-input-manifest').PauseBoundRuling | null
   headSha: string
   verdict: SecurityVerdict
   findings: readonly Finding[]
@@ -808,7 +812,7 @@ export function isEscalationClass(value: string): value is EscalationClass {
 
 export type EscalationInput = TokensInput & {
   manifestVersion?: 2
-  pauseBoundRuling?: import('../../../tools/task-contract/review-input-manifest').PauseBoundRuling | null
+  pauseBoundRuling?: import('@harness/workflow/tools/task-contract/review-input-manifest').PauseBoundRuling | null
   headSha: string
   escalationClass: EscalationClass
   summary: string
@@ -2494,7 +2498,7 @@ export async function reviewPostCommand(args: string[]): Promise<void> {
 
 // Run as a program (`vinaya-review-post`): started through the shared program entry.
 if (isEntryPoint(import.meta.url, 'review-post')) {
-  const { runProgram } = await import('../../../tools/program-entry.js')
+  const { runProgram } = await import('@harness/workflow/tools/program-entry.js')
   await runProgram('review-post', async (argv: string[]) => {
     await reviewPostCommand(argv)
   })

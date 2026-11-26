@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'bun:test'
-import { defaultTaskCancelHandler } from '../../../loops/dev-review/run-control/cancel.js'
-import { taskEscalationReadHandler, taskStatusHandler } from '../../../loops/dev-review/run-control/handlers.js'
-import { taskPrReadHandler } from '../../../loops/dev-review/run-control/pr-read.js'
-import { routeTaskToolIntent } from '../../../../../kernel/tools/host/router.js'
-import { defaultTaskResumeHandler } from '../../../loops/dev-review/run-control/resume.js'
-import { defaultTaskStartHandler } from '../../../loops/dev-review/run-control/start.js'
+import { defaultTaskCancelHandler } from '@harness/workflow/loops/dev-review/run-control/cancel.js'
+import {
+  taskEscalationReadHandler,
+  taskStatusHandler
+} from '@harness/workflow/loops/dev-review/run-control/handlers.js'
+import { taskPrReadHandler } from '@harness/workflow/loops/dev-review/run-control/pr-read.js'
+import { routeTaskToolIntent } from '@harness/kernel/tools/host/router.js'
+import { defaultTaskResumeHandler } from '@harness/workflow/loops/dev-review/run-control/resume.js'
+import { defaultTaskStartHandler } from '@harness/workflow/loops/dev-review/run-control/start.js'
 
 /**
  * Held-out prompts (O3) — none of these are the literal keywords the

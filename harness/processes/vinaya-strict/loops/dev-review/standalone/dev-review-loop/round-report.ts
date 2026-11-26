@@ -5,8 +5,8 @@
  * `LoopRunContext`; the bodies are unchanged.
  */
 
-import type { Confidence, RoundStats } from '../../../../tools/dev-review-policy/types'
-import type { PauseBoundRuling } from '../../../../tools/task-contract/review-input-manifest'
+import type { Confidence, RoundStats } from '@harness/workflow/tools/dev-review-policy/types'
+import type { PauseBoundRuling } from '@harness/workflow/tools/task-contract/review-input-manifest'
 import { developerRoundMarker, parseShortstat, renderDeveloperRoundComment } from './round-assess.js'
 import {
   addressedFindingIdsFromRecords,

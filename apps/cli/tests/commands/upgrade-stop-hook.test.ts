@@ -1,4 +1,4 @@
-import { installVinayaCheckRegistry } from '../../../../harness/processes/vinaya-strict/checks/registry'
+import { installVinayaCheckRegistry } from '@harness/workflow/checks/registry'
 installVinayaCheckRegistry()
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -10,13 +10,13 @@ import type { InitDeps } from '../../src/commands/init.js'
 import { runInit } from '../../src/commands/init.js'
 import type { UpgradeDeps } from '../../src/commands/upgrade.js'
 import { runUpgrade } from '../../src/commands/upgrade.js'
-import { CONFIG_PATH, TRACKED_HOOK_DIR } from '../../../../harness/processes/vinaya-strict/integration/artifacts.js'
+import { CONFIG_PATH, TRACKED_HOOK_DIR } from '@harness/workflow/integration/artifacts.js'
 import {
   CLAUDE_SETTINGS_PATH,
   CLAUDE_STOP_HOOK_MARKER,
   CLAUDE_STOP_HOOK_SCRIPT_PATH
-} from '../../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
-import type { LabelGateway } from '../../../../harness/kernel/gates/ops.js'
+} from '@harness/workflow/integration/claude-stop-hook-emitter.js'
+import type { LabelGateway } from '@harness/kernel/gates/ops.js'
 
 // Task 3 (#397): a repo that ran `vinaya init` before the Claude Code Stop
 // hook existed has a `claude`-selected manifest with no record of either

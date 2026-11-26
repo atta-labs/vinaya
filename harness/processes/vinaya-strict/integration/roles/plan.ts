@@ -19,13 +19,13 @@ import { resolveDoctrineRoot } from '../../tools/doctrine/resolve-doctrine'
 import { roleEntry } from '../../tools/doctrine/doctrine-map'
 import { configPath, loadConfigChecked } from '../config/compose'
 import type { RoleEntry } from '../config/compose'
-import { type RoleContract, validateRoleContract } from '../../../../kernel/config/loader/roles/contract'
+import { type RoleContract, validateRoleContract } from '@harness/kernel/config/loader/roles/contract'
 import {
   type ResolvedRole,
   type RoleConfigInput,
   type RoleResolverFailure,
   resolveRoles
-} from '../../../../kernel/config/loader/roles/resolver'
+} from '@harness/kernel/config/loader/roles/resolver'
 
 export type RolePlan =
   | { available: true; resolved: ResolvedRole[]; failures: RoleResolverFailure[] }

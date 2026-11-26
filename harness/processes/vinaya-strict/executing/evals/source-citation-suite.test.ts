@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 
 import { parseDeveloperTurnResult, semanticErrors, type DeveloperTurnResult } from '../developer/developer-turn-result'
-import { manifestDigest, sha256Digest, type SourceDeliveryReceipt } from '../../../../kernel/source-manifest'
+import { manifestDigest, sha256Digest, type SourceDeliveryReceipt } from '@harness/kernel/source-manifest'
 import {
   ADAPTERS,
   CASES_PATH,

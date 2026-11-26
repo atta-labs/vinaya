@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { renderBeyondSurfaceBlock } from '../../../tools/task-contract/issue-validation'
+import { renderBeyondSurfaceBlock } from '@harness/workflow/tools/task-contract/issue-validation'
 
 import type { DeveloperTurnResult } from '../developer-turn-result'
 import {
@@ -10,7 +10,7 @@ import {
   sha256Digest,
   type PreparedSource,
   type RequiredSourceManifest
-} from '../../../../../kernel/source-manifest'
+} from '@harness/kernel/source-manifest'
 import {
   beyondScope,
   briefRequiredSources,

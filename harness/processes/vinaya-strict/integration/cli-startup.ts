@@ -1,5 +1,5 @@
-import { registerDeferredLogSinkFactory } from '../../../kernel/log/deferred-sink-factory.js'
-import { registerCliVersionSource } from '../../../kernel/log/run-identity.js'
+import { registerDeferredLogSinkFactory } from '@harness/kernel/log/deferred-sink-factory.js'
+import { registerCliVersionSource } from '@harness/kernel/log/run-identity.js'
 
 /**
  * What the command-line program installs before any command: the check registry and the Log sink factory. The

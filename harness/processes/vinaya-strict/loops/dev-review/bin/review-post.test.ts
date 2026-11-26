@@ -1,10 +1,13 @@
 import { execFileSync } from 'node:child_process'
-import { programCommandLine } from '../../../tools/programs.js'
+import { programCommandLine } from '@harness/workflow/tools/programs.js'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extractCodeReviewVerdict, extractSecurityReviewVerdict } from '../../../tools/task-contract/verdict-extraction'
+import {
+  extractCodeReviewVerdict,
+  extractSecurityReviewVerdict
+} from '@harness/workflow/tools/task-contract/verdict-extraction'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import {
   FLAG_TABLES,

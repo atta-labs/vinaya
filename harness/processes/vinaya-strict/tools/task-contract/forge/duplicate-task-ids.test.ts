@@ -9,7 +9,7 @@ const state = {
 mock.module('@octokit/graphql', () => ({
   graphql: { defaults: () => async (query: string) => state.respond(query) }
 }))
-mock.module('../../../../../kernel/adapters/code-host/github/github-token', () => ({
+mock.module('@harness/kernel/adapters/code-host/github/github-token', () => ({
   resolveGithubToken: async () => 'token'
 }))
 

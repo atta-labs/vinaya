@@ -3,14 +3,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
-import { coreCheckRegistry } from '../../../checks/registry'
-import type { CheckSpec } from '../../../../../kernel/gates/checks/contract'
-import { buildCheckEnv, runChecks } from '../../../../../kernel/gates/checks/runner'
-import {
-  identityOf,
-  isSameProcessAlive,
-  type ProcessIdentity
-} from '../../../../../kernel/conformance/unit/process-registry'
+import { coreCheckRegistry } from '@harness/workflow/checks/registry'
+import type { CheckSpec } from '@harness/kernel/gates/checks/contract'
+import { buildCheckEnv, runChecks } from '@harness/kernel/gates/checks/runner'
+import { identityOf, isSameProcessAlive, type ProcessIdentity } from '@harness/kernel/conformance/unit/process-registry'
 
 const FIXTURES = join(import.meta.dir, '../../../../../kernel/gates/checks/fixtures')
 /** The check fixtures that read Vinaya's own configuration, beside this test. */

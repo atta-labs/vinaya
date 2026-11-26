@@ -76,7 +76,7 @@ import { describe, expect, it } from 'bun:test'
 import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { FIXTURE_REPO_SEGMENT, isolatedConfigFixture } from '../../../../../kernel/conformance/unit/process-fixture'
+import { FIXTURE_REPO_SEGMENT, isolatedConfigFixture } from '@harness/kernel/conformance/unit/process-fixture'
 
 const TESTS_ROOT = join(fileURLToPath(new URL('../../../../../../apps/cli/tests', import.meta.url)))
 /**

@@ -41,10 +41,10 @@ import {
   reconstructRounds,
   type ReconstructedJournal,
   type ReviewGateFact
-} from '../../../../tools/dev-review-policy/journal-reconstruction'
-import { isPrincipal } from '../../../../tools/task-contract/waiver-label'
+} from '@harness/workflow/tools/dev-review-policy/journal-reconstruction'
+import { isPrincipal } from '@harness/workflow/tools/task-contract/waiver-label'
 
-import { parseDeveloperRoundMarker } from '../../../../tools/task-contract/review-status'
+import { parseDeveloperRoundMarker } from '@harness/workflow/tools/task-contract/review-status'
 import { markerComments, principalAllowlist, type MarkerComment } from './developer-dispatch.js'
 import { sh } from './gate-reading.js'
 import { reviewGateFactForCurrentState } from '../../review-gate-input.js'

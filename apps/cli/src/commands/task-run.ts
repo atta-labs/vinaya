@@ -58,25 +58,18 @@ import {
   DISPATCH_EFFORT_REFUSAL,
   type DispatchEffort,
   parseDispatchEffort
-} from '../../../../harness/processes/vinaya-strict/loops/dev-review/dispatch/dispatch.js'
-import {
-  DISPATCH_AGENTS,
-  type DispatchAgent
-} from '../../../../harness/processes/vinaya-strict/tools/task-contract/dispatch-task.js'
-import {
-  loadConfig,
-  loadTaskRunner,
-  type TaskRunner
-} from '../../../../harness/processes/vinaya-strict/integration/config/compose.js'
+} from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
+import { DISPATCH_AGENTS, type DispatchAgent } from '@harness/workflow/tools/task-contract/dispatch-task.js'
+import { loadConfig, loadTaskRunner, type TaskRunner } from '@harness/workflow/integration/config/compose.js'
 import {
   engineStartRefusal,
   runTask,
   type RunTaskResult,
   type RunTaskOutcome
-} from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run.js'
-import { startBackgroundRun } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-run-background.js'
-import { resumeCommandFor } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-status.js'
-import { noPushResumeCommandFor } from '../../../../harness/processes/vinaya-strict/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
+} from '@harness/workflow/loops/dev-review/run-control/task-run.js'
+import { startBackgroundRun } from '@harness/workflow/loops/dev-review/run-control/task-run-background.js'
+import { resumeCommandFor } from '@harness/workflow/loops/dev-review/run-control/task-status.js'
+import { noPushResumeCommandFor } from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/pause-resume.js'
 
 /** Any failure other than a usage/argv error or a policy `pause` — see the module doc comment's exit-code table. */
 const TASK_RUN_FAILURE_EXIT_CODE = 3
@@ -638,7 +631,7 @@ export async function taskRunCommand(args: string[]): Promise<void> {
   })
 }
 
-import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
+import type { SurfaceExemption } from '@harness/workflow/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   'task run': { date: '2026-09-30', callsToday: 9, retiresVia: 'sharedCommandShell' }

@@ -2,14 +2,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { CONTROL_RUN_RECORDS, touchedSince } from '../../../../../kernel/conformance/unit/real-runtime-guard-core'
+import { CONTROL_RUN_RECORDS, touchedSince } from '@harness/kernel/conformance/unit/real-runtime-guard-core'
 import {
   type ControlStoreDeps,
   readCurrentOwnership,
   readEffect,
   readRun,
   writeEffect
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 import type { ProcessSnapshot } from '../dispatch/dispatch'
 import { fenceStartedEffectsAsUncertain } from '../standalone/dev-review-loop/pause-resume'
 import {

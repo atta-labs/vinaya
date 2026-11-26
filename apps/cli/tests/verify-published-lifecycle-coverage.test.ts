@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { COMMANDS } from '../../../harness/processes/vinaya-strict/integration/commands.js'
+import { COMMANDS } from '@harness/workflow/integration/commands.js'
 import {
   declaredCommandNames,
   EXERCISES,

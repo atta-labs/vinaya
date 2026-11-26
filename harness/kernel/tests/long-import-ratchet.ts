@@ -1,31 +1,18 @@
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  lstatSync,
-  mkdtempSync,
-  openSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
-import { dirname, join, posix, relative, sep } from 'node:path'
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from 'node:fs'
+import { join, posix, relative, sep } from 'node:path'
 import ts from 'typescript'
-import {
-  type Baseline,
-  git,
-  gitShow,
-  renames,
-  REPOSITORY_ROOT,
-  serializeBaseline,
-  total
-} from './architecture-ratchet.js'
+import { git, gitShow, renames, REPOSITORY_ROOT } from './architecture-ratchet.js'
 
+export const LONG_IMPORT_EXCEPTIONS = 'harness/kernel/tests/long-import-exceptions.json'
+/** The per-file count file the exceptions list replaced; it must not come back. */
 export const LONG_IMPORT_BASELINE = 'harness/kernel/tests/long-import-baseline.json'
 const COMMAND = 'bun harness/kernel/tests/long-import-ratchet.ts'
-export const WRITE_COMMAND = `${COMMAND} --write`
+
+const STUDIO_FOLDER = 'apps/vinaya-studio/'
+const ALIASED_FOLDERS = ['harness/kernel/', 'harness/processes/vinaya-strict/']
+
+/** One relative specifier that climbs three or more folders and stays relative, with the reason it does. */
+export type LongImportException = { file: string; specifier: string; reason: string }
 
 const REPLACEMENT =
   'Use @harness/kernel/<path> for a kernel target or @harness/workflow/<path> for a workflow target. Any other target needs a named exception.'
@@ -108,43 +95,35 @@ function* scan(root: string, folders: string[] = []): Generator<[string, LongSpe
   }
 }
 
-/** Zero counts are implicit in the baseline. */
-function countTree(root: string): Baseline {
-  return Object.fromEntries(Array.from(scan(root), ([file, specifiers]) => [file, specifiers.length]))
-}
+type Occurrence = { file: string; specifier: string }
 
-export function writeLongImportBaseline(root: string): Baseline {
-  const counts = countTree(root)
-  const destination = join(root, LONG_IMPORT_BASELINE)
-  const scratch = mkdtempSync(join(dirname(destination), '.long-import-baseline-'))
-  try {
-    const temporary = join(scratch, 'baseline.json')
-    writeFileSync(temporary, serializeBaseline(counts))
-    // Rename replaces the destination directory entry itself, even if it is a symlink.
-    renameSync(temporary, destination)
-  } finally {
-    rmSync(scratch, { recursive: true, force: true })
+/** Every long specifier in the tracked tree, in path and source order. */
+function treeOccurrences(root: string): Occurrence[] {
+  const occurrences: Occurrence[] = []
+  for (const [file, specifiers] of scan(root)) {
+    for (const { text } of specifiers) occurrences.push({ file, specifier: text })
   }
-  return counts
+  return occurrences
 }
 
-function parseBaseline(text: string): Baseline {
-  const baseline = JSON.parse(text) as Baseline
-  if (
-    !baseline ||
-    typeof baseline !== 'object' ||
-    Array.isArray(baseline) ||
-    Object.values(baseline).some((count) => !Number.isSafeInteger(count) || count <= 0)
-  ) {
-    throw new Error(
-      `${LONG_IMPORT_BASELINE} must map file paths to positive integer counts. Regenerate it with \`${WRITE_COMMAND}\`.`
+function parseExceptions(text: string): LongImportException[] {
+  const parsed: unknown = JSON.parse(text)
+  const valid =
+    Array.isArray(parsed) &&
+    parsed.every(
+      (entry) =>
+        entry &&
+        typeof entry === 'object' &&
+        ['file', 'specifier', 'reason'].every((key) => typeof entry[key] === 'string' && entry[key] !== '')
     )
+  if (!valid) {
+    throw new Error(`${LONG_IMPORT_EXCEPTIONS} must be a list of entries with a file, a specifier and a reason.`)
   }
-  return baseline
+  return parsed as LongImportException[]
 }
 
-function readBaseline(root: string): Baseline {
-  return parseBaseline(readFileSync(join(root, LONG_IMPORT_BASELINE), 'utf8'))
+function readExceptions(root: string): LongImportException[] {
+  return parseExceptions(readFileSync(join(root, LONG_IMPORT_EXCEPTIONS), 'utf8'))
 }
 
 const LOG_CONTROL = /[\p{Cc}\p{Zl}\p{Zp}]/u
@@ -157,52 +136,90 @@ function displayField(value: string): string {
   )
 }
 
-function growth(file: string, count: number, entry: number, against: string): string {
-  return `${displayField(file)}: ${count} long imports exceed ${against} (${entry}). ${REPLACEMENT}`
+const keyOf = (file: string, specifier: string): string => JSON.stringify([file, specifier])
+
+function tally(entries: Occurrence[]): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const { file, specifier } of entries) {
+    const key = keyOf(file, specifier)
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  return counts
 }
 
-function countAt(counts: Baseline, file: string): number {
-  return Object.hasOwn(counts, file) ? (counts[file] ?? 0) : 0
+function describeKey(key: string): string {
+  const [file, specifier] = JSON.parse(key) as [string, string]
+  return `${displayField(file)} imports ${displayField(specifier)}`
 }
 
-function compareWithBaseline(counts: Baseline, baseline: Baseline): string[] {
+/** Whether a long specifier names a file under the kernel folder or the workflow process folder. */
+function namesAliasedFile(file: string, specifier: string): boolean {
+  const target = posix.join(posix.dirname(file), specifier)
+  return ALIASED_FOLDERS.some((folder) => target.startsWith(folder))
+}
+
+function compareWithList(tree: Occurrence[], list: LongImportException[], against: string): string[] {
   const failures: string[] = []
-  for (const file of [...new Set([...Object.keys(counts), ...Object.keys(baseline)])].sort()) {
-    const count = countAt(counts, file)
-    const entry = countAt(baseline, file)
-    if (count > entry) failures.push(growth(file, count, entry, 'its baseline entry'))
-    if (count < entry) {
+  const found = tally(tree)
+  const listed = tally(list)
+  for (const key of [...new Set([...found.keys(), ...listed.keys()])].sort()) {
+    const count = found.get(key) ?? 0
+    const entries = listed.get(key) ?? 0
+    if (count > entries) {
+      failures.push(`${describeKey(key)} ${count} times, but ${against} names it ${entries} times. ${REPLACEMENT}`)
+    }
+    if (count < entries) {
       failures.push(
-        `${displayField(file)}: ${count} long imports fell below its baseline entry (${entry}). Lower it with \`${WRITE_COMMAND}\`.`
+        `${describeKey(key)} ${count} times, but ${against} names it ${entries} times. Remove the stale entry from ${LONG_IMPORT_EXCEPTIONS}.`
       )
     }
   }
   return failures
 }
 
-export function checkLongImportBaseline(root: string): string[] {
-  return compareWithBaseline(countTree(root), readBaseline(root))
+export function checkLongImportExceptions(root: string): string[] {
+  const failures: string[] = []
+  if (existsSync(join(root, LONG_IMPORT_BASELINE))) {
+    failures.push(`${LONG_IMPORT_BASELINE} must not exist: ${LONG_IMPORT_EXCEPTIONS} is the single list.`)
+  }
+  const list = readExceptions(root)
+  failures.push(...compareWithList(treeOccurrences(root), list, 'the exceptions list'))
+  for (const { file, specifier } of list) {
+    if (!file.startsWith(STUDIO_FOLDER) && namesAliasedFile(file, specifier)) {
+      failures.push(
+        `${describeKey(keyOf(file, specifier))} names a kernel or workflow file and cannot be an exception. ${REPLACEMENT}`
+      )
+    }
+  }
+  return failures
 }
 
 export function compareLongImportsToBase(root: string, base: string): { notice: string | null; failures: string[] } {
-  const text = gitShow(root, base, LONG_IMPORT_BASELINE)
-  if (text === null) return { notice: `long import ratchet: the base ${base} has no baseline yet.`, failures: [] }
+  const text = gitShow(root, base, LONG_IMPORT_EXCEPTIONS)
+  if (text === null)
+    return { notice: `long import ratchet: the base ${base} has no exceptions list yet.`, failures: [] }
 
-  const baseBaseline = parseBaseline(text)
-  const counts = countTree(root)
-  const failures = compareWithBaseline(counts, readBaseline(root))
+  const baseList = parseExceptions(text)
+  const headList = readExceptions(root)
+  const tree = treeOccurrences(root)
+  const failures = compareWithList(tree, headList, 'the head exceptions list')
   const { from } = renames(root, base, { sameNameFallback: false })
-  for (const [file, count] of Object.entries(counts)) {
-    const baseFile = from.get(file) ?? file
-    const entry = countAt(baseBaseline, baseFile)
-    if (count > entry) {
-      const against = baseFile === file ? 'its base entry' : `the base entry for ${displayField(baseFile)}`
-      failures.push(growth(file, count, entry, against))
+  const allowed = tally(baseList)
+  for (const [key, count] of tally(tree)) {
+    const [file, specifier] = JSON.parse(key) as [string, string]
+    const baseKey = keyOf(from.get(file) ?? file, specifier)
+    if (count > (allowed.get(baseKey) ?? 0)) {
+      failures.push(
+        `${describeKey(key)} ${count} times, but the base exceptions list does not allow it. ${REPLACEMENT}`
+      )
     }
+  }
+  if (headList.length > baseList.length) {
+    failures.push(`the exceptions list grew from ${baseList.length} to ${headList.length} entries. ${REPLACEMENT}`)
   }
   const notice =
     failures.length === 0
-      ? `long import ratchet: head total ${total(counts)}, base total ${total(baseBaseline)} — no growth.`
+      ? `long import ratchet: head ${tree.length} long imports, base list ${baseList.length} entries — no growth.`
       : null
   return { notice, failures }
 }
@@ -225,18 +242,11 @@ export function listLongImports(root: string, folders: string[] = []): string[] 
 
 function main(argv: string[]): number {
   const [command, ...folders] = argv
-  if (command === '--write' && folders.length === 0) {
-    const counts = writeLongImportBaseline(REPOSITORY_ROOT)
-    process.stdout.write(
-      `long import ratchet: wrote ${total(counts)} long imports across ${Object.keys(counts).length} files.\n`
-    )
-    return 0
-  }
   if (command === '--list') {
     for (const line of listLongImports(REPOSITORY_ROOT, folders)) process.stdout.write(`${line}\n`)
     return 0
   }
-  process.stderr.write(`usage: ${WRITE_COMMAND}\n       ${COMMAND} --list [folder…]\n`)
+  process.stderr.write(`usage: ${COMMAND} --list [folder…]\n`)
   return 2
 }
 

@@ -14,9 +14,9 @@ import type {
   DevReviewLoopEventInput,
   LoopState,
   RoundStats
-} from '../../../../tools/dev-review-policy/types'
+} from '@harness/workflow/tools/dev-review-policy/types'
 import { readFileSync } from 'node:fs'
-import { CODE_TOKEN_PATTERN } from '../../../../../../kernel/log/schema'
+import { CODE_TOKEN_PATTERN } from '@harness/kernel/log/schema'
 import {
   defaultControlStoreDeps,
   readLoopState,
@@ -25,13 +25,13 @@ import {
   type LoopStateRecord,
   type ParsedRecord,
   type RoundHeadIdentity
-} from '../../../../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 
-import type { PauseBoundRuling } from '../../../../tools/task-contract/review-input-manifest'
+import type { PauseBoundRuling } from '@harness/workflow/tools/task-contract/review-input-manifest'
 import type { AgentVendor, DispatchHandle, SandboxProbeRefusal, UsageLimit } from '../../dispatch/dispatch.js'
-import { controlStoreRoot } from '../../../../../../kernel/effects/effects.js'
+import { controlStoreRoot } from '@harness/kernel/effects/effects.js'
 import { isControlCharacter } from './turn-result.js'
-import { COMMENT_MARKER_PREFIX_CURRENT } from '../../../../tools/legacy-markers'
+import { COMMENT_MARKER_PREFIX_CURRENT } from '@harness/workflow/tools/legacy-markers'
 
 // --- round marker comment ---------------------------------------------------
 

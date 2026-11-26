@@ -6,11 +6,11 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { validateGraderIdentity, validateSuiteRevision } from '../../../../kernel/evals/contracts'
-import type { Resampling } from '../../../../kernel/evals/estimators'
+import { validateGraderIdentity, validateSuiteRevision } from '@harness/kernel/evals/contracts'
+import type { Resampling } from '@harness/kernel/evals/estimators'
 import { ROLE_TOOL_GRANTS } from '../../integration/policies/roles'
-import { READ_SOURCE_TOOL } from '../../../../kernel/tools/read-source'
-import { DEV_TOOL_NAMES } from '../../../../kernel/tools/tool-catalog'
+import { READ_SOURCE_TOOL } from '@harness/kernel/tools/read-source'
+import { DEV_TOOL_NAMES } from '@harness/kernel/tools/tool-catalog'
 import {
   ADAPTERS,
   admit,

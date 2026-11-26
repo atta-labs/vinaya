@@ -22,11 +22,11 @@ import {
   startControlledRun
 } from '@atta/executor-agent-spawn'
 import { parse } from 'yaml'
-import type { GeneratedAgentConfig } from '../../../isolation/policy'
-import type { LoadedProcess } from '../../../dev-process-socket/loader/load-process'
-import { stageCodexAuth } from '../../../adapters/agents/codex/auth'
-import { RESUME_SESSION_PLACEHOLDER } from '../../../isolation/policy'
-import { sessionIdOf } from '../../../adapters/agents/structured-result'
+import type { GeneratedAgentConfig } from '@harness/kernel/isolation/policy'
+import type { LoadedProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
+import { stageCodexAuth } from '@harness/kernel/adapters/agents/codex/auth'
+import { RESUME_SESSION_PLACEHOLDER } from '@harness/kernel/isolation/policy'
+import { sessionIdOf } from '@harness/kernel/adapters/agents/structured-result'
 
 // Runs a loaded process's Flow on the packed executor. The runtime knows no
 // particular process: everything a Flow names (mechanical actions, deciding

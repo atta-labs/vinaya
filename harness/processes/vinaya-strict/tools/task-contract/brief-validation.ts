@@ -11,7 +11,7 @@
  * `brief-authoring` skill and `brief-developer` contract define.
  */
 
-import { type AnchorField, anchoredRegion, stripCode } from '../../../../kernel/gates/checks/anchored-region'
+import { type AnchorField, anchoredRegion, stripCode } from '@harness/kernel/gates/checks/anchored-region'
 import { COMMENT_MARKER_PREFIX_CURRENT, COMMENT_MARKER_PREFIX_PATTERN, REGION_PREFIXES } from '../legacy-markers'
 import { type Objective, objectivesVersion, objectivesOf } from './objectives'
 import { declaresNewFilesOnly, parsePremiseBlock, premiseBlockText } from './premise-check'

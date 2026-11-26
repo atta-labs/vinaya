@@ -24,12 +24,12 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { repoSegment, resolveSettings } from '@attalabs/vinaya-log-sdk'
-import { isInsideRepo, isUnattendedProcess, repoRootSync, RUNTIME_DIR_ENV_KEY } from '../../../kernel/run-paths.js'
+import { isInsideRepo, isUnattendedProcess, repoRootSync, RUNTIME_DIR_ENV_KEY } from '@harness/kernel/run-paths.js'
 import { createRecordFollow, readTaskRuns } from './follow-records.js'
-import type { Role } from '../../../kernel/log/schema'
-import { type AgentLineMark, formatAgentLine, parseLineMeta } from '../../../kernel/adapters/agents/agent-line.js'
+import type { Role } from '@harness/kernel/log/schema'
+import { type AgentLineMark, formatAgentLine, parseLineMeta } from '@harness/kernel/adapters/agents/agent-line.js'
 import { ANSI_RESET, colourEnabled, LOOP_ANSI, ROLE_ANSI } from '../loops/dev-review/dispatch/dispatch.js'
-import { type LoopLogRepo, followLoopLog, loopLogPathFor, loopsRoot } from '../../../kernel/log/client/loop-log.js'
+import { type LoopLogRepo, followLoopLog, loopLogPathFor, loopsRoot } from '@harness/kernel/log/client/loop-log.js'
 
 // --- stages -----------------------------------------------------------------
 

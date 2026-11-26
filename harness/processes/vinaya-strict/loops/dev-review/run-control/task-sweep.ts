@@ -31,15 +31,15 @@ import { execFile, execFileSync } from 'node:child_process'
 import { chmodSync, lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join, sep, resolve as resolvePath } from 'node:path'
 import { promisify } from 'node:util'
-import { issueBranchName } from '../../../tools/task-contract/task-branch-identity'
-import { hasLabel } from '../../../tools/task-contract/forge/labels'
+import { issueBranchName } from '@harness/workflow/tools/task-contract/task-branch-identity'
+import { hasLabel } from '@harness/workflow/tools/task-contract/forge/labels'
 import {
   developerBranchFor as realDeveloperBranchFor,
   fetchPrBody as realFetchPrBody,
   taskFromPrBody as realTaskFromPrBody
 } from '../standalone/dev-review-loop/developer-dispatch.js'
 import { isDriverPidAlive as realIsDriverPidAlive } from '../standalone/dev-review-loop/pause-resume.js'
-import { GLOBAL_VINAYA_HOME } from '../../../integration/config/compose.js'
+import { GLOBAL_VINAYA_HOME } from '@harness/workflow/integration/config/compose.js'
 import {
   DRIVER_LOCK_FILENAME,
   LEGACY_CONTROL_STORE,
@@ -58,7 +58,7 @@ import {
   type RunScope,
   scopeFromSegment,
   tasksExecutionRoot
-} from '../../../../../kernel/run-paths.js'
+} from '@harness/kernel/run-paths.js'
 
 function sh(cmd: string, args: string[]): string {
   return execFileSync(cmd, args, {

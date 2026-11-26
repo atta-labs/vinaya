@@ -6,7 +6,7 @@
 // exact process is gone afterwards instead of searching the machine for a
 // command line.
 import { appendFileSync } from 'node:fs'
-import { identityOf } from '../../../conformance/unit/process-registry'
+import { identityOf } from '@harness/kernel/conformance/unit/process-registry'
 
 const ms = Number(process.argv[2] ?? '0')
 const pidFile = process.argv[3]

@@ -10,7 +10,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ALL_NAMES, affectedNamesForFile, type LineRange, parseHunkRanges } from '@attalabs/test-selection'
 import { loadConfig } from './config/compose'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../kernel/conformance/unit/process-fixture'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 import {
   discoverWorkspaceDirs,
   discoverWorkspacePackages,
@@ -21,11 +21,11 @@ import {
   selectAffectedTestFiles,
   walkFiles
 } from './repository-verification'
-import { cliSpawnEdgeOf } from '../../../kernel/gates/ring0-hooks/pre-push/cli-spawn-tests'
+import { cliSpawnEdgeOf } from '@harness/kernel/gates/ring0-hooks/pre-push/cli-spawn-tests'
 import { spawnEdgeOf, startedScriptsOf } from '@attalabs/test-selection'
 import { scannedRootsOf } from './verification-scanner-policy'
 import { loadTypeScript } from '@attalabs/test-selection'
-import { fixtureDir } from '../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 
 function fixtureRepo(): string {
   const root = mkdtempSync(join(tmpdir(), 'vinaya-selector-'))

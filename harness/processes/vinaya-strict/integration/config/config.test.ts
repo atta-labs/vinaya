@@ -12,8 +12,8 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { CheckSpec } from '../../../../kernel/gates/checks/contract'
-import { runChecks } from '../../../../kernel/gates/checks/runner'
+import type { CheckSpec } from '@harness/kernel/gates/checks/contract'
+import { runChecks } from '@harness/kernel/gates/checks/runner'
 import { DEFAULT_REVIEW_POLICY } from '../../tools/task-contract/review-policy'
 import {
   isCanonicalHookBlockPath,

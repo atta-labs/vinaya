@@ -46,7 +46,7 @@ import {
   type TaskToolError,
   taskToolError,
   type TaskToolRef
-} from '../../../../../kernel/tools/catalog/task-tools'
+} from '@harness/kernel/tools/catalog/task-tools'
 import { markerComments, principalAllowlist } from '../standalone/dev-review-loop/developer-dispatch.js'
 import { sh } from '../standalone/dev-review-loop/gate-reading.js'
 import { resolveRowForRef, type TaskToolCallResult } from './handlers.js'

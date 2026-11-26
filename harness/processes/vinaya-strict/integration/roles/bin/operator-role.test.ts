@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { doctrineCommand } from '../../../../../../apps/cli/src/commands/doctrine.js'
-import { resolveDoctrineRoot } from '../../../tools/doctrine/resolve-doctrine.js'
+import { resolveDoctrineRoot } from '@harness/workflow/tools/doctrine/resolve-doctrine.js'
 
 /**
  * O2 — role discovery exposes the Operator: `doctrine --role operator`

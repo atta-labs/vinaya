@@ -23,8 +23,8 @@ import {
   taskIdFromTitle,
   validateAmendFlags
 } from './open-issue'
-import { makeCheckError } from '../../../tools/task-contract/forge/forge-write'
-import type { CheckError } from '../../../../../kernel/gates/checks/contract'
+import { makeCheckError } from '@harness/workflow/tools/task-contract/forge/forge-write'
+import type { CheckError } from '@harness/kernel/gates/checks/contract'
 import { createIssue, editIssue } from './planner-operations'
 
 describe('appliesTaskIssueGate (task-run-v1 21, #541, round 2 review SECURITY HIGH)', () => {

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { programCommandLine } from '../../../tools/programs.js'
+import { programCommandLine } from '@harness/workflow/tools/programs.js'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'

@@ -9,7 +9,7 @@ import {
   readEffect,
   readResolution,
   writeEffect
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 import { cancelDevReviewLoop, taskFromPrBody } from '../standalone/dev-review-loop'
 import {
   escalationIdFor,
@@ -30,10 +30,10 @@ import {
 import { createTaskCancelHandler } from './cancel'
 import { readEscalationPacket } from './read'
 import { createTaskResumeHandler, resumeContinuation } from './resume'
-import { programInvocation } from '../../../tools/programs'
-import { claimResume, liveResumeDeps } from '../../../bin/run-lifecycle'
-import { parseResumeArgs, refuseAnotherRunnersPause } from '../../../bin/run-engine'
-import { runEngineScenario, type EngineScenarioRun } from '../../../tests/dev-review-engine-loop-adapter.js'
+import { programInvocation } from '@harness/workflow/tools/programs'
+import { claimResume, liveResumeDeps } from '@harness/workflow/bin/run-lifecycle'
+import { parseResumeArgs, refuseAnotherRunnersPause } from '@harness/workflow/bin/run-engine'
+import { runEngineScenario, type EngineScenarioRun } from '@harness/workflow/tests/dev-review-engine-loop-adapter.js'
 import {
   makeWorld,
   runRecords,
@@ -41,8 +41,8 @@ import {
   withWorldEnv,
   type LoopWorld,
   type RoleOutcome
-} from '../../../tests/standalone/lib/dev-review-loop-harness'
-import { stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
+} from '@harness/workflow/tests/standalone/lib/dev-review-loop-harness'
+import { stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 const roots: string[] = []
 const children: number[] = []

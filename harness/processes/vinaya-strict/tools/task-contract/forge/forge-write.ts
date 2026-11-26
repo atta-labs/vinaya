@@ -32,7 +32,7 @@ import {
   isForgeReadOversize,
   readIssueBody,
   readIssueComments
-} from '../../../../../kernel/adapters/code-host/github/forge-read'
+} from '@harness/kernel/adapters/code-host/github/forge-read'
 import { resolveAliasedPath } from '@harness/kernel/imports/alias-table.js'
 import { checkQuotedCommandsExist } from '../named-commands'
 import { checkConditionWordsNeedPremise, checkProsePathsExist } from '../prose-facts'
@@ -136,7 +136,7 @@ import { CHANGESET_RELEASE_BRANCH, isChangesetsReleasePr } from '../../review-ga
 import { classifyProseFile, DEFAULT_SPEC_PATHS, normalizeSpecPath } from '../../reader-resolvable-prose'
 import type { DispatchBlockerClass } from '../../dispatch-gate'
 import { DOC_OWNERS_PATH } from '../../doc-owners'
-import { globToRegex } from '../../../../../kernel/gates/glob-to-regex'
+import { globToRegex } from '@harness/kernel/gates/glob-to-regex'
 import {
   assembleAndRenderBrief,
   assembleAndRenderBriefForIssue,
@@ -155,17 +155,17 @@ import {
   resolveMilestoneAttachTarget
 } from './fetch-milestone'
 import { parseRationaleDeps } from './parse-rationale-deps'
-import { COMMANDS } from '../../../integration/commands.js'
-import { CONFIG_REFERENCE } from '../../../integration/config-reference.js'
-import { CORE_CHECK_RING, coreCheckRegistry } from '../../../checks/registry'
-import { resolveChecks } from '../../../../../kernel/gates/checks/resolver'
-import { defaultParallelism, runChecks } from '../../../../../kernel/gates/checks/runner'
+import { COMMANDS } from '@harness/workflow/integration/commands.js'
+import { CONFIG_REFERENCE } from '@harness/workflow/integration/config-reference.js'
+import { CORE_CHECK_RING, coreCheckRegistry } from '@harness/workflow/checks/registry'
+import { resolveChecks } from '@harness/kernel/gates/checks/resolver'
+import { defaultParallelism, runChecks } from '@harness/kernel/gates/checks/runner'
 import {
   CHECK_SCHEMA_VERSION,
   type CheckError,
   type CheckSpec,
   emitCheckError
-} from '../../../../../kernel/gates/checks/contract'
+} from '@harness/kernel/gates/checks/contract'
 import {
   type BriefBuiltin,
   type BriefSection,
@@ -178,11 +178,11 @@ import {
   resolveGateCutovers,
   resolveReleaseActor,
   resolveTrustedPrincipals
-} from '../../../integration/config/compose'
-import { printJson } from '../../../../../kernel/effects/envelope'
-import { writeForgeRefused, writeForgeValidated, writeForgeWritten } from '../../../../../kernel/log/outside-log.js'
-import type { EffectIdentity, EffectReconcileResult } from '../../../../../kernel/effects/effects.js'
-import { sha256Hex } from '../../../../../kernel/effects/effects.js'
+} from '@harness/workflow/integration/config/compose'
+import { printJson } from '@harness/kernel/effects/envelope'
+import { writeForgeRefused, writeForgeValidated, writeForgeWritten } from '@harness/kernel/log/outside-log.js'
+import type { EffectIdentity, EffectReconcileResult } from '@harness/kernel/effects/effects.js'
+import { sha256Hex } from '@harness/kernel/effects/effects.js'
 
 // ---------------------------------------------------------------------------
 // Arg errors — a malformed `--body-file` is a refusal in the CheckError shape,

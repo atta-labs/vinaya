@@ -48,7 +48,7 @@ import {
   type DeveloperTurnResult,
   developerTurnResultJsonSchema,
   parseDeveloperTurnResult
-} from '../../../executing/developer/developer-turn-result.js'
+} from '@harness/workflow/executing/developer/developer-turn-result.js'
 import {
   judgeTurnOutput,
   PERMISSIBLE_RULING_DECISIONS,
@@ -56,17 +56,17 @@ import {
   readCodexTurnOutput,
   type TurnRead,
   turnResultCorrectionPrompt
-} from '../../../loops/dev-review/standalone/dev-review-loop/turn-result.js'
+} from '@harness/workflow/loops/dev-review/standalone/dev-review-loop/turn-result.js'
 import {
   vendorResumeArgs,
   vendorSessionArgs,
   writeDispatchSettingsAt
-} from '../../../loops/dev-review/dispatch/dispatch.js'
+} from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
 import {
   buildWorkerEnv,
   realConfinementPlatformDeps,
   resolveClaudeConfinement
-} from '../../../../../kernel/isolation/worker-boundary.js'
+} from '@harness/kernel/isolation/worker-boundary.js'
 import {
   type ConfinementDisclosure,
   confinedTmpEnv,
@@ -75,16 +75,16 @@ import {
   resolveProofConfinement,
   stageProofCodexHome
 } from './dev-proof.js'
-import { startDevToolsHost } from '../../../../../kernel/tools/host/dev-tools-host.js'
-import { DEV_TOOLS_MCP_SERVER_NAME } from '../../../../../kernel/tools/dev-tools-names.js'
-import { validatesJsonSchema } from '../../../../../kernel/tools/json-schema-check.js'
+import { startDevToolsHost } from '@harness/kernel/tools/host/dev-tools-host.js'
+import { DEV_TOOLS_MCP_SERVER_NAME } from '@harness/kernel/tools/dev-tools-names.js'
+import { validatesJsonSchema } from '@harness/kernel/tools/json-schema-check.js'
 import {
   type BridgeInvocation,
   claudeDevToolName,
   claudeDevToolsArgs,
   devToolsMcpConfigFileBody,
   devToolsSocketPath
-} from '../../../../../kernel/tools/dev-tools-registration.js'
+} from '@harness/kernel/tools/dev-tools-registration.js'
 
 export type ResultProofAgent = 'claude' | 'codex'
 

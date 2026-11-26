@@ -38,7 +38,7 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import ts from 'typescript'
-import { PROGRAMS } from '../../../harness/processes/vinaya-strict/tools/programs.js'
+import { PROGRAMS } from '@harness/workflow/tools/programs.js'
 
 const pkgRoot = join(import.meta.dir, '..')
 /** Where the `dist/` tree is written: the package folder, or the folder `--out` names. */

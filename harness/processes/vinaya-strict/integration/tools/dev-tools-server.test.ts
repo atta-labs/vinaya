@@ -4,13 +4,13 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { parseBridgeArgs, withDispatchCapability } from '../../../../kernel/tools/host/dev-tools-bridge.js'
+import { parseBridgeArgs, withDispatchCapability } from '@harness/kernel/tools/host/dev-tools-bridge.js'
 import {
   createDispatchCapabilityTable,
   type DispatchCapabilityTable,
   startDevToolsHost
-} from '../../../../kernel/tools/host/dev-tools-host.js'
-import { devToolsSocketPath, driverDevBridgeInvocation } from '../../../../kernel/tools/dev-tools-registration.js'
+} from '@harness/kernel/tools/host/dev-tools-host.js'
+import { devToolsSocketPath, driverDevBridgeInvocation } from '@harness/kernel/tools/dev-tools-registration.js'
 import {
   type CapabilityRefusalEvent,
   createDevToolsMcpServer,
@@ -20,8 +20,8 @@ import {
   devToolError,
   dispatchDevTool,
   type DevToolContext
-} from '../../../../kernel/tools/dev-tools-server.js'
-import { stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture.js'
+} from '@harness/kernel/tools/dev-tools-server.js'
+import { stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture.js'
 import { vinayaToolGrantPolicy } from '../policies/vinaya-policies.js'
 
 /**

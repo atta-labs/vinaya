@@ -10,7 +10,7 @@ import {
   type SpawnedProcessLike
 } from '@atta/executor-agent-spawn'
 import { emptyCheckpoint } from '@langchain/langgraph'
-import { loadProcess } from '../../../dev-process-socket/loader/load-process'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import { resumeProcessRun, startProcessRun, type ProcessRunOptions } from './run-process'
 import {
   CHECKPOINT_FORMAT_VERSION,

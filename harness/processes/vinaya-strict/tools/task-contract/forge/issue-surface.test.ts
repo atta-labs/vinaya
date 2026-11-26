@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { checkPinnedFileImportersCovered } from '../issue-validation'
 import { readPinnedFileImporters, readSurfaceForcedSet, renderSurfaceForcedSet } from './forge-write'
-import { printIssueSurface } from '../../../thinking/planner/tools/planner-operations'
+import { printIssueSurface } from '@harness/workflow/thinking/planner/tools/planner-operations'
 
 // ---------------------------------------------------------------------------
 // The surface tool's library and the importer rule read one listing through one

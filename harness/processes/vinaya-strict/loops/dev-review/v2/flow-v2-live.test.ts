@@ -1,34 +1,34 @@
-import { fixtureDir } from '../../../../../kernel/conformance/unit/test-temp-fixture'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import type { DevToolContext } from '../../../../../kernel/tools/dev-tools-server'
-import { DEV_TOOL_CATALOG } from '../../../../../kernel/tools/tool-catalog'
-import { validatesJsonSchema } from '../../../../../kernel/tools/json-schema-check'
+import type { DevToolContext } from '@harness/kernel/tools/dev-tools-server'
+import { DEV_TOOL_CATALOG } from '@harness/kernel/tools/tool-catalog'
+import { validatesJsonSchema } from '@harness/kernel/tools/json-schema-check'
 import {
   gitPath,
   LAST_PUSH_RESULT,
   SELECTION_NOTE
-} from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
 import {
   PROGRESS_MARKER,
   testGroupEndLine,
   testGroupStartLine
-} from '../../../../../kernel/gates/ring0-hooks/pre-push/push-progress'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/push-progress'
 import {
   DEFERRAL_MARKER_TTL_MS,
   parseDeferralMarker,
   READY_DEFERRAL_MARKER,
   READY_TESTS_DEFERRED_RECORD
-} from '../../../tools/pre-push-ready-policy'
+} from '@harness/workflow/tools/pre-push-ready-policy'
 import {
   DeferredEvidenceError,
   lookupGreenRun,
   resolveDeferredGroupC,
   type TestRunCache,
   type TestRunCacheRecord
-} from '../../../tools/pr-report/pr-report-engine'
+} from '@harness/workflow/tools/pr-report/pr-report-engine'
 import {
   beginReadyDeferral,
   beginStoragePushes,
@@ -56,12 +56,12 @@ import {
   type MidRunPlanState,
   type ToolPlanRepair
 } from './flow-v2-live'
-import { changedReviewInputs } from '../../../executing/actions'
-import { briefHash, type ReviewInputManifest } from '../../../tools/task-contract/review-input-manifest'
-import { checkPinnedFileImportersCovered } from '../../../tools/task-contract/issue-validation'
-import { CHECK_SCHEMA_VERSION } from '../../../../../kernel/gates/checks/contract'
-import { liveTaskInput, liveForge, type EngineForge } from '../../../bin/run-engine'
-import { stripVinayaEnv } from '../../../../../kernel/conformance/unit/process-fixture'
+import { changedReviewInputs } from '@harness/workflow/executing/actions'
+import { briefHash, type ReviewInputManifest } from '@harness/workflow/tools/task-contract/review-input-manifest'
+import { checkPinnedFileImportersCovered } from '@harness/workflow/tools/task-contract/issue-validation'
+import { CHECK_SCHEMA_VERSION } from '@harness/kernel/gates/checks/contract'
+import { liveTaskInput, liveForge, type EngineForge } from '@harness/workflow/bin/run-engine'
+import { stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 describe('mid-run deterministic plan repair', () => {
   const body =

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'bun:test'
-import { PRINCIPAL_RULING_MARKER } from '../../../../harness/processes/vinaya-strict/tools/legacy-markers'
+import { PRINCIPAL_RULING_MARKER } from '@harness/workflow/tools/legacy-markers'
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const INDEX = join(CLI_ROOT, 'src', 'index.ts')

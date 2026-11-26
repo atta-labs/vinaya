@@ -10,7 +10,7 @@
  * sources are read from a real throwaway git repository.
  */
 
-import { classifyDocumentationSource, REQUIRED_SOURCE_MISSING_REASONS } from '../../../../kernel/issue-documentation.js'
+import { classifyDocumentationSource, REQUIRED_SOURCE_MISSING_REASONS } from '@harness/kernel/issue-documentation.js'
 import { execFileSync } from 'node:child_process'
 import {
   existsSync,
@@ -40,7 +40,7 @@ import {
   sourceReceiptsPath,
   sourceSnapshotPath,
   sourceStoreDir
-} from '../../../../kernel/source-manifest.js'
+} from '@harness/kernel/source-manifest.js'
 import {
   gitObjectReader,
   prepareSources,
@@ -48,14 +48,14 @@ import {
   RequiredSourcesUnavailable,
   SourceReaderUnavailable,
   type SourceProviderDeps
-} from '../../../../kernel/tools/source-provider.js'
+} from '@harness/kernel/tools/source-provider.js'
 import {
   type FetchDocumentationDeps,
   type FetchTarget,
   FetchTransportError,
   type RawResponse
-} from '../../../../kernel/tools/fetch-documentation.js'
-import { buildClaudeSandboxSettings, controllerStoreReachableBy } from '../../../../kernel/isolation/worker-boundary.js'
+} from '@harness/kernel/tools/fetch-documentation.js'
+import { buildClaudeSandboxSettings, controllerStoreReachableBy } from '@harness/kernel/isolation/worker-boundary.js'
 
 const tempDirs: string[] = []
 afterEach(() => {

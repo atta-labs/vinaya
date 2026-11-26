@@ -6,11 +6,8 @@
  * live driver refuses it.
  */
 
-import {
-  DISPATCH_AGENTS,
-  type DispatchAgent
-} from '../../../../harness/processes/vinaya-strict/tools/task-contract/dispatch-task.js'
-import { runTaskSwitch } from '../../../../harness/processes/vinaya-strict/loops/dev-review/run-control/task-switch.js'
+import { DISPATCH_AGENTS, type DispatchAgent } from '@harness/workflow/tools/task-contract/dispatch-task.js'
+import { runTaskSwitch } from '@harness/workflow/loops/dev-review/run-control/task-switch.js'
 
 const AGENTS = DISPATCH_AGENTS.join(' | ')
 

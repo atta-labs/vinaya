@@ -46,9 +46,9 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir, userInfo } from 'node:os'
 import { dirname, join } from 'node:path'
-import { buildReviewInputManifest } from '../../../tools/task-contract/review-input-manifest'
-import { DEFAULT_REVIEW_POLICY } from '../../../tools/task-contract/review-policy'
-import type { Role } from '../../../../../kernel/log/schema'
+import { buildReviewInputManifest } from '@harness/workflow/tools/task-contract/review-input-manifest'
+import { DEFAULT_REVIEW_POLICY } from '@harness/workflow/tools/task-contract/review-policy'
+import type { Role } from '@harness/kernel/log/schema'
 import {
   buildCodexExecpolicyRules,
   isReviewerResume,
@@ -56,7 +56,7 @@ import {
   vendorResumeArgs,
   vendorSessionArgs,
   writeDispatchSettingsAt
-} from '../../../loops/dev-review/dispatch/dispatch.js'
+} from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
 import {
   type CompletedReview,
   classifyReviewOutcome,
@@ -69,13 +69,13 @@ import {
   type ReviewOutcome,
   RoundReviews,
   reviewResultJsonSchema
-} from '../../../executing/code-reviewer/review-result.js'
+} from '@harness/workflow/executing/code-reviewer/review-result.js'
 import {
   buildWorkerEnv,
   realConfinementPlatformDeps,
   resolveClaudeConfinement,
   stageCodexPolicyHome
-} from '../../../../../kernel/isolation/worker-boundary.js'
+} from '@harness/kernel/isolation/worker-boundary.js'
 import { confinedTmpEnv, resolveProofConfinement } from './dev-proof.js'
 import {
   accountEnv,

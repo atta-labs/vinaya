@@ -159,7 +159,7 @@ describe('the configuration module', () => {
 
   test("installs Vinaya's composed loader as the provider kernel code reads through", async () => {
     const { GLOBAL_VINAYA_HOME, installVinayaConfigProvider, loadConfig } = await import('./compose.js')
-    const { configProvider } = await import('../../../../kernel/config/loader/config-provider.js')
+    const { configProvider } = await import('@harness/kernel/config/loader/config-provider.js')
     installVinayaConfigProvider()
     expect(configProvider().homeDir).toBe(GLOBAL_VINAYA_HOME)
     expect(configProvider().loadConfig()).toEqual(loadConfig())

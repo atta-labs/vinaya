@@ -6,9 +6,9 @@
  * operation (however deep) is captured as a finding, not an exit.
  */
 
-import { runtimeDirForThisRepo } from '../../../../../kernel/run-paths'
-import { draftFingerprint, type PlanDraft, parsePlanDraft } from '../../../tools/plan-draft/draft'
-import { readPlanDraft, writePlanDraft } from '../../../tools/plan-draft/store'
+import { runtimeDirForThisRepo } from '@harness/kernel/run-paths'
+import { draftFingerprint, type PlanDraft, parsePlanDraft } from '@harness/workflow/tools/plan-draft/draft'
+import { readPlanDraft, writePlanDraft } from '@harness/workflow/tools/plan-draft/store'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,12 +16,18 @@ import {
   isForgeReadOversize,
   readIssueComments,
   readIssueFields
-} from '../../../../../kernel/adapters/code-host/github/forge-read.js'
-import { assembleAndRenderBrief, assembleAndRenderBriefForIssue } from '../../../tools/task-contract/brief-assembly.js'
-import { type FrozenBriefCandidate, resolveNewestFrozenBrief } from '../../../tools/task-contract/brief-validation'
-import { prepareTaskOrIssue } from '../../../tools/task-contract/dispatch-task.js'
-import { findTrancheSlug } from '../../../tools/task-contract/forge/labels'
-import { resolveTaskIssueRef } from '../../../tools/task-contract/forge/list-tasks'
+} from '@harness/kernel/adapters/code-host/github/forge-read.js'
+import {
+  assembleAndRenderBrief,
+  assembleAndRenderBriefForIssue
+} from '@harness/workflow/tools/task-contract/brief-assembly.js'
+import {
+  type FrozenBriefCandidate,
+  resolveNewestFrozenBrief
+} from '@harness/workflow/tools/task-contract/brief-validation'
+import { prepareTaskOrIssue } from '@harness/workflow/tools/task-contract/dispatch-task.js'
+import { findTrancheSlug } from '@harness/workflow/tools/task-contract/forge/labels'
+import { resolveTaskIssueRef } from '@harness/workflow/tools/task-contract/forge/list-tasks'
 import {
   type BodyResult,
   ForgeArgError,
@@ -45,20 +51,20 @@ import {
   resolvePrincipalsOrRefuse,
   runGhWriteOutcome,
   validateTaskIssueOutcome
-} from '../../../tools/task-contract/forge/forge-write'
-import type { CheckError } from '../../../../../kernel/gates/checks/contract'
+} from '@harness/workflow/tools/task-contract/forge/forge-write'
+import type { CheckError } from '@harness/kernel/gates/checks/contract'
 import {
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
   parseIssueParts,
   type SurfaceForcedSet
-} from '../../../tools/task-contract/issue-validation'
+} from '@harness/workflow/tools/task-contract/issue-validation'
 import {
   type Objective,
   objectivesOf,
   objectivesVersion,
   renderObjectives
-} from '../../../tools/task-contract/objectives'
+} from '@harness/workflow/tools/task-contract/objectives'
 
 export const RETRY_CREATE = 'task_issue_create'
 export const RETRY_EDIT = 'task_issue_edit'

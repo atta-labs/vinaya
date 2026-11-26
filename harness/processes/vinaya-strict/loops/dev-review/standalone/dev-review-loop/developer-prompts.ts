@@ -15,7 +15,7 @@ import { unpushedWorkResumeDetail } from './unpushed-work.js'
 import { withRateLimitWait } from './rate-limit-waits.js'
 import { postForgeEffectOnce } from './publication.js'
 
-import { LOOP_UNPUSHED_WORK_RESUME_MARKER } from '../../../../tools/legacy-markers'
+import { LOOP_UNPUSHED_WORK_RESUME_MARKER } from '@harness/workflow/tools/legacy-markers'
 
 import { DeveloperStopSignal } from './developer-dispatch.js'
 import { reconcileDeveloperResume } from './developer-context.js'

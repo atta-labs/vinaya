@@ -11,7 +11,7 @@
 // (lib/detect.ts) — the same path every other command uses — never a
 // second auth/repo-resolution mechanism.
 
-import { isEntryPoint } from '../../../../kernel/gates/checks/entry-point.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
 import {
   buildProvenanceBlock,
   hasProvenance,
@@ -25,17 +25,17 @@ import { formatTokensLine } from '../../tools/pr-report/tokens/report-tokens'
 import { parseDeveloperRoundMarker } from '../../tools/task-contract/review-status'
 import { resolveNewestFrozenBrief } from '../../tools/task-contract/brief-validation'
 import { trancheLabel, trancheSlugOf } from '../../tools/task-contract/forge/labels'
-import { extractIssue } from '../../../../kernel/adapters/code-host/github/extract-issue'
+import { extractIssue } from '@harness/kernel/adapters/code-host/github/extract-issue'
 import { REGION_PREFIXES } from '../../tools/legacy-markers'
 import {
   resolveMeteringCapability,
   type MeteringCapability
-} from '../../../../kernel/adapters/agents/claude-code/claude-code-transcript'
-import type { TranscriptSummary } from '../../../../kernel/adapters/agents/claude-code/transcript-summary'
+} from '@harness/kernel/adapters/agents/claude-code/claude-code-transcript'
+import type { TranscriptSummary } from '@harness/kernel/adapters/agents/claude-code/transcript-summary'
 import { deriveTrancheFromForge } from '../../tools/task-contract/forge/derive-from-forge'
 import { hasTrancheIntentsSection } from '../../tools/task-contract/forge/fetch-milestone'
-import { detectGitRepo, type RepoInfo } from '../../../../kernel/connectors/git/detect.js'
-import { closeStdin, promptYesNo } from '../../../../kernel/effects/prompt.js'
+import { detectGitRepo, type RepoInfo } from '@harness/kernel/connectors/git/detect.js'
+import { closeStdin, promptYesNo } from '@harness/kernel/effects/prompt.js'
 import { loadConfig, PrincipalsUnresolvedError, resolveTrustedPrincipals } from '../../integration/config/compose.js'
 import { declaredTranches, milestoneCloseDecision, type TrancheLifecycle } from '../archivist/milestone-close-hold.js'
 import { realDeps as meteringRealDeps } from '../../tools/pr-report/tokens/bin/tokens.js'

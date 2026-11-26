@@ -7,7 +7,7 @@
  */
 
 import { isProtectedAdminPath } from '../../tools/task-contract/protected-paths'
-import type { ProtectedPathPolicy } from '../../../../kernel/tools/host/broker.js'
+import type { ProtectedPathPolicy } from '@harness/kernel/tools/host/broker.js'
 
 export const VINAYA_PROTECTED_PATHS: ProtectedPathPolicy = {
   isProtected: (normalizedPath) => isProtectedAdminPath(normalizedPath)

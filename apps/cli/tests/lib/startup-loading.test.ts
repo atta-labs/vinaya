@@ -6,8 +6,8 @@ import { expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { spawnSyncBudgeted } from '../../../../harness/kernel/conformance/unit/process-fixture'
-import { storedEvents } from '../../../../harness/kernel/gates/checks/runner/local-copy-probe'
+import { spawnSyncBudgeted } from '@harness/kernel/conformance/unit/process-fixture'
+import { storedEvents } from '@harness/kernel/gates/checks/runner/local-copy-probe'
 
 const ENTRY = join(import.meta.dir, '../../src/index.ts')
 

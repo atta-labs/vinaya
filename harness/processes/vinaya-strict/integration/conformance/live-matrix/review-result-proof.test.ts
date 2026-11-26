@@ -15,8 +15,8 @@ import {
   reviewBlockerNeedsRuling,
   reviewResultJsonSchema,
   validateReviewResult
-} from '../../../executing/code-reviewer/review-result.js'
-import { isReviewerResume } from '../../../loops/dev-review/dispatch/dispatch.js'
+} from '@harness/workflow/executing/code-reviewer/review-result.js'
+import { isReviewerResume } from '@harness/workflow/loops/dev-review/dispatch/dispatch.js'
 import {
   adversarialCases,
   bindingFor,

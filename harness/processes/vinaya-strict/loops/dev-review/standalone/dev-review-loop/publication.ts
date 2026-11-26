@@ -7,8 +7,8 @@
  * below under the same path it always had.
  */
 
-import type { Journal } from '../../../../tools/dev-review-policy/types'
-import { renderPublishedMarker } from '../../../../tools/dev-review-policy/render-summary'
+import type { Journal } from '@harness/workflow/tools/dev-review-policy/types'
+import { renderPublishedMarker } from '@harness/workflow/tools/dev-review-policy/render-summary'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -19,27 +19,30 @@ import {
   type EchoedManifest,
   type ManifestBindingResult,
   type ReviewInputManifest
-} from '../../../../tools/task-contract/review-input-manifest'
+} from '@harness/workflow/tools/task-contract/review-input-manifest'
 import {
   consequentialFindings,
   evaluateCodeReview,
   evaluateSecurityReview,
   type ReviewPolicy
-} from '../../../../tools/task-contract/review-policy'
+} from '@harness/workflow/tools/task-contract/review-policy'
 import {
   extractCodeReviewVerdict,
   extractSecurityReviewVerdict,
   type VerdictExtraction
-} from '../../../../tools/task-contract/verdict-extraction'
+} from '@harness/workflow/tools/task-contract/verdict-extraction'
 
-import { defaultControlStoreDeps } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
+import { defaultControlStoreDeps } from '@harness/kernel/connectors/checkpoint/control-store/index'
 import { principalBodies } from '../../bin/review-post.js'
-import { controlStoreRoot, createEffectExecutor, sha256Hex } from '../../../../../../kernel/effects/effects.js'
-import { type DeferredFindingsIssueRef, reconcileGhComment } from '../../../../tools/task-contract/forge/forge-write.js'
+import { controlStoreRoot, createEffectExecutor, sha256Hex } from '@harness/kernel/effects/effects.js'
+import {
+  type DeferredFindingsIssueRef,
+  reconcileGhComment
+} from '@harness/workflow/tools/task-contract/forge/forge-write.js'
 import { sh } from './gate-reading.js'
 import { markerComments, principalAllowlist } from './developer-dispatch.js'
 import { heldVerdictPath, readIfExists } from './reviewer-dispatch.js'
-import { ensureRunDir, runPath } from '../../../../../../kernel/run-paths.js'
+import { ensureRunDir, runPath } from '@harness/kernel/run-paths.js'
 
 type ForgeEffectRecord = { effectId: string; status: 'started' | 'posted'; url?: string }
 

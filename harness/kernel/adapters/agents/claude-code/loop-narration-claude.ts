@@ -1,4 +1,4 @@
-import { redact } from '../../../log/redact'
+import { redact } from '@harness/kernel/log/redact'
 
 /**
  * Translates one Claude stream event into plain actions: what the agent is

@@ -16,22 +16,19 @@ import {
   defaultControlStoreDeps,
   readResolution,
   type ResolutionRecord
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
-import {
-  resolveRepo as realResolveRepo,
-  type RepoRef
-} from '../../../../../kernel/adapters/code-host/github/resolve-repo'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
+import { resolveRepo as realResolveRepo, type RepoRef } from '@harness/kernel/adapters/code-host/github/resolve-repo'
 import {
   type AssembleAndRenderBriefResult,
   assembleAndRenderBrief as realAssembleAndRenderBrief,
   assembleAndRenderBriefForIssue as realAssembleAndRenderBriefForIssue
-} from '../../../tools/task-contract/brief-assembly.js'
+} from '@harness/workflow/tools/task-contract/brief-assembly.js'
 import {
   type loadConfig,
   loadTaskRunner,
   resolveTaskRunner,
   type TaskRunner
-} from '../../../integration/config/compose.js'
+} from '@harness/workflow/integration/config/compose.js'
 import {
   type BackendRollbackDeps,
   endEngineRunThrough,
@@ -77,7 +74,7 @@ import {
 } from '../standalone/dev-review-loop/pause-resume.js'
 import { runtimeDir } from '../standalone/dev-review-loop/reviewer-dispatch.js'
 import { readTurnResultRecords, type TurnResultRecord } from '../standalone/dev-review-loop/turn-result.js'
-import { markProcessUnattended, tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
+import { markProcessUnattended, tasksExecutionRoot } from '@harness/kernel/run-paths.js'
 import {
   assignIssueAtRunStart as realAssignIssueAtRunStart,
   type DispatchAuthorization,
@@ -91,7 +88,7 @@ import {
   resolveModelForDispatch as realResolveModelForDispatch,
   runIssueWriteGate as realRunIssueWriteGate,
   type PrepareTaskResult
-} from '../../../tools/task-contract/dispatch-task.js'
+} from '@harness/workflow/tools/task-contract/dispatch-task.js'
 
 /** `findOpenPrForBranch`'s own return shape, never redeclared — `dev-review-loop.ts`'s private `PrRef` type stays unexported (loop internals are out of this task's Surface); `ReturnType` derives the identical shape from the real function instead. */
 type OpenPrRef = NonNullable<ReturnType<typeof realFindOpenPrForBranch>>
@@ -665,7 +662,7 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
     const cancelled = await deps.cancelledCheckpoint?.(issue)
     if (cancelled) {
       // Loaded here: this module statically loads neither the Engine runner nor its agent packages.
-      const { taskSwitchCommand } = await import('../../../bin/run-lifecycle.js')
+      const { taskSwitchCommand } = await import('@harness/workflow/bin/run-lifecycle.js')
       throw new RunTaskError(
         `runTask: ${taskLabel} was cancelled at ${cancelled.consumedAt} and its Engine checkpoint is kept — a cancelled run is never resumed. To set that checkpoint aside and start the task anew on ${agent}, run \`${taskSwitchCommand(issue, agent)}\`.`
       )

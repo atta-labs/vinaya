@@ -2,10 +2,10 @@ import type { Mock } from 'bun:test'
 import { describe, expect, it, mock } from 'bun:test'
 import { createGhMock } from '../../test-support/mock-gh'
 
-mock.module('../../../../../kernel/adapters/code-host/github/gh', () => createGhMock())
+mock.module('@harness/kernel/adapters/code-host/github/gh', () => createGhMock())
 
 const { ghApiGet, ghIssueListByAnyLabelAsync, ghIssueListByLabel } = await import(
-  '../../../../../kernel/adapters/code-host/github/gh'
+  '@harness/kernel/adapters/code-host/github/gh'
 )
 const { deriveTrancheFromForge, trancheFromIssues } = await import('./derive-from-forge')
 

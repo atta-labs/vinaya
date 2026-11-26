@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { installedCheckRegistry } from '../../../../harness/kernel/gates/checks/registry'
+import { installedCheckRegistry } from '@harness/kernel/gates/checks/registry'
 import { packageRoot } from '../lib/package-root.js'
 
 const TEMPLATE_PATH = join(packageRoot(import.meta.url), 'templates', 'noop-check.template.ts')

@@ -27,7 +27,7 @@
  * spent, the bound's pause detail (`--pause-on-conflict <detail>`) forward.
  */
 
-import { isEntryPoint } from '../../../../../../kernel/gates/checks/entry-point.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
 import {
   colourLoopLine,
   DISPATCH_EFFORT_REFUSAL,
@@ -36,8 +36,8 @@ import {
   type AgentVendor,
   type DispatchEffort
 } from '../../dispatch/dispatch.js'
-import { loadConfig } from '../../../../integration/config/compose.js'
-import { printJson } from '../../../../../../kernel/effects/envelope.js'
+import { loadConfig } from '@harness/workflow/integration/config/compose.js'
+import { printJson } from '@harness/kernel/effects/envelope.js'
 import { cancelDevReviewLoop, devReviewLoop, type LoopInput, runDriverLoop } from '../dev-review-loop.js'
 
 type ParsedArgs = {
@@ -233,7 +233,7 @@ export async function devReviewLoopCommand(args: string[]): Promise<void> {
 
 // Run as a program (`vinaya-dev-review-loop`): started through the shared program entry.
 if (isEntryPoint(import.meta.url, 'dev-review-loop')) {
-  const { runProgram } = await import('../../../../tools/program-entry.js')
+  const { runProgram } = await import('@harness/workflow/tools/program-entry.js')
   await runProgram('dev-review-loop', async (argv: string[]) => {
     await devReviewLoopCommand(argv)
   })

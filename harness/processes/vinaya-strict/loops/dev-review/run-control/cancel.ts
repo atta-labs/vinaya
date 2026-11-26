@@ -23,24 +23,24 @@ import {
   type ControlStoreDeps,
   defaultControlStoreDeps,
   readResolution
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 import {
   TaskCancelInputSchema,
   type TaskCancelOutcome,
   type TaskCancelResult,
   taskToolError,
   type TaskToolRef
-} from '../../../../../kernel/tools/catalog/task-tools'
+} from '@harness/kernel/tools/catalog/task-tools'
 import { type AgentVendor, isAgentVendor } from '../dispatch/dispatch.js'
 import { cancelDevReviewLoop, type CancelInput, type CancelResult, runtimeDir } from '../standalone/dev-review-loop.js'
-import { tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
+import { tasksExecutionRoot } from '@harness/kernel/run-paths.js'
 import {
   fetchIssueRulings,
   fetchNewestIssueRulingOrdinal,
   fetchNewestRulingOrdinal,
   fetchRulings
 } from '../standalone/dev-review-loop/developer-dispatch.js'
-import { appendRoleLine, loopLogPathFor } from '../../../../../kernel/log/client/loop-log.js'
+import { appendRoleLine, loopLogPathFor } from '@harness/kernel/log/client/loop-log.js'
 import {
   escalationIdFor,
   escalationPrOf,
@@ -53,11 +53,11 @@ import {
   StaleEscalationError,
   WrongTargetResolutionError
 } from '../standalone/dev-review-loop/pause-resume.js'
-import { type CommandRecord, type RecordScope, writeCommand } from '../../../../../kernel/log/outside-log.js'
+import { type CommandRecord, type RecordScope, writeCommand } from '@harness/kernel/log/outside-log.js'
 import { readTaskRunner } from './task-run-engine.js'
 import { resolveIssueForRef, type TaskToolCallResult } from './handlers.js'
 import { readEscalationPacket } from './read.js'
-import type { CallerContext } from '../../../integration/server.js'
+import type { CallerContext } from '@harness/workflow/integration/server.js'
 
 function ok<T>(result: T): TaskToolCallResult<T> {
   return { ok: true, result }

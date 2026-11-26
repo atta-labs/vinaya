@@ -12,7 +12,7 @@
 // `sleep` behind.
 import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
-import { identityOf } from '../../../conformance/unit/process-registry'
+import { identityOf } from '@harness/kernel/conformance/unit/process-registry'
 
 const pidFile = process.argv[2]
 const record = (file: string, pid: number, label: string): boolean => {

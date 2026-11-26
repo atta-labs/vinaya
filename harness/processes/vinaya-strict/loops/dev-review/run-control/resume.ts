@@ -59,13 +59,13 @@ import {
   type ControlStoreDeps,
   defaultControlStoreDeps,
   readResolution
-} from '../../../../../kernel/connectors/checkpoint/control-store/index'
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 import {
   TaskResumeInputSchema,
   taskToolError,
   type TaskResumeResult,
   type TaskToolRef
-} from '../../../../../kernel/tools/catalog/task-tools'
+} from '@harness/kernel/tools/catalog/task-tools'
 import { type LaunchResult, launchDetached, waitForLiveDriver } from './detached-launch.js'
 import { type AgentVendor, isAgentVendor } from '../dispatch/dispatch.js'
 import {
@@ -96,14 +96,14 @@ import { runtimeDir } from '../standalone/dev-review-loop.js'
 import { engineContinuationArgv, readTaskRunner } from './task-run-engine.js'
 import { newestPublishedRound } from './task-status.js'
 import { widenSurfaceContinuationFor } from './task-run.js'
-import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '../../../../../kernel/run-paths.js'
+import { ensureRunDir, runPath, runtimeDirForThisRepo, tasksExecutionRoot } from '@harness/kernel/run-paths.js'
 import { taskFromEscalationId } from '../standalone/dev-review-loop/pause-resume.js'
-import { type CommandRecord, type RecordScope, writeCommand } from '../../../../../kernel/log/outside-log.js'
+import { type CommandRecord, type RecordScope, writeCommand } from '@harness/kernel/log/outside-log.js'
 import type { TaskToolCallResult } from './handlers.js'
 import { resolveIssueForRef } from './handlers.js'
 import { readEscalationPacket } from './read.js'
-import { programInvocation } from '../../../tools/programs.js'
-import type { CallerContext } from '../../../integration/server.js'
+import { programInvocation } from '@harness/workflow/tools/programs.js'
+import type { CallerContext } from '@harness/workflow/integration/server.js'
 
 function ok<T>(result: T): TaskToolCallResult<T> {
   return { ok: true, result }

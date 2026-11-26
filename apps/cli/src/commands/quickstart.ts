@@ -23,8 +23,8 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { hardenedMeteringDeps } from '../../../../harness/kernel/adapters/agents/claude-code/metering-io-guard'
-import { resolveMeteringCapability } from '../../../../harness/kernel/adapters/agents/claude-code/claude-code-transcript'
+import { hardenedMeteringDeps } from '@harness/kernel/adapters/agents/claude-code/metering-io-guard'
+import { resolveMeteringCapability } from '@harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import { runDemoBreak } from './demo.js'
 import type { DoctorDeps } from './doctor.js'
 import { probeLogDestinationServer, resolveLogDestinationForDoctor, runDoctor } from './doctor.js'
@@ -34,7 +34,7 @@ import {
   applyDocOwnersBinding,
   planDocOwnersBinding,
   renderDocOwnersBindingDiffLine
-} from '../../../../harness/processes/vinaya-strict/tools/doc-owners-write.js'
+} from '@harness/workflow/tools/doc-owners-write.js'
 import {
   branchProtectionConfigured,
   checkGhAuth,
@@ -46,9 +46,9 @@ import {
   resolveHookDir,
   type RepoInfo,
   setCoreHooksPath
-} from '../../../../harness/kernel/connectors/git/detect.js'
+} from '@harness/kernel/connectors/git/detect.js'
 import { packageRoot } from '../lib/package-root.js'
-import { closeStdin, prompt as promptAsk, promptYesNo } from '../../../../harness/kernel/effects/prompt.js'
+import { closeStdin, prompt as promptAsk, promptYesNo } from '@harness/kernel/effects/prompt.js'
 
 export type QuickstartDeps = {
   detectRepo: () => Promise<RepoInfo | null>
@@ -455,7 +455,7 @@ export async function quickstartCommand(args: string[]): Promise<void> {
   process.exit(await runQuickstart(args, realDeps()))
 }
 
-import type { SurfaceExemption } from '../../../../harness/processes/vinaya-strict/tools/pr-report/surface-exemption'
+import type { SurfaceExemption } from '@harness/workflow/tools/pr-report/surface-exemption'
 
 export const SURFACE_EXEMPTIONS: Record<string, SurfaceExemption> = {
   quickstart: { date: '2026-09-05', callsToday: 9, retiresVia: 'sharedCommandShell' }

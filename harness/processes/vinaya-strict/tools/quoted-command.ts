@@ -67,7 +67,7 @@
  * (or never did) contain it verbatim.
  */
 
-import { maskCode } from '../../../kernel/adapters/code-host/github/strip-code'
+import { maskCode } from '@harness/kernel/adapters/code-host/github/strip-code'
 import { classifyProseFile, type ProseFileClass } from './reader-resolvable-prose'
 import { DOCTRINE_TREE } from './doctrine/doctrine-map'
 import { anchorAlternation, QUOTES_FILE_ANCHORS } from './legacy-markers'

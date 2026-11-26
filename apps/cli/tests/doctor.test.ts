@@ -1,4 +1,4 @@
-import { installVinayaCheckRegistry } from '../../../harness/processes/vinaya-strict/checks/registry'
+import { installVinayaCheckRegistry } from '@harness/workflow/checks/registry'
 installVinayaCheckRegistry()
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { execFileSync } from 'node:child_process'
@@ -24,11 +24,11 @@ import {
   urlForDisplay,
   withoutCredentialValues
 } from '../src/commands/doctor.js'
-import type { VinayaConfig } from '../../../harness/processes/vinaya-strict/integration/config/compose.js'
+import type { VinayaConfig } from '@harness/workflow/integration/config/compose.js'
 import type { InitDeps } from '../src/commands/init.js'
 import { runInit } from '../src/commands/init.js'
-import { DOC_OWNERS_PATH } from '../../../harness/processes/vinaya-strict/tools/doc-owners'
-import { LEGACY_PACKAGES_FILE } from '../../../harness/processes/vinaya-strict/tools/legacy-paths'
+import { DOC_OWNERS_PATH } from '@harness/workflow/tools/doc-owners'
+import { LEGACY_PACKAGES_FILE } from '@harness/workflow/tools/legacy-paths'
 import {
   CHECKS_WORKFLOW_PATH,
   CLAUDE_POINTER_PATH,
@@ -38,24 +38,21 @@ import {
   GEMINI_SETTINGS_PATH,
   RETIRED_DOCTRINE_POINTER_PATH,
   REVIEW_WORKFLOW_PATH
-} from '../../../harness/processes/vinaya-strict/integration/artifacts.js'
-import { CLAUDE_COMMAND_PATH } from '../../../harness/processes/vinaya-strict/integration/claude-command-emitter.js'
+} from '@harness/workflow/integration/artifacts.js'
+import { CLAUDE_COMMAND_PATH } from '@harness/workflow/integration/claude-command-emitter.js'
 import {
   CLAUDE_SETTINGS_PATH,
   CLAUDE_STOP_HOOK_SCRIPT_PATH
-} from '../../../harness/processes/vinaya-strict/integration/claude-stop-hook-emitter.js'
-import { GEMINI_COMMAND_PATH } from '../../../harness/processes/vinaya-strict/integration/gemini-command-emitter.js'
-import type { LabelGateway } from '../../../harness/kernel/gates/ops.js'
-import {
-  freshProjectsRegistry,
-  PROJECTS_REGISTRY_PATH
-} from '../../../harness/processes/vinaya-strict/artifacts/registry-write.js'
+} from '@harness/workflow/integration/claude-stop-hook-emitter.js'
+import { GEMINI_COMMAND_PATH } from '@harness/workflow/integration/gemini-command-emitter.js'
+import type { LabelGateway } from '@harness/kernel/gates/ops.js'
+import { freshProjectsRegistry, PROJECTS_REGISTRY_PATH } from '@harness/workflow/artifacts/registry-write.js'
 import {
   claudeSandboxProbeArgs,
   type ConfinementPlatformDeps,
   LINUX_SANDBOX_ALLOW_UNIX_SOCKETS_ENV,
   SANDBOX_PROBE_MARKER
-} from '../../../harness/kernel/isolation/worker-boundary.js'
+} from '@harness/kernel/isolation/worker-boundary.js'
 
 let root: string
 

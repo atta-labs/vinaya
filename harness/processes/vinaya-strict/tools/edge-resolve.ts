@@ -20,7 +20,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { DispatchDependsOnFact } from './dispatch-gate'
-import { execErrorText } from '../../../kernel/adapters/code-host/github/github-rate-limit'
+import { execErrorText } from '@harness/kernel/adapters/code-host/github/github-rate-limit'
 import { deriveTrancheFromForge } from './task-contract/forge/derive-from-forge'
 import { fetchForgeFacts } from './task-contract/forge/fetch-forge-facts'
 import { splitSlugQualifiedEdge } from './task-contract/forge/parse-rationale-deps'

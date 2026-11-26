@@ -3,12 +3,12 @@ import {
   isTokenCollectionWiringBroken,
   resolveMeteringCapability,
   summarizeTranscript
-} from '../../../../../../kernel/adapters/agents/claude-code/claude-code-transcript'
+} from '@harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import type {
   MeteringCapability,
   MeteringCapabilityDeps
-} from '../../../../../../kernel/adapters/agents/claude-code/claude-code-transcript'
-import { formatTokensLine } from '../../../../tools/pr-report/tokens/report-tokens'
+} from '@harness/kernel/adapters/agents/claude-code/claude-code-transcript'
+import { formatTokensLine } from '@harness/workflow/tools/pr-report/tokens/report-tokens'
 
 function assistantLine(opts: {
   id: string

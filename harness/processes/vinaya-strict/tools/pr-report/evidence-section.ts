@@ -11,9 +11,9 @@
  * lookup, the marker prefix and the placeholder text, never the report engine.
  */
 
-import { anchoredRegionBounds } from '../../../../kernel/gates/checks/anchored-region'
-import { maskCode } from '../../../../kernel/adapters/code-host/github/strip-code'
-import { ScanContext } from '../../../../kernel/gates/checks/scan-context'
+import { anchoredRegionBounds } from '@harness/kernel/gates/checks/anchored-region'
+import { maskCode } from '@harness/kernel/adapters/code-host/github/strip-code'
+import { ScanContext } from '@harness/kernel/gates/checks/scan-context'
 import { EVIDENCE_PLACEHOLDER_TEXT } from '../../checks/evidence-fresh-logic'
 import { REGION_PREFIX_CURRENT, REGION_PREFIXES } from '../legacy-markers'
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { REGION_PREFIXES } from '../../../tools/legacy-markers'
+import { REGION_PREFIXES } from '@harness/workflow/tools/legacy-markers'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -12,21 +12,21 @@ import {
   type TestRunCache,
   type TestRunCacheRecord,
   testRunCacheKey
-} from '../../../tools/pr-report/pr-report-engine'
+} from '@harness/workflow/tools/pr-report/pr-report-engine'
 import {
   ADOPTER_TEST_RUNNER,
   nativeRunCommand,
   readyTestCommand
-} from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
-import { READY_TESTS_DEFERRED_RECORD, readyCiPlanCommand } from '../../../tools/pre-push-ready-policy'
-import { writeJsonUnderGit } from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
-import { checkBareDigits } from '../../../tools/body-bare-digits-logic'
-import { compareEvidenceBlock } from '../../../checks/evidence-fresh-logic'
-import { resolveAnchoredRegion, ScanContext } from '../../../../../kernel/gates/checks/scan-context'
-import { fixtureDir } from '../../../../../kernel/conformance/unit/test-temp-fixture'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
+import { READY_TESTS_DEFERRED_RECORD, readyCiPlanCommand } from '@harness/workflow/tools/pre-push-ready-policy'
+import { writeJsonUnderGit } from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
+import { checkBareDigits } from '@harness/workflow/tools/body-bare-digits-logic'
+import { compareEvidenceBlock } from '@harness/workflow/checks/evidence-fresh-logic'
+import { resolveAnchoredRegion, ScanContext } from '@harness/kernel/gates/checks/scan-context'
+import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { readyGateEvidence, runExplicitCommandsLive } from './flow-v2-live'
-import { prReportCommand } from '../../../tools/pr-report/bin/pr-report'
-import { useRuntimeDir } from '../../../tests/round-fakes'
+import { prReportCommand } from '@harness/workflow/tools/pr-report/bin/pr-report'
+import { useRuntimeDir } from '@harness/workflow/tests/round-fakes'
 import { explicitTestPlanCommands, readyTestPlanCommand, withReadyTestCommand } from './v2-actions'
 
 // The loop writes the ready push's own test command as the staged body's Test Plan line, so the Evidence write

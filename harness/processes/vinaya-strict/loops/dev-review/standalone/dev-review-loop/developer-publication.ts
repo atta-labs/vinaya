@@ -21,8 +21,8 @@ import {
   type BeyondSurfacePath,
   beyondSurfacePaths,
   type IssueSurface
-} from '../../../../tools/task-contract/issue-validation'
-import { COMMIT_TYPE_STYLE, COMMIT_TYPES } from '../../../../tools/task-contract/brief-validation'
+} from '@harness/workflow/tools/task-contract/issue-validation'
+import { COMMIT_TYPE_STYLE, COMMIT_TYPES } from '@harness/workflow/tools/task-contract/brief-validation'
 
 // --- commit-header validation (O2) ------------------------------------------
 

@@ -5,8 +5,8 @@ import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSyn
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { packageRoot } from '../src/lib/package-root'
-import { resolveAuthorRepoSourceEntry } from '../../../harness/processes/vinaya-strict/tools/self-host'
-import { spawnSyncBudgeted, stripVinayaEnv } from '../../../harness/kernel/conformance/unit/process-fixture'
+import { resolveAuthorRepoSourceEntry } from '@harness/workflow/tools/self-host'
+import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 describe('packageRoot', () => {
   let tmpDir: string

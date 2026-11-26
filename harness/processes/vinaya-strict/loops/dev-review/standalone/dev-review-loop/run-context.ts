@@ -1,8 +1,8 @@
 import type { PauseState } from './pause-resume.js'
 import type { readDriverLock, recoverLoopState } from './pause-resume.js'
-import type { ReconstructedJournal } from '../../../../tools/dev-review-policy/journal-reconstruction'
-import type { TurnWriteAttribution } from '../../../../../../kernel/isolation/worker-boundary.js'
-import type { RequiredSourceManifest } from '../../../../../../kernel/source-manifest.js'
+import type { ReconstructedJournal } from '@harness/workflow/tools/dev-review-policy/journal-reconstruction'
+import type { TurnWriteAttribution } from '@harness/kernel/isolation/worker-boundary.js'
+import type { RequiredSourceManifest } from '@harness/kernel/source-manifest.js'
 import type { DeveloperDispatchHistory } from './round-assess.js'
 import type { createDriverExitRecorder } from './driver-lifecycle.js'
 /**
@@ -16,20 +16,20 @@ import type {
   DevReviewLoopEventInput,
   LoopConfig,
   LoopState
-} from '../../../../tools/dev-review-policy/types'
+} from '@harness/workflow/tools/dev-review-policy/types'
 
-import type { ReviewInputManifest } from '../../../../tools/task-contract/review-input-manifest'
-import type { ReviewPolicy } from '../../../../tools/task-contract/review-policy'
-import type { RoundHeadIdentity } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
-import type { Role } from '../../../../../../kernel/log/schema'
+import type { ReviewInputManifest } from '@harness/workflow/tools/task-contract/review-input-manifest'
+import type { ReviewPolicy } from '@harness/workflow/tools/task-contract/review-policy'
+import type { RoundHeadIdentity } from '@harness/kernel/connectors/checkpoint/control-store/index'
+import type { Role } from '@harness/kernel/log/schema'
 import type { AgentVendor, DispatchEffort } from '../../dispatch/dispatch.js'
-import type { DeferredFindingEntry } from '../../../../tools/task-contract/forge/forge-write.js'
-import type { createVinayaLogSink } from '../../../../integration/log/log-sink-factory.js'
-import type { resolveRepo } from '../../../../../../kernel/adapters/code-host/github/resolve-repo'
+import type { DeferredFindingEntry } from '@harness/workflow/tools/task-contract/forge/forge-write.js'
+import type { createVinayaLogSink } from '@harness/workflow/integration/log/log-sink-factory.js'
+import type { resolveRepo } from '@harness/kernel/adapters/code-host/github/resolve-repo'
 
 import type { DeveloperHandoff } from './round-assess.js'
 import type { createLivePublicationState } from '../../actions/live-developer-context.js'
-import type { FailedCheckLog } from '../../../../../../kernel/tools/failed-check-log.js'
+import type { FailedCheckLog } from '@harness/kernel/tools/failed-check-log.js'
 
 import type { LoopDeps, LoopInput } from '../dev-review-loop.js'
 
@@ -57,7 +57,7 @@ export type LoopRunContext = {
   dispatchModel: string | undefined
   /** The reasoning effort every agent turn of this run is launched with: the one given, else the held one on a resume, else `medium`. */
   dispatchEffort: DispatchEffort
-  pauseBoundRuling: import('../../../../tools/task-contract/review-input-manifest').PauseBoundRuling | null
+  pauseBoundRuling: import('@harness/workflow/tools/task-contract/review-input-manifest').PauseBoundRuling | null
   log: ReturnType<typeof createVinayaLogSink>['log']
   runId: string
   loopLogPath: string

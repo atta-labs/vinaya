@@ -2,11 +2,15 @@ import { describe, expect, it } from 'bun:test'
 import { join, resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { parse } from 'yaml'
-import { loadProcess } from '../../../../../kernel/dev-process-socket/loader/load-process.js'
-import corpus from '../../../fixtures/dev-review-engine-scenarios.json'
-import { currentRunId, type LogSinkDeps, type ResolvedLogDestination } from '../../../../../kernel/log/log-sink.js'
-import { RUNTIME_DIR_ENV_KEY } from '../../../../../kernel/run-paths.js'
-import { type CorpusSink, storedEngineScenario, storedStandaloneScenario } from '../../../tests/engine-corpus-store.js'
+import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process.js'
+import corpus from '@harness/workflow/fixtures/dev-review-engine-scenarios.json'
+import { currentRunId, type LogSinkDeps, type ResolvedLogDestination } from '@harness/kernel/log/log-sink.js'
+import { RUNTIME_DIR_ENV_KEY } from '@harness/kernel/run-paths.js'
+import {
+  type CorpusSink,
+  storedEngineScenario,
+  storedStandaloneScenario
+} from '@harness/workflow/tests/engine-corpus-store.js'
 
 /** The shared sink, recording to the scenario's own Log folder whatever the machine's config names. */
 const recording = (env: NodeJS.ProcessEnv): ResolvedLogDestination => ({

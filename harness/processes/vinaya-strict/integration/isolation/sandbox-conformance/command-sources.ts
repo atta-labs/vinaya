@@ -27,9 +27,9 @@
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { type BriefFacts, parseRationaleFields, renderBrief } from '../../../tools/task-contract/brief-render'
-import { NO_GATE_CUTOVERS } from '../../../tools/task-contract/gate-cutovers'
-import { PROGRAMS } from '../../../tools/programs.js'
+import { type BriefFacts, parseRationaleFields, renderBrief } from '@harness/workflow/tools/task-contract/brief-render'
+import { NO_GATE_CUTOVERS } from '@harness/workflow/tools/task-contract/gate-cutovers'
+import { PROGRAMS } from '@harness/workflow/tools/programs.js'
 
 export const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..', '..')
 

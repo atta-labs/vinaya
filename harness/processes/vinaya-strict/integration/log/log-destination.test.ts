@@ -33,8 +33,8 @@ import {
   resolveLogDestinationFrom,
   type LogSinkDeps,
   type LogSinkOverrides
-} from '../../../../kernel/log/log-sink.js'
-import { spawnBudgetedAsync, stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture'
+} from '@harness/kernel/log/log-sink.js'
+import { spawnBudgetedAsync, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 
 const DEFAULT_FOLDER = '/h/runtime/atta-labs-vinaya/logs'
 

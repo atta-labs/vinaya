@@ -46,7 +46,7 @@ import {
   validateReport,
   validateTask,
   validateTrialSet
-} from '../../../../kernel/evals/contracts'
+} from '@harness/kernel/evals/contracts'
 import {
   BOOTSTRAP_METHODS,
   type BootstrapMethod,
@@ -55,11 +55,11 @@ import {
   successRate,
   suiteMean,
   tallyTask
-} from '../../../../kernel/evals/estimators'
-import { unwrapShell } from '../../../../kernel/adapters/agents/codex/loop-narration-codex'
-import { READ_ONLY_COMMANDS, READ_ONLY_FORBIDDEN } from '../../../../kernel/adapters/agents/manifest'
-import { stripVinayaEnv } from '../../../../kernel/conformance/unit/process-fixture'
-import { startDevToolsHost } from '../../../../kernel/tools/host/dev-tools-host'
+} from '@harness/kernel/evals/estimators'
+import { unwrapShell } from '@harness/kernel/adapters/agents/codex/loop-narration-codex'
+import { READ_ONLY_COMMANDS, READ_ONLY_FORBIDDEN } from '@harness/kernel/adapters/agents/manifest'
+import { stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
+import { startDevToolsHost } from '@harness/kernel/tools/host/dev-tools-host'
 import {
   CLAUDE_DEV_TOOLS_ENV,
   claudeDevToolName,
@@ -68,12 +68,12 @@ import {
   devToolsMcpConfigFileBody,
   devToolsSocketPath,
   driverDevBridgeInvocation
-} from '../../../../kernel/tools/dev-tools-registration'
-import { DEV_TOOLS_MCP_SERVER_NAME } from '../../../../kernel/tools/dev-tools-names'
-import { type DevToolContext, type DevToolRefusal, dispatchDevTool } from '../../../../kernel/tools/dev-tools-server'
-import { servedTools } from '../../../../kernel/tools/role-grants'
+} from '@harness/kernel/tools/dev-tools-registration'
+import { DEV_TOOLS_MCP_SERVER_NAME } from '@harness/kernel/tools/dev-tools-names'
+import { type DevToolContext, type DevToolRefusal, dispatchDevTool } from '@harness/kernel/tools/dev-tools-server'
+import { servedTools } from '@harness/kernel/tools/role-grants'
 import { type GrantedRole, ROLE_TOOL_GRANTS } from '../../integration/policies/roles'
-import { AGENT_TOOL_CATALOG } from '../../../../kernel/tools/tool-catalog'
+import { AGENT_TOOL_CATALOG } from '@harness/kernel/tools/tool-catalog'
 import { programFile } from '../../tools/programs'
 import { vinayaToolGrantPolicy } from '../../integration/policies/vinaya-policies'
 

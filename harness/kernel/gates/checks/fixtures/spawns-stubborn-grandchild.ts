@@ -11,7 +11,7 @@
 import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { identityOf } from '../../../conformance/unit/process-registry'
+import { identityOf } from '@harness/kernel/conformance/unit/process-registry'
 
 const pidFile = process.argv[2]
 const stubborn = join(import.meta.dir, 'stubborn-sleeper.ts')

@@ -11,7 +11,7 @@
  * human-facing "selected N of M" line to STDERR, so the hook's own
  * `$(...)` capture of STDOUT is never polluted by it.
  */
-import { globToRegex } from '../../../kernel/gates/glob-to-regex'
+import { globToRegex } from '@harness/kernel/gates/glob-to-regex'
 import { existsSync } from 'node:fs'
 import { loadConfig } from './config/compose.js'
 import {
@@ -26,9 +26,9 @@ import {
   SELECTION_NOTE,
   verificationInputsDirty,
   writeJsonUnderGit
-} from '../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests.js'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests.js'
 import { prePushSelection } from './pre-push-selection.js'
-import type { ReadFailure } from '../../../kernel/connectors/git/remote-base.js'
+import type { ReadFailure } from '@harness/kernel/connectors/git/remote-base.js'
 import { type SelectionResult, selectAffectedTestFiles } from './repository-verification.js'
 
 function main(): void {

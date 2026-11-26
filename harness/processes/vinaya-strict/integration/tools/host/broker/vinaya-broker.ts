@@ -1,12 +1,12 @@
-import type { ControlStoreDeps } from '../../../../../../kernel/connectors/checkpoint/control-store/index'
-import type { DispatchTeeRecoveryDeps } from '../../../../loops/dev-review/dispatch/dispatch'
-import { vinayaBrokerPolicies } from '../../../policies/vinaya-policies'
+import type { ControlStoreDeps } from '@harness/kernel/connectors/checkpoint/control-store/index'
+import type { DispatchTeeRecoveryDeps } from '@harness/workflow/loops/dev-review/dispatch/dispatch'
+import { vinayaBrokerPolicies } from '@harness/workflow/integration/policies/vinaya-policies'
 import {
   type BrokerEffectRequest,
   type BrokerRecords,
   createBroker,
   type InvocationContext
-} from '../../../../../../kernel/tools/host/broker'
+} from '@harness/kernel/tools/host/broker'
 
 /**
  * The broker the tests drive, built the way every production builder builds

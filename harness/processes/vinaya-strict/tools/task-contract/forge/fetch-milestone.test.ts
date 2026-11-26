@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it, mock } from 'bun:test'
 import { createGhMock } from '../../test-support/mock-gh'
 
-mock.module('../../../../../kernel/adapters/code-host/github/gh', () => createGhMock())
+mock.module('@harness/kernel/adapters/code-host/github/gh', () => createGhMock())
 
 const {
   ghApiGet,
@@ -13,7 +13,7 @@ const {
   ghIssueListByLabel,
   ghIssueListByLabelAsync,
   ghLabelIssueCountsAsync
-} = await import('../../../../../kernel/adapters/code-host/github/gh')
+} = await import('@harness/kernel/adapters/code-host/github/gh')
 const {
   findMilestoneForSlug,
   hasExplicitMilestoneFlag,

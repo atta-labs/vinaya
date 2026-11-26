@@ -27,7 +27,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import matter from 'gray-matter'
-import type { CreateFileOp } from '../../../kernel/gates/ops.js'
+import type { CreateFileOp } from '@harness/kernel/gates/ops.js'
 import type { VendoredVinaya } from '../tools/self-host.js'
 import { ROLE_ENTRIES, roleEntry } from '../tools/doctrine/doctrine-map'
 

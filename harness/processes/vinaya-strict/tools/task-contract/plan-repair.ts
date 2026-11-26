@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import type { CheckError } from '../../../../kernel/gates/checks/contract'
+import type { CheckError } from '@harness/kernel/gates/checks/contract'
 import { parseRationaleFields } from './brief-render'
 import {
   boundaryPinnedFiles,

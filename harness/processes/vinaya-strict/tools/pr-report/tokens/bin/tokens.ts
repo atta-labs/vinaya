@@ -1,17 +1,14 @@
-import { isEntryPoint } from '../../../../../../kernel/gates/checks/entry-point.js'
+import { isEntryPoint } from '@harness/kernel/gates/checks/entry-point.js'
 import { execFileSync } from 'node:child_process'
 import { resolve as resolvePath } from 'node:path'
 import { formatBreakdown, formatTokensLine } from '../report-tokens'
-import { hardenedMeteringDeps } from '../../../../../../kernel/adapters/agents/claude-code/metering-io-guard'
-import { resolveMeteringCapability } from '../../../../../../kernel/adapters/agents/claude-code/claude-code-transcript'
+import { hardenedMeteringDeps } from '@harness/kernel/adapters/agents/claude-code/metering-io-guard'
+import { resolveMeteringCapability } from '@harness/kernel/adapters/agents/claude-code/claude-code-transcript'
 import type {
   MeteringCapabilityDeps,
   MeteringIncapableReason
-} from '../../../../../../kernel/adapters/agents/claude-code/claude-code-transcript'
-import type {
-  TranscriptSummary,
-  UsageComponents
-} from '../../../../../../kernel/adapters/agents/claude-code/transcript-summary'
+} from '@harness/kernel/adapters/agents/claude-code/claude-code-transcript'
+import type { TranscriptSummary, UsageComponents } from '@harness/kernel/adapters/agents/claude-code/transcript-summary'
 import {
   getTokensCollectTrust,
   gitBlobHash,
@@ -20,8 +17,8 @@ import {
   parseTokensCollectDeclaration,
   repoLocalConfigDir,
   trustTokensCollectCommand
-} from '../../../../integration/config/compose.js'
-import type { TokensCollectTrustEntry, VinayaConfig } from '../../../../integration/config/compose.js'
+} from '@harness/workflow/integration/config/compose.js'
+import type { TokensCollectTrustEntry, VinayaConfig } from '@harness/workflow/integration/config/compose.js'
 
 /**
  * `vinaya tokens` — the portable front door over the token-report
@@ -497,7 +494,7 @@ export function tokensCommand(argv: string[]): void {
 
 // Run as a program (`vinaya-tokens`): started through the shared program entry.
 if (isEntryPoint(import.meta.url, 'tokens')) {
-  const { runProgram } = await import('../../../program-entry.js')
+  const { runProgram } = await import('@harness/workflow/tools/program-entry.js')
   await runProgram('tokens', async (argv: string[]) => {
     tokensCommand(argv)
   })

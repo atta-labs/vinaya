@@ -4,15 +4,12 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { printJson } from '../../../harness/kernel/effects/envelope.js'
-import { ensureGhOnPath } from '../../../harness/kernel/adapters/code-host/github/gh-path.js'
-import {
-  installServices,
-  registerOperationRecord
-} from '../../../harness/processes/vinaya-strict/integration/cli-services.js'
+import { printJson } from '@harness/kernel/effects/envelope.js'
+import { ensureGhOnPath } from '@harness/kernel/adapters/code-host/github/gh-path.js'
+import { installServices, registerOperationRecord } from '@harness/workflow/integration/cli-services.js'
 import { printGroupHelp, printHelp } from './lib/output.js'
 import { packageRoot } from './lib/package-root.js'
-import { resolveAuthorRepoSourceEntry } from '../../../harness/processes/vinaya-strict/tools/self-host.js'
+import { resolveAuthorRepoSourceEntry } from '@harness/workflow/tools/self-host.js'
 
 // Each command's module loads only when that command runs, so a run, and a test that runs one command, reads
 // no other command's code.

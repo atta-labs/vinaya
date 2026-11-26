@@ -1,4 +1,4 @@
-import type { DevReviewLoopEventInput } from '../../../tools/dev-review-policy/types'
+import type { DevReviewLoopEventInput } from '@harness/workflow/tools/dev-review-policy/types'
 import { spawn, spawnSync } from 'node:child_process'
 import {
   accessSync,
@@ -14,10 +14,10 @@ import {
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 
-import { type DevToolContext, devToolError } from '../../../../../kernel/tools/dev-tools-server'
-import type { ReviewInputManifest } from '../../../tools/task-contract/review-input-manifest'
-import { briefHash } from '../../../tools/task-contract/review-input-manifest'
-import { repairPlan, repairPreservesScope } from '../../../tools/task-contract/plan-repair'
+import { type DevToolContext, devToolError } from '@harness/kernel/tools/dev-tools-server'
+import type { ReviewInputManifest } from '@harness/workflow/tools/task-contract/review-input-manifest'
+import { briefHash } from '@harness/workflow/tools/task-contract/review-input-manifest'
+import { repairPlan, repairPreservesScope } from '@harness/workflow/tools/task-contract/plan-repair'
 
 export type ToolPlanRepair = {
   tool: 'repair_plan'
@@ -153,23 +153,20 @@ import {
   removeUnderGit,
   SELECTION_NOTE,
   type SelectionNote
-} from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-failed-tests'
 import {
   containmentLogLine,
   identityOf,
   registerProcess,
   selectContainmentBackend,
   stopRegistered
-} from '../../../../../kernel/conformance/unit/process-registry'
+} from '@harness/kernel/conformance/unit/process-registry'
 import {
   ADOPTER_TEST_RUNNER,
   NO_LOCAL_TESTS_MARKER,
   REPOSITORY_LOCAL_RUN
-} from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
-import {
-  PUSH_MODE_MARKER,
-  storageMarkerText
-} from '../../../../../kernel/gates/ring0-hooks/pre-push/pre-push-mode-logic'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-test-runner'
+import { PUSH_MODE_MARKER, storageMarkerText } from '@harness/kernel/gates/ring0-hooks/pre-push/pre-push-mode-logic'
 import {
   DEFERRAL_MARKER_TTL_MS,
   deferralMarkerText,
@@ -177,10 +174,10 @@ import {
   readDeferredTestsRecord,
   type ReadyTestsPolicy,
   type RequiredCiPolicy
-} from '../../../tools/pre-push-ready-policy'
-import { createTestTempRun, removeTestTempRun, sweepAbandoned } from '../../../../../kernel/conformance/unit/test-temp'
-import { appendLoopLogLine, loopLogPathFor } from '../../../../../kernel/log/client/loop-log'
-import { programFile, progressObserverEntry } from '../../../tools/programs'
+} from '@harness/workflow/tools/pre-push-ready-policy'
+import { createTestTempRun, removeTestTempRun, sweepAbandoned } from '@harness/kernel/conformance/unit/test-temp'
+import { appendLoopLogLine, loopLogPathFor } from '@harness/kernel/log/client/loop-log'
+import { programFile, progressObserverEntry } from '@harness/workflow/tools/programs'
 import {
   appendProgressBytes,
   appendProgressRecord,
@@ -194,8 +191,8 @@ import {
   type ProgressRecord,
   scheduledFileNamed,
   type TestGroupStart
-} from '../../../../../kernel/gates/ring0-hooks/pre-push/push-progress'
-import { isPlainDirectory } from '../../../executing/actions'
+} from '@harness/kernel/gates/ring0-hooks/pre-push/push-progress'
+import { isPlainDirectory } from '@harness/workflow/executing/actions'
 import {
   agentCommandEnv,
   agentCommandText,
@@ -213,10 +210,10 @@ import {
   resolveCommandTimeoutMs,
   type TestRunCache,
   truncateAgentOutput
-} from '../../../tools/pr-report/pr-report-engine'
+} from '@harness/workflow/tools/pr-report/pr-report-engine'
 import { defaultReadDefaultBranchTip } from '../standalone/dev-review-loop'
 import { readPostedReviewVerdicts } from '../review-gate-input'
-import { detectVendoredVinaya } from '../../../tools/self-host'
+import { detectVendoredVinaya } from '@harness/workflow/tools/self-host'
 import {
   type ExplicitCommandsResult,
   explicitTestPlanCommands,
@@ -234,7 +231,7 @@ import { readRequiredCiLive } from './ci-recovery'
 import { CONTROL_FD, parseSupervisedCommandResult, RESULT_FD } from './supervised-command'
 import { carriedPass, carryKey } from './test-plan-carry'
 import { acquireRoundTestLock, type RoundTestLockOptions } from './round-test-lock'
-import { runtimeDirForThisRepo } from '../../../../../kernel/run-paths'
+import { runtimeDirForThisRepo } from '@harness/kernel/run-paths'
 import { extractFailureExcerpt } from '../run-control/pr-facts'
 
 // The live wiring of review locally, push once (version 2 of the developer-review Flow) for the Engine runner: the

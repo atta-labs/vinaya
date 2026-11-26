@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { AgentVendor } from '../../../kernel/adapters/agents/agent-vendors.js'
+import type { AgentVendor } from '@harness/kernel/adapters/agents/agent-vendors.js'
 import { buildInitOps } from './artifacts.js'
 
 // The self-hosted pre-push hook stops after the Vinaya checks on a tag-only push of already-pushed commits; the

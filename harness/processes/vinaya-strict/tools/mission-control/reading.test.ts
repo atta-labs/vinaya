@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { narrate } from '../../../../kernel/log/client/narration'
-import { buildExecution, EXECUTION_NAMES, type ExecutionName } from '../../../../kernel/log/fixtures/executions'
-import { normalizeStoredLine } from '../../../../kernel/log/sync/normalize'
+import { narrate } from '@harness/kernel/log/client/narration'
+import { buildExecution, EXECUTION_NAMES, type ExecutionName } from '@harness/kernel/log/fixtures/executions'
+import { normalizeStoredLine } from '@harness/kernel/log/sync/normalize'
 import {
   AMBER_AFTER_MS,
   emptyPicture,
@@ -660,8 +660,8 @@ describe('the reading is bundlable', () => {
       const specifiers = [...source.matchAll(/^import\s[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1])
       for (const specifier of specifiers) {
         expect([
-          '../../../../kernel/log/client/narration',
-          '../../../../kernel/log/sync/row',
+          '@harness/kernel/log/client/narration',
+          '@harness/kernel/log/sync/row',
           '../../integration/log/log-roles',
           './picture'
         ]).toContain(specifier as string)

@@ -34,7 +34,7 @@ import { briefHash } from './review-input-manifest'
 import { isPrincipal } from './waiver-label'
 import { boundaryPinnedFiles, parseIssueSurface } from './issue-validation'
 import { parseRationaleFields } from './brief-render'
-import { decideIssueAssignment } from '../../../../kernel/adapters/tracker/github-issues/issue-assignment'
+import { decideIssueAssignment } from '@harness/kernel/adapters/tracker/github-issues/issue-assignment'
 import {
   dispatchRole,
   isAgentClass,
@@ -56,9 +56,9 @@ import {
   waitForDependencies,
   type DependencyWaitClock
 } from './plan-repair'
-import type { CheckError } from '../../../../kernel/gates/checks/contract'
-import { isForgeReadOversize, readIssueComments } from '../../../../kernel/adapters/code-host/github/forge-read.js'
-import { emitCheckError } from '../../../../kernel/gates/checks/contract'
+import type { CheckError } from '@harness/kernel/gates/checks/contract'
+import { isForgeReadOversize, readIssueComments } from '@harness/kernel/adapters/code-host/github/forge-read.js'
+import { emitCheckError } from '@harness/kernel/gates/checks/contract'
 
 export { FROZEN_BRIEF_V1_MARKER, contentAfterTwoLines } from './brief-validation'
 export { briefHash } from './review-input-manifest'
