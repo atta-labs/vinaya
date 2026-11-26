@@ -534,11 +534,11 @@ type Renames = {
 }
 
 /**
- * New path → old path, and old path → new path, between the base and HEAD: git's rename detection, then a base file
+ * New path → old path, and old path → new path, between the base and HEAD: git's rename detection, then optionally a base file
  * the change deletes paired with a head file it adds under the same file name when each is the only one of that name
  * (a move that rewrote too much of the file for git to see it as the same file).
  */
-export function renames(root: string, base: string): Renames {
+export function renames(root: string, base: string, { sameNameFallback = true } = {}): Renames {
   const from = new Map<string, string>()
   const to = new Map<string, string>()
   const added = new Set<string>()
@@ -561,6 +561,8 @@ export function renames(root: string, base: string): Renames {
       touched.add(old)
     } else if (status === 'M') touched.add(old)
   }
+  if (!sameNameFallback) return { from, to, added, touched }
+
   const named = (paths: Set<string>): Map<string, string[]> => {
     const byName = new Map<string, string[]>()
     for (const path of paths)

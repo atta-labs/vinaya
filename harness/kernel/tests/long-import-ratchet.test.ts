@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { git, REPOSITORY_ROOT } from './architecture-ratchet.js'
@@ -8,7 +17,8 @@ import {
   compareLongImportsToBase,
   listLongImports,
   LONG_IMPORT_BASELINE,
-  WRITE_COMMAND
+  WRITE_COMMAND,
+  writeLongImportBaseline
 } from './long-import-ratchet.js'
 
 test('the committed long import baseline matches the tracked tree', () => {
@@ -19,6 +29,7 @@ describe('long import ratchet', () => {
   const file = 'src/deep/folder/example.ts'
   const specifier = '../../../target.js'
   const longImport = `import '${specifier}'`
+  const importAssignment = `import target = require('${specifier}')`
   let root: string
 
   function write(path: string, source: string): void {
@@ -65,6 +76,7 @@ describe('long import ratchet', () => {
 
   test.each([
     ['static import', longImport],
+    ['external import assignment', importAssignment],
     ['re-export', `export * from '${specifier}'`],
     ['dynamic import', `import('${specifier}')`],
     ['require call', `require('${specifier}')`],
@@ -110,6 +122,28 @@ describe('long import ratchet', () => {
     expect(checkLongImportBaseline(root)[0]).toContain(WRITE_COMMAND)
   })
 
+  test('refuses an explicit zero in a new baseline entry', () => {
+    const base = git(root, ['rev-parse', 'HEAD']).trim()
+    baseline({ [file]: 0 })
+    commit('add an explicit zero')
+    expect(() => checkLongImportBaseline(root)).toThrow('positive integer counts')
+    expect(() => compareLongImportsToBase(root, base)).toThrow(WRITE_COMMAND)
+  })
+
+  test('replaces a baseline symlink without writing to its target', () => {
+    write(file, longImport)
+    const target = join(root, 'keep.txt')
+    const destination = join(root, LONG_IMPORT_BASELINE)
+    writeFileSync(target, 'keep this file')
+    rmSync(destination)
+    symlinkSync(target, destination)
+
+    expect(writeLongImportBaseline(root)).toEqual({ [file]: 1 })
+    expect(lstatSync(destination).isFile()).toBe(true)
+    expect(readFileSync(target, 'utf8')).toBe('keep this file')
+    expect(checkLongImportBaseline(root)).toEqual([])
+  })
+
   test('passes with a notice when the base has no baseline', () => {
     rmSync(join(root, LONG_IMPORT_BASELINE))
     const base = commit('before the ratchet')
@@ -122,7 +156,7 @@ describe('long import ratchet', () => {
 
   test.each([false, true])('refuses source growth with the head baseline updated = %s', (updateBaseline) => {
     const base = git(root, ['rev-parse', 'HEAD']).trim()
-    write(file, longImport)
+    write(file, importAssignment)
     if (updateBaseline) baseline({ [file]: 1 })
     commit('introduce a long import')
     expect(compareLongImportsToBase(root, base).failures).toContainEqual(expect.stringContaining('its base entry (0)'))
@@ -151,10 +185,26 @@ describe('long import ratchet', () => {
     expect(compareLongImportsToBase(root, base).failures).toEqual([])
   })
 
+  test('refuses a new file that only shares the basename of a deleted file', () => {
+    write(file, `${longImport}\nexport const previous = ['original data', 'more original data']`)
+    baseline({ [file]: 1 })
+    const base = commit('record the original file')
+    const replacement = 'src/replacement/folder/example.ts'
+    rmSync(join(root, file))
+    write(replacement, "export * from '../../../unrelated.js'\nexport function replacement() { return 42 }")
+    baseline({ [replacement]: 1 })
+    commit('replace the original file')
+
+    expect(checkLongImportBaseline(root)).toEqual([])
+    expect(compareLongImportsToBase(root, base).failures).toEqual([
+      expect.stringContaining(`${replacement}: 1 long imports exceed its base entry (0)`)
+    ])
+  })
+
   test('lists each occurrence in path and source order with its resolved repository path', () => {
     write('target.ts', 'export {}')
     write('other.tsx', 'export {}')
-    write(file, `${longImport}\nexport * from '../../../other.js'\n${longImport}`)
+    write(file, `${longImport}\nexport * from '../../../other.js'\n${importAssignment}`)
     const earlier = 'src/deep/folder/earlier.ts'
     write(earlier, longImport)
     const outside = 'different/deep/folder/example.ts'

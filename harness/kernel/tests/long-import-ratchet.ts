@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { join, posix, relative, sep } from 'node:path'
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, posix, relative, sep } from 'node:path'
 import ts from 'typescript'
 import {
   type Baseline,
@@ -20,6 +20,9 @@ const REPLACEMENT =
 
 function moduleSpecifier(node: ts.Node): ts.Node | undefined {
   if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return node.moduleSpecifier
+  if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+    return node.moduleReference.expression
+  }
   if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) return node.argument.literal
   if (ts.isModuleDeclaration(node)) return node.name
   if (ts.isCallExpression(node)) {
@@ -72,16 +75,31 @@ function countTree(root: string): Baseline {
   return Object.fromEntries(Array.from(scan(root), ([file, specifiers]) => [file, specifiers.length]))
 }
 
+export function writeLongImportBaseline(root: string): Baseline {
+  const counts = countTree(root)
+  const destination = join(root, LONG_IMPORT_BASELINE)
+  const scratch = mkdtempSync(join(dirname(destination), '.long-import-baseline-'))
+  try {
+    const temporary = join(scratch, 'baseline.json')
+    writeFileSync(temporary, serializeBaseline(counts))
+    // Rename replaces the destination directory entry itself, even if it is a symlink.
+    renameSync(temporary, destination)
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+  }
+  return counts
+}
+
 function parseBaseline(text: string): Baseline {
   const baseline = JSON.parse(text) as Baseline
   if (
     !baseline ||
     typeof baseline !== 'object' ||
     Array.isArray(baseline) ||
-    Object.values(baseline).some((count) => !Number.isSafeInteger(count) || count < 0)
+    Object.values(baseline).some((count) => !Number.isSafeInteger(count) || count <= 0)
   ) {
     throw new Error(
-      `${LONG_IMPORT_BASELINE} must map file paths to nonnegative integer counts. Regenerate it with \`${WRITE_COMMAND}\`.`
+      `${LONG_IMPORT_BASELINE} must map file paths to positive integer counts. Regenerate it with \`${WRITE_COMMAND}\`.`
     )
   }
   return baseline
@@ -121,7 +139,7 @@ export function compareLongImportsToBase(root: string, base: string): { notice: 
   const baseBaseline = parseBaseline(text)
   const counts = countTree(root)
   const failures = compareWithBaseline(counts, readBaseline(root))
-  const { from } = renames(root, base)
+  const { from } = renames(root, base, { sameNameFallback: false })
   for (const [file, count] of Object.entries(counts)) {
     const baseFile = from.get(file) ?? file
     const entry = baseBaseline[baseFile] ?? 0
@@ -157,8 +175,7 @@ export function listLongImports(root: string, folders: string[] = []): string[] 
 function main(argv: string[]): number {
   const [command, ...folders] = argv
   if (command === '--write' && folders.length === 0) {
-    const counts = countTree(REPOSITORY_ROOT)
-    writeFileSync(join(REPOSITORY_ROOT, LONG_IMPORT_BASELINE), serializeBaseline(counts))
+    const counts = writeLongImportBaseline(REPOSITORY_ROOT)
     process.stdout.write(
       `long import ratchet: wrote ${total(counts)} long imports across ${Object.keys(counts).length} files.\n`
     )
