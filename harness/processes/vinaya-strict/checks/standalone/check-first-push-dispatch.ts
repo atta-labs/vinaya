@@ -32,8 +32,11 @@
  *      `resolveRepo()`/`resolveGithubToken()` both fail — e.g. no git
  *      remote and no token anywhere) is still checked as a backstop.
  *
- * A single flaky call to one specific `gh issue view`/`gh pr list` (rather
- * than total auth/reachability failure) remains a known, pre-existing
+ * A flaky `gh issue view` of the task's Issue is retried inside
+ * `verify-dispatch.ts` (a connection failure is tried again after 10, 30 and
+ * 60 seconds; a read that still fails blocks as `issue-read-failed`, never as
+ * a missing Issue). A single flaky `gh pr list` (rather than total
+ * auth/reachability failure) remains a known, pre-existing
  * limitation of `verify-dispatch.ts` itself (its `sh()` helper's silent
  * swallow, documented in that file) and is out of this task's surface to
  * fix — see `roles/developer.md` §4 "Out of surface".
