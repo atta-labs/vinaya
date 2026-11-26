@@ -6,6 +6,8 @@ import { projectsFromBody } from './forge/list-tasks'
 import { COMMENT_MARKER_PREFIX, REGION_PREFIX } from '../legacy-markers'
 import { escapeForPattern } from '../legacy-paths'
 import { describe, expect, it } from 'vitest'
+import { frozenSectionChangeOutcome, objectivesVersionMarkerPrefixes } from './forge/forge-write'
+import { objectivesOf, objectivesVersion } from './objectives'
 import { fenceShapes } from '../../tests/fixtures/fence-shapes'
 import {
   boundaryPinnedFiles,
@@ -63,6 +65,7 @@ import {
   declaredProjects,
   DOCUMENTATION_SINCE_ISSUE,
   frozenSectionsChanged,
+  objectivesEditCommentRefusal,
   globCoversPath,
   isTaskIssueBodyShaped,
   isTaskIssueLabelSet,
@@ -1324,6 +1327,113 @@ describe('frozenSectionsChanged (task-run-v1 11, review round 1, O3)', () => {
         '- https://example.com/a — the mechanism it governs\n'
     )
     expect(frozenSectionsChanged(withTwoSources, reordered)).toEqual(['Documentation'])
+  })
+})
+
+describe('objectivesEditCommentRefusal — Objectives stay tied to the newest objectives-edit comment', () => {
+  const PRINCIPALS = ['a-principal']
+  const prefixes = objectivesVersionMarkerPrefixes()
+  const surface = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n'
+  const bodyWith = (objective: string, extra = '') => `## Objectives\n\nO1. ${objective}\n\n${surface}${extra}`
+  const oldBody = bodyWith('Do the thing.')
+  const versionOf = (body: string) => {
+    const parsed = objectivesOf(body)
+    if (!parsed.ok) throw new Error('fixture does not parse')
+    return objectivesVersion(parsed.objectives)
+  }
+  const editComment = (version: string, author: string | null = 'a-principal', marker = prefixes[0] as string) => ({
+    body: `${marker}1 -->\nPrevious:\n- O1. x\n\nNow:\n- O1. y\n\nReason: because\nVersion: ${version}`,
+    author
+  })
+  const refusal = (newBody: string, comments: ReturnType<typeof editComment>[], old = oldBody) =>
+    objectivesEditCommentRefusal(old, newBody, comments, PRINCIPALS, prefixes)
+
+  it('refuses a changed `## Objectives` when a principal objectives-edit comment exists, naming task_objectives_edit', () => {
+    const out = refusal(bodyWith('Do another thing.'), [editComment(versionOf(oldBody))])
+    expect(out).toContain('task_objectives_edit')
+  })
+
+  it('recognises every marker spelling', () => {
+    for (const prefix of prefixes) {
+      expect(
+        refusal(bodyWith('Do another thing.'), [editComment(versionOf(oldBody), 'a-principal', prefix)])
+      ).not.toBeNull()
+    }
+  })
+
+  it('accepts the edit when there is no objectives-edit comment', () => {
+    expect(refusal(bodyWith('Do another thing.'), [])).toBeNull()
+  })
+
+  it('accepts the edit when the comment was written by a non-principal', () => {
+    expect(refusal(bodyWith('Do another thing.'), [editComment(versionOf(oldBody), 'someone-else')])).toBeNull()
+    expect(refusal(bodyWith('Do another thing.'), [editComment(versionOf(oldBody), null)])).toBeNull()
+  })
+
+  it('accepts an unchanged `## Objectives` whatever the comments', () => {
+    expect(refusal(oldBody.replace('apps/cli/src/lib', 'apps/cli/src/lib, packages/x'), [editComment('v')])).toBeNull()
+  })
+
+  it("accepts a body whose `## Objectives` match the newest edit comment's recorded version", () => {
+    const target = bodyWith('Do another thing.')
+    const comments = [editComment(versionOf(oldBody)), editComment(versionOf(target))]
+    expect(refusal(target, comments)).toBeNull()
+  })
+
+  it('judges against the newest comment, not an older one', () => {
+    const target = bodyWith('Do another thing.')
+    expect(refusal(target, [editComment(versionOf(target)), editComment(versionOf(oldBody))])).not.toBeNull()
+  })
+
+  it("accepts an edit whose current body's `## Objectives` does not parse", () => {
+    const broken = '## Objectives\n\nnot an objective line\n\n' + surface
+    expect(refusal(bodyWith('Do another thing.'), [editComment('v')], broken)).toBeNull()
+  })
+
+  it('leaves a `## Surface` change before freeze accepted', () => {
+    expect(
+      refusal(oldBody.replace('apps/cli/src/lib', 'packages/core/src'), [editComment(versionOf(oldBody))])
+    ).toBeNull()
+  })
+})
+
+describe('frozenSectionChangeOutcome — the forge-reading wrapper', () => {
+  const surface = '## Surface\n\nin: apps/cli/src/lib\nout: apps/cli/src/commands\n'
+  const oldBody = `## Objectives\n\nO1. Do the thing.\n\n${surface}`
+  const newBody = `## Objectives\n\nO1. Do another thing.\n\n${surface}`
+  const marker = `${objectivesVersionMarkerPrefixes()[0]}1 -->`
+  const editComment = {
+    body: `${marker}\nReason: r\nVersion: abc`,
+    url: 'https://example.test/c/1',
+    author: 'a-principal'
+  }
+  const allowlist = () => ['a-principal']
+  const outcome = (comments: { body: string; url: string; author: string | null }[], skip = false) =>
+    frozenSectionChangeOutcome('7', newBody, 'retry', skip, () => ({ body: oldBody, comments }), allowlist)
+
+  it('refuses a changed `## Objectives` with a principal edit comment and no frozen brief', () => {
+    const errors = outcome([editComment])
+    expect(errors).toHaveLength(1)
+    expect(errors[0]?.message).toContain('task_objectives_edit')
+    expect(errors[0]?.check).not.toBe('issue-frozen-brief')
+  })
+
+  it('accepts the same edit with no edit comment', () => {
+    expect(outcome([])).toEqual([])
+  })
+
+  it('accepts the edit when the check is skipped (the objectives edit itself)', () => {
+    expect(outcome([editComment], true)).toEqual([])
+  })
+
+  it("returns the frozen-brief refusal's existing text once a brief is frozen", () => {
+    const frozen = { body: '<!-- vinaya:brief:v1 -->\nbrief', url: 'https://example.test/c/2', author: 'a-principal' }
+    const errors = outcome([editComment, frozen])
+    expect(errors).toHaveLength(1)
+    expect(errors[0]?.check).toBe('issue-frozen-brief')
+    expect(errors[0]?.message).toBe(
+      "This task Issue's brief is already frozen — the frozen comment is at https://example.test/c/2. This edit changes `## Objectives`, which is locked once frozen. Use `task_objectives_edit` for an Objectives change; `## Surface`/`## Parts`/`## Documentation` have no self-serve edit path once frozen — escalate to the Planner to supersede the frozen brief."
+    )
   })
 })
 
