@@ -49,7 +49,7 @@ The GenAI conventions version the SDK stamps on its records is:
 | `log.agent.returned` | the agent span ends | What came out (change opened, round pushed, verdict, escalation, plan, done), attempt, `gen_ai.response.model` |
 | `log.agent.failed` | the agent span ends with `error.type` | Timeout, crash, refused, wrote outside its place, usage limit with reset time |
 | `log.agent.confidenceStated` | event `vinaya.agent.confidence_stated` | Confidence 0–100 or not given, its reason, after an extra turn |
-| `log.usage.recorded` | on the agent span | `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`; cost when known, exact or estimated; or why unknown. The one place for tokens |
+| `log.usage.recorded` | on the agent span | `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`; cost when known, exact or estimated; or why unknown. The one place for tokens. With tokens and no cost, `vinaya.usage.cost_unknown_reason` says why the cost is unknown; a cost never rides with it, and the reason for unknown usage (`vinaya.usage.unknown_reason`) still drops every figure |
 | `log.review.verdicts` | event `vinaya.review.verdicts` | Each seat's verdict, blocking count, each finding (identity, severity, place, blocking or not) |
 | `log.review.findingsCompared` | event `vinaya.review.findings_compared` | Findings open, resolved, new, recurring |
 | `log.checks.ran` | span `vinaya.checks {where}` | Where (hook, local, push, CI); ran, passed, failed, skipped, which failed |

@@ -150,7 +150,8 @@ const usageKeys = [
   A.usageCacheReadInputTokens,
   A.usageCost,
   A.usageCostKind,
-  A.usageUnknownReason
+  A.usageUnknownReason,
+  A.usageCostUnknownReason
 ]
 
 function endTimeOf(value: unknown): TimeInput {
