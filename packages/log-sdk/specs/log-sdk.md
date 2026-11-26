@@ -136,7 +136,7 @@ A line is set aside, with a rejected receipt and an entry in `setAside` (not in 
 <!-- VINAYA:CLAIM: packages/log-sdk/src/contract/custom.ts contains:export const CUSTOM_TEXT_MAX_LENGTH = 500 -->
 
 - **Every record is checked again** against the contract before it is sent and when it is read (§ 4, § 6).
-- **Redaction runs before writing, sending and reading.** It replaces recognized secrets and shortens a whole home directory to `~` at the start of a string or after whitespace, a quote, `=`, `:` or `(`. It ignores trailing separators in the configured home and recognizes colon-separated path lists. With home `/home/al`, `file=/home/al/work` becomes `file=~/work` and `PATH=/home/al:/usr/bin` becomes `PATH=~:/usr/bin`. A prefix-sharing path such as `file="/home/al ice/work"` stays intact because the space belongs to the quoted directory name.
+- **Redaction runs before writing, sending and reading.** It replaces recognized secrets and shortens a whole home directory to `~` at the start of a string or after whitespace, a quote, `=`, `:` or `(`. It ignores trailing separators in the configured home and recognizes colon-separated path lists. With home `/home/al`, `file=/home/al/work` becomes `file=~/work` and `PATH=/home/al:/usr/bin` becomes `PATH=~:/usr/bin`. A path that only shares a prefix with the home directory stays intact: `/home/alice/work` and `/home/al-backup` are not changed. Inside quotes, whitespace belongs to the name, so `file="/home/al ice/work"` stays intact; an unquoted `/home/al ice` is shortened to `~ ice`, because whitespace ends a bare path.
 
 <!-- VINAYA:CLAIM: packages/log-sdk/src/contract/redact.ts contains:out = out.replace(new RegExp(bare + '|' + quoted, 'g'), '$1$2~') -->
 

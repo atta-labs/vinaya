@@ -1,6 +1,12 @@
 /**
  * Redacts secrets and the caller's home directory before a value is written,
- * sent or read. Self-contained so the sender's large-line worker can run it.
+ * sent or read. Pure: `home` is passed in, never read here (the purity
+ * boundary, `apps/cli/specs/surface.md` "The rule" — no `os.homedir()` in
+ * this module).
+ *
+ * Every pattern is written inline inside `redact` on purpose: the sender
+ * embeds this function's source (`toString`) in its large-line worker, so the
+ * function must not reference any module-level binding.
  *
  * Walks every string leaf of `value` (objects and arrays recursively;
  * everything else returned as-is) and, in order, rewrites:
