@@ -493,37 +493,42 @@ describe('prepareTask (O1, task-run-v1 task 1)', () => {
     expect(existingCheckCalled).toBe(false)
   })
 
-  it('a supersede renders once and refuses at once on an unmerged dependency, never waiting', async () => {
+  it('a supersede renders as a preview, so an unmerged dependency never refuses or delays the new brief', async () => {
     let now = 0
-    let renders = 0
-    await expect(
-      prepareTask(
-        { tranche: 'task-run-v1', n: 1, supersede: { reason: 'objectives reworded' } },
-        preparePostingDeps({
-          dependencyClock: {
-            now: () => now,
-            sleep: async (ms) => {
-              now += ms
-            }
-          },
-          assembleAndRenderBrief: async () => {
-            renders++
-            return {
-              ok: false,
-              missing: ['dispatch-gate depends-on: task 1 depends on #999, whose PR is not merged yet.'],
-              dispatchBlockerDetails: [
-                {
-                  class: 'depends-on-not-merged',
-                  message: 'dispatch-gate depends-on: task 1 depends on #999, whose PR is not merged yet.'
-                }
-              ]
-            }
+    const previews: boolean[] = []
+    let posted = false
+    const result = await prepareTask(
+      { tranche: 'task-run-v1', n: 1, supersede: { reason: 'objectives reworded' } },
+      preparePostingDeps({
+        dependencyClock: {
+          now: () => now,
+          sleep: async (ms) => {
+            now += ms
           }
-        })
-      )
-    ).rejects.toThrow(/depends on #999/)
+        },
+        assembleAndRenderBrief: async (_tranche, _id, _globs, _body, opts) => {
+          previews.push(opts?.preview === true)
+          const message = 'dispatch-gate depends-on: task 1 depends on #999, whose PR is not merged yet.'
+          return opts?.preview === true
+            ? { ok: true, brief: BRIEF_TEXT, issue: 427, waiting: [message] }
+            : { ok: false, missing: [message], dispatchBlockerDetails: [{ class: 'depends-on-not-merged', message }] }
+        },
+        findExistingFrozenBrief: () => ({
+          body: '<!-- vinaya:brief:v1 -->\nBrief hash: abc\nold brief',
+          url: 'https://github.com/acme/widget/issues/427#issuecomment-1',
+          author: 'a-principal',
+          version: 1
+        }),
+        postMarkedComment: () => {
+          posted = true
+          return 'https://github.com/acme/widget/issues/427#issuecomment-2'
+        }
+      })
+    )
+    expect(result.version).toBe(2)
+    expect(posted).toBe(true)
+    expect(previews).toEqual([true])
     expect(now).toBe(0)
-    expect(renders).toBe(1)
   })
 
   it('refuses when a frozen brief already exists, naming the existing comment url — nothing posted', async () => {

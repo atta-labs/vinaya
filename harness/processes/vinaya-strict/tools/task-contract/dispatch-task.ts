@@ -747,11 +747,16 @@ export async function prepareTask(
       ? (issue: number, body: string, labels: string[]) => deps.repairIssue!(issue, body, labels, retryCommand)
       : undefined
   const result = await waitForDependencies(
-    () => deps.assembleAndRenderBrief(tranche, String(n), undefined, undefined, { beforeIssueRender }),
+    () =>
+      deps.assembleAndRenderBrief(tranche, String(n), undefined, undefined, {
+        beforeIssueRender,
+        ...(supersede ? { preview: true } : {})
+      }),
     (r) =>
       // A supersede (an objectives or Surface edit on a task already in flight)
-      // renders once: it never waits on a dependency, which only gates a first
-      // dispatch, so the edit answers in seconds instead of polling for minutes.
+      // renders as a preview: an unmerged dependency or an open conflicting task
+      // only gates starting a task, never re-freezing its brief, so it is listed as
+      // waiting instead of refusing, and the edit never waits on it.
       !supersede &&
       !r.ok &&
       !!r.dispatchBlockerDetails?.length &&
@@ -898,11 +903,16 @@ export async function prepareIssueTask(
       ? (issue: number, body: string, labels: string[]) => deps.repairIssue!(issue, body, labels, retryCommand)
       : undefined
   const result = await waitForDependencies(
-    () => deps.assembleAndRenderBriefForIssue(n, undefined, { beforeIssueRender }),
+    () =>
+      deps.assembleAndRenderBriefForIssue(n, undefined, {
+        beforeIssueRender,
+        ...(supersede ? { preview: true } : {})
+      }),
     (r) =>
       // A supersede (an objectives or Surface edit on a task already in flight)
-      // renders once: it never waits on a dependency, which only gates a first
-      // dispatch, so the edit answers in seconds instead of polling for minutes.
+      // renders as a preview: an unmerged dependency or an open conflicting task
+      // only gates starting a task, never re-freezing its brief, so it is listed as
+      // waiting instead of refusing, and the edit never waits on it.
       !supersede &&
       !r.ok &&
       !!r.dispatchBlockerDetails?.length &&
