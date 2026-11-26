@@ -40,7 +40,8 @@ mock.module('@harness/kernel/adapters/code-host/github/github-token', () => ({
   resolveGithubToken: async () => 'fake-token-for-a-test'
 }))
 mock.module('../../tools/task-contract/forge/fetch-forge-facts', () => ({
-  fetchForgeFacts: async () => ({ facts: new Map(), prRefs: new Map(), unavailable: false })
+  fetchForgeFacts: async () => ({ facts: new Map(), prRefs: new Map(), unavailable: false }),
+  fetchForgeFactsByIssue: async () => ({ facts: new Map(), prRefs: new Map(), unavailable: false })
 }))
 mock.module('../../tools/task-contract/forge/list-tasks', () => ({
   ...realListTasks,
