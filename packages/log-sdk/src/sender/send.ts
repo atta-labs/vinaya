@@ -53,8 +53,13 @@ async function nextNewline(data: Buffer, offset: number, signal: AbortSignal): P
   return -1
 }
 
+/** The hash every per-line receipt key is built from: the line's file and offset, then its bytes. */
+function lineHash(identity: { file: string; offset: number }) {
+  return createHash('sha256').update(JSON.stringify(identity))
+}
+
 async function lineKey(identity: { file: string; offset: number }, line: Buffer, signal: AbortSignal) {
-  const hash = createHash('sha256').update(JSON.stringify(identity))
+  const hash = lineHash(identity)
   const block = 64 * 1024
   for (let start = 0; start < line.length; start += block) {
     if (signal.aborted) return undefined
@@ -78,12 +83,7 @@ export function deliveryStateOf(name: string, data: Buffer): { markers: string[]
   for (;;) {
     const end = data.indexOf(10, offset)
     if (end === -1) break
-    lineKeys.push(
-      createHash('sha256')
-        .update(JSON.stringify({ file: name, offset }))
-        .update(data.subarray(offset, end))
-        .digest('hex')
-    )
+    lineKeys.push(lineHash({ file: name, offset }).update(data.subarray(offset, end)).digest('hex'))
     offset = end + 1
   }
   const stem = name.slice(0, -'.jsonl'.length)

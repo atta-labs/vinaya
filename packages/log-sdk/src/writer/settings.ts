@@ -19,9 +19,9 @@ const absolutePath = (label: string) =>
 export const DEFAULT_KEEP_DAYS = 90
 
 const keepDaysSchema = z
-  .number({ invalid_type_error: 'logs.keepDays: must be a whole number of days' })
-  .int({ message: 'logs.keepDays: must be a whole number of days' })
-  .min(1, { message: 'logs.keepDays: must be at least 1' })
+  .number({ invalid_type_error: 'must be a whole number of days' })
+  .int({ message: 'must be a whole number of days' })
+  .min(1, { message: 'must be at least 1' })
 
 const logsObject = z
   .object({

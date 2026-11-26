@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { connect } from '../src/index.js'
 import { resetCleanedFolders } from '../src/local-copy/file-exporters.js'
-import { deliveryStateOf } from '../src/sender/send.js'
+import { deliveryStateOf, sendLocalCopy } from '../src/sender/send.js'
 
 type Attribute = { key: string; value: { stringValue?: string; intValue?: number | string } }
 type RecordData = {
@@ -193,6 +193,34 @@ test('opening a handle deletes old local-copy files with their delivery state, o
     open()
     expect(existsSync(join(folder, second))).toBe(true)
     expect(errors).toEqual([])
+  } finally {
+    rmSync(runtimeDir, { recursive: true, force: true })
+  }
+})
+
+test('cleaning removes the delivery state a real send wrote for an old file', async () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'log-sdk-sent-'))
+  const logs = join(runtimeDir, 'logs')
+  const folder = join(logs, 'acme-widgets')
+  try {
+    mkdirSync(folder, { recursive: true })
+    const name = 'sent~w1~000000000000.logs.jsonl'
+    writeFileSync(join(folder, name), '{"resourceLogs":[]}\n{"resourceLogs":[]}\n')
+    const report = await sendLocalCopy({
+      folder: logs,
+      repository: 'acme/widgets',
+      url: 'https://collector.example',
+      fetch: async () => new Response(null, { status: 200 })
+    })
+    expect(report.sent).toBe(2)
+    const state = join(folder, '.otlp-delivery')
+    expect(readdirSync(state).length).toBeGreaterThan(0)
+    const longAgo = new Date(Date.now() - 100 * 86_400_000)
+    utimesSync(join(folder, name), longAgo, longAgo)
+    resetCleanedFolders()
+    connect({ runId: 'run-s', repository: 'acme/widgets', repoRoot: join(runtimeDir, 'repo'), runtimeDir })
+    expect(existsSync(join(folder, name))).toBe(false)
+    expect(readdirSync(state)).toEqual([])
   } finally {
     rmSync(runtimeDir, { recursive: true, force: true })
   }

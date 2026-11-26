@@ -9666,10 +9666,10 @@
         {
           "code": "too_small",
           "path": ["logs", "keepDays"],
-          "message": "logs.keepDays: must be at least 1"
+          "message": "must be at least 1"
         }
       ],
-      "detail": "logs.keepDays: logs.keepDays: must be at least 1"
+      "detail": "logs.keepDays: must be at least 1"
     },
     {
       "value": {
@@ -9682,10 +9682,10 @@
         {
           "code": "invalid_type",
           "path": ["logs", "keepDays"],
-          "message": "logs.keepDays: must be a whole number of days"
+          "message": "must be a whole number of days"
         }
       ],
-      "detail": "logs.keepDays: logs.keepDays: must be a whole number of days"
+      "detail": "logs.keepDays: must be a whole number of days"
     }
   ]
 }

@@ -377,6 +377,7 @@
             "CustomEventSchema",
             "CustomFieldType",
             "CustomFieldValue",
+            "DEFAULT_KEEP_DAYS",
             "DevReviewLoopEvent",
             "DevReviewLoopEventSchema",
             "DispatchEvent",
@@ -568,6 +569,7 @@
             "CUSTOM_WORD_PATTERN",
             "CustomEventDeclarationsSchema",
             "CustomEventSchema",
+            "DEFAULT_KEEP_DAYS",
             "DevReviewLoopEventSchema",
             "DispatchEventSchema",
             "EARLIER_EVENT_PREFIX",
@@ -710,7 +712,7 @@
             "ConfidenceStated": [
               "type ConfidenceStated = { /** 0 to 100; absent when the agent gave none. */ confidence?: number; reason?: string; afterExtraTurn?: boolean; agent?: SpanParent; };"
             ],
-            "ConnectOptions": ["sha256:1dfbcd10a289ad275fc888f8a895147224abdaf3cab5bd3ee2c079eadbbe66d0"],
+            "ConnectOptions": ["sha256:5db7f0105cc3927e1535c82fdb42c21d05fe9a92fb84bdd468785bc358a5b105"],
             "ContractFailure": ["type ContractFailure = ReservedName;"],
             "ConvertedEarlierRecord": [
               "type ConvertedEarlierRecord = { resource: Resource; } & ({ type: 'span'; record: Span; } | { type: 'log'; record: LogRecord; });"
@@ -730,6 +732,7 @@
             "CustomEventSchema": ["sha256:6bada1b546435b9b359e72e7f4cae201d7177f5d9997c26f337292993d5a7d1c"],
             "CustomFieldType": ["type CustomFieldType = 'text' | 'number' | 'boolean' | string[];"],
             "CustomFieldValue": ["type CustomFieldValue = string | number | boolean;"],
+            "DEFAULT_KEEP_DAYS": ["const DEFAULT_KEEP_DAYS = 90"],
             "DevReviewLoopEvent": ["type DevReviewLoopEvent = z.infer<typeof DevReviewLoopEventSchema>;"],
             "DevReviewLoopEventSchema": ["sha256:06a5a060f2e0d5ffb26beb50aa0fa8af8e160884c4be04e47e0fc7d0c1ebc7b7"],
             "DispatchEvent": ["type DispatchEvent = z.infer<typeof DispatchEventSchema>;"],
@@ -855,7 +858,7 @@
               "type OverflowDiagnostic = { reason: 'capacity'; dropped: number; droppedIdentities: RecordIdentity[]; };"
             ],
             "PassedSettings": [
-              "type PassedSettings = { destination?: LogsSetting; headers?: Record<string, string>; runtimeDir?: string; };"
+              "type PassedSettings = { destination?: LogsSetting; /** The keep window in days; it replaces the settings files' `logs.keepDays`. */ keepDays?: number; headers?: Record<string, string>; runtimeDir?: string; };"
             ],
             "Pause": ["type Pause = { key?: string; round?: number; why?: string; startTime?: TimeInput; };"],
             "PersonAnswered": [
@@ -907,7 +910,7 @@
               "type RecordTrust = 'parent_attributed' | 'env_correlated' | 'self_reported' | 'unavailable';"
             ],
             "ResolvedSettings": [
-              "type ResolvedSettings = { /** `false` when the repository turned the Log off; `undefined` when nothing is configured. */ logs: LogsSetting | undefined; runtimeDir: string; };"
+              "type ResolvedSettings = { /** `false` when the repository turned the Log off; `undefined` when nothing is configured. */ logs: LogsSetting | undefined; runtimeDir: string; /** Days a local-copy file is kept after its last write. */ keepDays: number; };"
             ],
             "Resume": [
               "type Resume = { /** The pause span `paused` returned; with none, the handle's latest open pause. */ pause?: SpanParent; by: 'person' | 'run'; /** What a later process knows of the pause it resumes: when it began, its round and why. */ startTime?: TimeInput; round?: number; why?: string; endTime?: TimeInput; };"

@@ -242,9 +242,9 @@ export function logsSchema<Events extends z.ZodTypeAny>(events: Events) {
       readHeaders: z.record(z.string()).optional(),
       // Whole days a run's local copy is kept after its last write; 90 when absent.
       keepDays: z
-        .number({ invalid_type_error: 'logs.keepDays: must be a whole number of days' })
-        .int({ message: 'logs.keepDays: must be a whole number of days' })
-        .min(1, { message: 'logs.keepDays: must be at least 1' })
+        .number({ invalid_type_error: 'must be a whole number of days' })
+        .int({ message: 'must be a whole number of days' })
+        .min(1, { message: 'must be at least 1' })
         .optional(),
       // The repository's own log events, declared by name.
       events: events.optional()
