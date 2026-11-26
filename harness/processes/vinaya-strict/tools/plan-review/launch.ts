@@ -55,6 +55,8 @@ export const PLAN_REVIEWER_SEAT_DIR = join(import.meta.dir, '../../thinking/plan
 
 const ROUND_STEP_ID = 'review'
 /** What the launched agent's environment carries from the caller's own. */
+// HOME is kept because the vendors read their own login from it; what the session may read is bounded by the
+// seat's grants (read-only tools, no shell, no network) and its working directory, the staged copy.
 const ROUND_ENV_ALLOWLIST = ['PATH', 'HOME'] as const
 
 type SpawnFn = NonNullable<ProcessRunOptions['spawnFn']>
@@ -91,6 +93,8 @@ export interface RoundSession {
 /** What a finished session showed at the adapter boundary. */
 export interface RoundFacts {
   cancelled: boolean
+  /** The session ran to the time limit and was stopped there; a slow vendor, not a cancel. */
+  timedOut?: boolean
   /** The session continued an earlier one instead of starting fresh. */
   resumed?: boolean
   terminal: string | null
@@ -109,6 +113,7 @@ export type PlanNoReviewReason =
   | 'missing'
   | 'wrong_role'
   | 'cancelled'
+  | 'timed_out'
   | 'context_exhausted'
   | 'provider_error'
   | 'resumed'
@@ -140,6 +145,8 @@ export function classifyPlanRound(
 ): Pick<Extract<PlanRoundOutcome, { kind: 'no_review' }>, 'reason' | 'detail'> | { review: PlanReview } {
   const errorText = facts.errors.join(' | ')
   if (facts.resumed === true) return { reason: 'resumed', detail: 'a review runs only on a fresh session' }
+  if (facts.timedOut === true)
+    return { reason: 'timed_out', detail: 'the session reached its time limit and was stopped' }
   if (facts.cancelled) return { reason: 'cancelled', detail: 'the session was cancelled before it finished' }
   if (CONTEXT_EXHAUSTED.test(errorText)) return { reason: 'context_exhausted', detail: errorText }
   if (!facts.hasResult) {
@@ -371,7 +378,8 @@ export const engineRoundLauncher: RoundLauncher = async (session) => {
   // The executor stops the agent at the launcher's time limit; a step that ends there unfinished was cut off.
   const timedOut = !completed && Date.now() - started >= session.timeoutMs
   return {
-    cancelled: outcome.reason === 'paused' || timedOut,
+    cancelled: outcome.reason === 'paused' && !timedOut,
+    timedOut,
     resumed: false,
     terminal: read.terminal,
     errors: [...read.errors, ...(outcome.reason === 'failed' ? [outcome.error] : [])],

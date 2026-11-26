@@ -8,7 +8,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 
@@ -32,6 +32,8 @@ export function countLines(text: string): number {
 
 /** Stages the files of `revision` of the repository at `repoRoot` into a new scratch folder. */
 export function stageRevision(repoRoot: string, revision: string, parent: string = tmpdir()): StagedRevision {
+  // A revision is a full object id: anything else, an option included, is never handed to git.
+  if (!/^[0-9a-f]{40}$/.test(revision)) throw new Error(`cannot stage revision ${revision}: not a full commit id`)
   const root = mkdtempSync(join(parent, 'plan-review-round-'))
   const dir = join(root, 'code')
   const remove = (): void => {
@@ -70,6 +72,9 @@ export function stageRevision(repoRoot: string, revision: string, parent: string
       const file = resolve(dir, path)
       if (!file.startsWith(dir + sep)) return null
       try {
+        // A tracked symlink is not a file of the revision's tree: refuse it, and any path through one.
+        if (lstatSync(file).isSymbolicLink()) return null
+        if (!realpathSync(file).startsWith(`${realpathSync(dir)}${sep}`)) return null
         if (!statSync(file).isFile()) return null
         return countLines(readFileSync(file, 'utf8'))
       } catch {

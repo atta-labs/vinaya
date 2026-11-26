@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type PlanDraft, draftFingerprint, parsePlanDraft } from '../plan-draft/draft'
 import {
+  PLAN_REVIEWER_SEAT_DIR,
   PLAN_REVIEW_AGENTS,
   type PlanReviewAgent,
   type RoundFacts,
@@ -15,6 +16,7 @@ import {
   runPlanReviewRound
 } from './launch'
 import { REVIEW_FIXTURES } from './review-fixtures'
+import { stageRevision } from './stage'
 import {
   PLAN_REVIEW_QUESTION_NAMES,
   PLAN_REVIEW_QUESTION_VERSION,
@@ -193,6 +195,7 @@ describe('a round with no valid answer is classified and never retried', () => {
     ['bound to another revision', (draft) => ({ raw: answerFor(draft, { revision: 'c'.repeat(40) }) }), 'stale'],
     ['from the wrong role', () => ({ raw: { reviewResult: { status: 'completed' } } }), 'wrong_role'],
     ['cancelled', () => ({ cancelled: true, hasResult: false }), 'cancelled'],
+    ['timed out', () => ({ timedOut: true, hasResult: false }), 'timed_out'],
     [
       'out of context',
       () => ({ hasResult: false, terminal: 'error', errors: ['prompt is too long'] }),
@@ -230,6 +233,36 @@ describe('a round with no valid answer is classified and never retried', () => {
     const outcome = await runPlanReviewRound(request(), launch)
     expect(outcome).toMatchObject({ kind: 'no_review', reason: 'provider_error' })
     expect(existsSync(scratch)).toBe(false)
+  })
+})
+
+describe('the staged copy', () => {
+  test('a revision that is not a full commit id is never handed to git', async () => {
+    const { launch, seen } = fixtureLauncher(() => ({}))
+    const draft = { ...makeDraft(), revision: '--output=/tmp/x' }
+    const outcome = await runPlanReviewRound(request('codex', draft), launch)
+    expect(outcome).toMatchObject({ kind: 'no_review', reason: 'unstaged' })
+    expect(seen).toHaveLength(0)
+  })
+
+  test('a tracked symlink is not a file of the copy', () => {
+    symlinkSync('/etc/hosts', join(repo, 'link.ts'))
+    git('add', 'link.ts')
+    git('commit', '-q', '-m', 'link')
+    const staged = stageRevision(repo, git('rev-parse', 'HEAD'))
+    try {
+      expect(staged.lineCount('a.ts')).toBe(3)
+      expect(staged.lineCount('link.ts')).toBeNull()
+    } finally {
+      staged.remove()
+    }
+  })
+
+  test("the seat's grants deny writing, commands and network", () => {
+    const grants = readFileSync(join(PLAN_REVIEWER_SEAT_DIR, 'grants.yaml'), 'utf8')
+    expect(grants).toContain('write_files: deny')
+    expect(grants).toContain('run_commands: deny')
+    expect(grants).toContain('network: []')
   })
 })
 
