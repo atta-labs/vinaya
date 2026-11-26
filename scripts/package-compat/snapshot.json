@@ -933,7 +933,7 @@
               "type SeatNames = Readonly<Record<string, string | { reading: string; reviews?: boolean; }>>;"
             ],
             "SendLocalCopyOptions": [
-              "type SendLocalCopyOptions = { folder: string; repository?: string; url: string; headers?: Record<string, string>; fetch?: (url: string, init: RequestInit) => Promise<Response>; /** Absolute deadline in Unix milliseconds. */ deadline?: number; };"
+              "type SendLocalCopyOptions = { folder: string; repository?: string; url: string; headers?: Record<string, string>; /** Home directory to shorten in posted values. Defaults to the process's home directory. */ home?: string; fetch?: (url: string, init: RequestInit) => Promise<Response>; /** Absolute deadline in Unix milliseconds. */ deadline?: number; };"
             ],
             "SettingsResult": [
               "type SettingsResult = { ok: true; settings: ResolvedSettings; declarations: CustomEventDeclarations; } | { ok: false; error: Error; };"

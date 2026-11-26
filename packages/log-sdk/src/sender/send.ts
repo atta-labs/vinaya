@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, lstatSync } from 'node:fs'
 import { lstat, mkdir, open, readdir, rename, unlink, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { checkReservedNames, describeContractFailure, type ReservedName, reservedNamesOf } from '../contract/check.js'
+import { redact } from '../contract/redact.js'
 import { repoSegment } from '../writer/settings.js'
 
 type Signal = 'traces' | 'logs'
@@ -16,6 +18,8 @@ export type SendLocalCopyOptions = {
   repository?: string
   url: string
   headers?: Record<string, string>
+  /** Home directory to shorten in posted values. Defaults to the process's home directory. */
+  home?: string
   fetch?: (url: string, init: RequestInit) => Promise<Response>
   /** Absolute deadline in Unix milliseconds. */
   deadline?: number
@@ -130,23 +134,62 @@ async function recordReceipt(path: string, content: string | Uint8Array): Promis
   }
 }
 
-type Inspection = { valid: boolean; names: ReservedName[] }
+type Inspection = { valid: false } | { valid: true; names: ReservedName[]; body: string }
 
-/** One parse of a line: whether it is JSON, and the `vinaya.*` names its records carry. Self-contained, so a worker can run it. */
-function inspectLine(bytes: Uint8Array, collect: (document: unknown) => ReservedName[]): Inspection {
+/** Read the original contract names and serialize the redacted values. A worker can run this for large lines. */
+function inspectLine(
+  bytes: Uint8Array,
+  home: string,
+  collect: typeof reservedNamesOf,
+  redactValue: typeof redact
+): Inspection {
+  let text: string
   try {
-    const document: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes))
-    return { valid: true, names: collect(document) }
+    text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
   } catch {
-    return { valid: false, names: [] }
+    return { valid: false }
   }
+  let document: unknown
+  try {
+    document = JSON.parse(text)
+  } catch {
+    return { valid: false }
+  }
+  const names = collect(document)
+
+  // Reserialize only changed string values in the validated JSON. Scanning the
+  // tokens needs no recursion and keeps number literals at their original precision.
+  const quoteOrEscape = /["\\]/g
+  const propertySeparator = /[ \t\r\n]*:/y
+  let body = ''
+  let copiedThrough = 0
+  let start = text.indexOf('"')
+  while (start !== -1) {
+    quoteOrEscape.lastIndex = start + 1
+    for (let match = quoteOrEscape.exec(text); match?.[0] === '\\'; match = quoteOrEscape.exec(text)) {
+      quoteOrEscape.lastIndex++
+    }
+    const end = quoteOrEscape.lastIndex
+    propertySeparator.lastIndex = end
+    if (!propertySeparator.test(text)) {
+      const value = JSON.parse(text.slice(start, end)) as string
+      const redacted = redactValue(value, home)
+      if (redacted !== value) {
+        body += text.slice(copiedThrough, start) + JSON.stringify(redacted)
+        copiedThrough = end
+      }
+    }
+    start = text.indexOf('"', end)
+  }
+  return { valid: true, names, body: body + text.slice(copiedThrough) }
 }
 
-function inspectLargeLine(line: Buffer, signal: AbortSignal): Promise<Inspection> {
+function inspectLargeLine(line: Buffer, home: string, signal: AbortSignal): Promise<Inspection> {
   const worker = new Worker(
     `const { parentPort, workerData } = require('node:worker_threads');
-     parentPort.postMessage((${inspectLine.toString()})(workerData, (${reservedNamesOf.toString()})));`,
-    { eval: true, workerData: line }
+     const { line, home } = workerData;
+     parentPort.postMessage((${inspectLine.toString()})(line, home, (${reservedNamesOf.toString()}), (${redact.toString()})));`,
+    { eval: true, workerData: { line, home } }
   )
   const abort = () => void worker.terminate()
   return new Promise<Inspection>((resolve, reject) => {
@@ -172,7 +215,7 @@ async function post(
   fetcher: NonNullable<SendLocalCopyOptions['fetch']>,
   url: string,
   headers: Headers,
-  body: string | Uint8Array<ArrayBuffer>,
+  body: string,
   deadline: number
 ): Promise<number | 'deadline reached' | 'request timed out' | 'no answer'> {
   const remaining = deadline - Date.now()
@@ -213,6 +256,7 @@ export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<Loca
   const stop = new AbortController()
 
   async function send(): Promise<void> {
+    const home = options.home ?? homedir()
     const endpoints = { traces: otlpSignalUrl(options.url, 'traces'), logs: otlpSignalUrl(options.url, 'logs') }
     const headers = new Headers(options.headers)
     headers.set('content-type', 'application/json')
@@ -346,14 +390,17 @@ export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<Loca
         if (!bytes || stopped || Date.now() >= deadline) continue
         const line = bytes.subarray(0, -1)
         const large = line.length > 64 * 1024
-        const { valid, names } = large ? await inspectLargeLine(line, stop.signal) : inspectLine(line, reservedNamesOf)
+        const inspection = large
+          ? await inspectLargeLine(line, home, stop.signal)
+          : inspectLine(line, home, reservedNamesOf, redact)
         if (stopped || Date.now() >= deadline) return
-        const body = large ? (line as Uint8Array<ArrayBuffer>) : line.toString('utf8')
-        const failure = valid ? checkReservedNames(names) : null
-        let reason = !valid ? 'invalid JSON' : failure ? `contract: ${describeContractFailure(failure)}` : undefined
-        if (!reason) {
+        const failure = inspection.valid ? checkReservedNames(inspection.names) : null
+        let reason: string
+        if (!inspection.valid) reason = 'invalid JSON'
+        else if (failure) reason = `contract: ${describeContractFailure(failure)}`
+        else {
           if (rejectedBeforePost(rejected)) continue
-          const status = await post(options.fetch ?? fetch, endpoints[signal], headers, body, deadline)
+          const status = await post(options.fetch ?? fetch, endpoints[signal], headers, inspection.body, deadline)
           if (stopped) return
           if (typeof status !== 'number') {
             report.failures.push({ ...identity, reason: status })

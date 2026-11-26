@@ -69,6 +69,33 @@ test('a secret-shaped string value is redacted wherever it sits, and the home di
   expect(trusted.attributes.nested).toEqual({ path: '~/work', keep: 7 })
 })
 
+test('shortens each whole home path inside a value', () => {
+  const home = '/home/al/'
+  const paths = [
+    '/home/al/file and /home/al/other',
+    'file="/home/al/file" dir=\'/home/al\'',
+    'root:/home/al (/home/al)',
+    'PATH=/home/al:/usr/bin:/home/al/work',
+    'PATH="/home/al:/usr/bin"',
+    'file=/home/alice/file (/home/al-backup) /mnt/home/al/file',
+    'file="/home/al ice/file" dir=\'/home/al ice\'',
+    'file=/home/al\\ice/file'
+  ]
+  const trusted = applyTrust(record({ paths }), { foreign: false, home })
+  expect(trusted.attributes.paths).toEqual([
+    '~/file and ~/other',
+    'file="~/file" dir=\'~\'',
+    'root:~ (~)',
+    'PATH=~:/usr/bin:~/work',
+    'PATH="~:/usr/bin"',
+    'file=/home/alice/file (/home/al-backup) /mnt/home/al/file',
+    'file="/home/al ice/file" dir=\'/home/al ice\'',
+    'file=/home/al\\ice/file'
+  ])
+  const dotted = applyTrust(record({ path: 'file=/home/a.b/file' }), { foreign: false, home: '/home/a.b' })
+  expect(dotted.attributes.path).toBe('file=~/file')
+})
+
 test('a reader applies trust and redaction to every record it hands', async () => {
   const source: RecordSource = {
     name: 'other tool',
@@ -76,7 +103,12 @@ test('a reader applies trust and redaction to every record it hands', async () =
     read: async () => ({
       records: [
         record(
-          { [A.provenance]: 'governed', 'gen_ai.input.messages': 'prompt', token: SECRET },
+          {
+            [A.provenance]: 'governed',
+            'gen_ai.input.messages': 'prompt',
+            token: SECRET,
+            detail: 'opened /home/al/file'
+          },
           { provenance: 'governed' }
         )
       ],
@@ -84,11 +116,12 @@ test('a reader applies trust and redaction to every record it hands', async () =
       position: 'p1'
     })
   }
-  const { records } = await createReader(source).pull()
+  const { records } = await createReader(source, { home: '/home/al' }).pull()
   expect(records).toHaveLength(1)
   expect(records[0]?.provenance).toBe('reported')
   expect(JSON.stringify(records)).not.toContain('prompt')
   expect(JSON.stringify(records)).not.toContain(SECRET)
+  expect(records[0]?.attributes.detail).toBe('opened ~/file')
 })
 
 test('identity and source fields are redacted too', () => {

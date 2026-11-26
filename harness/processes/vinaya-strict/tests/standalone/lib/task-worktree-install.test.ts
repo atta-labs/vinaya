@@ -6,7 +6,7 @@
  */
 
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'bun:test'
@@ -132,9 +132,11 @@ describe('installing the task worktree dependencies before the Developer starts'
 
     const log = await readDriverLog(world)
     expect(log.split(READY_LINE)).toHaveLength(2)
-    expect(log).toMatch(
-      new RegExp(`${READY_LINE} ${worktreePath(world).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} after \\d+\\.\\ds`)
-    )
+    // The log redacts a path under the home directory to `~`; elsewhere it is unchanged.
+    const home = homedir()
+    const worktree = worktreePath(world)
+    const logged = worktree.startsWith(`${home}/`) ? `~${worktree.slice(home.length)}` : worktree
+    expect(log).toMatch(new RegExp(`${READY_LINE} ${logged.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} after \\d+\\.\\ds`))
     expect(log.indexOf(READY_LINE)).toBeLessThan(log.indexOf('Developer starting round 1'))
   })
 
