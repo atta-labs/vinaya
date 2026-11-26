@@ -30,8 +30,10 @@ export const WRITE_COMMAND = `${COMMAND} --write`
 const REPLACEMENT =
   'Use @harness/kernel/<path> for a kernel target or @harness/workflow/<path> for a workflow target. Any other target needs a named exception.'
 
-function unwrapParentheses(expression: ts.Expression): ts.Expression {
-  while (ts.isParenthesizedExpression(expression)) expression = expression.expression
+function unwrapCallTarget(expression: ts.Expression): ts.Expression {
+  while (ts.isParenthesizedExpression(expression) || ts.isNonNullExpression(expression)) {
+    expression = expression.expression
+  }
   return expression
 }
 
@@ -43,8 +45,8 @@ function moduleSpecifier(node: ts.Node): ts.Node | undefined {
   if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) return node.argument.literal
   if (ts.isModuleDeclaration(node)) return node.name
   if (ts.isCallExpression(node)) {
-    const callee = unwrapParentheses(node.expression)
-    const receiver = ts.isPropertyAccessExpression(callee) ? unwrapParentheses(callee.expression) : undefined
+    const callee = unwrapCallTarget(node.expression)
+    const receiver = ts.isPropertyAccessExpression(callee) ? unwrapCallTarget(callee.expression) : undefined
     if (
       callee.kind === ts.SyntaxKind.ImportKeyword ||
       (ts.isIdentifier(callee) && callee.text === 'require') ||
@@ -159,11 +161,15 @@ function growth(file: string, count: number, entry: number, against: string): st
   return `${displayField(file)}: ${count} long imports exceed ${against} (${entry}). ${REPLACEMENT}`
 }
 
+function countAt(counts: Baseline, file: string): number {
+  return Object.hasOwn(counts, file) ? (counts[file] ?? 0) : 0
+}
+
 function compareWithBaseline(counts: Baseline, baseline: Baseline): string[] {
   const failures: string[] = []
   for (const file of [...new Set([...Object.keys(counts), ...Object.keys(baseline)])].sort()) {
-    const count = counts[file] ?? 0
-    const entry = baseline[file] ?? 0
+    const count = countAt(counts, file)
+    const entry = countAt(baseline, file)
     if (count > entry) failures.push(growth(file, count, entry, 'its baseline entry'))
     if (count < entry) {
       failures.push(
@@ -188,7 +194,7 @@ export function compareLongImportsToBase(root: string, base: string): { notice: 
   const { from } = renames(root, base, { sameNameFallback: false })
   for (const [file, count] of Object.entries(counts)) {
     const baseFile = from.get(file) ?? file
-    const entry = baseBaseline[baseFile] ?? 0
+    const entry = countAt(baseBaseline, baseFile)
     if (count > entry) {
       const against = baseFile === file ? 'its base entry' : `the base entry for ${displayField(baseFile)}`
       failures.push(growth(file, count, entry, against))

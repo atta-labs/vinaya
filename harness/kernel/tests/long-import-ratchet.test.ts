@@ -81,8 +81,10 @@ describe('long import ratchet', () => {
     ['dynamic import', `import('${specifier}')`],
     ['require call', `require('${specifier}')`],
     ['parenthesized require call', `((require))('${specifier}')`],
+    ['non-null require call', `require!('${specifier}')`],
     ['mock.module call', `mock.module('${specifier}', () => ({}))`],
     ['parenthesized mock.module call', `((mock).module)('${specifier}', () => ({}))`],
+    ['non-null mock.module call', `mock.module!('${specifier}', () => ({}))`],
     ['import type', `type Target = typeof import('${specifier}')`],
     ['module declaration', `declare module '${specifier}' {}`]
   ])('refuses a new long %s', (_kind, source) => {
@@ -145,6 +147,13 @@ describe('long import ratchet', () => {
   test('refuses a stale entry and names the write command', () => {
     baseline({ [file]: 1 })
     expect(checkLongImportBaseline(root)[0]).toContain(WRITE_COMMAND)
+  })
+
+  test('treats a stale constructor entry as zero in the tracked tree', () => {
+    baseline({ constructor: 1 })
+    const failures = checkLongImportBaseline(root)
+    expect(failures).toEqual([expect.stringContaining('constructor: 0 long imports fell below its baseline entry (1)')])
+    expect(failures[0]).toContain(WRITE_COMMAND)
   })
 
   test('refuses an explicit zero in a new baseline entry', () => {
