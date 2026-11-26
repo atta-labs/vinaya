@@ -61,6 +61,14 @@ describe('the developer reference checklist sections', () => {
     }
   })
 
+  it('states the version 2 test-run rule in the injected verification section, scoped to that flow', () => {
+    const section = extractDeveloperSection(reference, 'Verification before reporting done')
+    expect(section).toContain('version 2) only')
+    expect(section).toContain('-t "<the case\'s name>"')
+    expect(section).toContain('$TMPDIR')
+    expect(section).toContain('--rerun-each=20')
+  })
+
   it('assembles into the injected block with the short version and both sections', () => {
     const assembled = assembleDeveloperDoctrine(extractShortVersion(roleFile), reference) ?? ''
     expect(assembled).toContain('**You own**')

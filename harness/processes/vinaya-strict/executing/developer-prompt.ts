@@ -65,13 +65,23 @@ export interface DeveloperPromptFacts {
 }
 
 /**
+ * Version 2's test-run rule, alone: what a Developer does when it runs a test file. `FLOW_V2_NOTE` ends with it, and
+ * a resumed session on the revision path carries it by itself, since a resumed session reads neither the note nor the
+ * reference's injected sections.
+ */
+export const TEST_RUN_RULE_V2 =
+  'Test runs: while you work on one failing case, run its file with `-t "<the case’s name>"`. When you run a file, write its whole output once to a file under `$TMPDIR` and read slices of that file; never run the file again on unchanged inputs to see a different part of the output. Each set of inputs gets exactly one run: a `-t "<the case’s name>"` run while you are still fixing one case, or the whole file once on your final inputs; if you want the whole-file run on a set of inputs, do not spend that set’s run on `-t`. The one exception: the reproduction a failing-round-test handoff asks for (`--rerun-each=20` on the whole file) is run exactly as the handoff gives it.'
+
+/**
  * Version 2's publishing note: every commit is pushed as a storage push (cheap checks, no tests, no CI) while no
  * pull request is open, and `open_pull_request` only saves the body; the driver opens the pull request once both
- * reviewers approve and the ready push's tests pass. The Developer runs no test suite and no evidence refresh in this
- * flow; the one test run it may make is the reproduction a failing round test's handoff asks for.
+ * reviewers approve and the ready push's tests pass. The Developer runs no evidence refresh in this flow; it may run
+ * one plain focused test per set of inputs, under `TEST_RUN_RULE_V2`, and the reproduction a failing round test's
+ * handoff asks for.
  */
 export const FLOW_V2_NOTE =
-  'This run uses review locally, push once: publish every commit with `publish_changes` — while no pull request is open each push is a storage push (cheap checks only, no tests, no CI), so publish often. Call `open_pull_request` once with the full PR-report body: in this flow it saves the body, and the driver opens the pull request itself after both reviewers approve and the ready push passes. Do not wait for CI: the reviewers judge your local commit each round. You may run one plain focused test invocation per distinct set of code and test inputs: a single `bun test` (or the repository’s equivalent) naming the explicit test files that cover the behavior you changed — never a whole directory or package suite, and never again on unchanged inputs; after you change code or tests, one more focused run is allowed. The brief’s mandatory commands and live checks still apply. Write no test receipts and do not call `pr report --write` or `refresh_evidence`: the driver owns publication verification — the ready push, the approved Test Plan commands on the published head, and the Evidence block once the pull request opens — and your own focused run counts as neither a receipt nor a required CI result.'
+  'This run uses review locally, push once: publish every commit with `publish_changes` — while no pull request is open each push is a storage push (cheap checks only, no tests, no CI), so publish often. Call `open_pull_request` once with the full PR-report body: in this flow it saves the body, and the driver opens the pull request itself after both reviewers approve and the ready push passes. Do not wait for CI: the reviewers judge your local commit each round. You may run one plain focused test invocation per distinct set of code and test inputs: a single `bun test` (or the repository’s equivalent) naming the explicit test files that cover the behavior you changed — never a whole directory or package suite, and never again on unchanged inputs; after you change code or tests, one more focused run is allowed. The brief’s mandatory commands and live checks still apply. Write no test receipts and do not call `pr report --write` or `refresh_evidence`: the driver owns publication verification — the ready push, the approved Test Plan commands on the published head, and the Evidence block once the pull request opens — and your own focused run counts as neither a receipt nor a required CI result. ' +
+  TEST_RUN_RULE_V2
 
 const TOOL_CATALOG = [
   'fetch_documentation',
@@ -392,6 +402,7 @@ function revisionPromptText(
               ? (latestSendBack(results)?.detail ?? '')
               : `Round ${facts.round} review findings:\n\n${facts.heldReview ?? '(no held review was found for the previous round)'}\n`,
     kind === 'review' ? (roundTestFailureOf(results) ?? '') : '',
+    facts.flow === 'v2' ? TEST_RUN_RULE_V2 : '',
     handoff.length > 0
       ? `Finding ids in this handoff — cite the ones you address in your turn result's \`addressedFindingIds\`:\n${handoff.map((f) => `- ${f.id}: ${f.description}`).join('\n')}`
       : '',
