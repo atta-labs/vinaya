@@ -67,6 +67,7 @@ export const DOCTRINE_MAP: readonly DoctrineMapEntry[] = [
   { key: 'roles/developer.md', source: 'executing/developer/doctrine.md', role: 'developer', ships: true },
   { key: 'roles/developer/reference.md', source: 'executing/developer/reference.md', ships: true },
   { key: 'roles/operator.md', source: 'executing/operator/doctrine.md', role: 'operator', ships: true },
+  { key: 'roles/plan-reviewer.md', source: 'thinking/plan-reviewer/doctrine.md', role: 'plan-reviewer', ships: true },
   { key: 'roles/planner.md', source: 'thinking/planner/doctrine.md', role: 'planner', ships: true },
   { key: 'roles/planner/reference.md', source: 'thinking/planner/reference.md', ships: true },
   { key: 'roles/principal.md', source: 'doctrine/roles/principal.md', role: 'principal', ships: true },

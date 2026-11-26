@@ -1,5 +1,5 @@
 /**
- * Vinaya's Log roles: the seven names the Log attributes, each with its
+ * Vinaya's Log roles: the eight names the Log attributes, each with its
  * reading in narration, its title on the agent line and whether it reviews.
  * The Log spells the security reviewer `security`; the process's role folder
  * is `security-reviewer`. Registers on import; imports nothing from Node, so
@@ -13,6 +13,7 @@ export const VINAYA_LOG_ROLES = [
   { name: 'developer', reading: 'developer', title: 'Developer', reviews: false },
   { name: 'code-reviewer', reading: 'code reviewer', title: 'Code review', reviews: true },
   { name: 'security', reading: 'security reviewer', title: 'Security', reviews: true },
+  { name: 'plan-reviewer', reading: 'plan reviewer', title: 'Plan review', reviews: true },
   { name: 'principal', reading: 'principal', title: 'Principal', reviews: false },
   { name: 'archivist', reading: 'archivist', title: 'Archivist', reviews: false },
   { name: 'architect', reading: 'architect', title: 'Architect', reviews: false }

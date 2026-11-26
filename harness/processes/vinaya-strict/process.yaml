@@ -1,6 +1,6 @@
 id: vinaya
 name: Vinaya
-version: 0.5.12
+version: 0.5.13
 # A run chooses its flow by key (`task run --flow <key>`); a run that names none gets default_flow.
 flows:
   v1: executing/dev-review.flow.yaml
@@ -11,6 +11,7 @@ roles:
   - executing/developer
   - executing/code-reviewer
   - executing/security-reviewer
+  - thinking/plan-reviewer
 # Everything else Vinaya provides. The loader resolves and pins each path; the composition roots import the modules.
 provides:
   roles:
@@ -26,6 +27,10 @@ provides:
       doctrine: executing/security-reviewer/doctrine.md
       grants: executing/security-reviewer/grants.yaml
       output_schema: executing/security-reviewer/output.schema.json
+    plan-reviewer:
+      doctrine: thinking/plan-reviewer/doctrine.md
+      grants: thinking/plan-reviewer/grants.yaml
+      output_schema: thinking/plan-reviewer/output.schema.json
     operator:
       doctrine: executing/operator/doctrine.md
     planner:

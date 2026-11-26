@@ -6,7 +6,7 @@ import { vinayaProcessIntegration } from './process-integration'
 const processDir = join(import.meta.dir, '..', '..')
 const loaded = loadProcess(processDir)
 
-const LAUNCHED_ROLES = ['developer', 'code-reviewer', 'security-reviewer']
+const LAUNCHED_ROLES = ['developer', 'code-reviewer', 'security-reviewer', 'plan-reviewer']
 const INTERACTIVE_ROLES = ['operator', 'planner', 'architect', 'archivist', 'tranche-archivist']
 
 describe("Vinaya's process declaration", () => {

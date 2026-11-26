@@ -1,0 +1,22 @@
+role: plan-reviewer
+# The seat reads and searches the code and its history and does nothing else: no write, no code execution,
+# no network, no install. Its shell is the evidence commands below, by prefix; any other command is refused.
+# Per vendor only because a model id names one vendor's model; process-supplied leaves it to the run.
+models: { claude: process-supplied, codex: process-supplied }
+capabilities:
+  read_files: allow
+  # Command rules are plain command prefixes; `prefix ... -flag` refuses the flag anywhere after the prefix.
+  # No `default`: a command no allow rule names is refused.
+  run_commands:
+    allow: ["git show", "git cat-file", "git ls-tree", "git ls-files", "git grep", "git log", "git diff", "rg", "grep", "ls"]
+    deny: ["git push", "git commit", "git add", "gh", "bun install", "bun test", "bun run", "npx", "security", "launchctl", "defaults", "systemsetup", "networksetup", "pmset", "dscl", "crontab", "chsh", "git config --global", "git config --system", "sudo", "git -c", "git diff ... --output", "git diff ... --ext-diff", "git diff ... --textconv", "git log ... --output", "git log ... --ext-diff", "git log ... --textconv", "git show ... --output", "git show ... --ext-diff", "git show ... --textconv", "git grep ... --open-files-in-pager", "git grep ... -O", "rg ... --pre"]
+  write_files: deny
+  network: []
+  web_fetch: deny
+  web_search: deny
+  subagents: deny
+  plan_tool: allow
+  view_image: allow
+mcp_tools: {}
+hooks: { background_shell: true, force_push: true, no_verify: true, default_branch_commit: true, write_scope: true }
+sandbox: enabled
