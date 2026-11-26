@@ -2977,8 +2977,9 @@ export interface EngineForge {
 
 /**
  * Blocks the calling thread for `ms`. The forge reads the round makes are synchronous, so the retry wait is too; it
- * only runs inside the retry bound (three minutes in all), and only the two newest-ruling reads use it — every other
- * forge read and push pauses at once, as before.
+ * only runs inside the retry bound (285 seconds in all), and only the reads `retryingForge` wraps use it — every
+ * other forge read and push pauses at once, as before. The wait is an `Atomics.wait` on the driver's one thread, so
+ * for up to 285 seconds the driver answers no signal and writes no line; that is accepted for these synchronous reads.
  */
 export function blockingSleep(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
@@ -3010,12 +3011,23 @@ export function retryForgeRead<T>(read: () => T, sleep: (ms: number) => void = b
   }
 }
 
-/** The forge with its newest-ruling reads retried across a connection failure — the first read every round makes. */
+/**
+ * The forge with the reads a round makes once retried across a connection failure: the two newest-ruling reads, the
+ * frozen brief, the Issue's objectives, the source revision, the rulings reads, the pull request body and the loop
+ * history. Writes, polled reads and reads whose callers already take a default on failure are left as they are.
+ */
 export function retryingForge(forge: EngineForge, sleep?: (ms: number) => void): EngineForge {
   return {
     ...forge,
     fetchNewestRulingOrdinal: (prNumber) => retryForgeRead(() => forge.fetchNewestRulingOrdinal(prNumber), sleep),
-    fetchNewestIssueRulingOrdinal: (issue) => retryForgeRead(() => forge.fetchNewestIssueRulingOrdinal(issue), sleep)
+    fetchNewestIssueRulingOrdinal: (issue) => retryForgeRead(() => forge.fetchNewestIssueRulingOrdinal(issue), sleep),
+    fetchFrozenBrief: (...args) => retryForgeRead(() => forge.fetchFrozenBrief(...args), sleep),
+    resolveIssueObjectives: (...args) => retryForgeRead(() => forge.resolveIssueObjectives(...args), sleep),
+    fetchSourceRevision: (...args) => retryForgeRead(() => forge.fetchSourceRevision(...args), sleep),
+    fetchIssueRulingsAfterBrief: (...args) => retryForgeRead(() => forge.fetchIssueRulingsAfterBrief(...args), sleep),
+    fetchRulings: (...args) => retryForgeRead(() => forge.fetchRulings(...args), sleep),
+    prBody: (...args) => retryForgeRead(() => forge.prBody(...args), sleep),
+    fetchLoopHistory: (...args) => retryForgeRead(() => forge.fetchLoopHistory(...args), sleep)
   }
 }
 
@@ -3523,6 +3535,8 @@ export const developerSourceStoreDir = (runtimeDir: string, task: number): strin
 export function liveDeveloperFacts(input: {
   /** A complete forge replacing the live one; absent means the live forge. */
   forge?: EngineForge
+  /** Replaces the wait between retries of a forge connection failure, so a test never sleeps. */
+  forgeRetrySleep?: (ms: number) => void
   policy?: typeof reviewPolicyForLoop
   task: number
   repoRoot: string
@@ -3536,7 +3550,7 @@ export function liveDeveloperFacts(input: {
   takeRulingsOwed?: () => boolean
 }): () => Promise<DeveloperPromptFacts> {
   const { task, repoRoot, runtimeDir, branch, worktreePath } = input
-  const forge: EngineForge = retryingForge(input.forge ?? liveForge)
+  const forge: EngineForge = retryingForge(input.forge ?? liveForge, input.forgeRetrySleep)
   return async () => {
     const policy = (input.policy ?? reviewPolicyForLoop)()
     const brief = forge.fetchFrozenBrief(task)
@@ -3653,9 +3667,11 @@ export function liveRecovery(input: {
   taskInput: Awaited<ReturnType<typeof liveTaskInput>>
   /** A complete forge replacing the live one; absent means the live forge. */
   forge?: EngineForge
+  /** Replaces the wait between retries of a forge connection failure, so a test never sleeps. */
+  forgeRetrySleep?: (ms: number) => void
   repo?: { owner: string; repo: string } | null
 }): RecoveryDeps {
-  const forge: EngineForge = retryingForge(input.forge ?? liveForge)
+  const forge: EngineForge = retryingForge(input.forge ?? liveForge, input.forgeRetrySleep)
   const { args, runtimeDir, taskInput } = input
   return {
     prNumber: () => forge.findOpenPrForBranch(taskInput.branch)?.number ?? null,
@@ -3777,7 +3793,7 @@ async function runLive(
               throw new Error('could not obtain a fresh default-branch tip for the Evidence comparison')
             const body = await readyGateEvidence({
               ...(evidenceBase ? { base: evidenceBase } : {}),
-              body: liveForge.prBody(pr),
+              body: (taskInput.bound?.fetchPrBody ?? liveForge.prBody)(pr),
               head,
               resultPath: store.gateResultPath,
               worktreePath: taskInput.worktreePath

@@ -121,9 +121,9 @@ export type StopDecision =
   | { type: 'accept' }
   | { type: 'pause'; reason: PauseReason; detail: string }
 
-/** The Atta Engine runner retries a forge connection failure after this fixed wait … */
-export const ENGINE_FORGE_RETRY_WAIT_MS = 30_000
-/** … at most this many times: a total bound of three minutes of waiting. */
+/** The Atta Engine runner retries a forge connection failure after these growing waits, one per retry … */
+export const ENGINE_FORGE_RETRY_WAITS_MS: readonly number[] = [15_000, 30_000, 60_000, 60_000, 60_000, 60_000]
+/** … at most this many times: a total bound of 285 seconds of waiting. */
 export const ENGINE_FORGE_RETRY_MAX_ATTEMPTS = 6
 
 /** Red CI that every failing check shares with the parent waits this long in all for the parent to turn green … */
@@ -253,7 +253,7 @@ export function decideStop(event: StopEvent): StopDecision {
         if (used < ENGINE_FORGE_RETRY_MAX_ATTEMPTS) {
           return {
             type: 'retry',
-            waitMs: ENGINE_FORGE_RETRY_WAIT_MS,
+            waitMs: ENGINE_FORGE_RETRY_WAITS_MS[used] ?? ENGINE_FORGE_RETRY_WAITS_MS.at(-1) ?? 0,
             bound: { kind: 'attempts', used: used + 1, max: ENGINE_FORGE_RETRY_MAX_ATTEMPTS }
           }
         }

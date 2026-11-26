@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CheckSpec } from '@harness/kernel/gates/checks/contract'
 import { runChecks } from '@harness/kernel/gates/checks/runner'
+import { classifyDriverError } from '../../loops/dev-review/standalone/dev-review-loop/stop-decision'
 import { DEFAULT_REVIEW_POLICY } from '../../tools/task-contract/review-policy'
 import {
   isCanonicalHookBlockPath,
@@ -1690,6 +1691,27 @@ describe('resolveTrustedPrincipals — the refusing Principal resolver', () => {
     })
     expect(unauthenticated.kind).toBe('read-failed')
     expect(unauthenticated.message).toContain('gh auth login required')
+  })
+
+  it('a read-failed error carries the original error as its cause, so a connection failure classifies as one', () => {
+    const original = execFileLikeError('error connecting to api.github.com\ncheck your internet connection')
+    const err = refusal(() => {
+      throw original
+    })
+    expect(err.kind).toBe('read-failed')
+    expect(err.cause).toBe(original)
+    expect(classifyDriverError(err)).toBe('forge_connection')
+  })
+
+  it('a missing configuration stays not-configured and is not a connection failure', () => {
+    const missing = refusal(() => {
+      throw execFileLikeError('gh: Not Found (HTTP 404)')
+    })
+    expect(missing.kind).toBe('not-configured')
+    expect(classifyDriverError(missing)).not.toBe('forge_connection')
+    const noPrincipals = refusal(() => b64({ reviewPolicy: { codeReviewThreshold: 'MAJOR' } }))
+    expect(noPrincipals.kind).toBe('not-configured')
+    expect(classifyDriverError(noPrincipals)).not.toBe('forge_connection')
   })
 
   it('a configured list is returned as-is — never the built-in Principal', () => {

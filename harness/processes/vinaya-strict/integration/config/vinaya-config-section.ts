@@ -1002,8 +1002,8 @@ export type PrincipalsUnresolvedKind = 'not-configured' | 'read-failed'
 export class PrincipalsUnresolvedError extends Error {
   readonly kind: PrincipalsUnresolvedKind
 
-  constructor(kind: PrincipalsUnresolvedKind, message: string) {
-    super(message)
+  constructor(kind: PrincipalsUnresolvedKind, message: string, options?: { cause?: unknown }) {
+    super(message, options)
     this.name = 'PrincipalsUnresolvedError'
     this.kind = kind
   }
@@ -1053,7 +1053,9 @@ export function createTrustedPrincipalsResolver(reads: TrustedPrincipalsReads) {
       if (isMissingFileError(err)) throw principalsNotConfigured('the default branch has no vinaya.config.json')
       throw new PrincipalsUnresolvedError(
         'read-failed',
-        `could not read "principals" from vinaya.config.json on the default branch: ${fetchFailureReason(err)}`
+        `could not read "principals" from vinaya.config.json on the default branch: ${fetchFailureReason(err)}`,
+        // The original error rides as the cause so the driver's classifier can tell a connection failure from it.
+        { cause: err }
       )
     }
     const unusable = { why: '' }
