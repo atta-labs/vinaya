@@ -266,6 +266,9 @@
         "dist/vinaya-strict/retrospecting/archivist/doctrine.md",
         "dist/vinaya-strict/retrospecting/tranche-archivist/doctrine.md",
         "dist/vinaya-strict/thinking/architect/doctrine.md",
+        "dist/vinaya-strict/thinking/plan-reviewer/doctrine.md",
+        "dist/vinaya-strict/thinking/plan-reviewer/grants.yaml",
+        "dist/vinaya-strict/thinking/plan-reviewer/output.schema.json",
         "dist/vinaya-strict/thinking/planner/doctrine.md",
         "dist/vinaya-strict/thinking/planner/tools/amend-rationale-deps.test.ts",
         "dist/vinaya-strict/thinking/planner/tools/amend-rationale-deps.ts",
@@ -312,6 +315,7 @@
         "vinaya-strict/retrospecting/archivist/doctrine.md",
         "vinaya-strict/retrospecting/tranche-archivist/doctrine.md",
         "vinaya-strict/thinking/architect/doctrine.md",
+        "vinaya-strict/thinking/plan-reviewer/doctrine.md",
         "vinaya-strict/thinking/planner/doctrine.md",
         "vinaya-strict/thinking/planner/reference.md"
       ]
