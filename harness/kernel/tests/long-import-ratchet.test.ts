@@ -80,7 +80,9 @@ describe('long import ratchet', () => {
     ['re-export', `export * from '${specifier}'`],
     ['dynamic import', `import('${specifier}')`],
     ['require call', `require('${specifier}')`],
+    ['parenthesized require call', `((require))('${specifier}')`],
     ['mock.module call', `mock.module('${specifier}', () => ({}))`],
+    ['parenthesized mock.module call', `((mock).module)('${specifier}', () => ({}))`],
     ['import type', `type Target = typeof import('${specifier}')`],
     ['module declaration', `declare module '${specifier}' {}`]
   ])('refuses a new long %s', (_kind, source) => {
@@ -101,6 +103,29 @@ describe('long import ratchet', () => {
     const failures = checkLongImportBaseline(root)
     expect(failures).toHaveLength(1)
     expect(failures[0]).toContain(fixture)
+  })
+
+  test('skips tracked links and paths replaced by a directory or a linked parent', () => {
+    const external = mkdtempSync(join(tmpdir(), 'long-import-external-'))
+    try {
+      const target = join(external, 'example.ts')
+      writeFileSync(target, longImport)
+      symlinkSync(target, join(root, 'linked.ts'))
+      stage()
+      expect(listLongImports(root)).toEqual([])
+
+      rmSync(join(root, file))
+      mkdirSync(join(root, file))
+      expect(listLongImports(root)).toEqual([])
+
+      const parent = join(root, dirname(file))
+      rmSync(parent, { recursive: true })
+      symlinkSync(external, parent, 'dir')
+      expect(listLongImports(root)).toEqual([])
+      expect(checkLongImportBaseline(root)).toEqual([])
+    } finally {
+      rmSync(external, { recursive: true, force: true })
+    }
   })
 
   test('ignores comments, import text in strings, template arguments, and shorter paths', () => {
@@ -185,6 +210,26 @@ describe('long import ratchet', () => {
     expect(compareLongImportsToBase(root, base).failures).toEqual([])
   })
 
+  test('escapes control characters in growth, stale-entry and rename diagnostics', () => {
+    const oldFile = 'src/deep/folder/old\nname.ts'
+    const renamed = 'src/deep/folder/new\rname.ts'
+    const body = `export const description = '${'stable file content '.repeat(12)}';`
+    write(oldFile, `${longImport}\n${body}\n`)
+    baseline({ [oldFile]: 1 })
+    const base = commit('record the original file')
+    renameSync(join(root, oldFile), join(root, renamed))
+    write(renamed, `${longImport}\n${body}\n((require))('${specifier}')\n`)
+    commit('rename the file and add an import')
+
+    const { failures } = compareLongImportsToBase(root, base)
+    expect(failures).toEqual([
+      expect.stringContaining('"src/deep/folder/new\\rname.ts": 2 long imports'),
+      expect.stringContaining('"src/deep/folder/old\\nname.ts": 0 long imports'),
+      expect.stringContaining('base entry for "src/deep/folder/old\\nname.ts" (1)')
+    ])
+    for (const failure of failures) expect(failure).not.toMatch(/[\r\n]/)
+  })
+
   test('refuses a new file that only shares the basename of a deleted file', () => {
     write(file, `${longImport}\nexport const previous = ['original data', 'more original data']`)
     baseline({ [file]: 1 })
@@ -206,7 +251,7 @@ describe('long import ratchet', () => {
     write('other.tsx', 'export {}')
     write(file, `${longImport}\nexport * from '../../../other.js'\n${importAssignment}`)
     const earlier = 'src/deep/folder/earlier.ts'
-    write(earlier, longImport)
+    write(earlier, `(require)('${specifier}')`)
     const outside = 'different/deep/folder/example.ts'
     write(outside, longImport)
     stage()

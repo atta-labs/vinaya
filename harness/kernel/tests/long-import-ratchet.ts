@@ -1,4 +1,16 @@
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { dirname, join, posix, relative, sep } from 'node:path'
 import ts from 'typescript'
 import {
@@ -18,6 +30,11 @@ export const WRITE_COMMAND = `${COMMAND} --write`
 const REPLACEMENT =
   'Use @harness/kernel/<path> for a kernel target or @harness/workflow/<path> for a workflow target. Any other target needs a named exception.'
 
+function unwrapParentheses(expression: ts.Expression): ts.Expression {
+  while (ts.isParenthesizedExpression(expression)) expression = expression.expression
+  return expression
+}
+
 function moduleSpecifier(node: ts.Node): ts.Node | undefined {
   if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return node.moduleSpecifier
   if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
@@ -26,13 +43,15 @@ function moduleSpecifier(node: ts.Node): ts.Node | undefined {
   if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) return node.argument.literal
   if (ts.isModuleDeclaration(node)) return node.name
   if (ts.isCallExpression(node)) {
-    const callee = node.expression
+    const callee = unwrapParentheses(node.expression)
+    const receiver = ts.isPropertyAccessExpression(callee) ? unwrapParentheses(callee.expression) : undefined
     if (
       callee.kind === ts.SyntaxKind.ImportKeyword ||
       (ts.isIdentifier(callee) && callee.text === 'require') ||
       (ts.isPropertyAccessExpression(callee) &&
-        ts.isIdentifier(callee.expression) &&
-        callee.expression.text === 'mock' &&
+        receiver &&
+        ts.isIdentifier(receiver) &&
+        receiver.text === 'mock' &&
         callee.name.text === 'module')
     ) {
       return node.arguments[0]
@@ -56,16 +75,33 @@ function longSpecifiers(file: string, source: string): LongSpecifier[] {
   return specifiers
 }
 
+function readTrackedSource(path: string): string | null {
+  try {
+    if (!lstatSync(path).isFile() || realpathSync(path) !== path) return null
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    try {
+      return fstatSync(fd).isFile() ? readFileSync(fd, 'utf8') : null
+    } finally {
+      closeSync(fd)
+    }
+  } catch (error) {
+    const { code } = error as NodeJS.ErrnoException
+    if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'ELOOP') return null
+    throw error
+  }
+}
+
 /** Tracked TypeScript files in path order, with their long imports in source order. */
 function* scan(root: string, folders: string[] = []): Generator<[string, LongSpecifier[]]> {
   const paths = git(root, ['--literal-pathspecs', 'ls-files', '-z', '--deduplicate', '--', ...folders])
     .split('\0')
     .filter((path) => /\.tsx?$/.test(path))
     .sort()
+  const canonicalRoot = realpathSync(root)
   for (const file of paths) {
-    const path = join(root, file)
-    if (!existsSync(path)) continue
-    const specifiers = longSpecifiers(file, readFileSync(path, 'utf8'))
+    const source = readTrackedSource(join(canonicalRoot, file))
+    if (source === null) continue
+    const specifiers = longSpecifiers(file, source)
     if (specifiers.length > 0) yield [file, specifiers]
   }
 }
@@ -109,8 +145,18 @@ function readBaseline(root: string): Baseline {
   return parseBaseline(readFileSync(join(root, LONG_IMPORT_BASELINE), 'utf8'))
 }
 
+const LOG_CONTROL = /[\p{Cc}\p{Zl}\p{Zp}]/u
+
+function displayField(value: string): string {
+  if (!LOG_CONTROL.test(value) && !value.startsWith('::') && !value.startsWith('##[')) return value
+  return JSON.stringify(value).replace(
+    /[\p{Cc}\p{Zl}\p{Zp}]/gu,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`
+  )
+}
+
 function growth(file: string, count: number, entry: number, against: string): string {
-  return `${file}: ${count} long imports exceed ${against} (${entry}). ${REPLACEMENT}`
+  return `${displayField(file)}: ${count} long imports exceed ${against} (${entry}). ${REPLACEMENT}`
 }
 
 function compareWithBaseline(counts: Baseline, baseline: Baseline): string[] {
@@ -121,7 +167,7 @@ function compareWithBaseline(counts: Baseline, baseline: Baseline): string[] {
     if (count > entry) failures.push(growth(file, count, entry, 'its baseline entry'))
     if (count < entry) {
       failures.push(
-        `${file}: ${count} long imports fell below its baseline entry (${entry}). Lower it with \`${WRITE_COMMAND}\`.`
+        `${displayField(file)}: ${count} long imports fell below its baseline entry (${entry}). Lower it with \`${WRITE_COMMAND}\`.`
       )
     }
   }
@@ -144,7 +190,7 @@ export function compareLongImportsToBase(root: string, base: string): { notice: 
     const baseFile = from.get(file) ?? file
     const entry = baseBaseline[baseFile] ?? 0
     if (count > entry) {
-      const against = baseFile === file ? 'its base entry' : `the base entry for ${baseFile}`
+      const against = baseFile === file ? 'its base entry' : `the base entry for ${displayField(baseFile)}`
       failures.push(growth(file, count, entry, against))
     }
   }
@@ -159,14 +205,13 @@ export function listLongImports(root: string, folders: string[] = []): string[] 
   const lines: string[] = []
   const options = { moduleResolution: ts.ModuleResolutionKind.Bundler }
   const cache = ts.createModuleResolutionCache(root, (path) => path, options)
-  const field = (value: string): string => (/[\t\r\n]/.test(value) ? JSON.stringify(value) : value)
   for (const [file, specifiers] of scan(root, folders)) {
     for (const { text, spelling } of specifiers) {
       const target = ts.resolveModuleName(text, join(root, file), options, ts.sys, cache).resolvedModule
       const path = target
         ? relative(root, target.resolvedFileName).split(sep).join('/')
         : posix.join(posix.dirname(file), text)
-      lines.push([file, spelling, path].map(field).join('\t'))
+      lines.push([file, spelling, path].map(displayField).join('\t'))
     }
   }
   return lines
