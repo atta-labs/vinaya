@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { agentEnvAllowlist } from '@harness/kernel/adapters/agents/launch-env'
 import { type PlanDraft, draftFingerprint, parsePlanDraft } from '../plan-draft/draft'
 import {
   PLAN_REVIEWER_SEAT_DIR,
@@ -13,6 +14,7 @@ import {
   type RoundSession,
   planReviewFlow,
   planReviewPrompt,
+  roundEnvAllowlist,
   runPlanReviewRound
 } from './launch'
 import { REVIEW_FIXTURES } from './review-fixtures'
@@ -153,6 +155,12 @@ describe('one review round', () => {
     expect(seen).toHaveLength(2)
     expect(seen[0]?.scratch).not.toBe(seen[1]?.scratch)
     expect(one.kind === 'review' && two.kind === 'review' && one.sessionId !== two.sessionId).toBe(true)
+  })
+
+  test("the round's environment allowlist is the shared agent list and holds USER and LOGNAME", () => {
+    expect(roundEnvAllowlist()).toEqual(agentEnvAllowlist())
+    expect(roundEnvAllowlist()).toContain('USER')
+    expect(roundEnvAllowlist()).toContain('LOGNAME')
   })
 
   test('the flow is one agent step that continues no session', () => {

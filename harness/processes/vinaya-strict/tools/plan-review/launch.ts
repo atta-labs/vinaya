@@ -21,6 +21,7 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { agentEnvAllowlist } from '@harness/kernel/adapters/agents/launch-env'
 import { generateClaudeSettings } from '@harness/kernel/adapters/agents/claude-code/settings'
 import { generateCodexConfig } from '@harness/kernel/adapters/agents/codex/config'
 import { loadRoleContract, resolveRoleGrants, withModel } from '@harness/kernel/adapters/agents/manifest'
@@ -55,10 +56,15 @@ export type PlanReviewAgent = (typeof PLAN_REVIEW_AGENTS)[number]
 export const PLAN_REVIEWER_SEAT_DIR = join(import.meta.dir, '../../thinking/plan-reviewer')
 
 const ROUND_STEP_ID = 'review'
-/** What the launched agent's environment carries from the caller's own. */
-// HOME is kept because the vendors read their own login from it; what the session may read is bounded by the
-// seat's grants (read-only tools, no shell, no network) and its working directory, the staged copy.
-const ROUND_ENV_ALLOWLIST = ['PATH', 'HOME'] as const
+/**
+ * What the launched agent's environment carries from the caller's own: the one list every agent launch shares.
+ * It holds USER and LOGNAME because Claude Code on macOS finds its subscription login in the Keychain through
+ * them. What the session may read is bounded by the seat's grants (read-only tools, no shell, no network) and
+ * its working directory, the staged copy.
+ */
+export function roundEnvAllowlist(): string[] {
+  return agentEnvAllowlist()
+}
 
 type SpawnFn = NonNullable<ProcessRunOptions['spawnFn']>
 
@@ -403,7 +409,7 @@ export const engineRoundLauncher: RoundLauncher = async (session) => {
       checkpointer,
       workingDirectoryRoot: session.stagedDir,
       spawnFn,
-      envAllowlist: [...ROUND_ENV_ALLOWLIST],
+      envAllowlist: roundEnvAllowlist(),
       stepPrompts: { [ROUND_STEP_ID]: () => session.prompt }
     })
   } finally {
