@@ -83,6 +83,54 @@ describe('a stopped driver ends the processes its own tools started', () => {
     }
   })
 
+  it('ends a descendant that ignores the termination signal after the command itself exited on it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'driver-shutdown-'))
+    const pidFile = join(dir, 'pid')
+    const driver = startFakeDriver(dir, `(trap '' TERM; exec sleep 61) & echo $! > ${pidFile}; wait`)
+    let stubborn = 0
+    try {
+      expect(await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '', 10_000)).toBe(true)
+      stubborn = Number(readFileSync(pidFile, 'utf8').trim())
+      expect(alive(stubborn)).toBe(true)
+      driver.kill('SIGKILL')
+      expect(await waitFor(() => !alive(stubborn), 10_000)).toBe(true)
+    } finally {
+      driver.kill('SIGKILL')
+      if (stubborn > 0 && alive(stubborn)) process.kill(stubborn, 'SIGKILL')
+    }
+  })
+
+  it('ends a background process a returned command left behind and returns the command status and output', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'driver-shutdown-'))
+    const pidFile = join(dir, 'pid')
+    let left = 0
+    try {
+      const result = guardedSpawnSync(
+        'sh',
+        ['-c', `(trap '' TERM; exec sleep 61) >/dev/null 2>&1 & echo $! > ${pidFile}; echo out; exit 7`],
+        { stdio: ['ignore', 'pipe', 'pipe'], guardPollMs: 50, guardGraceMs: 1500 }
+      )
+      expect(result.status).toBe(7)
+      expect(result.stdout).toBe('out\n')
+      left = Number(readFileSync(pidFile, 'utf8').trim())
+      expect(await waitFor(() => !alive(left), 10_000)).toBe(true)
+    } finally {
+      if (left > 0 && alive(left)) process.kill(left, 'SIGKILL')
+    }
+  })
+
+  it('returns the command status and output without waiting for the grace period when nothing is left behind', () => {
+    const started = Date.now()
+    const result = guardedSpawnSync('sh', ['-c', 'echo out; exit 3'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      guardPollMs: 50,
+      guardGraceMs: 20_000
+    })
+    expect(result.status).toBe(3)
+    expect(result.stdout).toBe('out\n')
+    expect(Date.now() - started).toBeLessThan(10_000)
+  })
+
   it('still returns the command output and exit status while the driver lives', () => {
     const ok = guardedSpawnSync('sh', ['-c', 'echo out; echo err >&2'], { stdio: ['ignore', 'pipe', 'pipe'] })
     expect(ok.status).toBe(0)
