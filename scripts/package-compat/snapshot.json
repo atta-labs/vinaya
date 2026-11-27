@@ -484,6 +484,7 @@
             "RecordProvenance",
             "RecordSource",
             "RecordTrust",
+            "ReservedName",
             "ResolvedSettings",
             "Resume",
             "ReviewFinding",
@@ -523,6 +524,7 @@
             "applyTrust",
             "checkCustomEvent",
             "checkRecordContract",
+            "checkReservedNames",
             "classifyStoredLine",
             "connect",
             "convertEarlierEvents",
@@ -547,6 +549,7 @@
             "recordIdentity",
             "redact",
             "repoSegment",
+            "reservedNamesOf",
             "resolveSettings",
             "sendLocalCopy",
             "spanIdFor",
@@ -618,6 +621,7 @@
             "applyTrust",
             "checkCustomEvent",
             "checkRecordContract",
+            "checkReservedNames",
             "classifyStoredLine",
             "connect",
             "convertEarlierEvents",
@@ -642,6 +646,7 @@
             "recordIdentity",
             "redact",
             "repoSegment",
+            "reservedNamesOf",
             "resolveSettings",
             "sendLocalCopy",
             "spanIdFor",
@@ -913,6 +918,7 @@
             "RecordTrust": [
               "type RecordTrust = 'parent_attributed' | 'env_correlated' | 'self_reported' | 'unavailable';"
             ],
+            "ReservedName": ["type ReservedName = { name: string; field: Field; };"],
             "ResolvedSettings": [
               "type ResolvedSettings = { /** `false` when the repository turned the Log off; `undefined` when nothing is configured. */ logs: LogsSetting | undefined; runtimeDir: string; /** Days a local-copy file is kept after its last write. */ keepDays: number; };"
             ],
@@ -994,6 +1000,9 @@
               "function checkCustomEvent(declarations: CustomEventDeclarations, name: string, fields: Readonly<Record<string, unknown>>): CustomEventCheck;"
             ],
             "checkRecordContract": ["function checkRecordContract(record: CheckableRecord): ContractFailure | null;"],
+            "checkReservedNames": [
+              "function checkReservedNames(names: readonly ReservedName[]): ContractFailure | null;"
+            ],
             "classifyStoredLine": ["function classifyStoredLine(raw: string, home: string): ReadRecord;"],
             "connect": ["function connect(options: ConnectOptions): LogHandle;"],
             "convertEarlierEvents": [
@@ -1040,6 +1049,7 @@
             "recordIdentity": ["function recordIdentity(obj: unknown): RecordIdentity | null;"],
             "redact": ["function redact<T>(value: T, home: string): T;"],
             "repoSegment": ["function repoSegment(repository: string | undefined): string;"],
+            "reservedNamesOf": ["function reservedNamesOf(document: unknown): ReservedName[];"],
             "resolveSettings": [
               "function resolveSettings(input: { repoRoot: string; repository?: string; vinayaHome?: string; passed?: PassedSettings; }): SettingsResult;"
             ],

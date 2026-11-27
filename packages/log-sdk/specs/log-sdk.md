@@ -108,6 +108,10 @@ Delivery state is kept in `.otlp-delivery` inside the repository's folder, with 
 
 A line is set aside, with a rejected receipt and an entry in `setAside` (not in `failures`), when it is not valid JSON, when its record fails the contract (a `vinaya.*` span, event or attribute name outside the catalogue; the entry names the first failing name), or when the collector answers with a `4xx` status that is not in the retried set above. Valid JSON with no `vinaya.*` names also goes through redaction before posting.
 
+The contract check the sender runs on a line — `reservedNamesOf` to collect a document's `vinaya.*` names and `checkReservedNames` to find the first one outside the catalogue — is exported from the package, together with `traceIdFor`, the run's trace id. The stored-record contract module re-exports all three, so a receiver that loads only the contract modules, such as the Log server's Worker, checks a received record exactly as the sender checked it and selects one run's records by the same trace id.
+
+<!-- VINAYA:CLAIM: packages/log-sdk/src/contract/store.ts contains:export { checkReservedNames, type ReservedName, reservedNamesOf } from './check.js' -->
+
 ## 5. Settings
 
 `connect()` reads `log.config.json` in `repoRoot` (the working directory by default) or, when that is absent, the `logs` and `runtimeDir` keys of `vinaya.config.json`; what the caller passes overrides both. The same reader is public as `resolveSettings`.

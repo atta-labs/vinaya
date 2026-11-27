@@ -812,6 +812,12 @@
         "runner": "atta-engine",
         "logs": {
           "url": "https://vinaya-log-server.estevez-dani.workers.dev/v1/repos/atta-labs/vinaya/events",
+          "otlp": {
+            "url": "https://vinaya-log-server.estevez-dani.workers.dev/v1/repos/atta-labs/vinaya/otlp",
+            "headers": {
+              "authorization": "Bearer ${VINAYA_LOG_TOKEN}"
+            }
+          },
           "headers": {
             "authorization": "Bearer ${VINAYA_LOG_TOKEN}"
           },
@@ -1682,6 +1688,12 @@
               "runner": "atta-engine",
               "logs": {
                 "url": "https://vinaya-log-server.estevez-dani.workers.dev/v1/repos/atta-labs/vinaya/events",
+                "otlp": {
+                  "url": "https://vinaya-log-server.estevez-dani.workers.dev/v1/repos/atta-labs/vinaya/otlp",
+                  "headers": {
+                    "authorization": "Bearer ${VINAYA_LOG_TOKEN}"
+                  }
+                },
                 "headers": {
                   "authorization": "Bearer ${VINAYA_LOG_TOKEN}"
                 },
