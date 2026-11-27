@@ -1568,7 +1568,8 @@ function logCredentialSourceFinding(credentialVars: readonly string[], env: Node
  * records, and when it does, which environment variable the credential is read from and whether it is set. Only the
  * variable's presence is inspected; its value is never read into the report. No address is `info` — the records stay
  * in the local copy, which is a sanctioned outcome — and an address whose credential variable is unset is `warn`,
- * because every send is then refused and retried until it is set.
+ * because every send is then refused and retried until it is set. In a CI job (`GITHUB_ACTIONS` or `CI` set, the test
+ * the address rule applies) an unset credential is `info`: a job that holds no log secret is a sanctioned outcome.
  */
 async function diagnoseOtlpAddress(deps: DoctorDeps): Promise<Finding[]> {
   if (deps.resolveOtlpTarget === undefined) return []
@@ -1581,7 +1582,17 @@ async function diagnoseOtlpAddress(deps: DoctorDeps): Promise<Finding[]> {
   if (address.kind === 'none') {
     const none = `no OpenTelemetry address resolves on this host — ${address.reason}. This host's run records stay in its local copy.`
     // An address refused only for its unset credential is fixed by setting that variable, so it is named and warned of.
+    // A CI job that holds no log secret — a fork's pull request, a release pull request a bot opens — is a sanctioned
+    // outcome, as the `[logs]` finding reports it: the same CI test the address rule applies makes it information.
     if (missing.length > 0) {
+      if (process.env.GITHUB_ACTIONS || process.env.CI) {
+        return [
+          info(
+            'logs-otlp',
+            `${none} Its credential is read from ${named} ${never}; a CI job that holds no log credential keeps its records local.`
+          )
+        ]
+      }
       return [
         warn(
           'logs-otlp',
