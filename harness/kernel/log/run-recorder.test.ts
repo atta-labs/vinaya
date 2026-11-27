@@ -1,10 +1,20 @@
-import { expect, test } from 'bun:test'
+import { expect, spyOn, test } from 'bun:test'
+import * as childProcess from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  utimesSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { traceIdFor } from '@attalabs/vinaya-log-sdk'
-import { createRunRecorder } from './run-recorder.js'
+import { createRunRecorder, githubRepositoryOf, originUrlOf, processRepository } from './run-recorder.js'
 
 const RUN = 'run-recorder'
 
@@ -396,6 +406,120 @@ test('a launching process writes parent_attributed, one with a role or task in i
   const bare = setup({ environment: {} })
   bare.recorder.turn({ seat: 'developer', key: 'b' }).returned()
   expect(trustOf(bare)).toEqual({ trust: 'unavailable', provenance: 'governed' })
+})
+
+/** A checkout whose git config names `origin` at `url` (none when `url` is null), as a directory or a linked worktree. */
+function checkout(url: string | null, shape: 'directory' | 'worktree' = 'directory'): string {
+  const root = mkdtempSync(join(tmpdir(), 'vinaya-run-recorder-checkout-'))
+  const config = `[core]\n\tbare = false\n${url === null ? '' : `[remote "origin"]\n\turl = ${url}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n`}`
+  const main = join(root, 'main')
+  mkdirSync(join(main, '.git', 'worktrees', 'task'), { recursive: true })
+  writeFileSync(join(main, '.git', 'config'), config)
+  if (shape === 'directory') return main
+  const worktree = join(root, 'task')
+  mkdirSync(join(worktree, 'nested'), { recursive: true })
+  writeFileSync(join(worktree, '.git'), `gitdir: ${join(main, '.git', 'worktrees', 'task')}\n`)
+  writeFileSync(join(main, '.git', 'worktrees', 'task', 'commondir'), '../..\n')
+  return join(worktree, 'nested')
+}
+
+/** A recorder whose default repository is the process's own rule, over `cwd`'s checkout, with every file read counted. */
+function recorderIn(cwd: string, env: NodeJS.ProcessEnv = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'vinaya-run-recorder-'))
+  const folder = join(dir, 'logs')
+  const configReads: string[] = []
+  const repository = processRepository({
+    env: () => env,
+    cwd: () => cwd,
+    reader: {
+      exists: existsSync,
+      readText: (path) => {
+        if (path.endsWith('config')) configReads.push(path)
+        return readFileSync(path, 'utf8')
+      },
+      realpath: realpathSync
+    }
+  })
+  const errors: unknown[] = []
+  const recorder = createRunRecorder({
+    runId: () => RUN,
+    workRef: () => undefined,
+    repository,
+    place: (repo) => ({ folder, repository: repo }),
+    processIdentity: () => undefined,
+    sender: () => ({ request: () => {}, remember: () => {}, drain: async () => {} }),
+    environment: () => ({}),
+    home: () => dir,
+    cwd: () => cwd,
+    onError: (e) => errors.push(e)
+  })
+  return { recorder, folder, configReads, errors, repository }
+}
+
+test("a record from a process given no repository lands in the git remote's repository folder", () => {
+  for (const [url, shape] of [
+    ['git@github.com:acme/widgets.git', 'directory'],
+    ['https://github.com/acme/widgets.git', 'worktree'],
+    ['ssh://git@github.com/acme/widgets', 'directory']
+  ] as const) {
+    const { recorder, folder, errors } = recorderIn(checkout(url, shape))
+    recorder.turn({ seat: 'developer', key: 'remote' }).returned()
+    expect(errors).toEqual([])
+    expect(readdirSync(folder)).toEqual(['acme-widgets'])
+  }
+})
+
+test('the environment’s VINAYA_REPO wins over the remote, and with no GitHub origin the record stays unresolved', () => {
+  const named = recorderIn(checkout('git@github.com:acme/widgets.git'), { VINAYA_REPO: 'atta-labs/vinaya' })
+  named.recorder.turn({ seat: 'developer', key: 'named' }).returned()
+  expect(readdirSync(named.folder)).toEqual(['atta-labs-vinaya'])
+  expect(named.configReads).toEqual([])
+
+  for (const url of [null, 'https://gitlab.com/acme/widgets.git', '/srv/git/widgets.git']) {
+    const { recorder, folder, repository } = recorderIn(checkout(url))
+    expect(repository()).toBeUndefined()
+    recorder.turn({ seat: 'developer', key: 'none' }).returned()
+    expect(readdirSync(folder)).toEqual(['unresolved'])
+  }
+  const outside = recorderIn(mkdtempSync(join(tmpdir(), 'vinaya-run-recorder-no-checkout-')))
+  expect(outside.repository()).toBeUndefined()
+})
+
+test('many handle opens read the git config once and spawn no process', () => {
+  const spawns = [
+    spyOn(childProcess, 'execFileSync'),
+    spyOn(childProcess, 'execSync'),
+    spyOn(childProcess, 'spawnSync'),
+    spyOn(childProcess, 'spawn'),
+    spyOn(childProcess, 'execFile'),
+    spyOn(childProcess, 'exec')
+  ]
+  try {
+    const { recorder, folder, configReads } = recorderIn(checkout('git@github.com:acme/widgets.git', 'worktree'))
+    for (let n = 0; n < 25; n += 1) {
+      recorder.turn({ seat: 'developer', key: `turn-${n}` }).returned()
+      recorder.stageChanged({ stage: 'review', round: n })
+      recorder.handle()
+    }
+    expect(readdirSync(folder)).toEqual(['acme-widgets'])
+    expect(configReads).toHaveLength(1)
+    for (const spawn of spawns) expect(spawn).not.toHaveBeenCalled()
+  } finally {
+    for (const spawn of spawns) spawn.mockRestore()
+  }
+})
+
+test('the origin URL and the GitHub repository are read from the shapes git writes', () => {
+  expect(
+    originUrlOf(
+      '[remote "upstream"]\n\turl = git@github.com:other/x.git\n[remote "origin"]\n\turl = git@github.com:acme/widgets.git\n'
+    )
+  ).toBe('git@github.com:acme/widgets.git')
+  expect(originUrlOf('[core]\n\tbare = false\n')).toBeUndefined()
+  expect(githubRepositoryOf('git@github.com:acme/widgets.git')).toBe('acme/widgets')
+  expect(githubRepositoryOf('https://token@github.com/acme/widgets/')).toBe('acme/widgets')
+  expect(githubRepositoryOf('https://github.com/acme/widgets/tree/main')).toBeUndefined()
+  expect(githubRepositoryOf('git@gitlab.com:acme/widgets.git')).toBeUndefined()
 })
 
 test("each agent turn records its effort: the one named, the run's own, else medium", () => {

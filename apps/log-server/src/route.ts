@@ -17,9 +17,28 @@
 const SEGMENT = /^[A-Za-z0-9._-]+$/
 
 export type Route = {
-  kind: 'ingest' | 'read' | 'stats' | 'rejected' | 'replay' | 'live'
+  kind: 'ingest' | 'read' | 'stats' | 'rejected' | 'replay' | 'live' | 'otlp-traces' | 'otlp-logs' | 'otlp-records'
   owner: string
   repo: string
+}
+
+/**
+ * The OpenTelemetry routes' tails under a repository, each with the one method it answers and the route it is. The
+ * two ingest tails are the OTLP/HTTP signal paths under the address `/v1/repos/<owner>/<repo>/otlp`, which is where
+ * the Log SDK's sender posts when given that address.
+ */
+const OTLP_TAILS: ReadonlyMap<string, { method: string; kind: Route['kind'] }> = new Map<
+  string,
+  { method: string; kind: Route['kind'] }
+>([
+  ['otlp/v1/traces', { method: 'POST', kind: 'otlp-traces' }],
+  ['otlp/v1/logs', { method: 'POST', kind: 'otlp-logs' }],
+  ['otlp/records', { method: 'GET', kind: 'otlp-records' }]
+])
+
+/** Whether a route takes the ingest token: the two ingests, events and OpenTelemetry, and the replay. */
+export function takesIngestToken(kind: Route['kind']): boolean {
+  return kind === 'ingest' || kind === 'replay' || kind === 'otlp-traces' || kind === 'otlp-logs'
 }
 
 /**
@@ -72,20 +91,32 @@ export function repoName(route: Pick<Route, 'owner' | 'repo'>): string {
 }
 
 /**
- * `/v1/repos/<owner>/<repo>/<events|stats|rejected|live>`. `POST` on `rejected`
- * is the replay, a write — it takes the ingest token, as `POST` on `events`
- * does (`worker.ts`). A malformed repository
+ * `/v1/repos/<owner>/<repo>/<events|stats|rejected|live>`, and the
+ * OpenTelemetry routes `/v1/repos/<owner>/<repo>/otlp/v1/<traces|logs>` and
+ * `/v1/repos/<owner>/<repo>/otlp/records`. `POST` on `rejected` is the replay,
+ * a write — it takes the ingest token, as `POST` on `events` and on the two
+ * OpenTelemetry signal paths does (`worker.ts`). A malformed repository
  * segment is `400`, an unknown path `404`, a known path with the wrong method
- * `405`.
+ * `405`. A path longer than five segments that is not an OpenTelemetry route
+ * is `404` before its repository segments are read, as every such path was
+ * before those routes existed.
  */
 export function parseRoute(url: URL, method: string): RouteResult {
   const segments = url.pathname.split('/').filter((s) => s.length > 0)
-  if (segments.length !== 5 || segments[0] !== 'v1' || segments[1] !== 'repos') {
+  if (segments.length < 5 || segments[0] !== 'v1' || segments[1] !== 'repos') {
     return { ok: false, status: 404 }
   }
+  const otlp = segments.length === 5 ? undefined : OTLP_TAILS.get(segments.slice(4).join('/'))
+  if (segments.length !== 5 && otlp === undefined) return { ok: false, status: 404 }
+
   const owner = segments[2] as string
   const repo = segments[3] as string
   if (!SEGMENT.test(owner) || !SEGMENT.test(repo)) return { ok: false, status: 400 }
+
+  if (otlp !== undefined) {
+    if (method === otlp.method) return { ok: true, route: { kind: otlp.kind, owner, repo } }
+    return { ok: false, status: 405 }
+  }
 
   const tail = segments[4]
   if (tail === 'events') {

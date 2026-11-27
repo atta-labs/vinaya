@@ -1,0 +1,1039 @@
+{
+  "runId": "sdk-export-fixture-run",
+  "repository": "acme/widgets",
+  "address": "https://log.example/v1/repos/acme/widgets/otlp",
+  "exports": [
+    {
+      "path": "/v1/repos/acme/widgets/otlp/v1/logs",
+      "contentType": "application/json",
+      "body": {
+        "resourceLogs": [
+          {
+            "resource": {
+              "attributes": [
+                {
+                  "key": "service.name",
+                  "value": {
+                    "stringValue": "sdk-export-fixture"
+                  }
+                },
+                {
+                  "key": "service.version",
+                  "value": {
+                    "stringValue": "1.0.0"
+                  }
+                },
+                {
+                  "key": "vinaya.repository",
+                  "value": {
+                    "stringValue": "acme/widgets"
+                  }
+                },
+                {
+                  "key": "host.id",
+                  "value": {
+                    "stringValue": "00000000000000000000000000000000"
+                  }
+                },
+                {
+                  "key": "vinaya.sdk.version",
+                  "value": {
+                    "stringValue": "0.46.0"
+                  }
+                },
+                {
+                  "key": "vinaya.semconv.version",
+                  "value": {
+                    "stringValue": "semantic-conventions-genai@main-2026-11-18"
+                  }
+                },
+                {
+                  "key": "os.type",
+                  "value": {
+                    "stringValue": "darwin"
+                  }
+                },
+                {
+                  "key": "vinaya.ci",
+                  "value": {
+                    "boolValue": false
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0
+            },
+            "scopeLogs": [
+              {
+                "scope": {
+                  "name": "@attalabs/vinaya-log-sdk",
+                  "version": "0.46.0"
+                },
+                "logRecords": [
+                  {
+                    "timeUnixNano": "1795744520250000000",
+                    "observedTimeUnixNano": "1795744520250000000",
+                    "body": {},
+                    "eventName": "vinaya.run.started",
+                    "attributes": [
+                      {
+                        "key": "gen_ai.operation.name",
+                        "value": {
+                          "stringValue": "invoke_workflow"
+                        }
+                      },
+                      {
+                        "key": "vinaya.run.id",
+                        "value": {
+                          "stringValue": "sdk-export-fixture-run"
+                        }
+                      },
+                      {
+                        "key": "vinaya.seq",
+                        "value": {
+                          "intValue": 1
+                        }
+                      },
+                      {
+                        "key": "vinaya.writer.id",
+                        "value": {
+                          "stringValue": "b1b9ccff-8e1b-47c1-a69f-1a2fc1b90a9b"
+                        }
+                      },
+                      {
+                        "key": "vinaya.provenance",
+                        "value": {
+                          "stringValue": "reported"
+                        }
+                      },
+                      {
+                        "key": "vinaya.trust",
+                        "value": {
+                          "stringValue": "unavailable"
+                        }
+                      },
+                      {
+                        "key": "vinaya.work.ref",
+                        "value": {
+                          "stringValue": "42"
+                        }
+                      },
+                      {
+                        "key": "vinaya.event.id",
+                        "value": {
+                          "stringValue": "b1b9ccff-8e1b-47c1-a69f-1a2fc1b90a9b:1"
+                        }
+                      }
+                    ],
+                    "droppedAttributesCount": 0,
+                    "flags": 1,
+                    "traceId": "01145694eac63349a2b69359fc53fc0c",
+                    "spanId": "73a934cb81621c73"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "path": "/v1/repos/acme/widgets/otlp/v1/logs",
+      "contentType": "application/json",
+      "body": {
+        "resourceLogs": [
+          {
+            "resource": {
+              "attributes": [
+                {
+                  "key": "service.name",
+                  "value": {
+                    "stringValue": "sdk-export-fixture"
+                  }
+                },
+                {
+                  "key": "service.version",
+                  "value": {
+                    "stringValue": "1.0.0"
+                  }
+                },
+                {
+                  "key": "vinaya.repository",
+                  "value": {
+                    "stringValue": "acme/widgets"
+                  }
+                },
+                {
+                  "key": "host.id",
+                  "value": {
+                    "stringValue": "00000000000000000000000000000000"
+                  }
+                },
+                {
+                  "key": "vinaya.sdk.version",
+                  "value": {
+                    "stringValue": "0.46.0"
+                  }
+                },
+                {
+                  "key": "vinaya.semconv.version",
+                  "value": {
+                    "stringValue": "semantic-conventions-genai@main-2026-11-18"
+                  }
+                },
+                {
+                  "key": "os.type",
+                  "value": {
+                    "stringValue": "darwin"
+                  }
+                },
+                {
+                  "key": "vinaya.ci",
+                  "value": {
+                    "boolValue": false
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0
+            },
+            "scopeLogs": [
+              {
+                "scope": {
+                  "name": "@attalabs/vinaya-log-sdk",
+                  "version": "0.46.0"
+                },
+                "logRecords": [
+                  {
+                    "timeUnixNano": "1795744520251000000",
+                    "observedTimeUnixNano": "1795744520251000000",
+                    "body": {},
+                    "eventName": "vinaya.run.stage_changed",
+                    "attributes": [
+                      {
+                        "key": "vinaya.stage.to",
+                        "value": {
+                          "stringValue": "working"
+                        }
+                      },
+                      {
+                        "key": "vinaya.round.number",
+                        "value": {
+                          "intValue": 1
+                        }
+                      },
+                      {
+                        "key": "vinaya.seq",
+                        "value": {
+                          "intValue": 2
+                        }
+                      },
+                      {
+                        "key": "vinaya.writer.id",
+                        "value": {
+                          "stringValue": "b1b9ccff-8e1b-47c1-a69f-1a2fc1b90a9b"
+                        }
+                      },
+                      {
+                        "key": "vinaya.provenance",
+                        "value": {
+                          "stringValue": "reported"
+                        }
+                      },
+                      {
+                        "key": "vinaya.trust",
+                        "value": {
+                          "stringValue": "unavailable"
+                        }
+                      },
+                      {
+                        "key": "vinaya.work.ref",
+                        "value": {
+                          "stringValue": "42"
+                        }
+                      },
+                      {
+                        "key": "vinaya.event.id",
+                        "value": {
+                          "stringValue": "b1b9ccff-8e1b-47c1-a69f-1a2fc1b90a9b:2"
+                        }
+                      }
+                    ],
+                    "droppedAttributesCount": 0,
+                    "flags": 1,
+                    "traceId": "01145694eac63349a2b69359fc53fc0c",
+                    "spanId": "73a934cb81621c73"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "path": "/v1/repos/acme/widgets/otlp/v1/logs",
+      "contentType": "application/json",
+      "body": {
+        "resourceLogs": [
+          {
+            "resource": {
+              "attributes": [
+                {
+                  "key": "service.name",
+                  "value": {
+                    "stringValue": "sdk-export-fixture"
+                  }
+                },
+                {
+                  "key": "service.version",
+                  "value": {
+                    "stringValue": "1.0.0"
+                  }
+                },
+                {
+                  "key": "vinaya.repository",
+                  "value": {
+                    "stringValue": "acme/widgets"
+                  }
+                },
+                {
+                  "key": "host.id",
+                  "value": {
+                    "stringValue": "00000000000000000000000000000000"
+                  }
+                },
+                {
+                  "key": "vinaya.sdk.version",
+                  "value": {
+                    "stringValue": "0.46.0"
+                  }
+                },
+                {
+                  "key": "vinaya.semconv.version",
+                  "value": {
+                    "stringValue": "semantic-conventions-genai@main-2026-11-18"
+                  }
+                },
+                {
+                  "key": "os.type",
+                  "value": {
+                    "stringValue": "darwin"
+                  }
+                },
+                {
+                  "key": "vinaya.ci",
+                  "value": {
+                    "boolValue": false
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0
+            },
+            "scopeLogs": [
+              {
+                "scope": {
+                  "name": "@attalabs/vinaya-log-sdk",
+                  "version": "0.46.0"
+                },
+                "logRecords": [
+                  {
+                    "timeUnixNano": "1795744520251000000",
+                    "observedTimeUnixNano": "1795744520251000000",
+                    "body": {},
+                    "eventName": "vinaya.round.started",
+                    "attributes": [
+                      {
+                        "key": "vinaya.round.number",
+                        "value": {
+                          "intValue": 1
+                        }
+                      },
+                      {
+                        "key": "vinaya.run.id",
+                        "value": {
+                          "stringValue": "sdk-export-fixture-run"
+                        }
+                      },
+                      {
+                        "key": "vinaya.span.parent_id",
+                        "value": {
+                          "stringValue": "73a934cb81621c73"
+                        }
+                      },
+                      {
+                        "key": "vinaya.seq",
+                        "value": {
+                          "intValue": 3
+                        }
+                      },
+                      {
+                        "key": "vinaya.writer.id",
+                        "value": {
+                          "stringValue": "b1b9ccff-8e1b-47c1-a69f-1a2fc1b90a9b"
+                        }
+                      },
+                      {
+                        "key": "vinaya.provenance",
+                        "value": {
+                          "stringValue": "reported"
+                        }
+                      },
+                      {
+                        "key": "vinaya.trust",
+                        "value": {
+                          "stringValue": "unavailable"
+                        }
+                      },
+                      {
+                        "key": "vinaya.work.ref",
+                        "value": {
+                          "stringValue": "42"
+                        }
+                      },
+                      {
+                        "key": "vinaya.round",
+                        "value": {
+                          "intValue": 1
+                        }
+                      },
+                      {
+                        "key": "vinaya.event.id",
+                        "value": {
+                          "stringValue": "b1b9ccff-8e1b-47c1-a69f-1a2fc1b90a9b:3"
+                        }
+                      }
+                    ],
+                    "droppedAttributesCount": 0,
+                    "flags": 1,
+                    "traceId": "01145694eac63349a2b69359fc53fc0c",
+                    "spanId": "15d3f98b4f65a81b"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "path": "/v1/repos/acme/widgets/otlp/v1/logs",
+      "contentType": "application/json",
+      "body": {
+        "resourceLogs": [
+          {
+            "resource": {
+              "attributes": [
+                {
+                  "key": "service.name",
+                  "value": {
+                    "stringValue": "sdk-export-fixture"
+                  }
+                },
+                {
+                  "key": "service.version",
+                  "value": {
+                    "stringValue": "1.0.0"
+                  }
+                },
+                {
+                  "key": "vinaya.repository",
+                  "value": {
+                    "stringValue": "acme/widgets"
+                  }
+                },
+                {
+                  "key": "host.id",
+                  "value": {
+                    "stringValue": "00000000000000000000000000000000"
+                  }
+                },
+                {
+                  "key": "vinaya.sdk.version",
+                  "value": {
+                    "stringValue": "0.46.0"
+                  }
+                },
+                {
+                  "key": "vinaya.semconv.version",
+                  "value": {
+                    "stringValue": "semantic-conventions-genai@main-2026-11-18"
+                  }
+                },
+                {
+                  "key": "os.type",
+                  "value": {
+                    "stringValue": "darwin"
+                  }
+                },
+                {
+                  "key": "vinaya.ci",
+                  "value": {
+                    "boolValue": false
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0
+            },
+            "scopeLogs": [
+              {
+                "scope": {
+                  "name": "@attalabs/vinaya-log-sdk",
+                  "version": "0.46.0"
+                },
+                "logRecords": [
+                  {
+                    "timeUnixNano": "1795744520251000000",
+                    "observedTimeUnixNano": "1795744520251000000",
+                    "body": {},
+                    "eventName": "vinaya.agent.started",
+                    "attributes": [
+                      {
+                        "key": "gen_ai.operation.name",
+                        "value": {
+                          "stringValue": "invoke_agent"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.agent.name",
+                        "value": {
+                          "stringValue": "developer"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.provider.name",
+                        "value": {
+                          "stringValue": "anthropic"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.request.model",
+                        "value": {
+                          "stringValue": "fixture-model"
+                        }
+                      },
+                      {
+                        "key": "vinaya.round.number",
+                        "value": {
+                          "intValue": 1
+                        }
+                      },
+                      {
+                        "key": "vinaya.run.id",
+                        "value": {
+                          "stringValue": "sdk-export-fixture-run"
+                        }
+                      },
+                      {
+                        "key": "vinaya.span.parent_id",
+                        "value": {
+                          "stringValue": "15d3f98b4f65a81b"
+                        }
+                      },
+                      {
+                        "key": "vinaya.seq",
+                        "value": {
+                          "intValue": 4
+                        }
+                      },
+                      {
+                        "key": "vinaya.writer.id",
+                        "value": {
+                          "stringValue": "b1b9ccff-8e1b-47c1-a69f-1a2fc1b90a9b"
+                        }
+                      },
+                      {
+                        "key": "vinaya.provenance",
+                        "value": {
+                          "stringValue": "reported"
+                        }
+                      },
+                      {
+                        "key": "vinaya.trust",
+                        "value": {
+                          "stringValue": "unavailable"
+                        }
+                      },
+                      {
+                        "key": "vinaya.work.ref",
+                        "value": {
+                          "stringValue": "42"
+                        }
+                      },
+                      {
+                        "key": "vinaya.round",
+                        "value": {
+                          "intValue": 1
+                        }
+                      },
+                      {
+                        "key": "vinaya.seat",
+                        "value": {
+                          "stringValue": "developer"
+                        }
+                      },
+                      {
+                        "key": "vinaya.event.id",
+                        "value": {
+                          "stringValue": "b1b9ccff-8e1b-47c1-a69f-1a2fc1b90a9b:4"
+                        }
+                      }
+                    ],
+                    "droppedAttributesCount": 0,
+                    "flags": 1,
+                    "traceId": "01145694eac63349a2b69359fc53fc0c",
+                    "spanId": "2928498a7a6a29f9"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "path": "/v1/repos/acme/widgets/otlp/v1/traces",
+      "contentType": "application/json",
+      "body": {
+        "resourceSpans": [
+          {
+            "resource": {
+              "attributes": [
+                {
+                  "key": "service.name",
+                  "value": {
+                    "stringValue": "sdk-export-fixture"
+                  }
+                },
+                {
+                  "key": "service.version",
+                  "value": {
+                    "stringValue": "1.0.0"
+                  }
+                },
+                {
+                  "key": "vinaya.repository",
+                  "value": {
+                    "stringValue": "acme/widgets"
+                  }
+                },
+                {
+                  "key": "host.id",
+                  "value": {
+                    "stringValue": "00000000000000000000000000000000"
+                  }
+                },
+                {
+                  "key": "vinaya.sdk.version",
+                  "value": {
+                    "stringValue": "0.46.0"
+                  }
+                },
+                {
+                  "key": "vinaya.semconv.version",
+                  "value": {
+                    "stringValue": "semantic-conventions-genai@main-2026-11-18"
+                  }
+                },
+                {
+                  "key": "os.type",
+                  "value": {
+                    "stringValue": "darwin"
+                  }
+                },
+                {
+                  "key": "vinaya.ci",
+                  "value": {
+                    "boolValue": false
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0
+            },
+            "scopeSpans": [
+              {
+                "scope": {
+                  "name": "@attalabs/vinaya-log-sdk",
+                  "version": "0.46.0"
+                },
+                "spans": [
+                  {
+                    "traceId": "01145694eac63349a2b69359fc53fc0c",
+                    "spanId": "2928498a7a6a29f9",
+                    "parentSpanId": "15d3f98b4f65a81b",
+                    "name": "invoke_agent developer",
+                    "kind": 1,
+                    "startTimeUnixNano": "1795744520251000000",
+                    "endTimeUnixNano": "1795744520251298750",
+                    "attributes": [
+                      {
+                        "key": "vinaya.writer.id",
+                        "value": {
+                          "stringValue": "b1b9ccff-8e1b-47c1-a69f-1a2fc1b90a9b"
+                        }
+                      },
+                      {
+                        "key": "vinaya.provenance",
+                        "value": {
+                          "stringValue": "reported"
+                        }
+                      },
+                      {
+                        "key": "vinaya.trust",
+                        "value": {
+                          "stringValue": "unavailable"
+                        }
+                      },
+                      {
+                        "key": "vinaya.work.ref",
+                        "value": {
+                          "stringValue": "42"
+                        }
+                      },
+                      {
+                        "key": "vinaya.round",
+                        "value": {
+                          "intValue": 1
+                        }
+                      },
+                      {
+                        "key": "vinaya.seat",
+                        "value": {
+                          "stringValue": "developer"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.operation.name",
+                        "value": {
+                          "stringValue": "invoke_agent"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.agent.name",
+                        "value": {
+                          "stringValue": "developer"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.provider.name",
+                        "value": {
+                          "stringValue": "anthropic"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.request.model",
+                        "value": {
+                          "stringValue": "fixture-model"
+                        }
+                      },
+                      {
+                        "key": "vinaya.round.number",
+                        "value": {
+                          "intValue": 1
+                        }
+                      },
+                      {
+                        "key": "gen_ai.usage.input_tokens",
+                        "value": {
+                          "intValue": 1200
+                        }
+                      },
+                      {
+                        "key": "gen_ai.usage.output_tokens",
+                        "value": {
+                          "intValue": 300
+                        }
+                      },
+                      {
+                        "key": "vinaya.seq",
+                        "value": {
+                          "intValue": 5
+                        }
+                      }
+                    ],
+                    "droppedAttributesCount": 0,
+                    "events": [],
+                    "droppedEventsCount": 0,
+                    "status": {
+                      "code": 0
+                    },
+                    "links": [],
+                    "droppedLinksCount": 0,
+                    "flags": 257
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "path": "/v1/repos/acme/widgets/otlp/v1/traces",
+      "contentType": "application/json",
+      "body": {
+        "resourceSpans": [
+          {
+            "resource": {
+              "attributes": [
+                {
+                  "key": "service.name",
+                  "value": {
+                    "stringValue": "sdk-export-fixture"
+                  }
+                },
+                {
+                  "key": "service.version",
+                  "value": {
+                    "stringValue": "1.0.0"
+                  }
+                },
+                {
+                  "key": "vinaya.repository",
+                  "value": {
+                    "stringValue": "acme/widgets"
+                  }
+                },
+                {
+                  "key": "host.id",
+                  "value": {
+                    "stringValue": "00000000000000000000000000000000"
+                  }
+                },
+                {
+                  "key": "vinaya.sdk.version",
+                  "value": {
+                    "stringValue": "0.46.0"
+                  }
+                },
+                {
+                  "key": "vinaya.semconv.version",
+                  "value": {
+                    "stringValue": "semantic-conventions-genai@main-2026-11-18"
+                  }
+                },
+                {
+                  "key": "os.type",
+                  "value": {
+                    "stringValue": "darwin"
+                  }
+                },
+                {
+                  "key": "vinaya.ci",
+                  "value": {
+                    "boolValue": false
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0
+            },
+            "scopeSpans": [
+              {
+                "scope": {
+                  "name": "@attalabs/vinaya-log-sdk",
+                  "version": "0.46.0"
+                },
+                "spans": [
+                  {
+                    "traceId": "01145694eac63349a2b69359fc53fc0c",
+                    "spanId": "15d3f98b4f65a81b",
+                    "parentSpanId": "73a934cb81621c73",
+                    "name": "vinaya.round 1",
+                    "kind": 1,
+                    "startTimeUnixNano": "1795744520251000000",
+                    "endTimeUnixNano": "1795744520252041542",
+                    "attributes": [
+                      {
+                        "key": "vinaya.writer.id",
+                        "value": {
+                          "stringValue": "b1b9ccff-8e1b-47c1-a69f-1a2fc1b90a9b"
+                        }
+                      },
+                      {
+                        "key": "vinaya.provenance",
+                        "value": {
+                          "stringValue": "reported"
+                        }
+                      },
+                      {
+                        "key": "vinaya.trust",
+                        "value": {
+                          "stringValue": "unavailable"
+                        }
+                      },
+                      {
+                        "key": "vinaya.work.ref",
+                        "value": {
+                          "stringValue": "42"
+                        }
+                      },
+                      {
+                        "key": "vinaya.round",
+                        "value": {
+                          "intValue": 1
+                        }
+                      },
+                      {
+                        "key": "vinaya.round.number",
+                        "value": {
+                          "intValue": 1
+                        }
+                      },
+                      {
+                        "key": "vinaya.seq",
+                        "value": {
+                          "intValue": 6
+                        }
+                      }
+                    ],
+                    "droppedAttributesCount": 0,
+                    "events": [],
+                    "droppedEventsCount": 0,
+                    "status": {
+                      "code": 0
+                    },
+                    "links": [],
+                    "droppedLinksCount": 0,
+                    "flags": 257
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "path": "/v1/repos/acme/widgets/otlp/v1/traces",
+      "contentType": "application/json",
+      "body": {
+        "resourceSpans": [
+          {
+            "resource": {
+              "attributes": [
+                {
+                  "key": "service.name",
+                  "value": {
+                    "stringValue": "sdk-export-fixture"
+                  }
+                },
+                {
+                  "key": "service.version",
+                  "value": {
+                    "stringValue": "1.0.0"
+                  }
+                },
+                {
+                  "key": "vinaya.repository",
+                  "value": {
+                    "stringValue": "acme/widgets"
+                  }
+                },
+                {
+                  "key": "host.id",
+                  "value": {
+                    "stringValue": "00000000000000000000000000000000"
+                  }
+                },
+                {
+                  "key": "vinaya.sdk.version",
+                  "value": {
+                    "stringValue": "0.46.0"
+                  }
+                },
+                {
+                  "key": "vinaya.semconv.version",
+                  "value": {
+                    "stringValue": "semantic-conventions-genai@main-2026-11-18"
+                  }
+                },
+                {
+                  "key": "os.type",
+                  "value": {
+                    "stringValue": "darwin"
+                  }
+                },
+                {
+                  "key": "vinaya.ci",
+                  "value": {
+                    "boolValue": false
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0
+            },
+            "scopeSpans": [
+              {
+                "scope": {
+                  "name": "@attalabs/vinaya-log-sdk",
+                  "version": "0.46.0"
+                },
+                "spans": [
+                  {
+                    "traceId": "01145694eac63349a2b69359fc53fc0c",
+                    "spanId": "73a934cb81621c73",
+                    "name": "invoke_workflow",
+                    "kind": 1,
+                    "startTimeUnixNano": "1795744520250000000",
+                    "endTimeUnixNano": "1795744520252116750",
+                    "attributes": [
+                      {
+                        "key": "vinaya.writer.id",
+                        "value": {
+                          "stringValue": "b1b9ccff-8e1b-47c1-a69f-1a2fc1b90a9b"
+                        }
+                      },
+                      {
+                        "key": "vinaya.provenance",
+                        "value": {
+                          "stringValue": "reported"
+                        }
+                      },
+                      {
+                        "key": "vinaya.trust",
+                        "value": {
+                          "stringValue": "unavailable"
+                        }
+                      },
+                      {
+                        "key": "vinaya.work.ref",
+                        "value": {
+                          "stringValue": "42"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.operation.name",
+                        "value": {
+                          "stringValue": "invoke_workflow"
+                        }
+                      },
+                      {
+                        "key": "vinaya.run.id",
+                        "value": {
+                          "stringValue": "sdk-export-fixture-run"
+                        }
+                      },
+                      {
+                        "key": "vinaya.seq",
+                        "value": {
+                          "intValue": 7
+                        }
+                      }
+                    ],
+                    "droppedAttributesCount": 0,
+                    "events": [],
+                    "droppedEventsCount": 0,
+                    "status": {
+                      "code": 0
+                    },
+                    "links": [],
+                    "droppedLinksCount": 0,
+                    "flags": 257
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

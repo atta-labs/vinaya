@@ -95,6 +95,7 @@ import {
   schemaDigestMismatch
 } from '@harness/kernel/log/client/log-schema-digest.js'
 import { statsUrlFrom } from '@harness/kernel/log/client/log-sync-server-source.js'
+import { resolveOtlpAddress } from '@harness/kernel/log/otlp-address.js'
 import { isUnattendedProcess, repoRootSync, runtimeDirForRepoAsync } from '@harness/kernel/run-paths.js'
 import {
   branchProtectionConfigured,
@@ -146,6 +147,58 @@ export type DoctorDeps = {
   readLastLogFallback?: () => Promise<FolderFallbackRecord | null>
   /** The host facts and runner the dispatch's own sandbox probe uses. Omitted, no probe runs and no finding is reported: only `realDeps` reads the real host, so a test fixture never starts an agent. */
   agentSandboxProbe?: AgentSandboxProbeDeps
+  /** The OpenTelemetry address this host resolves, through the sender's own rule, and the variables its credential is read from — see `OtlpAddressTarget`. Omitted, no `[logs-otlp]` finding is reported: only `realDeps` reads the host's settings. */
+  resolveOtlpTarget?: () => Promise<OtlpAddressTarget>
+}
+
+/**
+ * What the `[logs-otlp]` finding reports: whether this host resolves an OpenTelemetry address, and the `${VAR}` names
+ * its `logs.otlp.headers` read the credential from. The resolved header values are never carried here, so no
+ * credential can reach the report.
+ */
+export type OtlpAddressTarget = {
+  address: { kind: 'address'; url: string } | { kind: 'none'; reason: string }
+  credentialVars: string[]
+}
+
+/**
+ * The pure half of the `[logs-otlp]` finding's resolution: the address through `resolveOtlpAddress`, the same rule
+ * every send of a local copy goes through, and the variables named by the `logs.otlp.headers` of the settings that
+ * rule reads — the default branch's when the process is unattended or on CI, the working tree's otherwise.
+ */
+export function otlpAddressTargetFrom(input: {
+  localConfig: VinayaConfig | null
+  trustAnchorConfig: VinayaConfig | null
+  unattended: boolean
+  env: NodeJS.ProcessEnv
+}): OtlpAddressTarget {
+  const decision = resolveOtlpAddress(input)
+  const anchored = input.unattended || Boolean(input.env.GITHUB_ACTIONS || input.env.CI)
+  const logs = (anchored ? input.trustAnchorConfig : input.localConfig)?.logs
+  const headers = logs ? logs.otlp?.headers : undefined
+  const names = new Set<string>()
+  for (const value of Object.values(headers ?? {})) {
+    for (const match of value.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) names.add(match[1] as string)
+  }
+  return {
+    address: decision.kind === 'address' ? { kind: 'address', url: decision.url } : decision,
+    credentialVars: [...names]
+  }
+}
+
+/** The I/O half: this host's settings, read the way the sender's own address decision reads them. */
+export async function resolveOtlpTargetForDoctor(): Promise<OtlpAddressTarget> {
+  const localConfig = loadConfig()
+  const unattended = isUnattendedProcess(process.env)
+  const anchored = unattended || Boolean(process.env.GITHUB_ACTIONS || process.env.CI)
+  const trustAnchorConfig = anchored
+    ? await withDeadline(
+        loadTrustAnchorConfigAsync(undefined, { quiet: true }),
+        LOG_DESTINATION_ANCHOR_DEADLINE_MS,
+        null
+      )
+    : null
+  return otlpAddressTargetFrom({ localConfig, trustAnchorConfig, unattended, env: process.env })
 }
 
 /** What the `agent-sandbox` finding reads from the host — each swapped by a test to prove the finding's outcomes without a Linux host or a real agent. */
@@ -355,6 +408,7 @@ export function realDeps(): DoctorDeps {
     readLastLogFallback: readLastLogFallbackReal,
     readLogServerDigest: readLogServerDigestReal,
     localSchemaDigest,
+    resolveOtlpTarget: resolveOtlpTargetForDoctor,
     agentSandboxProbe: {
       confinementPlatform: realConfinementPlatformDeps,
       claudeBinary: () => executableOnPath('claude'),
@@ -1509,6 +1563,49 @@ function logCredentialSourceFinding(credentialVars: readonly string[], env: Node
   )
 }
 
+/**
+ * The `[logs-otlp]` finding, beside `[logs]`: whether this host resolves an OpenTelemetry address for its run's
+ * records, and when it does, which environment variable the credential is read from and whether it is set. Only the
+ * variable's presence is inspected; its value is never read into the report. No address is `info` — the records stay
+ * in the local copy, which is a sanctioned outcome — and an address whose credential variable is unset is `warn`,
+ * because every send is then refused and retried until it is set.
+ */
+async function diagnoseOtlpAddress(deps: DoctorDeps): Promise<Finding[]> {
+  if (deps.resolveOtlpTarget === undefined) return []
+  const { address, credentialVars } = await deps.resolveOtlpTarget()
+  const missing = credentialVars.filter((name) => !process.env[name])
+  const named = credentialVars
+    .map((name) => (missing.includes(name) ? `${name}, which is not set` : `${name}, which is set`))
+    .join('; ')
+  const never = '(the value itself is never read into this report)'
+  if (address.kind === 'none') {
+    const none = `no OpenTelemetry address resolves on this host — ${address.reason}. This host's run records stay in its local copy.`
+    // An address refused only for its unset credential is fixed by setting that variable, so it is named and warned of.
+    if (missing.length > 0) {
+      return [
+        warn(
+          'logs-otlp',
+          `${none} Its credential is read from ${named} ${never}. Set ${missing.join(', ')} to the ingest credential to send them.`
+        )
+      ]
+    }
+    return [info('logs-otlp', none)]
+  }
+  const where = `this host's run records are sent to the OpenTelemetry address ${urlForDisplay(address.url)}`
+  if (credentialVars.length === 0) {
+    return [ok('logs-otlp', `${where}; its headers read no credential from the environment.`)]
+  }
+  if (missing.length > 0) {
+    return [
+      warn(
+        'logs-otlp',
+        `${where}; its credential is read from ${named} ${never}. Set ${missing.join(', ')} to the ingest credential — until then every send is refused and the records wait in the local copy.`
+      )
+    ]
+  }
+  return [ok('logs-otlp', `${where}; its credential is read from ${named} ${never}.`)]
+}
+
 async function diagnoseLogDestination(deps: DoctorDeps): Promise<Finding[]> {
   const { destination, credentialVars } = await deps.resolveLogDestination()
   const source = logCredentialSourceFinding(credentialVars, process.env)
@@ -1783,6 +1880,7 @@ export async function runDoctor(args: string[], deps: DoctorDeps): Promise<numbe
   findings.push(diagnoseCodeowners(repo.repoRoot))
   findings.push(...diagnoseTestCi(repo.repoRoot))
   findings.push(...(await diagnoseLogDestination(deps)))
+  findings.push(...(await diagnoseOtlpAddress(deps)))
   findings.push(...(await diagnoseLastLogFallback(deps)))
   findings.push(...(await diagnoseAgentSandbox(deps, repo.repoRoot)))
 
