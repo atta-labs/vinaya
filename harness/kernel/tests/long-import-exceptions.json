@@ -1,7 +1,17 @@
 [
   {
     "file": "apps/log-server/src/log-sdk-contract.ts",
+    "specifier": "../../../packages/log-sdk/src/contract/check.js",
+    "reason": "The Worker's bundle and test pool resolve the Log SDK contract files by this relative path, so it names a package file with no alias."
+  },
+  {
+    "file": "apps/log-server/src/log-sdk-contract.ts",
     "specifier": "../../../packages/log-sdk/src/contract/custom.js",
+    "reason": "The Worker's bundle and test pool resolve the Log SDK contract files by this relative path, so it names a package file with no alias."
+  },
+  {
+    "file": "apps/log-server/src/log-sdk-contract.ts",
+    "specifier": "../../../packages/log-sdk/src/contract/ids.js",
     "reason": "The Worker's bundle and test pool resolve the Log SDK contract files by this relative path, so it names a package file with no alias."
   },
   {

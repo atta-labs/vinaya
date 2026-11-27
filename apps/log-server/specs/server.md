@@ -203,7 +203,7 @@ The Durable Object class is declared with `new_sqlite_classes` in its migration:
 
 Setting `logs.url` moves local runs off the default local folder as well: a Vinaya installation delivers to exactly one destination.
 
-**How the Worker reaches the store and the redaction.** The kernel's Log modules (`harness/kernel/log/store.ts`, `redact.ts`, `schema.ts`) re-export the Log SDK package, `@attalabs/vinaya-log-sdk`, by its name. The Worker needs only the stored-event contract (the store's `classifyStoredLine` and `recordIdentity`, `redact`, the schemas), and the package's full entry also holds the writer and the sender, which use Node modules the Worker runtime does not provide. So the Worker's bundle (`wrangler.jsonc` `alias`) and the test pool (`vitest.config.ts`) resolve the package name to `src/log-sdk-contract.ts`, which re-exports those contract modules alone. No route, sequence number or token depends on this.
+**How the Worker reaches the store and the redaction.** The kernel's Log modules (`harness/kernel/log/store.ts`, `redact.ts`, `schema.ts`) re-export the Log SDK package, `@attalabs/vinaya-log-sdk`, by its name. The Worker needs only the stored-event contract (the record check, the run's trace id `traceIdFor`, the store's `classifyStoredLine` and `recordIdentity`, `redact`, the schemas), and the package's full entry also holds the writer and the sender, which use Node modules the Worker runtime does not provide. So the Worker's bundle (`wrangler.jsonc` `alias`) and the test pool (`vitest.config.ts`) resolve the package name to `src/log-sdk-contract.ts`, which re-exports those contract modules alone. No route, sequence number or token depends on this.
 
 ## 7. Tests run the real runtime
 
