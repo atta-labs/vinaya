@@ -73,19 +73,23 @@ describe('recording off gives every process no local copy', () => {
     ).toBeUndefined()
   })
 
-  test('an unattended process takes the off switch from the default branch only, and unreadable settings leave it on', () => {
+  test('an unattended process follows the address rule: its working tree or its default branch turns recording off, and unreadable settings leave it on', () => {
     const home = tmp()
-    const off = { home, cwd: settingsAt({ logs: false }), handedRuntimeDir: undefined, unattended: true }
     const defaultFolder = join(home, '.vinaya', 'runtime', 'a-b', 'logs')
-    // The working tree, which a change under review can edit, never turns an unattended process's recording off.
-    expect(localCopyWriter.resolveLocalCopySettings({ ...off, defaultBranchLogs: () => ({}) }, 'a/b')?.folder).toBe(
-      defaultFolder
-    )
+    // As the OpenTelemetry address: a working tree's `logs: false` turns an unattended process's recording off too.
+    const treeOff = { home, cwd: settingsAt({ logs: false }), handedRuntimeDir: undefined, unattended: true }
+    expect(
+      localCopyWriter.resolveLocalCopySettings({ ...treeOff, defaultBranchLogs: () => ({}) }, 'a/b')
+    ).toBeUndefined()
     // A default branch whose settings cannot be read keeps the default folder, as before.
-    expect(localCopyWriter.resolveLocalCopySettings({ ...off, defaultBranchLogs: () => null }, 'a/b')?.folder).toBe(
+    const treeOn = { ...treeOff, cwd: settingsAt({}) }
+    expect(localCopyWriter.resolveLocalCopySettings({ ...treeOn, defaultBranchLogs: () => null }, 'a/b')?.folder).toBe(
       defaultFolder
     )
-    expect(localCopyWriter.resolveLocalCopySettings(off, 'a/b')?.folder).toBe(defaultFolder)
+    expect(localCopyWriter.resolveLocalCopySettings({ ...treeOn, defaultBranchLogs: () => ({}) }, 'a/b')?.folder).toBe(
+      defaultFolder
+    )
+    expect(localCopyWriter.resolveLocalCopySettings(treeOn, 'a/b')?.folder).toBe(defaultFolder)
   })
 
   test('an attended process never reads the default branch for its off switch', () => {

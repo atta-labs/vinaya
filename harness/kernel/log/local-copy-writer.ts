@@ -40,22 +40,22 @@ export type LocalCopyFolderInputs = {
 }
 
 /**
- * Whether the settings a process reads its off switch from turn recording off: the default branch's for an unattended
- * process, never its working tree, which a change under review can edit; the working tree's for any other process,
- * also one handed its runtime directory. Settings that cannot be read leave recording on.
+ * Whether recording is off, by the rule the OpenTelemetry address follows: the working tree's settings turn it off for
+ * every process, also one handed its runtime directory, and an unattended process is turned off by the default
+ * branch's settings as well. Neither can turn recording on, and settings that cannot be read leave it on.
  */
 function recordingTurnedOff(
   inputs: LocalCopyFolderInputs,
   vinayaHome: string,
   repository: string | undefined
 ): boolean {
-  if (inputs.unattended) return inputs.defaultBranchLogs?.()?.logs === false
   const resolved = sdkResolveSettings({
     repoRoot: inputs.cwd,
     ...(repository === undefined ? {} : { repository }),
     vinayaHome
   })
-  return resolved.ok && resolved.settings.logs === false
+  if (resolved.ok && resolved.settings.logs === false) return true
+  return inputs.unattended && inputs.defaultBranchLogs?.()?.logs === false
 }
 
 /**
@@ -75,7 +75,7 @@ export function resolveLocalCopyFolder(
  * The folder of `resolveLocalCopyFolder` with the keep window beside it. A process that reads no working-tree
  * setting for the folder (an unattended one, or one handed its runtime directory) reads none for the window
  * either, and keeps the default. Recording off gives no place for every process, that one included: an unattended
- * process takes the off switch from the default branch's settings, and a default branch whose settings cannot be read
+ * process is also turned off by the default branch's settings, and a default branch whose settings cannot be read
  * keeps the default folder.
  */
 export function resolveLocalCopySettings(

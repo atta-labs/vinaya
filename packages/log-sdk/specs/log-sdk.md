@@ -119,7 +119,7 @@ A line is set aside, with a rejected receipt and an entry in `setAside` (not in 
 - `logs.events` — the declared custom events and their fields.
 - `logs: false`, or `destination: false` — the handle records nothing and keeps every function.
 
-A passed destination still replaces a file's `logs: false`, so a caller that passes one reads the off switch itself. The Vinaya harness does: with `logs: false` it opens no handle and passes no destination, also for a process handed its runtime directory and for an unattended process, which reads the switch from the default branch's settings rather than its working tree.
+A passed destination still replaces a file's `logs: false`, so a caller that passes one reads the off switch itself. The Vinaya harness does: with `logs: false` it opens no handle and passes no destination, also for a process handed its runtime directory and for an unattended process, which is also turned off by the default branch's settings.
 
 ## 6. Reading and narrating
 

@@ -2198,18 +2198,11 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         return sandboxProbePlanFor(vendor, developer, join(runDir, 'generated', 'developer'), taskInput.worktreePath)
       }
     }
-    // Each round's review inputs, kept as its reviewers were dispatched against them: the launch turns of the round
-    // record their versions from this manifest, never from a second forge read.
+    // Each round's review inputs, kept as its reviewers were dispatched against them: read from what the round's
+    // dispatch step recorded (a fresh snapshot, or on a retry the round's earlier one), and on a resumed run from the
+    // checkpoint's recorded dispatch. The launch turns of the round record their versions from this manifest, never
+    // from a second forge read.
     const roundReviewInputs = new Map<number, ReviewRoundInputs>()
-    const takeReviewInputs = options.taskInput?.reviewInputs
-    if (options.taskInput && takeReviewInputs) {
-      options.taskInput.reviewInputs = (reviewRound) => {
-        const inputs = takeReviewInputs(reviewRound)
-        roundReviewInputs.set(reviewRound, inputs)
-        return inputs
-      }
-    }
-    // A resumed run's round reuses the inputs its dispatch recorded; they are kept the same way.
     const keepDispatchedInputs = (results: Readonly<Record<string, StepNodeResult>>): void => {
       const dispatched = recordedDispatch(results)
       if (dispatched?.inputs) roundReviewInputs.set(dispatched.round, dispatched.inputs)
@@ -2229,6 +2222,8 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
           if (context.nodeId === 'validate-reviewer-outputs' || context.nodeId === 'validate-developer-output')
             restoreCheckpointUsage(options.taskInput, args.agent, context.results)
           const result = await action(context)
+          if (context.nodeId === 'dispatch-reviewers')
+            keepDispatchedInputs({ 'dispatch-reviewers': result as StepNodeResult })
           if (context.nodeId === 'reconcile-external-state') {
             try {
               const found = (JSON.parse(result.stdout ?? 'null') as { number?: unknown } | null)?.number
