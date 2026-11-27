@@ -3,11 +3,14 @@
  * properties, demonstrated by the fault fixtures in `local.test.ts` rather
  * than asserted in prose:
  *
- * **Atomic, durable transitions.** Every write — an ordinary overwrite via
- * `atomicWriteFile`, or an exclusive claim via `exclusiveCreateFile` — lands
- * fully-formed content on a private temp file in the same directory,
- * `fsync`ed, before that content is ever published under its real name via
- * `renameSync` (an overwrite) or `linkSync` (an exclusive claim). POSIX
+ * **Atomic transitions, synced content and name.** Every write — an ordinary
+ * overwrite via `atomicWriteFile`, or an exclusive claim via
+ * `exclusiveCreateFile` — lands fully-formed content on a private temp file in
+ * the same directory, `fsync`ed, before that content is ever published under
+ * its real name via `renameSync` (an overwrite) or `linkSync` (an exclusive
+ * claim). The directory holding the real name is then `fsync`ed too, so the
+ * name itself is synced and not only the bytes; a directory this store
+ * creates inside its own root has its parent synced the same way. POSIX
  * guarantees both publish operations are atomic on a shared filesystem, so
  * a reader never observes a partial file, and a crash before the publish
  * step simply leaves the prior state (or none) untouched. This is the
@@ -346,6 +349,7 @@ export function mkdirNoSymlinks(dir: string, mode: number, trustedRoot: string):
   const ownUid = currentUid()
   const trustedOverflowUid = typeof ownUid === 'number' ? processTrustedOverflowUid() : undefined
   let current = absolute.startsWith(sep) ? sep : ''
+  const trustedRootPrefix = rootSegments.length === 0 ? sep : `${sep}${rootSegments.join(sep)}${sep}`
   segments.forEach((segment, index) => {
     current = current === '' || current === sep ? `${current}${segment}` : `${current}${sep}${segment}`
     // `trustedRoot` itself sits at index `rootSegments.length - 1` — at or
@@ -353,11 +357,17 @@ export function mkdirNoSymlinks(dir: string, mode: number, trustedRoot: string):
     // resolved and its real target trust-checked instead of refused outright.
     const atOrBelowTrustedRoot = isAtOrBelowTrustedRoot(index, rootSegments.length)
     const overflowUid = segmentTrustedOverflowUid(index, rootSegments.length, trustedOverflowUid)
+    let created = false
     try {
       mkdirSync(current, { mode })
+      created = true
     } catch (err) {
       if (!isErrnoException(err, 'EEXIST')) throw err
     }
+    // A directory this call created strictly inside the store's own root has
+    // its parent synced, so the new name reaches disk. Decided by path: an
+    // existing directory, or one outside the root, is never opened.
+    if (created && current.startsWith(trustedRootPrefix)) syncDirectory(dirname(current))
     const stat = lstatSync(current)
     if (stat.isSymbolicLink()) {
       if (atOrBelowTrustedRoot) {
@@ -398,7 +408,17 @@ export function mkdirNoSymlinks(dir: string, mode: number, trustedRoot: string):
   })
 }
 
-/** Whole-file write via temp-then-rename, `fsync`ed before the rename so the bytes are durable, not just visible. `trustedRoot` is this store's own root (`deps.root()`) — see `mkdirNoSymlinks`. */
+/** Syncs a directory's entries to disk: opens it read-only and `fsync`s that descriptor, since a file's own sync does not cover the directory entry naming it. */
+function syncDirectory(dir: string): void {
+  const fd = openSync(dir, fsConstants.O_RDONLY)
+  try {
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/** Whole-file write via temp-then-rename: the temp file is `fsync`ed before the rename, and the directory holding the real name is `fsync`ed after it, so both the bytes and the name are synced. A failing directory sync throws and leaves the published record in place. `trustedRoot` is this store's own root (`deps.root()`) — see `mkdirNoSymlinks`. */
 function atomicWriteFile(path: string, contents: string, trustedRoot: string): void {
   mkdirNoSymlinks(dirname(path), 0o700, trustedRoot)
   const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`
@@ -410,6 +430,7 @@ function atomicWriteFile(path: string, contents: string, trustedRoot: string): v
     closeSync(fd)
   }
   renameSync(tmp, path)
+  syncDirectory(dirname(path))
 }
 
 /**
@@ -439,17 +460,21 @@ function exclusiveCreateFile(
     closeSync(fd)
   }
   try {
-    linkSync(tmp, path)
+    try {
+      linkSync(tmp, path)
+    } catch (err) {
+      if (!isErrnoException(err, 'EEXIST')) throw err
+      return { created: false }
+    }
+    // Published; a failing directory sync throws and leaves the record in place.
+    syncDirectory(dirname(path))
     return { created: true }
-  } catch (err) {
-    if (!isErrnoException(err, 'EEXIST')) throw err
-    return { created: false }
   } finally {
     // Runs on every exit from the try above — both returns AND a rethrown
     // non-EEXIST error alike (a full disk, a permissions fault) — so the
     // private temp file is never left behind regardless of how `linkSync`
     // failed. The temp file already did its job by this point (its content
-    // is durably published at `path`, or it wasn't needed because someone
+    // is published at `path` and its bytes synced, or it wasn't needed because someone
     // else published first, or publishing itself failed and there is
     // nothing left to keep it for); a failure removing it is not this
     // call's own concern to surface, so it's swallowed here rather than

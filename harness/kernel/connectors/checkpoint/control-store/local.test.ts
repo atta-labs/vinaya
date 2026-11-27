@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import {
   acquireOwnership,
+  mkdirNoSymlinks,
   appendTransition,
   attemptEpochClaim,
   consumeResolutionOnce,
@@ -883,5 +884,59 @@ describe('listStartedEffectKeys / markEffectUncertain (#556, O3)', () => {
 
     expect(markEffectUncertain(deps, 556, epoch, 'already-verified')).toBeNull()
     expect(markEffectUncertain(deps, 556, epoch, 'never-written')).toBeNull()
+  })
+})
+
+describe('directory syncs — a published record name and a created store directory reach disk', () => {
+  // The fs wrapper that records directory syncs is process-wide, so the probe
+  // runs in a child process and this suite only reads its report.
+  const child = Bun.spawnSync(['bun', join(import.meta.dir, 'directory-sync-probe.ts')], {
+    stdout: 'pipe',
+    stderr: 'pipe'
+  })
+  const line = child.stdout
+    .toString()
+    .split('\n')
+    .find((l) => l.startsWith('REPORT:'))
+  const report = (line ? JSON.parse(line.slice('REPORT:'.length)) : {}) as {
+    root: string
+    claimSynced: string[]
+    runSynced: string[]
+    createdSynced: string[]
+    existingSynced: string[]
+    outsideSynced: string[]
+    outsideCreated: boolean
+    runError: string | null
+    runStatus: string
+    runFiles: string[]
+    claimError: string | null
+    ownershipFiles: string[]
+  }
+
+  it('the probe ran to its report', () => {
+    expect(line === undefined ? child.stderr.toString() : '').toBe('')
+  })
+
+  it('an ownership claim syncs the directory it links into, and a run record the directory it renames into', () => {
+    expect(report.claimSynced).toContain(join(report.root, '551', 'control', 'ownership'))
+    expect(report.runSynced).toContain(join(report.root, '551', 'control', 'run'))
+  })
+
+  it('a directory created inside the root has its parent synced', () => {
+    expect(report.createdSynced).toEqual([report.root, join(report.root, 'a')])
+  })
+
+  it('an existing directory and a directory outside the root are not synced', () => {
+    expect(report.existingSynced).toEqual([])
+    expect(report.outsideCreated).toBe(true)
+    expect(report.outsideSynced).toEqual([])
+  })
+
+  it('a failed directory sync throws from the write and the published record stays in place', () => {
+    expect(report.runError).toBe('injected directory sync failure')
+    expect(report.runStatus).toBe('ok')
+    expect(report.runFiles).toEqual(['run-a.json'])
+    expect(report.claimError).toBe('injected directory sync failure')
+    expect(report.ownershipFiles).toEqual(['epoch-000001.json', 'epoch-000002.json'])
   })
 })
