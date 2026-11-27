@@ -9,7 +9,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { checkReservedNames, describeContractFailure, redact, reservedNamesOf, traceIdFor } from './log-sdk-contract'
+import { checkReservedNames, type ReservedName, redact, reservedNamesOf, traceIdFor } from './log-sdk-contract'
 
 export type OtlpSignal = 'traces' | 'logs'
 export type OtlpRecordKind = 'span' | 'log'
@@ -43,6 +43,11 @@ const REFUSED_LINE_CHARS = 64 * 1024
  * an event line (spec § 3).
  */
 const NO_HOME = ''
+
+/** The sentence a refusal carries for a failing name: the same wording the Log SDK's sender sets a line aside with. */
+function describeFailure(failure: ReservedName): string {
+  return `${failure.field} "${failure.name}" is not in the Log's contract`
+}
 
 const ALL_ZERO = /^0+$/
 const encoder = new TextEncoder()
@@ -178,7 +183,7 @@ function oneRecord(
   if (size > MAX_RECORD_BYTES) return refuse(`too_large:${size}`)
 
   const failure = checkReservedNames(reservedNamesOf(document))
-  if (failure !== null) return refuse(`contract:${describeContractFailure(failure)}`)
+  if (failure !== null) return refuse(`contract:${describeFailure(failure)}`)
 
   // Identity is read from the record as it arrived: redaction is applied to what is stored, and two records that
   // differ only in a secret are two records.

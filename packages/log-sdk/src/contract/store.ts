@@ -371,3 +371,5 @@ export function createFixtureStore(options: FixtureStoreOptions = {}): LogStore 
     }
   }
 }
+export { checkReservedNames, type ReservedName, reservedNamesOf } from './check.js'
+export { traceIdFor } from './ids.js'
