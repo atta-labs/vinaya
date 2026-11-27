@@ -24,7 +24,8 @@ import {
   PLAN_REVIEW_QUESTION_VERSION,
   type PlanReview,
   type PlanReviewAnswer,
-  type PlanReviewEvidence
+  type PlanReviewEvidence,
+  planReviewJsonSchema
 } from './result'
 
 let repo: string
@@ -184,6 +185,39 @@ describe('one review round', () => {
     expect(prompt).toContain('## The short version')
     expect(prompt).toContain('"scope"')
     expect(prompt).toContain(`revision: ${revision}`)
+  })
+
+  test('the answers a first round came back with and was rejected for are held to the rules while written', () => {
+    const draft = makeDraft()
+    const schema = planReviewJsonSchema() as {
+      properties: {
+        planReview: {
+          properties: Record<string, { items: { properties: { evidence: { minItems?: number } } } }>
+        }
+      }
+    }
+    // An answer or a finding with no evidence: the output schema refuses it.
+    const { answers, findings } = schema.properties.planReview.properties
+    expect(answers?.items.properties.evidence.minItems).toBe(1)
+    expect(findings?.items.properties.evidence.minItems).toBe(1)
+    // A confirmation on a first round: the prompt says nothing is asked to be confirmed and the list stays empty.
+    const first = planReviewPrompt(draft)
+    expect(first).toContain('No finding is asked to be confirmed')
+    expect(first).toContain('leave `confirmations` as an empty list')
+    expect(first).not.toContain('Findings to confirm')
+    // A later round keeps listing what it asks to confirm.
+    const later = planReviewPrompt(draft, { tasks: [1], openFindings: ['f-1'] }, [
+      { id: 'f-1', question: 2, task: 1, resolution: 'fix it' }
+    ])
+    expect(later).toContain('Findings to confirm')
+    expect(later).toContain('f-1')
+    expect(later).not.toContain('No finding is asked to be confirmed')
+    // A scope passage that summarises the scope: every prompt says it is words copied verbatim from one item.
+    for (const prompt of [first, later]) {
+      expect(prompt).toContain('words copied verbatim from one single item')
+      expect(prompt).toContain('Never a summary, a paraphrase, a count or a list of scope items')
+      expect(prompt).toContain('a `path` inside the copy, the captured `revision` above, and a line range')
+    }
   })
 
   test('a revision the repository does not hold is not staged', async () => {
