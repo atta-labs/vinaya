@@ -617,7 +617,9 @@ export async function runV2(agent: Agent, scenario: Scenario = {}): Promise<Obse
     fresh.bound = {
       ...fresh.bound,
       localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
-      probeAgentSandbox: async () => ({ ok: true })
+      probeAgentSandbox: async () => ({ ok: true }),
+      // The security-scan command is the default branch's trust-anchor config: none is declared here, so no read of the real GitHub.
+      resolveSecurityScanCommand: () => null
     }
     if (scenario.clock) fresh.clock = scenario.clock
     // A mergeability the forge never resolves spends its poll budget at once.

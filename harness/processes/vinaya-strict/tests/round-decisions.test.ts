@@ -330,7 +330,9 @@ async function run(agent: Agent, scenario: Scenario = {}): Promise<Observed> {
   task.bound = {
     ...task.bound,
     localGateControl: () => ({ control: 'local-gate', active: true, detail: '', remedy: '' }),
-    probeAgentSandbox: async () => ({ ok: true })
+    probeAgentSandbox: async () => ({ ok: true }),
+    // The security-scan command is the default branch's trust-anchor config: none is declared here, so no read of the real GitHub.
+    resolveSecurityScanCommand: () => null
   }
   if (scenario.clock) task.clock = scenario.clock
   if (scenario.attachAtRound !== undefined) {
