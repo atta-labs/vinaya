@@ -205,7 +205,11 @@ export function planReviewPrompt(
 ): string {
   const later =
     scope === undefined
-      ? []
+      ? [
+          '',
+          'This is a first round. No finding is asked to be confirmed: leave `confirmations` as an empty list, `[]`,',
+          'and confirm nothing. Put every finding of yours in `findings`.'
+        ]
       : [
           '',
           'This is a later round. Judge only this scope:',
@@ -229,6 +233,13 @@ export function planReviewPrompt(
     `questionVersion: ${draft.reviewQuestionVersion}`,
     `revision: ${draft.revision}`,
     ...later,
+    '',
+    'Every answer and every finding carries at least one piece of evidence, in one of two forms:',
+    '- A code location (`kind: "code"`): a `path` inside the copy, the captured `revision` above, and a line range',
+    '  (`lineStart` to `lineEnd`) that lies inside that file. Set `passage` to null.',
+    '- A scope passage (`kind: "scope"`): `passage` is words copied verbatim from one single item of the draft\'s agreed',
+    '  scope. Never a summary, a paraphrase, a count or a list of scope items. Set `path`, `revision`, `lineStart`',
+    '  and `lineEnd` to null.',
     '',
     'The draft (JSON), with its agreed scope:',
     '```json',
