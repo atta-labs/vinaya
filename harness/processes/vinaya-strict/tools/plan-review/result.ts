@@ -128,12 +128,22 @@ export type PlanReviewFinding = z.infer<typeof FindingSchema>
 export type PlanReviewConfirmation = z.infer<typeof ConfirmationSchema>
 export type PlanReview = z.infer<typeof PlanReviewSchema>
 
-/** The JSON Schema handed to the vendor CLI. `$schema` is dropped: neither CLI needs it. */
+/**
+ * The JSON Schema handed to the vendor CLI. `$schema` is dropped: neither CLI needs it. An answer and a finding
+ * each carry at least one piece of evidence in the schema the agent writes against, so an answer with none cannot
+ * be produced; the validator still refuses one that arrives anyway, with its own reason.
+ */
 export function planReviewJsonSchema(): Record<string, unknown> {
   const { $schema: _dropped, ...rest } = z.toJSONSchema(PlanReviewOutputSchema, { target: 'draft-7' }) as Record<
     string,
     unknown
   >
+  type Node = { properties?: Record<string, Node>; items?: Node; minItems?: number }
+  const review = (rest as Node).properties?.planReview
+  for (const list of ['answers', 'findings']) {
+    const evidence = review?.properties?.[list]?.items?.properties?.evidence
+    if (evidence !== undefined) evidence.minItems = 1
+  }
   return rest
 }
 
