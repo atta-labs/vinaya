@@ -15,7 +15,14 @@
  * which accepts the socket and answers with the feed's protocol name alone.
  */
 
-import { asksForLiveSubprotocol, liveSubprotocolToken, LIVE_SUBPROTOCOL, parseRoute, repoName } from './route'
+import {
+  asksForLiveSubprotocol,
+  liveSubprotocolToken,
+  LIVE_SUBPROTOCOL,
+  parseRoute,
+  repoName,
+  takesIngestToken
+} from './route'
 import { RepoLog, type Env } from './repo-log'
 
 export { RepoLog }
@@ -75,10 +82,11 @@ export default {
       return refuse(parsed.status, error)
     }
 
-    // Write-only on ingest and on the replay of rejected rows, read-only
+    // Write-only on the two ingests, events and OpenTelemetry, and on the
+    // replay of rejected rows, read-only
     // everywhere else: presenting one token on the other's route is refused
     // exactly like presenting none (spec § 5).
-    const writes = parsed.route.kind === 'ingest' || parsed.route.kind === 'replay'
+    const writes = takesIngestToken(parsed.route.kind)
     const expected = writes ? env.INGEST_TOKEN : env.READ_TOKEN
     if (typeof expected !== 'string' || expected.length === 0) {
       // An unset secret must never authorize anything — an empty expected

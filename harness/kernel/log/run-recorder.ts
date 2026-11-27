@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve as resolvePath } from 'node:path'
 import {
   connect,
   EVENT_NAMES,
@@ -495,12 +495,118 @@ function runIdentityFromEnvironment(): RunIdentityParts {
   }
 }
 
+/** How the checkout's repository is read: its files, read synchronously, and nothing else. */
+export type CheckoutReader = {
+  /** Whether a path exists. */
+  exists: (path: string) => boolean
+  /** A file's text; throws when it cannot be read. */
+  readText: (path: string) => string
+  /** A path with every symbolic link resolved; throws when it does not exist. */
+  realpath: (path: string) => string
+}
+
+const fileReader: CheckoutReader = {
+  exists: (path) => existsSync(path),
+  readText: (path) => readFileSync(path, 'utf8'),
+  realpath: (path) => realpathSync(path)
+}
+
+/** `owner/repo` of a GitHub remote URL, in the shapes `git remote get-url` prints for one; `undefined` for any other host. */
+export function githubRepositoryOf(url: string): string | undefined {
+  const match =
+    /^git@github\.com:([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(url) ??
+    /^ssh:\/\/(?:[^@/]+@)?github\.com(?::\d+)?\/([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(url) ??
+    /^https?:\/\/(?:[^@/]+@)?github\.com\/([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(url)
+  return match?.[1] && match[2] && !match[2].includes('/') ? `${match[1]}/${match[2]}` : undefined
+}
+
+/** The `url` of the `[remote "origin"]` section of a git config file's text, or `undefined` when it has none. */
+export function originUrlOf(config: string): string | undefined {
+  let inOrigin = false
+  for (const raw of config.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (line.startsWith('[')) {
+      inOrigin = /^\[\s*remote\s+"origin"\s*\]$/.test(line)
+      continue
+    }
+    if (!inOrigin) continue
+    const entry = /^url\s*=\s*(.*)$/i.exec(line)
+    if (entry?.[1] !== undefined) return entry[1].trim().replace(/^"(.*)"$/, '$1')
+  }
+  return undefined
+}
+
+/**
+ * The repository of the checkout `start` lies in, from its `origin` remote, read from the git config file — never by
+ * spawning `git`. The checkout is found by walking up from `start` to the first `.git` entry, the way `repoRootSync`
+ * finds the repository root: a directory holds `config`; a linked worktree's `.git` file names its own git directory,
+ * whose `commondir` names the one holding `config`. `undefined` outside a checkout, or when `origin` is not on GitHub.
+ */
+export function checkoutRepository(start: string, reader: CheckoutReader = fileReader): string | undefined {
+  try {
+    let dir = reader.realpath(start)
+    for (;;) {
+      const dotGit = join(dir, '.git')
+      if (reader.exists(dotGit)) {
+        const url = originUrlOf(reader.readText(join(gitCommonDir(dotGit, dir, reader), 'config')))
+        return url === undefined ? undefined : githubRepositoryOf(url)
+      }
+      const parent = dirname(dir)
+      if (parent === dir) return undefined
+      dir = parent
+    }
+  } catch {
+    return undefined
+  }
+}
+
+/** The git directory that holds a checkout's `config`, from its `.git` entry. */
+function gitCommonDir(dotGit: string, root: string, reader: CheckoutReader): string {
+  let pointer: string
+  try {
+    pointer = reader.readText(dotGit)
+  } catch {
+    // A directory, which cannot be read as text: the git directory itself.
+    return dotGit
+  }
+  const named = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim()
+  if (named === undefined) return dotGit
+  const gitDir = resolvePath(root, named)
+  try {
+    const common = reader.readText(join(gitDir, 'commondir')).trim()
+    return common === '' ? gitDir : resolvePath(gitDir, common)
+  } catch {
+    return gitDir
+  }
+}
+
+/**
+ * The default repository of a process's records: `VINAYA_REPO` when the environment names one, and otherwise the
+ * repository of the checkout the process runs in. The checkout is read once per process, on the first ask that the
+ * environment does not answer: the recorder asks on every handle and turn, including while check children run, and
+ * a synchronous spawn at that moment can swallow a child's exit (`repoRootSync`), so the read is of files alone.
+ */
+export function processRepository(
+  source: { env: () => NodeJS.ProcessEnv; cwd: () => string; reader?: CheckoutReader } = {
+    env: () => process.env,
+    cwd: () => process.cwd()
+  }
+): () => string | undefined {
+  let checkout: { repository: string | undefined } | undefined
+  return () => {
+    const named = source.env().VINAYA_REPO
+    if (named) return named
+    checkout ??= { repository: checkoutRepository(source.cwd(), source.reader) }
+    return checkout.repository
+  }
+}
+
 /** This process's one recorder, for the run the default sink records. */
 export function runRecorder(): RunRecorder {
   shared ??= createRunRecorder({
     runId: currentRunId,
     workRef: () => process.env.VINAYA_TASK || undefined,
-    repository: () => process.env.VINAYA_REPO || undefined,
+    repository: processRepository(),
     place: processLocalCopyPlace,
     processIdentity: identityFromEnvironment,
     runIdentity: runIdentityFromEnvironment,

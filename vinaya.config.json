@@ -66,6 +66,12 @@
     },
     "readHeaders": {
       "authorization": "Bearer ${VINAYA_LOG_READ_TOKEN}"
+    },
+    "otlp": {
+      "url": "https://vinaya-log-server.estevez-dani.workers.dev/v1/repos/atta-labs/vinaya/otlp",
+      "headers": {
+        "authorization": "Bearer ${VINAYA_LOG_TOKEN}"
+      }
     }
   },
   "principals": ["daniboomerang"],

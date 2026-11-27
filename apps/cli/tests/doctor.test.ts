@@ -19,6 +19,7 @@ import type { AgentSandboxProbeDeps, DoctorDeps, Finding } from '../src/commands
 import {
   credentialVarNames,
   logDestinationTargetFrom,
+  otlpAddressTargetFrom,
   probeLogDestinationServer,
   runDoctor,
   urlForDisplay,
@@ -2049,6 +2050,84 @@ describe('vinaya doctor — the log destination works (Issue #793)', () => {
       expect(urlForDisplay('https://logs.example.com/events')).toBe('https://logs.example.com/events')
       expect(urlForDisplay('not a url at all')).toBe('<unparseable logs.url>')
     })
+  })
+})
+
+describe('vinaya doctor — the OpenTelemetry address (logs-otlp)', () => {
+  const ADDRESS = 'https://logs.example.com/v1/repos/acme/widget/otlp'
+  const VARIABLE = 'VINAYA_DOCTOR_OTLP_TEST_TOKEN'
+  const SECRET = 'otlp-secret-value-never-printed'
+  const otlp = { url: ADDRESS, headers: { authorization: `Bearer \${${VARIABLE}}` } }
+  const settings = { logs: { otlp } } as unknown as VinayaConfig
+
+  function otlpFinding(findings: Finding[]): Finding {
+    const found = findings.filter((f) => f.check === 'logs-otlp')
+    expect(found).toHaveLength(1)
+    return found[0] as Finding
+  }
+
+  afterEach(() => {
+    delete process.env[VARIABLE]
+  })
+
+  it('names the address, the credential’s variable and that it is set, and never prints its value', async () => {
+    await runInit(['--yes'], initDeps())
+    process.env[VARIABLE] = SECRET
+    const target = otlpAddressTargetFrom({
+      localConfig: settings,
+      trustAnchorConfig: null,
+      unattended: false,
+      env: process.env
+    })
+    expect(target).toEqual({ address: { kind: 'address', url: ADDRESS }, credentialVars: [VARIABLE] })
+    const report = await runDoctorJson({ resolveOtlpTarget: async () => target })
+    const finding = otlpFinding(report.findings)
+    expect(finding.severity).toBe('ok')
+    expect(finding.message).toContain(ADDRESS)
+    expect(finding.message).toContain(`${VARIABLE}, which is set`)
+    expect(JSON.stringify(report)).not.toContain(SECRET)
+  })
+
+  it('warns, naming the variable, when the address resolves and its credential variable is not set', async () => {
+    await runInit(['--yes'], initDeps())
+    const target = otlpAddressTargetFrom({ localConfig: settings, trustAnchorConfig: null, unattended: false, env: {} })
+    const report = await runDoctorJson({ resolveOtlpTarget: async () => target })
+    const finding = otlpFinding(report.findings)
+    expect(finding.severity).toBe('warn')
+    expect(finding.message).toContain(`${VARIABLE}, which is not set`)
+    expect(finding.message).toContain(ADDRESS)
+  })
+
+  it('reports at info that this host resolves no address, with the reason the sender’s rule gives', async () => {
+    await runInit(['--yes'], initDeps())
+    const none = otlpAddressTargetFrom({
+      localConfig: { logs: {} } as VinayaConfig,
+      trustAnchorConfig: null,
+      unattended: false,
+      env: {}
+    })
+    expect(none.address).toEqual({ kind: 'none', reason: 'no logs.otlp address' })
+    const report = await runDoctorJson({ resolveOtlpTarget: async () => none })
+    const finding = otlpFinding(report.findings)
+    expect(finding.severity).toBe('info')
+    expect(finding.message).toContain('no logs.otlp address')
+  })
+
+  it('reads the default branch’s address for an unattended process, as the sender does', () => {
+    const anchored = otlpAddressTargetFrom({
+      localConfig: { logs: { otlp: { url: 'https://working-tree.example/otlp' } } } as unknown as VinayaConfig,
+      trustAnchorConfig: settings,
+      unattended: true,
+      env: { [VARIABLE]: SECRET }
+    })
+    expect(anchored).toEqual({ address: { kind: 'address', url: ADDRESS }, credentialVars: [VARIABLE] })
+    expect(JSON.stringify(anchored)).not.toContain(SECRET)
+  })
+
+  it('reports nothing when the host’s address is not asked for', async () => {
+    await runInit(['--yes'], initDeps())
+    const report = await runDoctorJson()
+    expect(report.findings.filter((f) => f.check === 'logs-otlp')).toHaveLength(0)
   })
 })
 

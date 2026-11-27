@@ -20,13 +20,23 @@ import { DurableObject } from 'cloudflare:workers'
 import { classifyStoredLine, recordIdentity } from '@attalabs/harness/log/store'
 import { logEventSchemaDigest } from '@attalabs/harness/log/client/schema-digest'
 import { redact } from '@attalabs/harness/log/redact'
+import {
+  exportResponse,
+  isJsonContentType,
+  type OtlpRecord,
+  type OtlpRefusal,
+  type OtlpSignal,
+  recordLine,
+  runTraceId,
+  splitExport
+} from './otlp'
 import { LIVE_SUBPROTOCOL, parseRoute, repoName, type Route } from './route'
 
 export interface Env {
   REPO_LOG: DurableObjectNamespace<RepoLog>
-  /** Write-only bearer token, accepted on the ingest route and the rejected route's replay alone. A Worker secret, never in the repository. */
+  /** Write-only bearer token, accepted on the ingest route, the two OpenTelemetry ingest routes and the rejected route's replay alone. A Worker secret, never in the repository. */
   INGEST_TOKEN: string
-  /** Read-only bearer token, accepted on the read, stats, rejected and live routes alone. A Worker secret, never in the repository. */
+  /** Read-only bearer token, accepted on the read, stats, rejected, live and OpenTelemetry records routes alone. A Worker secret, never in the repository. */
   READ_TOKEN: string
 }
 
@@ -147,7 +157,7 @@ function liveResponse(client: WebSocket): Response {
   })
 }
 
-function jsonError(status: 400 | 404 | 405 | 413, error: string): Response {
+function jsonError(status: 400 | 404 | 405 | 413 | 415, error: string): Response {
   return Response.json({ error }, { status })
 }
 
@@ -189,6 +199,31 @@ export class RepoLog extends DurableObject<Env> {
         line        TEXT
       )`
     )
+    // The OpenTelemetry records (spec § 4) share nothing with `events`: their
+    // own table, their own sequence, their own refusal record. `seq` is a
+    // plain rowid for the same reason `events.seq` is. Each record costs three
+    // rows written — the row, the `record_id` identity index, and the
+    // `trace_id` index that reads one run without a scan (spec § 2).
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS otlp_records (
+        seq         INTEGER PRIMARY KEY,
+        record_id   TEXT NOT NULL UNIQUE,
+        kind        TEXT NOT NULL,
+        trace_id    TEXT,
+        received_at INTEGER NOT NULL,
+        line        TEXT NOT NULL
+      )`
+    )
+    this.sql.exec('CREATE INDEX IF NOT EXISTS otlp_records_trace_id ON otlp_records (trace_id)')
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS otlp_rejected (
+        id          INTEGER PRIMARY KEY,
+        received_at INTEGER NOT NULL,
+        kind        TEXT NOT NULL,
+        reason      TEXT NOT NULL,
+        line        TEXT
+      )`
+    )
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -209,7 +244,140 @@ export class RepoLog extends DurableObject<Env> {
         return this.replayRejected()
       case 'live':
         return this.live(url)
+      case 'otlp-traces':
+        return await this.ingestOtlp(request, 'traces')
+      case 'otlp-logs':
+        return await this.ingestOtlp(request, 'logs')
+      case 'otlp-records':
+        return this.readOtlpRecords(url)
     }
+  }
+
+  /**
+   * One OTLP/HTTP JSON export request (spec § 5, "OpenTelemetry"), stored in
+   * one SQLite transaction: every record of a request answered `200` is
+   * stored, a duplicate, or refused and kept in `otlp_rejected`, and a request
+   * that throws stores none of them. One refused record never refuses the
+   * request: the rest are stored and the export response's partial success
+   * counts the refused ones.
+   *
+   * Only `otlp_records` and `otlp_rejected` are written. Nothing here touches
+   * `events`, `rejected` or a live viewer.
+   */
+  private async ingestOtlp(request: Request, signal: OtlpSignal): Promise<Response> {
+    if (!isJsonContentType(request.headers.get('content-type'))) {
+      return jsonError(415, 'the OpenTelemetry routes take OTLP JSON: content-type application/json')
+    }
+    const declared = request.headers.get('content-length')
+    if (declared !== null && /^\d+$/.test(declared) && Number(declared) > MAX_BODY_BYTES) {
+      return jsonError(413, 'body over 8 MiB')
+    }
+    const bytes = await request.arrayBuffer()
+    if (bytes.byteLength > MAX_BODY_BYTES) return jsonError(413, 'body over 8 MiB')
+
+    let body: unknown
+    try {
+      body = JSON.parse(decoder.decode(bytes))
+    } catch {
+      return jsonError(400, 'the body is not JSON')
+    }
+    const split = splitExport(signal, body)
+    if (!split.ok) return jsonError(400, split.error)
+
+    const receivedAt = Date.now()
+    let stored = 0
+    let duplicates = 0
+    this.ctx.storage.transactionSync(() => {
+      // Reset inside the closure, as an events ingest does: a retried
+      // transaction must not fold an abandoned attempt's counts in.
+      stored = 0
+      duplicates = 0
+      for (const record of split.records) {
+        if (this.storeOtlpRecord(record, receivedAt)) stored += 1
+        else duplicates += 1
+      }
+      for (const refusal of split.refused) this.recordOtlpRefusal(refusal, receivedAt)
+    })
+
+    return Response.json(exportResponse(signal, split.refused), {
+      headers: {
+        'vinaya-log-stored': String(stored),
+        'vinaya-log-duplicates': String(duplicates),
+        'vinaya-log-refused': String(split.refused.length)
+      }
+    })
+  }
+
+  /** Insert one record under its identity (spec § 3); `false` when that identity is already stored. */
+  private storeOtlpRecord(record: OtlpRecord, receivedAt: number): boolean {
+    const inserted = this.sql
+      .exec(
+        `INSERT OR IGNORE INTO otlp_records (record_id, kind, trace_id, received_at, line)
+         VALUES (?, ?, ?, ?, ?) RETURNING seq`,
+        record.recordId,
+        record.kind,
+        record.traceId,
+        receivedAt,
+        record.line
+      )
+      .toArray()
+    return inserted.length > 0
+  }
+
+  private recordOtlpRefusal(refusal: OtlpRefusal, receivedAt: number): void {
+    this.sql.exec(
+      'INSERT INTO otlp_rejected (received_at, kind, reason, line) VALUES (?, ?, ?, ?)',
+      receivedAt,
+      refusal.kind,
+      refusal.reason,
+      truncateToBytes(refusal.line, REJECTED_LINE_BYTES)
+    )
+  }
+
+  /**
+   * A page of stored OpenTelemetry records after `after`, in arrival order,
+   * at most `limit` (default and maximum `1000`), with the same paging rules
+   * and `vinaya-log-next-after` header as the events read route. `run=<run
+   * id>` keeps one run's records: those on the trace the Log SDK derives from
+   * that run id, read through the `trace_id` index rather than a scan.
+   */
+  private readOtlpRecords(url: URL): Response {
+    const after = parseNonNegativeInteger(url.searchParams.get('after'), 0)
+    if (after === 'invalid') return jsonError(400, 'after must be a non-negative integer')
+
+    const requested = parseNonNegativeInteger(url.searchParams.get('limit'), READ_LIMIT_MAX)
+    if (requested === 'invalid' || requested === 0) return jsonError(400, 'limit must be a positive integer')
+    const limit = Math.min(requested, READ_LIMIT_MAX)
+
+    const run = url.searchParams.get('run')
+    if (run === '') return jsonError(400, 'run must be a run id when present')
+
+    type Row = { seq: number; kind: string; line: string }
+    const rows = (
+      run === null
+        ? this.sql.exec<Row>(
+            'SELECT seq, kind, line FROM otlp_records WHERE seq > ? ORDER BY seq LIMIT ?',
+            after,
+            limit
+          )
+        : this.sql.exec<Row>(
+            'SELECT seq, kind, line FROM otlp_records WHERE trace_id = ? AND seq > ? ORDER BY seq LIMIT ?',
+            runTraceId(run),
+            after,
+            limit
+          )
+    ).toArray()
+
+    const body = rows.map((row) => `${recordLine(Number(row.seq), row.kind, row.line)}\n`).join('')
+    const last = rows[rows.length - 1]
+    const nextAfter = last === undefined ? after : Number(last.seq)
+
+    return new Response(body, {
+      headers: {
+        'content-type': 'application/x-ndjson',
+        'vinaya-log-next-after': String(nextAfter)
+      }
+    })
   }
 
   /**
