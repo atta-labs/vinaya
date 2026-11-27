@@ -2077,7 +2077,7 @@ describe('vinaya doctor — the OpenTelemetry address (logs-otlp)', () => {
       localConfig: settings,
       trustAnchorConfig: null,
       unattended: false,
-      env: process.env
+      env: { [VARIABLE]: SECRET }
     })
     expect(target).toEqual({ address: { kind: 'address', url: ADDRESS }, credentialVars: [VARIABLE] })
     const report = await runDoctorJson({ resolveOtlpTarget: async () => target })
