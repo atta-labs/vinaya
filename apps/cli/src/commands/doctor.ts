@@ -1580,7 +1580,7 @@ async function diagnoseOtlpAddress(deps: DoctorDeps): Promise<Finding[]> {
   const never = '(the value itself is never read into this report)'
   if (address.kind === 'none') {
     const none = `no OpenTelemetry address resolves on this host — ${address.reason}. This host's run records stay in its local copy.`
-    // An address refused only for its unset credential is a fix the operator makes, so it is named and warned of.
+    // An address refused only for its unset credential is fixed by setting that variable, so it is named and warned of.
     if (missing.length > 0) {
       return [
         warn(
