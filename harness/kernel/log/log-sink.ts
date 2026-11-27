@@ -598,9 +598,6 @@ export function createTrustAnchorCache(
 
 const processTrustAnchorByRepo = createTrustAnchorCache(safeLoadTrustAnchorConfig)
 function processTrustAnchor(repoRoot: string | null): Promise<ProvidedConfig | null> {
-  // A default-branch read the local-copy place already made answers here too, so the process reads it once.
-  const known = defaultBranchSettingsByRepo.get(repoRoot)
-  if (known !== undefined && known !== null) return Promise.resolve(known)
   return processTrustAnchorByRepo.get(repoRoot)
 }
 

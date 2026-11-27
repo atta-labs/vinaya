@@ -8,7 +8,13 @@ import {
   uninstallConfigProvider
 } from '../config/loader/config-provider.js'
 import * as localCopyWriter from './local-copy-writer.js'
-import { createLogSink, type LogSinkOverrides, processLocalCopyPlace, resetTrustAnchorConfigMemo } from './log-sink.js'
+import {
+  createLogSink,
+  type LogSinkOverrides,
+  processLocalCopyPlace,
+  resetTrustAnchorConfigMemo,
+  resolveProcessOtlpAddress
+} from './log-sink.js'
 import { registerRole, restoreRoleRegistry, type RoleRegistrySnapshot, saveRoleRegistry } from './roles.js'
 
 let saved: RoleRegistrySnapshot
@@ -134,6 +140,32 @@ describe('recording off gives every process no local copy', () => {
       if (previous !== null) installConfigProvider(previous)
     }
   })
+})
+
+test("the local copy's synchronous default-branch read never stands in for the address's own read", async () => {
+  const previous = uninstallConfigProvider()
+  const role = process.env.VINAYA_ROLE
+  installConfigProvider({
+    homeDir: tmp(),
+    loadConfig: () => null,
+    loadTrustAnchorConfig: () => ({ logs: { otlp: { url: 'https://sync.example' } } }) as ProvidedConfig,
+    loadTrustAnchorConfigAsync: async () => null
+  })
+  resetTrustAnchorConfigMemo()
+  try {
+    process.env.VINAYA_ROLE = 'developer'
+    expect(processLocalCopyPlace('a/b')).toBeDefined()
+    expect(await resolveProcessOtlpAddress({ readConfig: () => null, env: () => ({}) })).toEqual({
+      kind: 'none',
+      reason: 'default branch settings unavailable'
+    })
+  } finally {
+    if (role === undefined) delete process.env.VINAYA_ROLE
+    else process.env.VINAYA_ROLE = role
+    resetTrustAnchorConfigMemo()
+    uninstallConfigProvider()
+    if (previous !== null) installConfigProvider(previous)
+  }
 })
 
 describe('the sink writes the earlier format only', () => {
