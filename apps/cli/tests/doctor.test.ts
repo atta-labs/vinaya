@@ -2066,8 +2066,56 @@ describe('vinaya doctor — the OpenTelemetry address (logs-otlp)', () => {
     return found[0] as Finding
   }
 
+  // The finding tells a CI job from a person's machine by `GITHUB_ACTIONS` or `CI`, so each case sets them itself
+  // rather than inheriting whichever the runner that runs this suite carries.
+  const ciVariables = ['GITHUB_ACTIONS', 'CI'] as const
+  const ciBefore = new Map<string, string | undefined>()
+
+  beforeEach(() => {
+    for (const name of ciVariables) {
+      ciBefore.set(name, process.env[name])
+      delete process.env[name]
+    }
+  })
+
   afterEach(() => {
     delete process.env[VARIABLE]
+    for (const name of ciVariables) {
+      const value = ciBefore.get(name)
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  })
+
+  it('in a CI job with no log credential, reports the unresolved address at info, and doctor passes', async () => {
+    await runInit(['--yes'], initDeps())
+    process.env.GITHUB_ACTIONS = 'true'
+    const target = otlpAddressTargetFrom({
+      localConfig: settings,
+      trustAnchorConfig: settings,
+      unattended: false,
+      env: { GITHUB_ACTIONS: 'true' }
+    })
+    expect(target).toEqual({
+      address: { kind: 'none', reason: 'CI is missing an OpenTelemetry header credential' },
+      credentialVars: [VARIABLE]
+    })
+    const report = await runDoctorJson({ resolveOtlpTarget: async () => target })
+    const finding = otlpFinding(report.findings)
+    expect(finding.severity).toBe('info')
+    expect(finding.message).toContain('CI is missing an OpenTelemetry header credential')
+    expect(finding.message).toContain(`${VARIABLE}, which is not set`)
+    expect(report.healthy).toBe(true)
+  })
+
+  it('on a machine with neither GITHUB_ACTIONS nor CI set, still warns and names the variable to set', async () => {
+    await runInit(['--yes'], initDeps())
+    const target = otlpAddressTargetFrom({ localConfig: settings, trustAnchorConfig: null, unattended: false, env: {} })
+    const report = await runDoctorJson({ resolveOtlpTarget: async () => target })
+    const finding = otlpFinding(report.findings)
+    expect(finding.severity).toBe('warn')
+    expect(finding.message).toContain(`Set ${VARIABLE} to the ingest credential`)
+    expect(report.healthy).toBe(false)
   })
 
   it('names the address, the credential’s variable and that it is set, and never prints its value', async () => {
