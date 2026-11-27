@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import {
   acquireOwnership,
   mkdirNoSymlinks,
@@ -40,30 +40,6 @@ import {
 
 const readEffect: (...args: Parameters<typeof readEffectResult>) => unknown = readEffectResult
 const readResolution: (...args: Parameters<typeof readResolutionResult>) => unknown = readResolutionResult
-
-// A pass-through wrapper over node:fs that records which directories were
-// synced and can make one directory sync throw. It stays installed for every
-// later test in this process and is pass-through outside that one fault.
-const realFs = { ...(require('node:fs') as typeof import('node:fs')) }
-const openPaths = new Map<number, string>()
-const syncedDirs: string[] = []
-let failSyncOf: string | null = null
-mock.module('node:fs', () => ({
-  ...realFs,
-  openSync: (path: unknown, ...rest: unknown[]) => {
-    const fd = (realFs.openSync as (...a: unknown[]) => number)(path, ...rest)
-    if (typeof path === 'string') openPaths.set(fd, path)
-    return fd
-  },
-  fsyncSync: (fd: number) => {
-    const path = openPaths.get(fd)
-    if (path !== undefined && realFs.statSync(path).isDirectory()) {
-      if (path === failSyncOf) throw Object.assign(new Error('injected directory sync failure'), { code: 'EIO' })
-      syncedDirs.push(path)
-    }
-    return realFs.fsyncSync(fd)
-  }
-}))
 
 // This suite is entirely the control store / node:fs — nothing here ever reaches the
 // Vinaya Log sink (`harness/kernel/log/log-sink.ts` lives in a different
@@ -912,61 +888,55 @@ describe('listStartedEffectKeys / markEffectUncertain (#556, O3)', () => {
 })
 
 describe('directory syncs — a published record name and a created store directory reach disk', () => {
-  const run = { runId: 'run-a', pid: 100, host: 'box', startedAt: '2026-09-14T00:00:00.000Z' }
-
-  beforeEach(() => {
-    syncedDirs.length = 0
-    failSyncOf = null
+  // The fs wrapper that records directory syncs is process-wide, so the probe
+  // runs in a child process and this suite only reads its report.
+  const child = Bun.spawnSync(['bun', join(import.meta.dir, 'directory-sync-probe.ts')], {
+    stdout: 'pipe',
+    stderr: 'pipe'
   })
-  afterEach(() => {
-    failSyncOf = null
+  const line = child.stdout
+    .toString()
+    .split('\n')
+    .find((l) => l.startsWith('REPORT:'))
+  const report = (line ? JSON.parse(line.slice('REPORT:'.length)) : {}) as {
+    root: string
+    claimSynced: string[]
+    runSynced: string[]
+    createdSynced: string[]
+    existingSynced: string[]
+    outsideSynced: string[]
+    outsideCreated: boolean
+    runError: string | null
+    runStatus: string
+    runFiles: string[]
+    claimError: string | null
+    ownershipFiles: string[]
+  }
+
+  it('the probe ran to its report', () => {
+    expect(line === undefined ? child.stderr.toString() : '').toBe('')
   })
 
   it('an ownership claim syncs the directory it links into, and a run record the directory it renames into', () => {
-    const claim = acquireOwnership(deps, 551, 'run-a')
-    if (!claim.acquired) throw new Error('expected the claim')
-    expect(syncedDirs).toContain(join(dir, '551', 'control', 'ownership'))
-
-    syncedDirs.length = 0
-    writeRun(deps, 551, claim.epoch, run)
-    expect(syncedDirs).toContain(join(dir, '551', 'control', 'run'))
+    expect(report.claimSynced).toContain(join(report.root, '551', 'control', 'ownership'))
+    expect(report.runSynced).toContain(join(report.root, '551', 'control', 'run'))
   })
 
   it('a directory created inside the root has its parent synced', () => {
-    mkdirNoSymlinks(join(dir, 'a', 'b'), 0o700, dir)
-    expect(syncedDirs).toEqual([dir, join(dir, 'a')])
+    expect(report.createdSynced).toEqual([report.root, join(report.root, 'a')])
   })
 
   it('an existing directory and a directory outside the root are not synced', () => {
-    mkdirNoSymlinks(join(dir, 'a'), 0o700, dir)
-    syncedDirs.length = 0
-    mkdirNoSymlinks(join(dir, 'a'), 0o700, dir)
-    expect(syncedDirs).toEqual([])
-
-    const outside = mkdtempSync(join(tmpdir(), 'control-store-outside-'))
-    try {
-      const target = join(outside, 'x', 'y')
-      mkdirNoSymlinks(target, 0o700, join(dir, 'a'))
-      expect(existsSync(target)).toBe(true)
-      expect(syncedDirs).toEqual([])
-    } finally {
-      rmSync(outside, { recursive: true, force: true })
-    }
+    expect(report.existingSynced).toEqual([])
+    expect(report.outsideCreated).toBe(true)
+    expect(report.outsideSynced).toEqual([])
   })
 
   it('a failed directory sync throws from the write and the published record stays in place', () => {
-    const claim = acquireOwnership(deps, 551, 'run-a')
-    if (!claim.acquired) throw new Error('expected the claim')
-    const runDir = join(dir, '551', 'control', 'run')
-    mkdirNoSymlinks(runDir, 0o700, dir)
-
-    failSyncOf = runDir
-    expect(() => writeRun(deps, 551, claim.epoch, run)).toThrow('injected directory sync failure')
-    expect(readRun(deps, 551, 'run-a').status).toBe('ok')
-    expect(readdirSync(runDir)).toEqual(['run-a.json'])
-
-    failSyncOf = join(dir, '551', 'control', 'ownership')
-    expect(() => attemptEpochClaim(deps, 551, 2, 'x')).toThrow('injected directory sync failure')
-    expect(readdirSync(failSyncOf).sort()).toEqual(['epoch-000001.json', 'epoch-000002.json'])
+    expect(report.runError).toBe('injected directory sync failure')
+    expect(report.runStatus).toBe('ok')
+    expect(report.runFiles).toEqual(['run-a.json'])
+    expect(report.claimError).toBe('injected directory sync failure')
+    expect(report.ownershipFiles).toEqual(['epoch-000001.json', 'epoch-000002.json'])
   })
 })

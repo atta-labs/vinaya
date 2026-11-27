@@ -349,7 +349,7 @@ export function mkdirNoSymlinks(dir: string, mode: number, trustedRoot: string):
   const ownUid = currentUid()
   const trustedOverflowUid = typeof ownUid === 'number' ? processTrustedOverflowUid() : undefined
   let current = absolute.startsWith(sep) ? sep : ''
-  const trustedRootPath = rootSegments.length === 0 ? sep : `${sep}${rootSegments.join(sep)}`
+  const trustedRootPrefix = rootSegments.length === 0 ? sep : `${sep}${rootSegments.join(sep)}${sep}`
   segments.forEach((segment, index) => {
     current = current === '' || current === sep ? `${current}${segment}` : `${current}${sep}${segment}`
     // `trustedRoot` itself sits at index `rootSegments.length - 1` — at or
@@ -367,7 +367,7 @@ export function mkdirNoSymlinks(dir: string, mode: number, trustedRoot: string):
     // A directory this call created strictly inside the store's own root has
     // its parent synced, so the new name reaches disk. Decided by path: an
     // existing directory, or one outside the root, is never opened.
-    if (created && current.startsWith(`${trustedRootPath}${sep}`)) syncDirectory(dirname(current))
+    if (created && current.startsWith(trustedRootPrefix)) syncDirectory(dirname(current))
     const stat = lstatSync(current)
     if (stat.isSymbolicLink()) {
       if (atOrBelowTrustedRoot) {
