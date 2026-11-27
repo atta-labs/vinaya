@@ -282,7 +282,7 @@ export class RepoLog extends DurableObject<Env> {
       return jsonError(400, 'the body is not JSON')
     }
     const split = splitExport(signal, body)
-    if (!split.ok) return jsonError(400, split.error)
+    if (!split.ok) return jsonError(split.status ?? 400, split.error)
 
     const receivedAt = Date.now()
     let stored = 0

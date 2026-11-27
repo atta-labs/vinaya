@@ -21,10 +21,21 @@ export type OtlpRecord = { kind: OtlpRecordKind; recordId: string; traceId: stri
 export type OtlpRefusal = { kind: OtlpRecordKind; reason: string; line: string }
 
 /** An export request's records, or why the request as a whole cannot be read. */
-export type OtlpSplit = { ok: true; records: OtlpRecord[]; refused: OtlpRefusal[] } | { ok: false; error: string }
+export type OtlpSplit =
+  | { ok: true; records: OtlpRecord[]; refused: OtlpRefusal[] }
+  | { ok: false; status?: 413; error: string }
 
 /** A record over this size is refused rather than stored, as an event line over it is (spec § 3). */
 export const MAX_RECORD_BYTES = 1024 * 1024
+
+/**
+ * The most bytes the one-record documents of one request may come to together, each counted at most at
+ * `MAX_RECORD_BYTES`. A request past it is `413` as a whole, and nothing of it is stored.
+ */
+export const MAX_SPLIT_BYTES = 32 * 1024 * 1024
+
+/** How much of an oversized record its refusal keeps; the refusal record keeps at most 64 KiB of any line. */
+const REFUSED_LINE_CHARS = 64 * 1024
 
 /**
  * `redact(value, home)` rewrites absolute paths under `home` to `~/…`. The server is not the machine that produced
@@ -91,7 +102,7 @@ export function runTraceId(runId: string): string {
 
 /**
  * Split one export request for `signal` into one-record documents. A request whose body, groups or scopes are not
- * the encoding's shape cannot be split, and answers `400` as a whole; a record that is refused is one of
+ * the encoding's shape cannot be split, and answers `400` as a whole, and one whose records with their resources and scopes come to more than `MAX_SPLIT_BYTES` answers `413`; a record that is refused is one of
  * `refused`, and every other record of the request is still returned to be stored.
  */
 export function splitExport(signal: OtlpSignal, body: unknown): OtlpSplit {
@@ -103,15 +114,35 @@ export function splitExport(signal: OtlpSignal, body: unknown): OtlpSplit {
 
   const records: OtlpRecord[] = []
   const refused: OtlpRefusal[] = []
+  // Every one-record document repeats its resource and scope, so the documents a request splits into can be far
+  // larger than the request. Each record's size is reckoned before its document is built or redacted, and the
+  // documents together are bounded, so one request can never make the object hold more than that bound.
+  let total = 0
   for (const group of groups) {
     if (!isObject(group)) return { ok: false, error: `an entry of ${level.groups} is not an object` }
     const scopes = group[level.scopes] ?? []
     if (!Array.isArray(scopes)) return { ok: false, error: `${level.scopes} is not an array` }
+    const groupBytes = jsonBytes({ ...group, [level.scopes]: [] })
     for (const scope of scopes) {
       if (!isObject(scope)) return { ok: false, error: `an entry of ${level.scopes} is not an object` }
       const entries = scope[level.records] ?? []
       if (!Array.isArray(entries)) return { ok: false, error: `${level.records} is not an array` }
+      const contextBytes = groupBytes + jsonBytes({ ...scope, [level.records]: [] })
       for (const record of entries) {
+        const size = contextBytes + jsonBytes(record)
+        total += Math.min(size, MAX_RECORD_BYTES)
+        if (total > MAX_SPLIT_BYTES) {
+          return {
+            ok: false,
+            status: 413,
+            error: 'the request’s records, each with its resource and scope, come to more than 32 MiB'
+          }
+        }
+        if (size > MAX_RECORD_BYTES) {
+          // Kept with the record alone, never its resource and scope: the size is what refused it.
+          refused.push({ kind: level.kind, reason: `too_large:${size}`, line: oversizedLine(record) })
+          continue
+        }
         const document = { [level.groups]: [{ ...group, [level.scopes]: [{ ...scope, [level.records]: [record] }] }] }
         const outcome = oneRecord(level.kind, document, record)
         if (outcome.ok) records.push(outcome.record)
@@ -120,6 +151,17 @@ export function splitExport(signal: OtlpSignal, body: unknown): OtlpSplit {
     }
   }
   return { ok: true, records, refused }
+}
+
+/** The UTF-8 size of a value's JSON, before any redaction. */
+function jsonBytes(value: unknown): number {
+  return encoder.encode(JSON.stringify(value) ?? 'null').byteLength
+}
+
+/** An oversized record as its refusal keeps it: redacted, then cut to what the refusal record holds. */
+function oversizedLine(record: unknown): string {
+  const text = JSON.stringify(redact(record, NO_HOME)) ?? 'null'
+  return text.length <= REFUSED_LINE_CHARS ? text : text.slice(0, REFUSED_LINE_CHARS)
 }
 
 function oneRecord(

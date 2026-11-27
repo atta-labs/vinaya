@@ -67,7 +67,7 @@ An OpenTelemetry record has one identity too, and the same `UNIQUE` column and `
 Each record of a request is classified on its own, and one refused record never refuses the request:
 
 - **stored** — a record whose `vinaya.*` span name, event name and attribute names are all in the Log SDK's catalogue (`reservedNamesOf` and `checkReservedNames`, the same check the sender runs before it posts), or that carries none — a team's own tracing, with only standard or other names, is stored as it comes. Every string value is passed through the Log's `redact` with no home directory first, exactly as an event line is.
-- **refused** — a record with a `vinaya.*` name outside the catalogue (reason `contract:<the failing name>`), a span with no identity (`invalid:<why>`), or a record over 1 MiB (`too_large:<bytes>`), kept in `otlp_rejected` with its reason and counted in the export response's partial success (§ 5).
+- **refused** — a record with a `vinaya.*` name outside the catalogue (reason `contract:<the failing name>`), a span with no identity (`invalid:<why>`), or a record over 1 MiB with its resource and scope (`too_large:<bytes>`, kept with the record alone, its size reckoned before its document is built), kept in `otlp_rejected` with its reason and counted in the export response's partial success (§ 5).
 
 ## 4. Storage
 
@@ -243,7 +243,7 @@ The two are OTLP/HTTP's signal paths under the address `/v1/repos/<owner>/<repo>
 | `400` | the body is not JSON, or not the export request's shape (its groups, scopes or record lists are not objects and arrays); nothing was stored |
 | `401` | missing or wrong token — the read token included |
 | `405` | a method other than `POST` |
-| `413` | body over 8 MiB |
+| `413` | body over 8 MiB, or a request whose records, each with its resource and scope, come to more than 32 MiB together (each counted at most at 1 MiB); nothing was stored |
 | `415` | a `content-type` other than `application/json` (parameters such as `charset` are accepted) |
 | `5xx` | the server failed; nothing was stored |
 
@@ -287,7 +287,7 @@ Setting `logs.url` moves local runs off the default local folder as well: a Vina
                       "headers": { "authorization": "Bearer ${VINAYA_LOG_TOKEN}" } } } }
 ```
 
-It sits beside `logs.url`, `logs.headers` and `logs.readHeaders`, which keep delivering events as before. An unattended process reads it from the default branch, as it reads `logs.url`. Records sent before the server is deployed with these routes are not lost: the old server answers `404`, which the Log SDK's sender retries, so they wait in the local copy and are sent on the first send after the deploy.
+It sits beside `logs.url`, `logs.headers` and `logs.readHeaders`, which keep delivering events as before. An unattended process reads it from the default branch, as it reads `logs.url`. A process whose environment does not set the credential variable the headers name resolves no address and posts nothing: its records wait in the local copy until the variable is set. Records sent before the server is deployed with these routes are not lost: the old server answers `404`, which the Log SDK's sender retries, so they wait in the local copy and are sent on the first send after the deploy.
 
 **How the Worker reaches the store and the redaction.** The kernel's Log modules (`harness/kernel/log/store.ts`, `redact.ts`, `schema.ts`) re-export the Log SDK package, `@attalabs/vinaya-log-sdk`, by its name. The Worker needs only the stored-event contract (the store's `classifyStoredLine` and `recordIdentity`, `redact`, the schemas), and the package's full entry also holds the writer and the sender, which use Node modules the Worker runtime does not provide. So the Worker's bundle (`wrangler.jsonc` `alias`) and the test pool (`vitest.config.ts`) resolve the package name to `src/log-sdk-contract.ts`, which re-exports those contract modules alone, and, for the OpenTelemetry routes, the record check on `vinaya.*` names (`reservedNamesOf`, `checkReservedNames`, `describeContractFailure`) and the run's trace id (`traceIdFor`) by name. No OpenTelemetry package is bundled: export requests are read as plain objects. No route, sequence number or token depends on this.
 
@@ -304,4 +304,4 @@ The OpenTelemetry routes' tests post export requests the Log SDK's own sender po
 - Not an authority: nothing reads it to decide what happens next.
 - Not a query engine: readers page through the sequence and compute on their own copy (the Log's sync and readers).
 - Not a place for secrets, prompts or transcripts: the sender redacts before sending and `classifyStoredLine` redacts again on arrival.
-- Not shared between repositories: one object per repository, one sequence per object.
+- Not shared between repositories: one object per repository, which keeps one sequence for its events and another for its OpenTelemetry records.

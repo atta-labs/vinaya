@@ -1573,23 +1573,28 @@ function logCredentialSourceFinding(credentialVars: readonly string[], env: Node
 async function diagnoseOtlpAddress(deps: DoctorDeps): Promise<Finding[]> {
   if (deps.resolveOtlpTarget === undefined) return []
   const { address, credentialVars } = await deps.resolveOtlpTarget()
+  const missing = credentialVars.filter((name) => !process.env[name])
+  const named = credentialVars
+    .map((name) => (missing.includes(name) ? `${name}, which is not set` : `${name}, which is set`))
+    .join('; ')
+  const never = '(the value itself is never read into this report)'
   if (address.kind === 'none') {
-    return [
-      info(
-        'logs-otlp',
-        `no OpenTelemetry address resolves on this host — ${address.reason}. This host's run records stay in its local copy.`
-      )
-    ]
+    const none = `no OpenTelemetry address resolves on this host — ${address.reason}. This host's run records stay in its local copy.`
+    // An address refused only for its unset credential is a fix the operator makes, so it is named and warned of.
+    if (missing.length > 0) {
+      return [
+        warn(
+          'logs-otlp',
+          `${none} Its credential is read from ${named} ${never}. Set ${missing.join(', ')} to the ingest credential to send them.`
+        )
+      ]
+    }
+    return [info('logs-otlp', none)]
   }
   const where = `this host's run records are sent to the OpenTelemetry address ${urlForDisplay(address.url)}`
   if (credentialVars.length === 0) {
     return [ok('logs-otlp', `${where}; its headers read no credential from the environment.`)]
   }
-  const missing = credentialVars.filter((name) => process.env[name] === undefined)
-  const named = credentialVars
-    .map((name) => (missing.includes(name) ? `${name}, which is not set` : `${name}, which is set`))
-    .join('; ')
-  const never = '(the value itself is never read into this report)'
   if (missing.length > 0) {
     return [
       warn(

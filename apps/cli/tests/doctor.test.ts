@@ -2088,14 +2088,19 @@ describe('vinaya doctor — the OpenTelemetry address (logs-otlp)', () => {
     expect(JSON.stringify(report)).not.toContain(SECRET)
   })
 
-  it('warns, naming the variable, when the address resolves and its credential variable is not set', async () => {
+  it('warns, naming the variable, when the address is configured but its credential variable is not set', async () => {
     await runInit(['--yes'], initDeps())
     const target = otlpAddressTargetFrom({ localConfig: settings, trustAnchorConfig: null, unattended: false, env: {} })
+    // The sender's rule never posts unauthenticated: an unset credential resolves no address.
+    expect(target).toEqual({
+      address: { kind: 'none', reason: 'the logs.otlp headers name a credential variable that is not set' },
+      credentialVars: [VARIABLE]
+    })
     const report = await runDoctorJson({ resolveOtlpTarget: async () => target })
     const finding = otlpFinding(report.findings)
     expect(finding.severity).toBe('warn')
     expect(finding.message).toContain(`${VARIABLE}, which is not set`)
-    expect(finding.message).toContain(ADDRESS)
+    expect(finding.message).toContain('credential variable that is not set')
   })
 
   it('reports at info that this host resolves no address, with the reason the sender’s rule gives', async () => {

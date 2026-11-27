@@ -33,6 +33,21 @@ test('CI needs its credentials and a server address alone never resolves', () =>
   expect(resolveOtlpAddress({ ...settings, localConfig: { logs: { url } } })).toMatchObject({ kind: 'none' })
 })
 
+test('an address whose credential variable is unset never resolves, so nothing is posted unauthenticated', () => {
+  const withCredential = { logs: { otlp: { url, headers: { authorization: 'Bearer ${TOKEN}' } } } }
+  for (const env of [{}, { TOKEN: '' }]) {
+    expect(resolveOtlpAddress({ ...settings, localConfig: withCredential, env })).toEqual({
+      kind: 'none',
+      reason: 'the logs.otlp headers name a credential variable that is not set'
+    })
+  }
+  expect(resolveOtlpAddress({ ...settings, localConfig: withCredential, env: { TOKEN: 'value' } })).toEqual({
+    kind: 'address',
+    url,
+    headers: { authorization: 'Bearer value' }
+  })
+})
+
 test("this repository's committed settings resolve the Log server's OpenTelemetry address, credential from VINAYA_LOG_TOKEN", () => {
   const committed = JSON.parse(readFileSync(join(import.meta.dir, '../../../vinaya.config.json'), 'utf8'))
   const eventsUrl: string = committed.logs.url

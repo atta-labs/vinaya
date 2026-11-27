@@ -22,8 +22,15 @@ export function resolveOtlpAddress(input: {
   if (!address) {
     return { kind: 'none', reason: anchored ? 'default branch has no logs.otlp address' : 'no logs.otlp address' }
   }
-  if (ci && logsCredentialMissing(address.headers, input.env)) {
-    return { kind: 'none', reason: 'CI is missing an OpenTelemetry header credential' }
+  if (logsCredentialMissing(address.headers, input.env)) {
+    // A header whose credential variable is unset would post every record unauthenticated, to be refused and
+    // retried; the records wait in the local copy instead until the variable is set.
+    return {
+      kind: 'none',
+      reason: ci
+        ? 'CI is missing an OpenTelemetry header credential'
+        : 'the logs.otlp headers name a credential variable that is not set'
+    }
   }
   return { kind: 'address', url: address.url, headers: resolveLogsHeaderValues(address.headers, input.env) }
 }

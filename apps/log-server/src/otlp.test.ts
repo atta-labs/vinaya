@@ -11,7 +11,15 @@
 import { describe, expect, it } from 'vitest'
 import fixture from './fixtures/sdk-export.json'
 import { traceIdFor } from './log-sdk-contract'
-import { exportResponse, isJsonContentType, recordIdentity, runTraceId, splitExport } from './otlp'
+import {
+  exportResponse,
+  isJsonContentType,
+  MAX_RECORD_BYTES,
+  MAX_SPLIT_BYTES,
+  recordIdentity,
+  runTraceId,
+  splitExport
+} from './otlp'
 
 type Json = Record<string, any>
 
@@ -198,6 +206,38 @@ describe('the catalogue check and redaction', () => {
     if (!split.ok) throw new Error(split.error)
     expect(split.records[0]?.line).not.toContain(token)
     expect(split.records[0]?.line).toContain('pushed with <redacted>')
+  })
+})
+
+describe('what one request may cost to split', () => {
+  it('refuses a record over 1 MiB with its resource and scope, keeping the record alone and storing the rest', () => {
+    const request = copy(traces[0] as Json)
+    const big = copy(spanOf(request))
+    big.spanId = 'abcdefabcdefabcd'
+    big.attributes.push({ key: 'team.blob', value: { stringValue: 'a'.repeat(MAX_RECORD_BYTES) } })
+    request.resourceSpans[0].scopeSpans[0].spans.push(big)
+    const split = splitExport('traces', request)
+    if (!split.ok) throw new Error(split.error)
+    expect(split.records).toHaveLength(1)
+    expect(split.refused).toHaveLength(1)
+    expect(split.refused[0]?.reason).toMatch(/^too_large:\d+$/)
+    expect(split.refused[0]?.line.length).toBeLessThanOrEqual(64 * 1024)
+    expect(split.refused[0]?.line).not.toContain('resourceSpans')
+  })
+
+  it('answers 413 as a whole when a large resource repeated for many small records passes the bound', () => {
+    const request = copy(traces[0] as Json)
+    request.resourceSpans[0].resource.attributes.push({
+      key: 'team.large',
+      value: { stringValue: 'r'.repeat(512 * 1024) }
+    })
+    const span = spanOf(request)
+    const count = Math.ceil(MAX_SPLIT_BYTES / (512 * 1024)) + 1
+    request.resourceSpans[0].scopeSpans[0].spans = Array.from({ length: count }, (_, n) => ({
+      ...span,
+      spanId: n.toString(16).padStart(16, '1')
+    }))
+    expect(splitExport('traces', request)).toEqual({ ok: false, status: 413, error: expect.stringContaining('32 MiB') })
   })
 })
 
