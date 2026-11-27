@@ -93,7 +93,7 @@ import type { TranscriptSummary } from '@harness/kernel/adapters/agents/claude-c
 import type { Role, RoleAttemptOutcome } from '@harness/kernel/log/schema'
 import { drainLogSpool } from '@harness/kernel/log/log-sink.js'
 import type { LogHandle } from '@attalabs/vinaya-log-sdk'
-import { type AgentTurn, runRecorder } from '@harness/kernel/log/run-recorder.js'
+import { type AgentTurn, reviewInputVersions, runRecorder } from '@harness/kernel/log/run-recorder.js'
 import { createVinayaLogSink } from '@harness/workflow/integration/log/log-sink-factory.js'
 // The command line installs the process's sink factory through the dispatch module it already loads.
 export { installVinayaLogSinkFactory } from '@harness/workflow/integration/log/log-sink-factory.js'
@@ -4444,6 +4444,9 @@ export async function dispatchRole(
     }
   }
   let turn: AgentTurn | undefined
+  // The versions of the review inputs this dispatch was handed, from the caller's manifest and never read again: the
+  // turn's records carry exactly what the agent is judged against, and a dispatch handed none writes none.
+  const turnInputs = reviewInputVersions(opts.inputVersions)
   const beginTurn = (): AgentTurn => {
     turn ??= runRecorder().turn({
       seat: role,
@@ -4456,6 +4459,7 @@ export async function dispatchRole(
       runId,
       ...(repository === undefined ? {} : { repository }),
       ...(opts.task === undefined ? {} : { workRef: String(opts.task) }),
+      ...(turnInputs === undefined ? {} : { inputs: turnInputs }),
       startTime: start,
       // The driver log shows the line the Log SDK's `narrate` gives for each of the turn's records.
       ...(opts.roleLogPath === undefined

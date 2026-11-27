@@ -32,6 +32,30 @@ export type LocalCopyFolderInputs = {
   handedRuntimeDir: string | undefined
   /** Whether the process is an unattended one, which reads no working-tree setting for the folder. */
   unattended: boolean
+  /**
+   * The `logs` setting of the default branch's settings, which an unattended process reads whether recording is off
+   * from; `null` when those settings cannot be read. Asked only for an unattended process, at most once per answer.
+   */
+  defaultBranchLogs?: () => { logs?: unknown } | null
+}
+
+/**
+ * Whether recording is off, by the rule the OpenTelemetry address follows: the working tree's settings turn it off for
+ * every process, also one handed its runtime directory, and an unattended process is turned off by the default
+ * branch's settings as well. Neither can turn recording on, and settings that cannot be read leave it on.
+ */
+function recordingTurnedOff(
+  inputs: LocalCopyFolderInputs,
+  vinayaHome: string,
+  repository: string | undefined
+): boolean {
+  const resolved = sdkResolveSettings({
+    repoRoot: inputs.cwd,
+    ...(repository === undefined ? {} : { repository }),
+    vinayaHome
+  })
+  if (resolved.ok && resolved.settings.logs === false) return true
+  return inputs.unattended && inputs.defaultBranchLogs?.()?.logs === false
 }
 
 /**
@@ -50,13 +74,17 @@ export function resolveLocalCopyFolder(
 /**
  * The folder of `resolveLocalCopyFolder` with the keep window beside it. A process that reads no working-tree
  * setting for the folder (an unattended one, or one handed its runtime directory) reads none for the window
- * either, and keeps the default.
+ * either, and keeps the default. Recording off gives no place for every process, that one included: an unattended
+ * process is also turned off by the default branch's settings, and a default branch whose settings cannot be read
+ * keeps the default folder.
  */
 export function resolveLocalCopySettings(
   inputs: LocalCopyFolderInputs,
   repository: string | undefined
 ): { folder: string; keepDays: number } | undefined {
   const vinayaHome = join(inputs.home, '.vinaya')
+  if ((inputs.handedRuntimeDir || inputs.unattended) && recordingTurnedOff(inputs, vinayaHome, repository))
+    return undefined
   if (inputs.handedRuntimeDir) return { folder: join(inputs.handedRuntimeDir, 'logs'), keepDays: DEFAULT_KEEP_DAYS }
   if (inputs.unattended)
     return { folder: join(sdkDefaultRuntimeDir(repository, vinayaHome), 'logs'), keepDays: DEFAULT_KEEP_DAYS }

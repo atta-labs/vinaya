@@ -139,6 +139,17 @@ export function isLogCacheReaderIndex(rel: string): boolean {
   return rel === join('logs-cache', 'cache.sqlite-shm')
 }
 
+/**
+ * Whether `rel` is a local copy's delivery state, its folder or a file in it (`logs/<repository>/.otlp-delivery/…`): the receipts and
+ * staged lines a sender writes as it delivers the repository's whole local copy. Any process on the host with an
+ * OpenTelemetry address resolved delivers that copy, another loop's driver included, so its time says nothing about
+ * this run's tests. A test's own records still land in local-copy segments, which stay judged.
+ */
+export function isLocalCopyDeliveryState(rel: string): boolean {
+  const parts = rel.split(sep)
+  return parts.length >= 3 && parts[0] === 'logs' && parts[1] !== '' && parts[2] === '.otlp-delivery'
+}
+
 export function exemptPrefixes(env: NodeJS.ProcessEnv): string[] {
   const task = env.VINAYA_TASK
   const controllerCache = join('tasks-execution', 'unscoped', 'output', 'test-run-cache.json')
@@ -256,13 +267,15 @@ export function touchedSince(
       // only when it was created during this run; a changed file inside it is
       // flagged on its own path by the walk.
       if (st.isDirectory()) {
-        if (st.birthtimeMs >= sinceMs) touched.push(rel)
+        if (st.birthtimeMs >= sinceMs && !isLocalCopyDeliveryState(rel)) touched.push(rel)
         walk(full)
       } else if (st.isFile() && isSanctionedAppend(rel)) {
         // Only a regular file: the append refuses anything else, so a symlink there is judged like any path.
         sanctionedFolders.add(rel.split(sep)[1] as string)
       } else if (st.isFile() && isLogCacheReaderIndex(rel)) {
         // A reader's index, not a write: see `isLogCacheReaderIndex`.
+      } else if (st.isFile() && isLocalCopyDeliveryState(rel)) {
+        // Any delivering process's state, not this run's: see `isLocalCopyDeliveryState`.
       } else if (st.mtimeMs >= sinceMs || st.ctimeMs >= sinceMs) touched.push(rel)
     }
   }

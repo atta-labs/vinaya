@@ -1,5 +1,17 @@
 import { expect, test } from 'bun:test'
-import { createOrdering, EARLIER_WRITER_PREFIX, EVENT_NAMES as E, type OtelRecord } from '../src/index.js'
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  connect,
+  createFolderSource,
+  createOrdering,
+  createOtlpSource,
+  createReader,
+  EARLIER_WRITER_PREFIX,
+  EVENT_NAMES as E,
+  type OtelRecord
+} from '../src/index.js'
 
 function event(writerId: string | null, seq: number | null, time: number, extra: Partial<OtelRecord> = {}): OtelRecord {
   return {
@@ -118,7 +130,7 @@ test('writers of the earlier format report no sequence gap, and records with no 
 
 test("a run read from its start reports numbers missing before a writer's first record, and a resumed read does not", () => {
   const first = createOrdering({ fromStart: true, patience: 1 }).push([event('a', 3, 1)])
-  expect(first.gaps.map(({ place }) => place)).toEqual(['writer a sequence 0–2'])
+  expect(first.gaps.map(({ place }) => place)).toEqual(['writer a sequence 1–2'])
   expect(labels(first.ready)).toEqual(['a3'])
   const second = createOrdering({ patience: 1 }).push([event('a', 3, 1)])
   expect(second.gaps).toEqual([])
@@ -137,4 +149,78 @@ test('a long follow keeps a bounded memory of identities and of held records', (
   ])
   expect(held.gaps).toHaveLength(1)
   expect(labels(held.ready)).toEqual(['b5', 'b6', 'b7'])
+})
+
+test("a run read from its start hands each SDK writer's first record, numbered 1, with no gap", () => {
+  const ordering = createOrdering({ fromStart: true, patience: 1 })
+  const { ready, gaps } = ordering.push([event('a', 2, 3), event('b', 1, 2), event('a', 1, 1)])
+  expect(gaps).toEqual([])
+  expect(labels(ready)).toEqual(['a1', 'b1', 'a2'])
+  expect(ordering.flush().gaps).toEqual([])
+})
+
+test('a converted writer whose records start at 0 is read in full, with no gap, from its start', () => {
+  const ordering = createOrdering({ fromStart: true, patience: 1 })
+  const first = ordering.push([event('a', 0, 1), event('a', 1, 2), event('a', 2, 3)])
+  expect(first.gaps).toEqual([])
+  expect(labels(first.ready)).toEqual(['a0', 'a1', 'a2'])
+  // A record 0 that comes after its writer's 1 is handed as early, never reported as missing.
+  const late = createOrdering({ fromStart: true, patience: 1 })
+  expect(labels(late.push([event('b', 1, 2)]).ready)).toEqual(['b1'])
+  const after = late.push([event('b', 0, 1)])
+  expect(after.gaps).toEqual([])
+  expect(labels(after.ready)).toEqual(['b0'])
+  expect(late.flush().gaps).toEqual([])
+})
+
+test("every reader of an SDK writer's local copy, read from its start, reports no sequence gap", async () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'log-sdk-reader-order-'))
+  try {
+    const errors: unknown[] = []
+    const handle = connect({
+      runId: 'run-1',
+      repository: 'acme/widgets',
+      repoRoot: join(runtimeDir, 'repo'),
+      runtimeDir,
+      onError: (error) => errors.push(error)
+    })
+    handle.run.started()
+    handle.run.alive()
+    handle.run.ended()
+    await handle.flush()
+    expect(errors).toEqual([])
+    const folder = join(runtimeDir, 'logs', 'acme-widgets')
+    const sequenceGaps = (gaps: readonly { kind: string }[]) => gaps.filter(({ kind }) => kind === 'sequence')
+
+    // The snapshot read the package's README shows.
+    const snapshot = await createReader(createFolderSource({ folder, runId: 'run-1' })).readAll()
+    expect(snapshot.records.length).toBeGreaterThanOrEqual(3)
+    expect(Math.min(...snapshot.records.flatMap(({ seq }) => (seq === null ? [] : [seq])))).toBe(1)
+    expect(snapshot.gaps).toEqual([])
+
+    const pulled = await createReader(createFolderSource({ folder, runId: 'run-1' }), { patience: 1 }).pull()
+    expect(pulled.records).toHaveLength(snapshot.records.length)
+    expect(sequenceGaps(pulled.gaps)).toEqual([])
+
+    const stop = new AbortController()
+    const followed = createReader(createFolderSource({ folder, runId: 'run-1' }), { patience: 1 }).follow({
+      intervalMs: 5,
+      signal: stop.signal
+    })
+    const firstUpdate = (await followed.next()).value
+    stop.abort()
+    expect(firstUpdate?.records).toHaveLength(snapshot.records.length)
+    expect(sequenceGaps(firstUpdate?.gaps ?? [])).toEqual([])
+
+    const documents = readdirSync(folder)
+      .filter((file) => file.endsWith('.jsonl'))
+      .flatMap((file) => readFileSync(join(folder, file), 'utf8').trimEnd().split('\n'))
+    const otlp = await createReader(
+      createOtlpSource({ name: 'copy', supply: async () => ({ documents }), foreign: false })
+    ).readAll()
+    expect(otlp.records).toHaveLength(snapshot.records.length)
+    expect(sequenceGaps(otlp.gaps)).toEqual([])
+  } finally {
+    rmSync(runtimeDir, { recursive: true, force: true })
+  }
 })

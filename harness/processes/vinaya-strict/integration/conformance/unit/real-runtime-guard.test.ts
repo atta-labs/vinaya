@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { spawnSyncBudgeted, stripVinayaEnv } from '@harness/kernel/conformance/unit/process-fixture'
 import {
   exemptPrefixes,
+  isLocalCopyDeliveryState,
   isLogCacheReaderIndex,
   isSanctionedAppend,
   liveTaskPrefixes,
@@ -116,6 +117,29 @@ describe('real runtime directory guard', () => {
       expect(isLogCacheReaderIndex(join('logs-cache', 'cache.sqlite-shm'))).toBe(true)
       expect(isLogCacheReaderIndex(join('logs-cache', 'cache.sqlite'))).toBe(false)
       expect(isLogCacheReaderIndex(join('tasks-execution', 'logs-cache', 'cache.sqlite-shm'))).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("ignores another process's delivery state of a local copy, never a record written into the copy", async () => {
+    const root = mkdtempSync(join(tmpdir(), 'real-runtime-guard-'))
+    try {
+      const folder = join(root, 'logs', 'acme-widgets')
+      mkdirSync(folder, { recursive: true })
+      await Bun.sleep(30)
+      const since = Date.now()
+      await Bun.sleep(30)
+      // Another process on the host delivers the repository's local copy: its receipts and staged lines.
+      mkdirSync(join(folder, '.otlp-delivery', 'staged'), { recursive: true })
+      writeFileSync(join(folder, '.otlp-delivery', 'line.sent'), 'x')
+      writeFileSync(join(folder, '.otlp-delivery', 'staged', 'line.json'), 'x')
+      expect(touchedSince(root, since, [])).toEqual([])
+      // A record a test writes into the copy, under a name no segment carries, stays judged.
+      writeFileSync(join(folder, 'stray.jsonl'), 'y')
+      expect(touchedSince(root, since, [])).toEqual([join('logs', 'acme-widgets', 'stray.jsonl')])
+      expect(isLocalCopyDeliveryState(join('logs', 'acme-widgets', '.otlp-delivery', 'line.sent'))).toBe(true)
+      expect(isLocalCopyDeliveryState(join('tasks-execution', 'acme-widgets', '.otlp-delivery', 'x'))).toBe(false)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
