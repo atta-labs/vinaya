@@ -146,7 +146,13 @@ import { briefHash as briefHashOf, policyDigest as policyDigestOf } from '../too
 import { extractSourceRevision } from '../tools/task-contract/brief-render'
 
 import { resolveRepo } from '@harness/kernel/adapters/code-host/github/resolve-repo'
-import { type AgentTurn, type RunRecorder, runRecorder } from '@harness/kernel/log/run-recorder'
+import {
+  type AgentTurn,
+  type AgentTurnStart,
+  type RunRecorder,
+  reviewInputVersions,
+  runRecorder
+} from '@harness/kernel/log/run-recorder'
 import { reviewerDevToolContext, type DevToolContext, type DevToolResult } from '@harness/kernel/tools/dev-tools-server'
 import { createReadSourceTool } from '@harness/kernel/tools/read-source'
 import {
@@ -1304,7 +1310,13 @@ export function launchSeatOf(role: LaunchUsage['role'], attribution?: LaunchLogA
  * its own, with the launch's attempt and the model it asked for.
  */
 export function startLaunchTurn(
-  input: { agent: Agent; model: string | null; loopId: string; recorder?: RunRecorder },
+  input: {
+    agent: Agent
+    model: string | null
+    loopId: string
+    recorder?: RunRecorder
+    inputs?: AgentTurnStart['inputs']
+  },
   role: LaunchUsage['role'],
   attribution: LaunchLogAttribution | undefined,
   startedAt: number
@@ -1317,7 +1329,9 @@ export function startLaunchTurn(
     ...(input.model === null ? {} : { model: input.model }),
     ...(attribution?.round === undefined ? {} : { round: attribution.round }),
     key: `${input.loopId}:${seat}:${attribution?.attempt ?? startedAt}`,
-    startTime: startedAt
+    startTime: startedAt,
+    // The versions of the review inputs the launch was dispatched with; a launch with none writes none.
+    ...(input.inputs === undefined ? {} : { inputs: input.inputs })
   })
 }
 
@@ -1588,6 +1602,8 @@ export interface EngineRunOptions {
   /** Replaces the actions built from `taskInput`; for a run that must not reach the forge. */
   actions?: ActionRegistry
   sink: LogSinkLike
+  /** The recorder each launch's agent turn is written through; absent, the process's own. */
+  turnRecorder?: RunRecorder
   startHost: (options: Parameters<typeof startDevToolsHost>[0]) => Promise<Pick<DevToolsHost, 'close'>>
   devToolsContext: DevToolContext
   /** Told every Engine event, unaltered, before the trace and the Log see it. */
@@ -2182,6 +2198,22 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
         return sandboxProbePlanFor(vendor, developer, join(runDir, 'generated', 'developer'), taskInput.worktreePath)
       }
     }
+    // Each round's review inputs, kept as its reviewers were dispatched against them: the launch turns of the round
+    // record their versions from this manifest, never from a second forge read.
+    const roundReviewInputs = new Map<number, ReviewRoundInputs>()
+    const takeReviewInputs = options.taskInput?.reviewInputs
+    if (options.taskInput && takeReviewInputs) {
+      options.taskInput.reviewInputs = (reviewRound) => {
+        const inputs = takeReviewInputs(reviewRound)
+        roundReviewInputs.set(reviewRound, inputs)
+        return inputs
+      }
+    }
+    // A resumed run's round reuses the inputs its dispatch recorded; they are kept the same way.
+    const keepDispatchedInputs = (results: Readonly<Record<string, StepNodeResult>>): void => {
+      const dispatched = recordedDispatch(results)
+      if (dispatched?.inputs) roundReviewInputs.set(dispatched.round, dispatched.inputs)
+    }
     // Every flow's shared actions, and version 2's own beside them; a flow binds only the ones it names.
     const base = options.actions ?? { ...createActions(options.taskInput), ...createV2Actions(options.taskInput) }
     // The pull request found by the reconcile step is the one the heartbeat reports.
@@ -2290,13 +2322,24 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       endLaunchTurn(launch, usageLimit)
     }
     // Each launch's agent turn opens where its process is spawned, on the run's Log handle.
-    const turnStarter: StartLaunchTurn = (role, attribution, startedAt) =>
-      startLaunchTurn(
-        { agent: args.agent, model: args.model ?? null, loopId: options.loopId },
+    // A reviewer launch's turn records the versions of the manifest its round was dispatched against.
+    const turnStarter: StartLaunchTurn = (role, attribution, startedAt) => {
+      const reviewRound = attribution?.round ?? options.taskInput?.reviewRound?.() ?? 1
+      const inputs =
+        role === 'developer' ? undefined : reviewInputVersions(roundReviewInputs.get(reviewRound)?.manifest)
+      return startLaunchTurn(
+        {
+          agent: args.agent,
+          model: args.model ?? null,
+          loopId: options.loopId,
+          ...(options.turnRecorder === undefined ? {} : { recorder: options.turnRecorder }),
+          ...(inputs === undefined ? {} : { inputs })
+        },
         role,
         attribution,
         startedAt
       )
+    }
     const automaticResumes: AutomaticResumes = { usageLimit: 0 }
     // This runner's automatic conflict re-entries of the published pull request.
     let conflictReentries = 0
@@ -2413,15 +2456,16 @@ async function runEngineLegs(options: EngineRunOptions): Promise<EngineRunResult
       // between the handoff and the Developer's launch to set them.
       // If the checkpoint already holds the Developer output, validation skips prompt preparation and needs
       // the manifest saved for that turn. A new launch refreshes the list after preparing its own prompt.
-      if (choice.kind === 'resume' && options.taskInput?.developerContext) {
-        const resumed = await readEffectiveResumedStateFrom(saver, identity.threadId)
-        if (resumed !== null)
-          options.taskInput.developerContext = {
-            ...options.taskInput.developerContext,
-            knownFindingIds: knownFindingIdsOf(resumed.results),
-            requiredSources: requiredSourceTexts()
-          }
-      }
+      const resumed = choice.kind === 'resume' ? await readEffectiveResumedStateFrom(saver, identity.threadId) : null
+      // A resumed round's reviewers launch against the inputs its dispatch recorded before the pause; no action takes
+      // them again, so they are kept here for the launch turns.
+      if (resumed !== null) keepDispatchedInputs(resumed.results)
+      if (resumed !== null && options.taskInput?.developerContext)
+        options.taskInput.developerContext = {
+          ...options.taskInput.developerContext,
+          knownFindingIds: knownFindingIdsOf(resumed.results),
+          requiredSources: requiredSourceTexts()
+        }
       // What a re-run reads before it dispatches: the prior launch, the round journal and any held verdict.
       const recovery = lifecycle.recovery ? recoverRun(lifecycle.recovery) : null
       if (recovery !== null && options.taskInput) {

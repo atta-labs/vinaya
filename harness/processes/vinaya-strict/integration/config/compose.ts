@@ -316,7 +316,10 @@ export function readRepoCiSetup(repoRoot: string): string | null {
  * (`resolveReleaseActor`, `resolveReviewPolicy`). Every failure returns `null`.
  * `fetcher` is injectable for tests ONLY.
  */
-export const loadTrustAnchorConfig: (fetcher?: TrustAnchorFetcher) => VinayaConfig | null = loader.loadTrustAnchorConfig
+export const loadTrustAnchorConfig: (
+  fetcher?: TrustAnchorFetcher,
+  options?: { quiet?: boolean }
+) => VinayaConfig | null = loader.loadTrustAnchorConfig
 
 /** `loadTrustAnchorConfig`, but a genuine forge-read failure other than a missing file is re-thrown. */
 export const loadTrustAnchorConfigOrThrow: (fetcher?: TrustAnchorFetcher) => VinayaConfig | null =
@@ -415,7 +418,7 @@ declare module '@harness/kernel/config/loader/config-provider.js' {
 export const vinayaConfigProvider: ConfigProvider = {
   homeDir: VINAYA_HOME,
   loadConfig: () => loadConfig(),
-  loadTrustAnchorConfig: () => loadTrustAnchorConfig(),
+  loadTrustAnchorConfig: (options) => loadTrustAnchorConfig(undefined, options),
   loadTrustAnchorConfigAsync: (fetcher, options) => loadTrustAnchorConfigAsync(fetcher, options)
 }
 

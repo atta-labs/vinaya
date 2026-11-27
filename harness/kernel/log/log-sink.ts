@@ -598,7 +598,28 @@ export function createTrustAnchorCache(
 
 const processTrustAnchorByRepo = createTrustAnchorCache(safeLoadTrustAnchorConfig)
 function processTrustAnchor(repoRoot: string | null): Promise<ProvidedConfig | null> {
+  // A default-branch read the local-copy place already made answers here too, so the process reads it once.
+  const known = defaultBranchSettingsByRepo.get(repoRoot)
+  if (known !== undefined && known !== null) return Promise.resolve(known)
   return processTrustAnchorByRepo.get(repoRoot)
+}
+
+/**
+ * The default branch's settings as a synchronous caller reads them, once per repository root for the process: the
+ * local-copy place opens handles synchronously, so an unattended process's off switch cannot wait on the async read.
+ * `null` when the settings cannot be read; the read prints nothing, whatever it meets.
+ */
+const defaultBranchSettingsByRepo = new Map<string | null, ProvidedConfig | null>()
+function defaultBranchSettingsNow(repoRoot: string | null): ProvidedConfig | null {
+  if (defaultBranchSettingsByRepo.has(repoRoot)) return defaultBranchSettingsByRepo.get(repoRoot) ?? null
+  let settings: ProvidedConfig | null
+  try {
+    settings = configProvider().loadTrustAnchorConfig({ quiet: true })
+  } catch {
+    settings = null
+  }
+  defaultBranchSettingsByRepo.set(repoRoot, settings)
+  return settings
 }
 
 /**
@@ -615,6 +636,7 @@ function processTrustAnchor(repoRoot: string | null): Promise<ProvidedConfig | n
  */
 export function resetTrustAnchorConfigMemo(): void {
   processTrustAnchorByRepo.clear()
+  defaultBranchSettingsByRepo.clear()
 }
 
 async function defaultResolveLogDestination(
@@ -2067,7 +2089,11 @@ export async function resolveProcessOtlpAddress(source: {
   })
 }
 
-/** Where this process's local copy of a repository's runs is kept, from the process's own settings; `undefined` when recording is off. */
+/**
+ * Where this process's local copy of a repository's runs is kept, from the process's own settings; `undefined` when
+ * recording is off. An unattended process reads the off switch from the default branch's settings, as its
+ * OpenTelemetry address does, through one synchronous read the process keeps.
+ */
 export function processLocalCopyPlace(repository: string | undefined): LocalCopyPlace | undefined {
   const base = defaultDeps()
   const found = resolveLocalCopySettings(
@@ -2075,7 +2101,8 @@ export function processLocalCopyPlace(repository: string | undefined): LocalCopy
       home: base.home(),
       cwd: base.cwd(),
       handedRuntimeDir: base.env()[RUNTIME_DIR_ENV_KEY],
-      unattended: isUnattendedProcess(process.env)
+      unattended: isUnattendedProcess(process.env),
+      defaultBranchLogs: () => defaultBranchSettingsNow(repoRootSync())
     },
     repository
   )

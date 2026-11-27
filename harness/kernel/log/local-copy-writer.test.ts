@@ -2,8 +2,13 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import {
+  installConfigProvider,
+  type ProvidedConfig,
+  uninstallConfigProvider
+} from '../config/loader/config-provider.js'
 import * as localCopyWriter from './local-copy-writer.js'
-import { createLogSink, type LogSinkOverrides } from './log-sink.js'
+import { createLogSink, type LogSinkOverrides, processLocalCopyPlace, resetTrustAnchorConfigMemo } from './log-sink.js'
 import { registerRole, restoreRoleRegistry, type RoleRegistrySnapshot, saveRoleRegistry } from './roles.js'
 
 let saved: RoleRegistrySnapshot
@@ -31,6 +36,99 @@ describe('the keep window beside the local copy folder', () => {
     expect(localCopyWriter.resolveLocalCopySettings(base, 'a/b')?.keepDays).toBe(12)
     expect(localCopyWriter.resolveLocalCopySettings({ ...base, unattended: true }, 'a/b')?.keepDays).toBe(90)
     expect(localCopyWriter.resolveLocalCopySettings({ ...base, handedRuntimeDir: tmp() }, 'a/b')?.keepDays).toBe(90)
+  })
+})
+
+describe('recording off gives every process no local copy', () => {
+  const settingsAt = (settings: unknown): string => {
+    const cwd = tmp()
+    writeFileSync(join(cwd, 'vinaya.config.json'), JSON.stringify(settings))
+    return cwd
+  }
+
+  test('with recording off, a handed runtime directory and an unattended process both get no place', () => {
+    const off = { home: tmp(), cwd: settingsAt({ logs: false }), handedRuntimeDir: undefined, unattended: false }
+    expect(localCopyWriter.resolveLocalCopySettings(off, 'a/b')).toBeUndefined()
+    expect(localCopyWriter.resolveLocalCopySettings({ ...off, handedRuntimeDir: tmp() }, 'a/b')).toBeUndefined()
+    const branchOff = () => ({ logs: false })
+    expect(
+      localCopyWriter.resolveLocalCopySettings({ ...off, unattended: true, defaultBranchLogs: branchOff }, 'a/b')
+    ).toBeUndefined()
+    expect(
+      localCopyWriter.resolveLocalCopySettings(
+        { ...off, unattended: true, handedRuntimeDir: tmp(), defaultBranchLogs: branchOff },
+        'a/b'
+      )
+    ).toBeUndefined()
+  })
+
+  test('an unattended process whose default branch turns recording off gets none while its working tree says on', () => {
+    const on = { home: tmp(), cwd: settingsAt({ logs: { keepDays: 12 } }), handedRuntimeDir: undefined }
+    expect(localCopyWriter.resolveLocalCopySettings({ ...on, unattended: false }, 'a/b')?.folder).toBeDefined()
+    expect(
+      localCopyWriter.resolveLocalCopySettings(
+        { ...on, unattended: true, defaultBranchLogs: () => ({ logs: false }) },
+        'a/b'
+      )
+    ).toBeUndefined()
+  })
+
+  test('an unattended process takes the off switch from the default branch only, and unreadable settings leave it on', () => {
+    const home = tmp()
+    const off = { home, cwd: settingsAt({ logs: false }), handedRuntimeDir: undefined, unattended: true }
+    const defaultFolder = join(home, '.vinaya', 'runtime', 'a-b', 'logs')
+    // The working tree, which a change under review can edit, never turns an unattended process's recording off.
+    expect(localCopyWriter.resolveLocalCopySettings({ ...off, defaultBranchLogs: () => ({}) }, 'a/b')?.folder).toBe(
+      defaultFolder
+    )
+    // A default branch whose settings cannot be read keeps the default folder, as before.
+    expect(localCopyWriter.resolveLocalCopySettings({ ...off, defaultBranchLogs: () => null }, 'a/b')?.folder).toBe(
+      defaultFolder
+    )
+    expect(localCopyWriter.resolveLocalCopySettings(off, 'a/b')?.folder).toBe(defaultFolder)
+  })
+
+  test('an attended process never reads the default branch for its off switch', () => {
+    let reads = 0
+    const defaultBranchLogs = () => {
+      reads += 1
+      return { logs: false }
+    }
+    const on = { home: tmp(), cwd: settingsAt({}), handedRuntimeDir: undefined, unattended: false, defaultBranchLogs }
+    expect(localCopyWriter.resolveLocalCopySettings(on, 'a/b')).toBeDefined()
+    expect(localCopyWriter.resolveLocalCopySettings({ ...on, handedRuntimeDir: tmp() }, 'a/b')).toBeDefined()
+    expect(reads).toBe(0)
+  })
+
+  test("the process's own place reads the default branch once, synchronously, and obeys its off switch", () => {
+    const previous = uninstallConfigProvider()
+    const role = process.env.VINAYA_ROLE
+    let reads = 0
+    let quiet: boolean | undefined
+    installConfigProvider({
+      homeDir: tmp(),
+      loadConfig: () => null,
+      loadTrustAnchorConfig: (options) => {
+        reads += 1
+        quiet = options?.quiet
+        return { logs: false } as ProvidedConfig
+      },
+      loadTrustAnchorConfigAsync: async () => null
+    })
+    resetTrustAnchorConfigMemo()
+    try {
+      process.env.VINAYA_ROLE = 'developer'
+      expect(processLocalCopyPlace('a/b')).toBeUndefined()
+      expect(processLocalCopyPlace('a/b')).toBeUndefined()
+      expect(reads).toBe(1)
+      expect(quiet).toBe(true)
+    } finally {
+      if (role === undefined) delete process.env.VINAYA_ROLE
+      else process.env.VINAYA_ROLE = role
+      resetTrustAnchorConfigMemo()
+      uninstallConfigProvider()
+      if (previous !== null) installConfigProvider(previous)
+    }
   })
 })
 

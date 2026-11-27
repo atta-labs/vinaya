@@ -11,6 +11,9 @@ export type ReadGap = {
 
 export type Ordered = { ready: OtelRecord[]; gaps: ReadGap[]; duplicates: number }
 
+/** The number an SDK writer gives its first record: what a run read from its start expects first of each writer. */
+const FIRST_SEQUENCE = 1
+
 type Writer = {
   /** Whether the SDK stamped this writer's records with sequence numbers to follow. */
   sequenced: boolean
@@ -82,8 +85,9 @@ export function createOrdering(
   function writerOf(key: string, sequenced: boolean): Writer {
     let writer = writers.get(key)
     if (writer === undefined) {
-      // A run read from its start expects each writer's first number to be 0.
-      writer = { sequenced, next: fromStart ? (options.firstSequence ?? 0) : null, held: [], age: 0 }
+      // A run read from its start expects each writer's first number to be 1, the number every SDK writer gives its
+      // first record. A writer whose records start at 0, as a converted earlier copy's can, has its 0 handed as early.
+      writer = { sequenced, next: fromStart ? (options.firstSequence ?? FIRST_SEQUENCE) : null, held: [], age: 0 }
       writers.set(key, writer)
     }
     return writer

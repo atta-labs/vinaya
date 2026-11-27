@@ -19,7 +19,7 @@ import { afterEach, describe, expect, it as bunIt } from 'bun:test'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { readOtlpDocument } from '@attalabs/vinaya-log-sdk'
+import { type OtelRecord, readOtlpDocument } from '@attalabs/vinaya-log-sdk'
 import { createRunRecorder } from '@harness/kernel/log/run-recorder.js'
 import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
@@ -1756,6 +1756,87 @@ describe('dispatchRole — a shared run_id (a nested dispatch inheriting VINAYA_
     for (const turn of turns) {
       expect(turn).toMatchObject({ outcome: 'done', usage: { input: 11, output: 22 } })
     }
+  })
+})
+
+describe('dispatchRole — the review input versions a dispatch was handed', () => {
+  it("a reviewer dispatch given input versions writes them on its turn's records, and a dispatch on the same run given none writes none", () => {
+    const home = tempDir('vinaya-dispatch-home-')
+    const cwd = tempDir('vinaya-dispatch-cwd-')
+    const binDir = tempDir('vinaya-dispatch-bin-')
+    writeFakeBinary(
+      binDir,
+      'claude',
+      `#!/bin/sh\ncat > /dev/null\necho '{"usage":{"input_tokens":11,"output_tokens":22}}'\nexit 0\n`
+    )
+    const promptFile = join(cwd, 'prompt.txt')
+    writeFileSync(promptFile, PROMPT_FILE_CONTENT)
+    const dispatchLib = join(
+      CLI_ROOT,
+      '..',
+      '..',
+      'harness',
+      'processes',
+      'vinaya-strict',
+      'loops',
+      'dev-review',
+      'dispatch',
+      'dispatch.ts'
+    )
+    const manifest = {
+      manifestVersion: 2,
+      briefHash: 'b'.repeat(64),
+      objectivesVersion: 'o'.repeat(64),
+      rulingOrdinal: 3,
+      policyDigest: 'p'.repeat(64)
+    }
+    const script = join(cwd, 'input-versions.ts')
+    writeFileSync(
+      script,
+      [
+        `import { dispatchRole } from ${JSON.stringify(dispatchLib)}`,
+        `process.env.VINAYA_RUN_ID = 'input-versions-fixture'`,
+        `const promptFile = ${JSON.stringify(promptFile)}`,
+        `await dispatchRole('code-reviewer', 'claude', 'p', { promptFile, inputVersions: ${JSON.stringify(manifest)} })`,
+        `await dispatchRole('developer', 'claude', 'p', { promptFile })`
+      ].join('\n')
+    )
+
+    runScriptWithBudget(
+      script,
+      cwd,
+      stripVinayaEnv({ ...process.env, HOME: home, PATH: `${binDir}:${pathWithoutRealVendors()}` })
+    )
+
+    const records: OtelRecord[] = []
+    const walk = (dir: string): void => {
+      if (!existsSync(dir)) return
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) walk(path)
+        else if (entry.name.endsWith('.jsonl'))
+          for (const line of readFileSync(path, 'utf8').split('\n'))
+            if (line.trim() !== '') records.push(...(readOtlpDocument(JSON.parse(line), path) ?? []))
+      }
+    }
+    walk(localCopyFolderOf(home))
+    const versionsOf = (record: OtelRecord): unknown[] =>
+      ['vinaya.input.brief', 'vinaya.input.objectives', 'vinaya.input.ruling', 'vinaya.input.policy'].map(
+        (key) => record.attributes[key]
+      )
+    const reviewer = records.find((record) => record.kind === 'span' && record.name === 'invoke_agent code-reviewer')
+    const developer = records.find((record) => record.kind === 'span' && record.name === 'invoke_agent developer')
+    expect(reviewer).toBeDefined()
+    expect(developer).toBeDefined()
+    expect(versionsOf(reviewer as OtelRecord)).toEqual(['b'.repeat(64), 'o'.repeat(64), '3', 'p'.repeat(64)])
+    expect(versionsOf(developer as OtelRecord)).toEqual([undefined, undefined, undefined, undefined])
+    // Both turns are on the one run's trace, and every record of the reviewer's turn carries its versions.
+    expect((reviewer as OtelRecord).traceId).toBe((developer as OtelRecord).traceId)
+    const reviewerStarted = records.filter(
+      (record) => record.kind === 'started' && record.spanId === (reviewer as OtelRecord).spanId
+    )
+    expect(reviewerStarted.length).toBeGreaterThan(0)
+    for (const started of reviewerStarted) expect(versionsOf(started)).toEqual(versionsOf(reviewer as OtelRecord))
   })
 })
 

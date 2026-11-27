@@ -119,9 +119,11 @@ A line is set aside, with a rejected receipt and an entry in `setAside` (not in 
 - `logs.events` — the declared custom events and their fields.
 - `logs: false`, or `destination: false` — the handle records nothing and keeps every function.
 
+A passed destination still replaces a file's `logs: false`, so a caller that passes one reads the off switch itself. The Vinaya harness does: with `logs: false` it opens no handle and passes no destination, also for a process handed its runtime directory and for an unattended process, which reads the switch from the default branch's settings rather than its working tree.
+
 ## 6. Reading and narrating
 
-`createReader` over `createFolderSource` (the local copy) or `createOtlpSource` (any system that supplies OTLP JSON) returns the records in order. `pull()` reads incrementally, `readAll()` takes a snapshot, and `follow({ signal })` is an async iterator; a saved `position` resumes a read. A record that fails the contract is not handed out: it is reported in `gaps` as kind `contract` with its place, writer and first failing name.
+`createReader` over `createFolderSource` (the local copy) or `createOtlpSource` (any system that supplies OTLP JSON) returns the records in order. `pull()` reads incrementally, `readAll()` takes a snapshot, and `follow({ signal })` is an async iterator; a saved `position` resumes a read. A read from a run's start expects each writer's first record to be numbered 1, the number every SDK writer gives its first record, so a writer read from its start reports no gap; `firstSequence` names another first number. A writer whose records start at 0, as an earlier copy converted to the contract can, has its record 0 handed as early, so it is still read in full with no gap. A record that fails the contract is not handed out: it is reported in `gaps` as kind `contract` with its place, writer and first failing name.
 
 `narrate(record, seatNames, earlier)` returns one line, a kind and a sentence, for any record the SDK writes, and `null` for anything else. It never throws. `seatNames` maps a seat to the reading's name for it; a step's agent is read from the agent's started record among `earlier`. A value the wording does not know reads as its code. The signature is:
 

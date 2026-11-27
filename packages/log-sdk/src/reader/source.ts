@@ -38,7 +38,7 @@ export type ReaderUpdate = {
 }
 
 export type ReaderOptions = {
-  /** First expected sequence for each writer when reading from the beginning. */
+  /** First expected sequence for each writer when reading from the beginning; 1, an SDK writer's first, when absent. */
   firstSequence?: number
   /** Where to read on from; omitted reads from the start. */
   position?: string

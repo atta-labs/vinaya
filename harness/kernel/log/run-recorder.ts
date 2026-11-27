@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   connect,
   EVENT_NAMES,
+  type InputVersions,
   type LogHandle,
   type NarratableRecord,
   type ReadableLogRecord,
@@ -117,6 +118,44 @@ export type AgentTurnStart = {
   effort?: string
   /** Narrates this turn's records as they are written; the process's own narrator when absent. */
   narrate?: AgentRecordNarrator
+  /**
+   * The versions of the review inputs the turn was dispatched with, written on every record of the turn: they ride
+   * on a handle of the turn's own on the same run, so the run's other records and other turns keep their own.
+   * Absent, or with no version known, the turn writes none.
+   */
+  inputs?: InputVersions
+}
+
+/** The parts of a review input manifest a turn's input versions are taken from. */
+export type ReviewInputVersionsSource = {
+  briefHash?: string | null
+  objectivesVersion?: string | null
+  rulingOrdinal?: number | null
+  policyDigest?: string | null
+}
+
+/**
+ * The input versions of a review input manifest, as a turn records them: the brief from its hash, the objectives from
+ * their version, the ruling from its ordinal and the policy from its digest. A version the manifest does not know is
+ * left out; `undefined` when it knows none.
+ */
+export function reviewInputVersions(manifest: ReviewInputVersionsSource | undefined): InputVersions | undefined {
+  if (manifest === undefined) return undefined
+  const inputs: InputVersions = {
+    ...(manifest.briefHash == null ? {} : { brief: manifest.briefHash }),
+    ...(manifest.objectivesVersion == null ? {} : { objectives: manifest.objectivesVersion }),
+    ...(manifest.rulingOrdinal == null ? {} : { ruling: manifest.rulingOrdinal }),
+    ...(manifest.policyDigest == null ? {} : { policy: manifest.policyDigest })
+  }
+  return Object.keys(inputs).length === 0 ? undefined : inputs
+}
+
+/** The input versions as a handle's name part: empty when there are none, so a turn without them shares the run's handle. */
+function inputsKey(inputs: InputVersions | undefined): string {
+  if (inputs === undefined) return ''
+  const { brief, objectives, ruling, policy } = inputs
+  if (brief === undefined && objectives === undefined && ruling === undefined && policy === undefined) return ''
+  return JSON.stringify([brief ?? null, objectives ?? null, ruling ?? null, policy ?? null])
 }
 
 type OpenStep = { ref: SpanParent; startedAt: number }
@@ -205,14 +244,17 @@ export function createRunRecorder(deps: RunRecorderDeps) {
   function open(
     runId: string,
     repository?: string,
-    workRefOverride?: string
+    workRefOverride?: string,
+    inputs?: InputVersions
   ): { log: LogHandle; place: LocalCopyPlace } | undefined {
     const repo = repository ?? bound.repository ?? deps.repository()
     const place = deps.place(repo)
     if (place === undefined) return undefined
-    // A handle's trust is fixed when it opens, so the trust is part of what names it.
+    // A handle's trust is fixed when it opens, so the trust is part of what names it. So are the input versions,
+    // which the SDK writes on every record of a handle: a turn with versions gets a handle of its own on the run.
     const trust = trustNow()
-    const key = `${runId}\0${place.folder}\0${repo ?? ''}\0${workRefOverride ?? ''}\0${trust}`
+    const versions = inputsKey(inputs)
+    const key = `${runId}\0${place.folder}\0${repo ?? ''}\0${workRefOverride ?? ''}\0${trust}\0${versions}`
     const known = handles.get(key)
     if (known !== undefined) return known
     const home = deps.home()
@@ -242,6 +284,7 @@ export function createRunRecorder(deps: RunRecorderDeps) {
       identity: runIdentity,
       ...(identity === undefined ? {} : { processName: identity.name, serviceVersion: identity.version }),
       ...(workRef === undefined ? {} : { workRef }),
+      ...(versions === '' || inputs === undefined ? {} : { inputs }),
       // The agent's records are narrated as the handle writes them: the started event, and the span's end.
       spanProcessors: [
         {
@@ -360,7 +403,7 @@ export function createRunRecorder(deps: RunRecorderDeps) {
       let opened: { log: LogHandle; place: LocalCopyPlace } | undefined
       let ref: SpanParent | undefined
       try {
-        opened = open(runId, start.repository, start.workRef)
+        opened = open(runId, start.repository, start.workRef, start.inputs)
         starting = { narrate: start.narrate ?? bound.narrate }
         ref =
           opened?.log.agent.sent({

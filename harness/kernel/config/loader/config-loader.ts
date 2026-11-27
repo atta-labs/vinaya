@@ -482,14 +482,18 @@ export function createConfigLoader<Schema extends z.ZodTypeAny>(options: ConfigL
    * built-in default — never into trusting unreviewed content. `fetcher` is
    * injectable for tests only.
    */
-  function loadTrustAnchorConfig(fetcher: TrustAnchorFetcher = fetchTrustAnchorConfig): Config | null {
+  function loadTrustAnchorConfig(
+    fetcher: TrustAnchorFetcher = fetchTrustAnchorConfig,
+    loadOptions: { quiet?: boolean } = {}
+  ): Config | null {
+    const warn = loadOptions.quiet ? () => {} : warnTrustAnchorFallback
     let base64: string
     try {
       base64 = fetcher()
     } catch (err) {
-      return trustAnchorFetchFailed(err)
+      return trustAnchorFetchFailed(err, warn)
     }
-    return parseTrustAnchorContent(base64)
+    return parseTrustAnchorContent(base64, warn)
   }
 
   /**
@@ -553,7 +557,7 @@ export type ConfigLoader<Config> = {
   writeConfig(scope: 'local' | 'global', config: Config, repoRoot?: string): void
   fetchTrustAnchorConfig: TrustAnchorFetcher
   parseTrustAnchorContent(content: string, warn?: (why: string) => void): Config | null
-  loadTrustAnchorConfig(fetcher?: TrustAnchorFetcher): Config | null
+  loadTrustAnchorConfig(fetcher?: TrustAnchorFetcher, options?: { quiet?: boolean }): Config | null
   loadTrustAnchorConfigOrThrow(fetcher?: TrustAnchorFetcher): Config | null
   loadTrustAnchorConfigAsync(fetcher?: () => Promise<string>, options?: { quiet?: boolean }): Promise<Config | null>
 }

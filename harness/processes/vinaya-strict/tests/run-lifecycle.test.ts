@@ -1449,3 +1449,91 @@ describe('the Engine ruling watch ends the person span an earlier process asked'
     }
   })
 })
+
+// --- the review input versions of a launch's turn ----------------------------------
+
+describe("an Engine runner launch's turn records the review input versions of its round", () => {
+  const INPUT_KEYS = ['vinaya.input.brief', 'vinaya.input.objectives', 'vinaya.input.ruling', 'vinaya.input.policy']
+  const versionsOf = (record: unknown): unknown[] => INPUT_KEYS.map((key) => attributeOf(record, key))
+  const expectedOf = (manifest: ReviewInputManifest): unknown[] => [
+    manifest.briefHash,
+    manifest.objectivesVersion,
+    String(manifest.rulingOrdinal),
+    manifest.policyDigest
+  ]
+  const turnsOf = (world: ReturnType<typeof createRunLifecycleWorld>): any[] =>
+    world.spans().filter((span: { name: string }) => span.name.startsWith('invoke_agent '))
+
+  test("a reviewer launch writes its round's manifest versions on its turn's records; the Developer's turn writes none", async () => {
+    const world = createRunLifecycleWorld()
+    const manifest = manifestAt('c'.repeat(40))
+    let taken = 0
+    const run = stubRun({
+      actions: {
+        // As the round's dispatch action: one snapshot of the inputs, recorded as the step's output.
+        'vinaya.dispatch-reviewers': () => {
+          const inputs = run.options.taskInput.reviewInputs?.(1)
+          return { exitCode: 0, stdout: JSON.stringify({ round: 1, attempt: 1, inputs }) }
+        }
+      }
+    })
+    run.options.turnRecorder = world.process()
+    run.options.taskInput = {
+      ...run.options.taskInput,
+      reviewRound: () => 1,
+      reviewInputs: () => {
+        taken += 1
+        return { manifest, objectives }
+      },
+      reviewerPrompt: async () => 'review the change'
+    } as TaskInput
+    const result = await runEngine(run.options)
+    expect(result.exitCode).toBe(0)
+    expect(run.spawns).toEqual(['develop', 'code-review', 'security-review'])
+    expect(taken).toBe(1)
+    const turns = turnsOf(world)
+    const reviewers = turns.filter((span) => span.name !== 'invoke_agent developer')
+    expect(reviewers.map((span) => span.name).sort()).toEqual(['invoke_agent code-reviewer', 'invoke_agent security'])
+    for (const span of reviewers) expect(versionsOf(span)).toEqual(expectedOf(manifest))
+    const developer = turns.find((span) => span.name === 'invoke_agent developer')
+    expect(developer).toBeDefined()
+    expect(versionsOf(developer)).toEqual([undefined, undefined, undefined, undefined])
+    expect(world.errors).toEqual([])
+  })
+
+  test('a resumed round reuses the inputs its dispatch recorded, never taking them again', async () => {
+    const manifest = manifestAt('d'.repeat(40))
+    const control = createRunControl()
+    const first = stubRun({
+      control,
+      actions: {
+        'vinaya.dispatch-reviewers': () => {
+          control.halt('stop')
+          return { exitCode: 0, stdout: JSON.stringify({ round: 1, attempt: 1, inputs: { manifest, objectives } }) }
+        }
+      }
+    })
+    expect((await runEngine(first.options)).exitCode).toBe(2)
+    expect(first.spawns).toEqual(['develop'])
+
+    const world = createRunLifecycleWorld()
+    const second = stubRun({}, first.runtimeDir)
+    let taken = 0
+    second.options.turnRecorder = world.process()
+    second.options.taskInput = {
+      ...second.options.taskInput,
+      reviewRound: () => 1,
+      reviewInputs: () => {
+        taken += 1
+        return { manifest: manifestAt('e'.repeat(40)), objectives }
+      },
+      reviewerPrompt: async () => 'review the change'
+    } as TaskInput
+    expect((await runEngine(second.options)).exitCode).toBe(0)
+    expect(second.spawns).toEqual(['code-review', 'security-review'])
+    expect(taken).toBe(0)
+    const turns = turnsOf(world)
+    expect(turns).toHaveLength(2)
+    for (const span of turns) expect(versionsOf(span)).toEqual(expectedOf(manifest))
+  })
+})

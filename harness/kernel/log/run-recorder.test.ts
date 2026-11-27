@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { traceIdFor } from '@attalabs/vinaya-log-sdk'
-import { createRunRecorder } from './run-recorder.js'
+import { createRunRecorder, reviewInputVersions } from './run-recorder.js'
 
 const RUN = 'run-recorder'
 
@@ -409,4 +409,75 @@ test("each agent turn records its effort: the one named, the run's own, else med
       .map((s) => attribute(s, 'vinaya.agent.effort'))
       .sort()
   ).toEqual(['high', 'low', 'medium'])
+})
+
+const INPUT_KEYS = ['vinaya.input.brief', 'vinaya.input.objectives', 'vinaya.input.ruling', 'vinaya.input.policy']
+const inputsOf = (record: any): unknown[] => INPUT_KEYS.map((key) => attribute(record, key))
+
+test('a turn opened with input versions writes the four input attributes on its records; a turn without them and the run records carry none', () => {
+  const { recorder, errors, spans, events } = setup()
+  recorder.stageChanged({ stage: 'developing', round: 1 })
+  const judged = recorder.turn({
+    seat: 'code-reviewer',
+    key: 'with-inputs',
+    inputs: { brief: 'b'.repeat(64), objectives: 'o'.repeat(64), ruling: 2, policy: 'p'.repeat(64) }
+  })
+  judged.steps.observe({ type: 'start', id: 'c1', tool: 'Read', kind: 'reading', target: 'a.ts', at: 1_000 })
+  judged.steps.observe({
+    type: 'result',
+    id: 'c1',
+    kind: 'reading',
+    target: 'a.ts',
+    ok: true,
+    durationMs: 5,
+    at: 1_005
+  })
+  judged.usage({ inputTokens: 3, outputTokens: 4 })
+  judged.returned({ outcome: 'done' })
+  recorder.turn({ seat: 'developer', key: 'without-inputs' }).returned({ outcome: 'done' })
+  recorder.stageChanged({ stage: 'reviewing', round: 1 })
+  expect(errors).toEqual([])
+
+  const written = spans()
+  const reviewer = written.find((s) => s.name === 'invoke_agent code-reviewer')
+  const step = written.find((s) => s.name === 'execute_tool Read')
+  const developer = written.find((s) => s.name === 'invoke_agent developer')
+  expect(inputsOf(reviewer)).toEqual(['b'.repeat(64), 'o'.repeat(64), '2', 'p'.repeat(64)])
+  expect(inputsOf(step)).toEqual(inputsOf(reviewer))
+  expect(inputsOf(developer)).toEqual([undefined, undefined, undefined, undefined])
+  // One run, one trace: the turn's own handle writes on the run's trace.
+  for (const span of written) expect(span.traceId).toBe(traceIdFor(RUN))
+
+  const started = events().filter((e) => e.eventName === 'vinaya.agent.started')
+  expect(started.map(inputsOf)).toContainEqual(inputsOf(reviewer))
+  expect(started.map(inputsOf)).toContainEqual([undefined, undefined, undefined, undefined])
+  // The run's own records, before the turn and after it, keep their own versions: none.
+  const stages = events().filter((e) => e.eventName === 'vinaya.run.stage_changed')
+  expect(stages).toHaveLength(2)
+  for (const stage of stages) expect(inputsOf(stage)).toEqual([undefined, undefined, undefined, undefined])
+})
+
+test("two turns with different input versions on one run never carry each other's versions", () => {
+  const { recorder, spans } = setup()
+  recorder.turn({ seat: 'code-reviewer', key: 'r1', inputs: { brief: 'one', ruling: 1 } }).returned()
+  recorder.turn({ seat: 'security', key: 's1', inputs: { brief: 'two', ruling: 2 } }).returned()
+  recorder.turn({ seat: 'code-reviewer', key: 'r2', inputs: { brief: 'one', ruling: 1 } }).returned()
+  const byKey = spans().map((s) => [s.name, attribute(s, 'vinaya.input.brief'), attribute(s, 'vinaya.input.ruling')])
+  expect(byKey.sort()).toEqual([
+    ['invoke_agent code-reviewer', 'one', '1'],
+    ['invoke_agent code-reviewer', 'one', '1'],
+    ['invoke_agent security', 'two', '2']
+  ])
+})
+
+test('a review input manifest maps to input versions, a version it does not know left out', () => {
+  expect(reviewInputVersions({ briefHash: 'b', objectivesVersion: 'o', rulingOrdinal: 0, policyDigest: 'p' })).toEqual({
+    brief: 'b',
+    objectives: 'o',
+    ruling: 0,
+    policy: 'p'
+  })
+  expect(reviewInputVersions({ briefHash: 'b', objectivesVersion: null, rulingOrdinal: null })).toEqual({ brief: 'b' })
+  expect(reviewInputVersions({ briefHash: null })).toBeUndefined()
+  expect(reviewInputVersions(undefined)).toBeUndefined()
 })

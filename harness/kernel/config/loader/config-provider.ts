@@ -28,8 +28,8 @@ export interface ConfigProvider {
   readonly homeDir: string
   /** The working tree's configuration, or `null` when none is found or it is invalid. */
   loadConfig(): ProvidedConfig | null
-  /** The default branch's configuration, or `null` on any failure. */
-  loadTrustAnchorConfig(): ProvidedConfig | null
+  /** The default branch's configuration, or `null` on any failure; `quiet` prints no fallback line. */
+  loadTrustAnchorConfig(options?: { quiet?: boolean }): ProvidedConfig | null
   /** `loadTrustAnchorConfig` without blocking the event loop. */
   loadTrustAnchorConfigAsync(
     fetcher?: () => Promise<string>,
