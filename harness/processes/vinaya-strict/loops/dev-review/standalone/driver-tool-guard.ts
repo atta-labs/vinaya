@@ -49,18 +49,28 @@ child.on('error', (err) => {
   process.stderr.write(command + ': ' + err.message + '\\n')
   process.exit(127)
 })
-child.on('exit', (code, signal) => {
-  process.exit(code === null ? 128 + (signal === 'SIGKILL' ? 9 : 15) : code)
-})
+let status = null
 let stopping = false
+function groupEmpty() {
+  try { process.kill(-child.pid, 0); return false } catch (err) { return err.code === 'ESRCH' }
+}
+function finish() {
+  process.exit(status === null ? 137 : status)
+}
+child.on('exit', (code, signal) => {
+  status = code === null ? 128 + (signal === 'SIGKILL' ? 9 : 15) : code
+  if (groupEmpty()) finish()
+  else stopGroup()
+})
 function stopGroup() {
   if (stopping || child.pid === undefined) return
   stopping = true
   try { process.kill(-child.pid, 'SIGTERM') } catch {}
   setTimeout(() => {
     try { process.kill(-child.pid, 'SIGKILL') } catch {}
-    process.exit(137)
+    finish()
   }, graceMs)
+  setInterval(() => { if (status !== null && groupEmpty()) finish() }, pollMs)
 }
 for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, stopGroup)
 setInterval(() => { if (process.ppid !== driverPid) stopGroup() }, pollMs)
