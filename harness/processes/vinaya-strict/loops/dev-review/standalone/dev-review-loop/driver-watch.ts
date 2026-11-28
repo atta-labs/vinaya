@@ -144,8 +144,7 @@ export type DriverWatchDeps = {
   writePauseState: typeof writePauseState
   readResolutionRecord: typeof readResolutionRecord
   /**
-   * issue-711 O4 (code review round 1, BLOCKER; round 2, MAJOR/security
-   * LOW): `runDriverLoop` holds the one-driver-per-task lock for its
+   * `runDriverLoop` holds the one-driver-per-task lock for its
    * ENTIRE life, across every pause and every resume attempt this same
    * process makes (`LoopInput.retainDriverLock` — `devReviewLoop`'s own
    * doc comment — carrying the one random token this run generated at its
@@ -528,12 +527,10 @@ export async function watchPauseThenResume(
         const result = await w.devReviewLoop(
           {
             ...continuation,
-            // issue-711 O4 (code review round 1, BLOCKER/MEDIUM; round 2,
-            // MAJOR/security LOW): this call is the SAME process
-            // re-entering the SAME task's driver lock it has held, unbroken
-            // and under the SAME token, since it first paused — never
-            // cleared first any more (that briefly opened the task to a
-            // genuinely concurrent second driver). `devReviewLoop`'s own
+            // This call is the SAME process re-entering the SAME task's
+            // driver lock it has held, unbroken and under the SAME token,
+            // since it first paused — never cleared first, which would
+            // briefly open the task to a genuinely concurrent second driver. `devReviewLoop`'s own
             // entry gate recognizes its own pid AND its own token on the
             // existing lock and neither refuses nor re-races it.
             retainDriverLock: driverLockToken
@@ -817,8 +814,7 @@ export async function runDriverLoop(
   if (!watchDeps.gitRevParseOriginMain && loopDeps.gitRevParseOriginMain) {
     w.gitRevParseOriginMain = loopDeps.gitRevParseOriginMain
   }
-  // issue-711 O4 (code review round 1, BLOCKER; round 2, MAJOR/security
-  // LOW): ONE token for this whole driver run, generated once, here, and
+  // ONE token for this whole driver run, generated once, here, and
   // threaded into EVERY call this run makes (this first one and every
   // resume attempt `watchPauseThenResume` makes) via `retainDriverLock` —
   // this is what lets `devReviewLoop`'s own entry gate tell "this exact

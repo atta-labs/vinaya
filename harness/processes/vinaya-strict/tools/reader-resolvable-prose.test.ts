@@ -1,5 +1,6 @@
-import { readdirSync, readFileSync } from 'node:fs'
-import { dirname, join, sep } from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'bun:test'
 import { type ProseRulesConfig, resolveProseRules } from './prose-rules'
@@ -869,21 +870,44 @@ describe("the repository's own history-narrating comment rules", () => {
     }
   })
 
-  // The log sink is bound to its own doc in `.vinaya/doc-owners`, and the
-  // commit hook's doc check runs with no pull request body, so even a
-  // comment-only edit to it cannot be declared doc-neutral at commit time.
-  // Its comments are rewritten separately, together with that doc; until
-  // then it is the one kernel file this sweep leaves out.
-  const NOT_YET_SWEPT = new Set(['harness/kernel/log/log-sink.ts'])
+  // The places whose comments are not yet rewritten, as repository-relative
+  // path prefixes: a folder ends in `/`, a single file is named whole. Each
+  // entry is removed by the task that rewrites that place's comments, so the
+  // list only shrinks and never gains an entry. The log sink is bound to its
+  // own doc in `.vinaya/doc-owners`, and the commit hook's doc check runs
+  // with no pull request body, so even a comment-only edit to it cannot be
+  // declared doc-neutral at commit time; its comments are rewritten together
+  // with that doc.
+  const NOT_YET_SWEPT: readonly string[] = [
+    'harness/processes/vinaya-strict/integration/',
+    'harness/processes/vinaya-strict/checks/',
+    'harness/processes/vinaya-strict/tools/',
+    'harness/processes/vinaya-strict/tests/',
+    'harness/processes/vinaya-strict/thinking/',
+    'harness/processes/vinaya-strict/retrospecting/',
+    'apps/cli/',
+    'harness/kernel/log/log-sink.ts',
+    'packages/log-sdk/src/contract/schema.ts'
+  ]
+  const notYetSwept = (path: string) => NOT_YET_SWEPT.some((prefix) => path.startsWith(prefix))
 
-  it('finds none of the four forms in any comment of any TypeScript file under the kernel', () => {
-    const kernelRoot = join(REPO_ROOT, 'harness/kernel')
-    const files = (readdirSync(kernelRoot, { recursive: true }) as string[])
-      .map((entry) => entry.split(sep).join('/'))
-      .filter((entry) => entry.endsWith('.ts') && !entry.split('/').includes('node_modules'))
-      .map((entry) => `harness/kernel/${entry}`)
-      .filter((path) => !NOT_YET_SWEPT.has(path))
+  // Every TypeScript file git tracks, so build output, dependency folders and
+  // other worktrees are never read; a tracked file deleted in the working
+  // tree has nothing to read.
+  const trackedTypeScript = (): string[] =>
+    execFileSync('git', ['ls-files', '-z', '--', '*.ts'], { cwd: REPO_ROOT, encoding: 'utf8' })
+      .split('\0')
+      .filter((path) => path.endsWith('.ts') && existsSync(join(REPO_ROOT, path)))
+
+  it('names no place under the loops folder as not yet rewritten', () => {
+    const loops = 'harness/processes/vinaya-strict/loops/'
+    expect(NOT_YET_SWEPT.filter((prefix) => prefix.startsWith(loops) || loops.startsWith(prefix))).toEqual([])
+  })
+
+  it('finds none of the four forms in any comment of any tracked TypeScript file outside the places not yet rewritten', () => {
+    const files = trackedTypeScript().filter((path) => !notYetSwept(path))
     expect(files.length).toBeGreaterThan(0)
+    expect(files.some((path) => path.startsWith('harness/processes/vinaya-strict/loops/'))).toBe(true)
     const findings = files.flatMap((path) => {
       const comments = extractComments(path, readFileSync(join(REPO_ROOT, path), 'utf8'))
       return historyFindings(path, comments).map((finding) => `${finding.file}:${finding.line} ${finding.message}`)

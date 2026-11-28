@@ -113,12 +113,12 @@ export function markerComments(raw: string): MarkerComment[] {
 }
 
 /**
- * A security-review HIGH finding: `fetchRulings`/`fetchFrozenBrief`
- * trusted ANY comment matching their marker regex, author unchecked — a
- * non-principal PR/Issue commenter could post a fake `vinaya:principal:ruling`-
- * or `vinaya:brief:v1`-shaped comment and have its content concatenated
- * straight into the resumed developer's prompt every round, in this fully
- * unattended, commit-pushing loop. Both now require the matching comment's
+ * `fetchRulings`/`fetchFrozenBrief` never trust a comment on its marker
+ * regex alone, author unchecked — a non-principal PR/Issue commenter could
+ * otherwise post a fake `vinaya:principal:ruling`- or `vinaya:brief:v1`-shaped
+ * comment and have its content concatenated straight into the resumed
+ * developer's prompt every round, in this fully unattended, commit-pushing
+ * loop. Both require the matching comment's
  * author to resolve as a principal — the SAME `isPrincipal`/
  * `resolveTrustedPrincipals` machinery `review-post.ts`'s own
  * `principalBodies` already uses for exactly this kind of forge-read trust
@@ -226,7 +226,7 @@ const DEVELOPER_STOP_MARKER = new RegExp(`^<!-- ${COMMENT_MARKER_PREFIX_PATTERN}
  * gate) or hits a stop condition before ever pushing has nowhere to post
  * but the task Issue — no PR exists yet. `harness/processes/vinaya-strict/executing/developer/doctrine.md`
  * names this exact marker for that one case. Same trust boundary as
- * `filterPrincipalRulings` (that same security-review HIGH finding): a non-
+ * `filterPrincipalRulings`: a non-
  * principal Issue commenter could otherwise post a fake stop marker and
  * end an unattended loop early.
  */
@@ -468,11 +468,10 @@ export function fetchIssueLabels(issueNumber: number): string[] {
 }
 
 /**
- * A code-review BLOCKER finding: the reviewer prompt's `OBJECTIVES:`
- * fact was `fetchFrozenBrief`'s ENTIRE brief text (every section — Context,
- * Technical dependencies, stop conditions, all of it), not "objectives from
- * the Issue" as O2 actually says and `renderReviewerPrompt`'s own doc
- * comment claims. This reads the Issue's `## Objectives` section only,
+ * The reviewer prompt's `OBJECTIVES:` fact is the Issue's objectives, never
+ * `fetchFrozenBrief`'s ENTIRE brief text (every section — Context, Technical
+ * dependencies, stop conditions, all of it), as `renderReviewerPrompt`'s own
+ * doc comment says. This reads the Issue's `## Objectives` section only,
  * directly off its body (never the frozen brief comment) — the current
  * objectives, nothing else, matching the facts-only contract
  * `renderReviewerDispatchPrompt` keeps by construction: the only prose that
@@ -1244,7 +1243,7 @@ export type ReconcileLaunchDeps = {
   hostname: () => string
   /** O3: a live snapshot of `pid`'s current identity (parent pid, start time, command), or `null` when no process answers there at all. Injected so the pure reconciler stays testable without a real process — `classifyChildLiveness` is the pure logic that reads it. */
   getProcessSnapshot: (pid: number) => ProcessSnapshot | null
-  /** O2 (found by code review, MAJOR): terminates an abandoned child by pid — `recoverDeveloperLaunch`'s reap step calls THIS, never `dispatch.ts`'s `terminateChildWithGrace` directly, so the reap step itself has a test seam: a test can inject a spy here and assert the orphan was actually reaped, without sending a real OS signal. */
+  /** Terminates an abandoned child by pid — `recoverDeveloperLaunch`'s reap step calls THIS, never `dispatch.ts`'s `terminateChildWithGrace` directly, so the reap step itself has a test seam: a test can inject a spy here and assert the orphan was actually reaped, without sending a real OS signal. */
   terminateChild: (pid: number) => void
   /** This controller's own process id. A launch whose recorded dispatcher is this very process, with no child pid on record, is not still running: the process that would be running it is the one now reconciling it. Injected so the pure reconciler stays testable; compared exactly, never against "some live pid". */
   selfPid: () => number
@@ -1261,7 +1260,7 @@ export type ReconcileLaunchDeps = {
  *                       it) does not match the record's, OR a field the
  *                       record DID capture can no longer be read back at
  *                       all (a transient `ps` failure is never treated as
- *                       proof of identity, round 3 security review, MEDIUM):
+ *                       proof of identity):
  *                       a pid the OS has since recycled for an unrelated
  *                       process is never treated as this launch's child,
  *                       and is never touched (O3 — Traps: never rely on a
@@ -1286,9 +1285,8 @@ export function classifyChildLiveness(
   if (record.childPid === null || record.host !== deps.hostname()) return 'not-ours'
   const snapshot = deps.getProcessSnapshot(record.childPid)
   if (snapshot === null) return 'not-ours'
-  // Round 3 security review, MEDIUM (round 4: factored into `dispatch.ts`'s
-  // `matchesCapturedIdentity`, the ONE identity guard this and the driver's
-  // own shutdown path now share): a field this record DID capture at spawn
+  // `dispatch.ts`'s `matchesCapturedIdentity` is the ONE identity guard this
+  // and the driver's own shutdown path share: a field this record DID capture at spawn
   // time must be re-confirmed now, not silently skipped, when the live
   // snapshot can't read it back — a transient `ps` read failure (a
   // permissions hiccup, a race) is not proof of identity and must never be

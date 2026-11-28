@@ -33,15 +33,14 @@ function tempDir(prefix: string): string {
 type CliResult = { status: number; stdout: string; stderr: string }
 
 /**
- * Issue #660, O3 round 3 (security review, HIGH) — `devReviewLoop`'s own
- * `runtimeDirForThisRepo()` resolves unconditionally at the top of the call,
- * before any dispatch, the exact same `VINAYA_RUNTIME_DIR`-leak/no-budget
- * pattern already fixed in the sibling
- * `harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-test-support.ts` (`fixtureChildEnv`) was left
- * unfixed here even though this file exercises the same call path.
+ * `devReviewLoop`'s own `runtimeDirForThisRepo()` resolves unconditionally
+ * at the top of the call, before any dispatch, so this file guards against
+ * the same `VINAYA_RUNTIME_DIR`-leak/no-budget pattern the sibling
+ * `harness/processes/vinaya-strict/tests/standalone/lib/dev-review-loop/driver-test-support.ts`
+ * (`fixtureChildEnv`) guards against, since it exercises the same call path.
  *
- * `VINAYA_REPO` is stripped alongside every `VINAYA_*` key (round 5, security
- * LOW) for the same reason `fixtureChildEnv` strips it there: a real value
+ * `VINAYA_REPO` is stripped alongside every `VINAYA_*` key for the same
+ * reason `fixtureChildEnv` strips it there: a real value
  * inherited from a dispatched session's own environment would steer this
  * fixture's repo-segment resolution away from the `unresolved` bucket this
  * scratch, non-git `cwd` assumes. `PATH` is deliberately left untouched,

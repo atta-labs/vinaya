@@ -458,7 +458,7 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
         `import { writeFileSync as writeFileSyncOrphan } from 'node:fs'`,
         `const opts = { promptFile: ${JSON.stringify(promptFile)}, task: 44 }`,
         `void dispatchRole('developer', 'claude', 'p', opts)`,
-        // Round 2 review, MINOR — records the observed pid to the outer
+        // Records the observed pid to the outer
         // test's pid file the INSTANT the launch record carries one, inside
         // the poll loop itself, rather than only after `waitForChildPid`
         // returns. A genuinely raced record write (the real child already
@@ -498,15 +498,15 @@ describe("recoverDeveloperLaunch (O2, Issue #605, code review, MAJOR) — the re
       PATH: `${binDir}:${process.env.PATH ?? ''}`
     })
     const orphanPidPath = join(cwd, 'orphan-pid.txt')
-    // Round 2 review, MINOR — this call itself is now wrapped: the script
+    // This call itself is wrapped: the script
     // writes `orphanPidPath` the moment it observes a childPid (above), so
     // even a non-zero exit here (the in-script 5s wait throwing) does not
     // skip reading whatever pid the script already captured before dying.
     // Only the genuine race where NO pid was ever observed within the
     // window (the real child spawned, but the launch record's own write
     // landed even later than that) still has nothing to read here — a
-    // fixture-level race, not a swallowed error. Issue #660, O3 round 3
-    // (reviewer F2) — the budget/timeout/diagnostic is layered on top of
+    // fixture-level race, not a swallowed error. The
+    // budget/timeout/diagnostic is layered on top of
     // that pre-existing swallow: only a genuine `SIGKILL`-by-budget (real
     // lock contention) throws here; a plain non-zero exit (the in-script
     // timeout) still falls through to the pid-file read below, unchanged.

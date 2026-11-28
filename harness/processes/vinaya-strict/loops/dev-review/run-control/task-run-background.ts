@@ -85,9 +85,9 @@ export class BackgroundUnsupportedError extends Error {}
  * WHO holds it — a real `host` name for the different-host case, or the
  * `ownerId` string `acquireOwnership` was called with (never mislabeled as a
  * host) when a race is lost and the winner's own `run` record cannot yet be
- * read back. Code review, round 2, MINOR: an earlier version always rendered
- * this as `on host '<value>'`, which named the composite `background:<host>:
- * <pid>` ownerId as if it were a bare host on the race-loss path.
+ * read back. Rendering every case as `on host '<value>'` would name the
+ * composite `background:<host>:<pid>` ownerId as if it were a bare host on
+ * the race-loss path.
  */
 export class ControllerConflictError extends Error {
   constructor(
@@ -241,7 +241,7 @@ async function defaultResolveLoopLogPath(task: number): Promise<string> {
  * a spawned child's `stdio` — closed by the caller immediately after `spawn`
  * returns; the child's own inherited copy of the descriptor stays open
  * regardless (POSIX `fork`/`exec` semantics), so closing ours here never
- * truncates or races the child's writes. Code review, round 2, MEDIUM: a
+ * truncates or races the child's writes. A
  * plain `openSync(path, 'a')` follows a symlink and creates a new file at
  * the process umask's default mode — the same hardening `loop-log.ts`'s
  * `appendLoopLogLine` already applies to this identical log family, applied
@@ -331,7 +331,7 @@ export async function startBackgroundRun(
   input: RunTaskInput,
   deps: StartBackgroundRunDeps = defaultStartBackgroundRunDeps()
 ): Promise<BackgroundRunHandle> {
-  // Round 2 review (MAJOR) / security review (MEDIUM): a driver runs with no
+  // A driver runs with no
   // human watching, so it must resolve `runtimeDir` through the
   // default-branch gate rather than trusting the working tree. Marked FIRST,
   // before any path is resolved and before anything is dispatched, so the

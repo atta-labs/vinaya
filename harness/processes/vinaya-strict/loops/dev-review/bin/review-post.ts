@@ -1479,10 +1479,10 @@ function resolveRulingOrdinalForPr(pr: string): number {
  * successfully-fetched comment list carries no principal-authored frozen
  * brief yet. Every OTHER case — the fetch itself throwing (network error,
  * `gh` auth failure, malformed JSON) — refuses via `refuseCmd`, the identical
- * treatment `resolveObjectivesForPr` already gives its own fetch failure
- * (a round-3 review finding): the prior version caught every exception into
- * `null`, silently rendering `Brief hash: (none)` on a transient `gh` hiccup
- * instead of refusing the post — inconsistent with every sibling resolver in
+ * treatment `resolveObjectivesForPr` already gives its own fetch failure.
+ * Catching every exception into `null` would silently render
+ * `Brief hash: (none)` on a transient `gh` hiccup instead of refusing the
+ * post — inconsistent with every sibling resolver in
  * this file, even though the gate's own independent re-check later fails
  * closed on the resulting mismatch.
  */

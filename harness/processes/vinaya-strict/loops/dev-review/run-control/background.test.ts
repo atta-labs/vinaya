@@ -256,7 +256,7 @@ describe('startBackgroundRun', () => {
       thrown = err
     }
     expect(thrown).toBeInstanceOf(ControllerConflictError)
-    // Code review, round 2, MINOR: the message must name the recorded run's
+    // The message must name the recorded run's
     // real host ('test-host', where the first start actually ran) — never
     // the composite `background:<host>:<pid>` ownerId string.
     expect((thrown as Error).message).toContain("host 'test-host'")

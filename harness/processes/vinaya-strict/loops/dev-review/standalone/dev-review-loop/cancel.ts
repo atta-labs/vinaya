@@ -115,7 +115,7 @@ export function defaultCancelDeps(): CancelDeps {
  * instant it tries, never silently landing after cancellation.
  */
 export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<CancelDeps> = {}): Promise<CancelResult> {
-  // Round 2 review (MAJOR) / security review (MEDIUM): a driver runs with no
+  // A driver runs with no
   // human watching, so it must resolve `runtimeDir` through the
   // default-branch gate rather than trusting the working tree. Marked FIRST,
   // before any path is resolved and before anything is dispatched, so the
@@ -261,11 +261,10 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   // function is a one-shot CLI command's own process (safe to mutate for its
   // remaining lifetime either way) but is ALSO called in-process, unchanged,
   // from `task-tools/cancel.ts` inside the shared, multi-task `vinaya
-  // task-tools serve` MCP server (round 2 security review, HIGH): leaving
-  // these globals mutated after this call returns would silently misattribute
-  // every later `log()` call in that process — including a completely
-  // different task's own `task_resume` — into THIS task's outbox, exactly
-  // the fabricated cross-task history O1/O3 forbid.
+  // task-tools serve` MCP server: leaving these globals mutated after this
+  // call returns would silently misattribute every later `log()` call in
+  // that process — including a completely different task's own
+  // `task_resume` — into THIS task's outbox, a fabricated cross-task history.
   const prevTask = process.env.VINAYA_TASK
   const prevRun = process.env.VINAYA_RUN
   process.env.VINAYA_TASK = String(task)

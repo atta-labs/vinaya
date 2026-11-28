@@ -10,7 +10,7 @@ import { logEvents } from './run-logging.js'
 import { driverDecidedPauseEvents } from './round-assess.js'
 
 /**
- * O8 (round 2 review, BLOCKER): re-read the base branch's head and
+ * Re-read the base branch's head and
  * compare against the fixed watermark recorded at loop start. A base
  * that moved past a commit touching this driver's own code sets
  * `decision` to `pause{reason:'stale_driver'}` and returns `true` — the
@@ -18,10 +18,9 @@ import { driverDecidedPauseEvents } from './round-assess.js'
  * that decision reach the bottom pause-handling. Called from TWO sites,
  * not just the loop top: a clean `dispatch_reviewers` → `publish`
  * transition falls through to publish in the SAME iteration with no
- * loop-back in between (found live, round 2 review — the doc comment's
- * old claim that "every iteration is a superset of every round entry"
- * was false for exactly this transition, the common clean-round path),
- * so publish re-checks this itself rather than trusting the top-of-loop
+ * loop-back in between — "every iteration is a superset of every round
+ * entry" is false for exactly this transition, the common clean-round
+ * path — so publish re-checks this itself rather than trusting the top-of-loop
  * check alone.
  *
  * Declared here, before the `try` below, for the same reason

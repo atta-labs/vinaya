@@ -756,7 +756,7 @@ export class ReviewerInfrastructureFailure extends Error {
     public readonly role: 'reviewer' | 'security',
     public readonly missing: readonly string[],
     /**
-     * Round 2 review, MAJOR: the last attempt's own `effect_id`/`durationMs`
+     * The last attempt's own `effect_id`/`durationMs`
      * (from its real `DispatchHandle`), so the caller's own failure
      * observation can carry this attempt's real evidence identity and
      * timing instead of a freshly generated id and the whole round's

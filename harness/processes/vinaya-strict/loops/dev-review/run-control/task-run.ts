@@ -185,7 +185,7 @@ export type WidenSurfaceRequest = { globs: string[]; reason: string }
  * anchor a `--resume` to) is rendered from the SAME `noPushResumeArgv` builder
  * the pause comment uses — `task run <tranche> <n>` for a tranche task,
  * `task run --issue <n>` for a backlog one — rather than a second, drifting
- * copy that hardcoded one form (round 2 review). Reusing the already-resolved
+ * copy that hardcoded one form. Reusing the already-resolved
  * value adds no forge read.
  */
 export type RunTaskResult = DriverResult & { prUrl: string | null; branch: string; effort?: DispatchEffort }
@@ -559,7 +559,7 @@ export async function resolveIssueForRunTask(
 export { engineStartRefusal }
 
 export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRunTaskDeps): Promise<RunTaskOutcome> {
-  // Round 2 review (MAJOR) / security review (MEDIUM): a driver runs with no
+  // A driver runs with no
   // human watching, so it must resolve `runtimeDir` through the
   // default-branch gate rather than trusting the working tree. Marked FIRST,
   // before any path is resolved and before anything is dispatched, so the
@@ -610,13 +610,12 @@ export async function runTask(input: RunTaskInput, deps: RunTaskDeps = defaultRu
     }
   }
 
-  // Round 2 security review, LOW: this check-then-act read has a real, accepted
-  // race window — two concurrent `runTask` calls for the same task can both
-  // read no open PR here and both proceed. O3's own guarantee names the
-  // SEQUENTIAL case (`task dispatch` then a later `task run`), which this
-  // closes completely; closing the concurrent case too needs a forge-side
-  // atomic reservation or a cross-process lock, both new infrastructure this
-  // "thin composition" task's Surface never named. `devReviewLoop`'s own
+  // This check-then-act read has a real, accepted race window — two
+  // concurrent `runTask` calls for the same task can both read no open PR
+  // here and both proceed. It closes the SEQUENTIAL case (`task dispatch`
+  // then a later `task run`) completely; closing the concurrent case too
+  // needs a forge-side atomic reservation or a cross-process lock, both new
+  // infrastructure this thin composition does not carry. `devReviewLoop`'s own
   // round-1 entry re-reads this same fact immediately before it would ever
   // dispatch fresh, narrowing the real double-dispatch window to the few
   // milliseconds between this read and that one, on both sides of the race.

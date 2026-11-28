@@ -159,12 +159,12 @@ export async function initializeRunEntry(c: LoopRunContext): Promise<void> {
     // other reason. `'corrupt'` is read as "budget unknown, be
     // conservative" here — never as `0` — so a control-store read failure
     // can never itself grant an unbounded bare-command resume. Floored
-    // against `held.infrastructureRetries` (round 2 review, security HIGH):
+    // against `held.infrastructureRetries`:
     // `held` is `writePauseState`'s own plain `writeFileSync` record, a
     // different write path than `persistLoopState`'s control-store one, so
     // a `persistLoopState` write that silently failed at the very pause
     // `held` itself records still leaves this floor intact — the
-    // control-store read alone can no longer heal a real count down to `0`
+    // control-store read alone can never heal a real count down to `0`
     // (or any lower number) just because its own write never landed.
     const recoveredForResume = recoverLoopState(closesTask)
     const controlStoreInfrastructureRetries =
@@ -184,8 +184,8 @@ export async function initializeRunEntry(c: LoopRunContext): Promise<void> {
       ((held.reason === 'infrastructure' || held.reason === 'stale_driver') &&
         infrastructureRetriesSoFar < MAX_INFRASTRUCTURE_RETRIES)
     // `held.escalationId` is the escalation's OWN real id — a disambiguating
-    // suffix when `writeEscalation` had to claim one (code review, round 2,
-    // MEDIUM); the natural key is still correct whenever no collision ever
+    // suffix when `writeEscalation` had to claim one; the natural key is
+    // still correct whenever no collision ever
     // happened, and for a `PauseState` written before this field existed.
     const resumeEscalationId = held.escalationId ?? escalationIdFor(closesTask, held.round, held.head)
     // A pause that needs a ruling, whose escalation has no durable record, is
@@ -450,8 +450,7 @@ export async function initializeRunEntry(c: LoopRunContext): Promise<void> {
   // over rather than left blocking forever (Traps to avoid: no lease, no
   // timestamp expiry — liveness is the only test).
   //
-  // issue-711 O4 (code review round 1, BLOCKER/MEDIUM; round 2, MAJOR/
-  // security LOW): a lock naming THIS process's own pid is treated as
+  // A lock naming THIS process's own pid is treated as
   // already mine — never refused, never re-raced — ONLY when its `token`
   // ALSO matches the one `retainDriverLock` carries. A bare pid match is
   // NOT proof of ownership on its own: the OS can reissue a crashed

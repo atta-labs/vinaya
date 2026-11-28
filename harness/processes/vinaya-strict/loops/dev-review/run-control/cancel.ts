@@ -206,8 +206,8 @@ export function createTaskCancelHandler(
     const escalationId = held?.escalationId ?? escalationIdFor(issue, packet.inputs.round, packet.inputs.head)
     const peekedEscalation = readEscalationRecord(issue, escalationId, controlStoreDeps)
 
-    // Security review, round 3, MEDIUM (the same defect as `resume.ts`'s
-    // identical gate): `rulings.length > 0` alone only proves SOME principal
+    // The same gate as `resume.ts`'s, for the same reason:
+    // `rulings.length > 0` alone only proves SOME principal
     // ruling exists on this PR, ever — never that it authorizes cancelling
     // THIS pause. `peekedEscalation.rulingOrdinal` is the ruling ordinal this
     // pause was already raised under; a ruling that authorizes cancelling it
