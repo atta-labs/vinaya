@@ -5,8 +5,7 @@ import { describe, expect, it, mock } from 'bun:test'
 import { LEGACY_TRANCHES_DIR } from '../../tools/legacy-paths'
 
 /**
- * What the sweep reports when its enumeration authority is gone (round-3
- * review finding 1).
+ * What the sweep reports when its enumeration authority is gone.
  *
  * The Milestone index is the ONLY authority L4 and L5 have. When its read
  * fails, `sweep.milestones` is null and the active-tranche list is empty —

@@ -10,8 +10,7 @@ import { runsUnderAll } from '@harness/kernel/gates/checks/registry'
  * verdict, two answers, because only the dedicated workflow is re-run when a
  * verdict comment lands.
  *
- * `body-bare-digits` joined `review-gate` here for a different reason
- * (round 5, security review, PR #165): its Changesets-release exemption
+ * `body-bare-digits` joined `review-gate` here for a different reason: its Changesets-release exemption
  * live-fetches the PR's real author keyed on `PR_NUMBER`, and
  * `vinaya-checks.yml`'s `pull_request` job cannot safely resolve that — the
  * PR's own workflow YAML controls `PR_NUMBER` there. It only runs from

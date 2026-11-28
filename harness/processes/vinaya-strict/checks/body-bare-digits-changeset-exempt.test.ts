@@ -9,11 +9,10 @@ import { runChecks } from '@harness/kernel/gates/checks/runner'
 // exemption. This check is `ownWorkflow: true` (own-workflow.test.ts) and
 // reachable in production ONLY from vinaya-body-checks.yml's
 // pull_request_target job — never from vinaya-checks.yml's pull_request job,
-// which cannot safely resolve this exemption (round 5, security review, PR
-// #165: PR_NUMBER/BRANCH are PR-editable on that trigger, letting an
-// attacker redirect the fetch to any already-approved PR). Both branch AND
-// author now come from ONE live `gh pr view` fetch — no BRANCH env var is
-// read at all, unlike the reverted round-3/4 version.
+// which cannot safely resolve this exemption (PR_NUMBER/BRANCH are
+// PR-editable on that trigger, letting an attacker redirect the fetch to any
+// already-approved PR). Both branch AND author come from ONE live
+// `gh pr view` fetch — no BRANCH env var is read at all.
 
 const BIN = join(import.meta.dir, 'bin', 'check-body-bare-digits.ts')
 
@@ -117,7 +116,7 @@ describe('check-body-bare-digits (bin) — Changesets release-PR exemption', () 
   })
 })
 
-// Round 4's finding (code review, PR #165): a hardcoded expected author
+// A hardcoded expected author
 // never matches a repo whose real release PRs are opened by a custom
 // release-token owner. These prove the configurable `releaseActor` field
 // closes that gap, now safely, from the trusted fetch path only.

@@ -36,7 +36,7 @@ import { LEGACY_TRANCHES_DIR } from '../../tools/legacy-paths'
  */
 
 /**
- * The fourth case below (round-3 review finding 4, then `#333`) needs a slug
+ * The fourth case below needs a slug
  * with a real Milestone AND real labeled Issues — the one thing the other
  * three cases' throwaway slugs deliberately lack. Reading that off this
  * repo's live forge state threw whenever no active Milestone carries labeled
@@ -213,8 +213,7 @@ describe('a PR that removes a topology file cannot narrow the sweep', () => {
   }, 60_000)
 
   /**
-   * The predicate itself, on the only shape that can observe it (round-3
-   * review finding 4). The three cases above all use a synthetic slug with no
+   * The predicate itself, on the only shape that can observe it. The three cases above all use a synthetic slug with no
    * Milestone, and the fill-in's own dedupe is keyed on `files` — so keying
    * `producedSlugs` on *enumerated* rather than *produced* candidates leaves
    * every one of them green while still being the defect the fix names.

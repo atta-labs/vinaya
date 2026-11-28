@@ -1147,8 +1147,8 @@ describe('VinayaConfigSchema.tokens — additive-only', () => {
     expect(parsed.success).toBe(false)
   })
 
-  // Round 3 (security review, PR #303): the grammar narrowed from "any
-  // shell command" to exactly "<interpreter> <script-path>" so content
+  // The grammar is exactly "<interpreter> <script-path>", never "any
+  // shell command", so content
   // pinning is rigorous, not heuristic.
   it('rejects a single token with no script path', () => {
     const parsed = VinayaConfigSchema.safeParse({ tokens: { collect: 'node' } })
@@ -1183,7 +1183,7 @@ describe('VinayaConfigSchema.tokens — additive-only', () => {
 })
 
 /**
- * Security review, HIGH: `runtimeDir` carries no repository segment — only
+ * `runtimeDir` carries no repository segment — only
  * `defaultRuntimeDir` adds one — so honouring it from the machine-global
  * config would collapse every repository on the host into one tree, and two
  * repositories' identically-numbered tasks would share a driver lock,

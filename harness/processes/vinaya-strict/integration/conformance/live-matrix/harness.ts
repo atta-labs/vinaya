@@ -76,7 +76,7 @@ export const ABS_BIN = join(CLI_ROOT, 'dist', 'index.js')
  * than "assume a shard-mate already did it."
  */
 export function ensureCliBuilt(): void {
-  // Issue #660, O3 (round 5 review, BLOCKER) — bounded by an explicit
+  // Bounded by an explicit
   // budget that throws with the child's own captured stdout/stderr on
   // expiry, rather than a bare timeout.
   const build = spawnSyncBudgeted(
@@ -221,7 +221,7 @@ export function buildSandbox(): Sandbox {
   // configuration is found decides the destination: run from this checkout, as
   // every client below used to be, these conformance servers resolved this
   // repository's own `logs.url` and POSTed their fixture events to the real log
-  // server (round 4 security review, LOW). The declared folder is the one the
+  // server. The declared folder is the one the
   // sandbox's own `VINAYA_RUNTIME_DIR` already makes the default, so an
   // unattended classification — whose local value the trust-anchor gate
   // refuses — lands in exactly the same place.
@@ -240,9 +240,8 @@ export function buildSandbox(): Sandbox {
   // `gatherTaskStatusList()`'s three calls for `conformance/1` (issue list, a
   // frozen-brief comment, an open-PR lookup), the same contract
   // `tests/commands/task-status.test.ts`'s own stub satisfies, not just the
-  // bare `issue list` the launch path used to need. (Restored: the sandbox
-  // configuration comment above replaced this rationale instead of joining it —
-  // round 5 review, MINOR.) That task-status read resolves the Principals
+  // bare `issue list` the launch path used to need. That task-status read
+  // resolves the Principals
   // too, so the stub also serves the default branch's `vinaya.config.json`
   // with `principals`.
   const principalsConfigB64 = Buffer.from(JSON.stringify({ principals: ['daniboomerang'] })).toString('base64')

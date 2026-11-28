@@ -879,8 +879,6 @@ describe("the repository's own history-narrating comment rules", () => {
   // declared doc-neutral at commit time; its comments are rewritten together
   // with that doc.
   const NOT_YET_SWEPT: readonly string[] = [
-    'harness/processes/vinaya-strict/integration/',
-    'harness/processes/vinaya-strict/checks/',
     'harness/processes/vinaya-strict/tools/',
     'harness/processes/vinaya-strict/tests/',
     'harness/processes/vinaya-strict/thinking/',

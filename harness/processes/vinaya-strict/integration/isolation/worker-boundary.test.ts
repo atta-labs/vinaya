@@ -828,7 +828,7 @@ describe('resolveClaudeConfinement — O1/O2/O5 the Claude half of the provider-
     if (!result.confined) {
       expect(result.warning).toContain('bwrap')
       expect(result.warning.toLowerCase()).not.toContain('install this for you')
-      // O5 (round 2 review, MAJOR): structural, for a caller logging the
+      // Structural, for a caller logging the
       // fact to the Vinaya Log rather than parsing `warning`'s own prose.
       expect(result.missingTools).toEqual(['bwrap'])
     }
@@ -1110,16 +1110,15 @@ describe('resolveCodexConfinement — O1/O2/O4/O5 the Codex half of the provider
  * session's tool routes — not merely that the generated JSON says so. The
  * same "do not test the policy by reading the file only" posture
  * `harness/processes/vinaya-strict/integration/conformance/live-matrix/permission-policy-live-smoke.ts` already
- * established for the permission layer (round 2 of that task found a
+ * established for the permission layer (a live run there found a
  * path-scoped `permissions.allow` entry that never actually granted a real
  * `Write`/`Edit` call), applied here to the sandbox layer instead.
  *
- * Round 2 review, BLOCKER: the fixture this replaces hand-built a settings
- * file from `buildClaudeSandboxSettings` alone — omitting the role
- * `permissions.allow`/`deny` and the write-access/background-deny
- * `PreToolUse` hooks `writeDispatchSettings` also writes — and placed
- * `worktreeDir` in a bare OS temp dir OUTSIDE `homedir()`, which a
- * production worktree never is. Fixed by extracting the REAL file through
+ * A settings file hand-built from `buildClaudeSandboxSettings` alone would
+ * omit the role `permissions.allow`/`deny` and the write-access/background-deny
+ * `PreToolUse` hooks `writeDispatchSettings` also writes, and a `worktreeDir`
+ * in a bare OS temp dir OUTSIDE `homedir()` is a place a production worktree
+ * never is. So this fixture extracts the REAL file through
  * the REAL `vinaya dispatch developer --agent claude --unattended` CLI
  * command (the same extraction shape `permission-policy-live-smoke.ts`'s
  * own `extractRealDeveloperSettingsFile` already uses, for the identical
@@ -1393,7 +1392,7 @@ describe.skipIf(!process.env.VINAYA_LIVE_CLAUDE_SANDBOX_SMOKE)(
     })
 
     /**
-     * O3 (round 2 review, MAJOR): proves the EFFECTIVE result survives a
+     * Proves the EFFECTIVE result survives a
      * second, competing settings source — never only the one file this
      * dispatch wrote. A project-level `.claude/settings.json`, which Claude
      * Code discovers from `cwd` on its own (no extra flag needed), tries

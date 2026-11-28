@@ -199,7 +199,7 @@ describe('compareEvidenceBlock — the untouched placeholder (O1)', () => {
     expect(result.status).toBe('fail')
   })
 
-  // Security review, HIGH: a real, already-posted block hand-edited back to
+  // A real, already-posted block hand-edited back to
   // the exact placeholder text must never re-exempt itself from the
   // fabrication check just by reverting to that literal string — the
   // exemption is for a genuinely fresh head, not a re-writable escape hatch.

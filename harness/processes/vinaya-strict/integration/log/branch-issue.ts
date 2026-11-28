@@ -100,8 +100,7 @@ async function issueForTrancheTask(
         // is waiting on: `withDeadline` answers `null` at the call site, but
         // a hanging, proxied or unauthenticated `gh` left running holds the
         // event loop open and delays this process's own exit long past it —
-        // on the pre-push-hook path, the very path this feature exists for
-        // (round 3 security review, LOW).
+        // on the pre-push-hook path, the very path this feature exists for.
         timeout: LOG_CONTEXT_LOOKUP_DEADLINE_MS,
         killSignal: 'SIGKILL'
       }
@@ -146,9 +145,9 @@ async function issueForTrancheTask(
  * `--repo` is passed from the ALREADY-RESOLVED repository, never left to the
  * directory's git remote: `meta.repo` and the outbox file come from
  * `resolveRepo()`, whose first source is `VINAYA_REPO`, so asking a different
- * repository would confirm a number in one place and file it in another
- * (round 5 review, MINOR). With no resolved repository to name, `gh`'s own
- * directory-derived default is all there is.
+ * repository would confirm a number in one place and file it in another.
+ * With no resolved repository to name, `gh`'s own directory-derived default
+ * is all there is.
  */
 type BacklogConfirmation = 'confirmed' | 'denied' | 'unknown'
 

@@ -298,8 +298,8 @@ describe('verify-brief --body-file (authoring-time gate)', () => {
   })
 
   it('FAILS loudly when --body-file is passed with no value, instead of degrading to PR_BODY', () => {
-    // Silent-green path (PR #631 review MAJOR): a fumbled path used to leave
-    // `--body-file` ignored, fall through to an empty PR_BODY, and exit 0 —
+    // Silent-green path: a fumbled path must never leave `--body-file`
+    // ignored, fall through to an empty PR_BODY, and exit 0 —
     // handing the Planner a green on a brief nobody graded.
     const bare = runCli(['--body-file'])
     expect(bare.code).toBe(1)

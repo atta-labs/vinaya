@@ -127,7 +127,7 @@ async function main(): Promise<void> {
     // filesystem root, so on a host whose `tmpdir` is the shared `/tmp` a
     // config planted there by any local user would become this server's
     // TRUSTED repo-local configuration — the one place `checks.*.run`
-    // commands are honoured (round 2 security review, MEDIUM). The sandbox's
+    // commands are honoured. The sandbox's
     // own configuration ends the walk inside the sandbox, and declares the
     // destination this script then reads, which also settles it for an
     // unattended classification: a local folder the default branch does not

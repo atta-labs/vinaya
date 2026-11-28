@@ -40,7 +40,7 @@ function tempDir(prefix: string): string {
 }
 
 /**
- * Round 2 review, MAJOR (Issue #660, O3) — this process's OWN environment,
+ * This process's OWN environment,
  * when it is itself a dispatched Developer/Reviewer session, carries
  * `VINAYA_RUNTIME_DIR` (checked before `$HOME` by `resolveRuntimeDirUncached`).
  * Spreading `...process.env` into this fixture's real subprocess hands it

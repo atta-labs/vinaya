@@ -138,15 +138,14 @@ describe('reader-resolvable-prose/retired-vocabulary doctrineRoot default — ta
   })
 })
 
-// Code review, PR #290 MINOR (round 2): `tests/diff-evidence.test.ts`
+// `tests/diff-evidence.test.ts`
 // unit-tests `resolveChangedFiles()` in isolation, but nothing exercised the
 // two real consumers (`check-reader-resolvable-prose.ts`/
 // `check-retired-vocabulary.ts`) end-to-end against a fixture with a genuine
 // doctrine finding. This suite spawns each real bin against one — BOTH
-// consumers (code review, round 3: the first version of this suite only
-// covered `retired-vocabulary`, leaving `reader-resolvable-prose` — which
-// carries the identical `repoRoot()`/diff-scoping pattern — asymmetrically
-// untested for diff-scoped filtering specifically).
+// consumers, because `reader-resolvable-prose` carries the identical
+// `repoRoot()`/diff-scoping pattern as `retired-vocabulary`; covering only
+// one would leave the other untested for diff-scoped filtering specifically.
 //
 // A relative `proseGates.doctrineRoot`, invoked from a SUBDIRECTORY, was
 // also tried here and deliberately dropped: it does not exercise this PR's
@@ -228,13 +227,12 @@ for (const check of [
       }
     })
 
-    // Named for what it actually proves (code review, round 3: the prior
-    // name/comment here claimed this discriminates the `repoRoot()` reuse
-    // fix specifically — it doesn't. `DOCTRINE_ROOT` on this path is already
+    // Named for what it actually proves, not for the `repoRoot()` reuse
+    // fix: it does not discriminate that fix. `DOCTRINE_ROOT` on this path is already
     // absolute via `resolveDoctrineRoot()`, so `resolve(pathBase, f.file)`
     // and the pre-fix `resolve(f.file)` are identical for every finding
     // regardless of `pathBase` — reverting the fix and re-running this test
-    // still passes, confirmed by the round-3 reviewer. Discriminating the
+    // still passes. Discriminating the
     // fix itself needs a RELATIVE `finding.file`, which requires a relative
     // `doctrineRoot` — and that combination is blocked by the separate,
     // out-of-scope `collect()` cwd-relative bug documented above.
