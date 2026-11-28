@@ -13,7 +13,7 @@ import {
 } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
-import { chmodSync } from 'node:fs'
+import { chmodSync, utimesSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { addCodexWritableDirs } from '../../loops/dev-review/dispatch/dispatch'
@@ -27,6 +27,7 @@ import {
   resolveCodexAccessToken,
   resolveOAuthConfigSourceDir,
   stageCodexPolicyHome,
+  refreshStagedCodexLogin,
   CODEX_POLICY_RULES_FILE,
   SUBSCRIPTION_LOGIN_AGENTS,
   stageOAuthCredential,
@@ -520,6 +521,9 @@ describe('resolveBunInstallCacheDir — round 4 Principal ruling: the bun instal
 
 describe('stageCodexPolicyHome — Issue #884 round 2 (F1): the floor rides a non-boundary Codex dispatch too', () => {
   const RULES = 'prefix_rule(pattern = ["sudo"], decision = "forbidden", justification = "x")\n'
+  // An environment with no CODEX_HOME, so the login is read from `.codex`
+  // under the fixture home whatever the test process's own environment holds.
+  const NO_CODEX_HOME = {}
 
   function operatorHome(prefix: string, opts: { auth?: boolean; extraRule?: boolean } = {}): string {
     const realHome = tempDir(prefix)
@@ -540,7 +544,7 @@ describe('stageCodexPolicyHome — Issue #884 round 2 (F1): the floor rides a no
     const realHome = operatorHome('vinaya-codex-policy-op-', { extraRule: true })
     const targetDir = join(tempDir('vinaya-codex-policy-target-'), 'codex-home')
 
-    const result = stageCodexPolicyHome({ targetDir, realHome, execpolicyRules: RULES })
+    const result = stageCodexPolicyHome({ targetDir, realHome, env: NO_CODEX_HOME, execpolicyRules: RULES })
     expect(result).not.toBeNull()
     expect(result?.codexHome).toBe(targetDir)
 
@@ -562,15 +566,15 @@ describe('stageCodexPolicyHome — Issue #884 round 2 (F1): the floor rides a no
   it('returns null when the operator has no auth.json to re-home from (keychain-only login), never overriding CODEX_HOME', () => {
     const realHome = operatorHome('vinaya-codex-policy-noauth-', { auth: false })
     const targetDir = join(tempDir('vinaya-codex-policy-noauth-target-'), 'codex-home')
-    expect(stageCodexPolicyHome({ targetDir, realHome, execpolicyRules: RULES })).toBeNull()
+    expect(stageCodexPolicyHome({ targetDir, realHome, env: NO_CODEX_HOME, execpolicyRules: RULES })).toBeNull()
   })
 
   it('is idempotent across a resumed turn that reuses the same run-scoped path', () => {
     const realHome = operatorHome('vinaya-codex-policy-resume-')
     const targetDir = join(tempDir('vinaya-codex-policy-resume-target-'), 'codex-home')
-    expect(stageCodexPolicyHome({ targetDir, realHome, execpolicyRules: RULES })).not.toBeNull()
+    expect(stageCodexPolicyHome({ targetDir, realHome, env: NO_CODEX_HOME, execpolicyRules: RULES })).not.toBeNull()
     // A second call (a resumed turn) must not throw on the already-symlinked entries.
-    const second = stageCodexPolicyHome({ targetDir, realHome, execpolicyRules: RULES })
+    const second = stageCodexPolicyHome({ targetDir, realHome, env: NO_CODEX_HOME, execpolicyRules: RULES })
     expect(second).not.toBeNull()
     expect(readFileSync(join(targetDir, 'rules', CODEX_POLICY_RULES_FILE), 'utf8')).toBe(RULES)
   })
@@ -585,6 +589,7 @@ describe('stageCodexPolicyHome — Issue #884 round 2 (F1): the floor rides a no
       const result = stageCodexPolicyHome({
         targetDir,
         realHome,
+        env: NO_CODEX_HOME,
         execpolicyRules: RULES,
         sandboxConfigToml: SANDBOX_TOML
       })
@@ -602,6 +607,7 @@ describe('stageCodexPolicyHome — Issue #884 round 2 (F1): the floor rides a no
       const result = stageCodexPolicyHome({
         targetDir,
         realHome,
+        env: NO_CODEX_HOME,
         execpolicyRules: RULES,
         sandboxConfigToml: SANDBOX_TOML
       })
@@ -619,7 +625,13 @@ describe('stageCodexPolicyHome — Issue #884 round 2 (F1): the floor rides a no
       mkdirSync(join(realHome, '.codex', 'sessions'), { recursive: true })
       const targetDir = join(tempDir('vinaya-codex-sandbox-target-other-'), 'codex-home')
 
-      stageCodexPolicyHome({ targetDir, realHome, execpolicyRules: RULES, sandboxConfigToml: SANDBOX_TOML })
+      stageCodexPolicyHome({
+        targetDir,
+        realHome,
+        env: NO_CODEX_HOME,
+        execpolicyRules: RULES,
+        sandboxConfigToml: SANDBOX_TOML
+      })
       expect(existsSync(join(targetDir, 'plugins'))).toBe(false)
       expect(existsSync(join(targetDir, 'sessions'))).toBe(false)
       // `rules/` still exists as a real directory, carrying the operator's
@@ -635,10 +647,143 @@ describe('stageCodexPolicyHome — Issue #884 round 2 (F1): the floor rides a no
       const realHome = operatorHome('vinaya-codex-sandbox-omitted-')
       const targetDir = join(tempDir('vinaya-codex-sandbox-omitted-target-'), 'codex-home')
 
-      const result = stageCodexPolicyHome({ targetDir, realHome, execpolicyRules: RULES })
+      const result = stageCodexPolicyHome({ targetDir, realHome, env: NO_CODEX_HOME, execpolicyRules: RULES })
       expect(result).not.toBeNull()
       expect(lstatSync(join(targetDir, 'auth.json')).isSymbolicLink()).toBe(true)
       expect(lstatSync(join(targetDir, 'config.toml')).isSymbolicLink()).toBe(true)
+    })
+  })
+})
+
+describe('the operator Codex login is read from the directory CODEX_HOME names, else .codex under the home', () => {
+  const RULES = 'prefix_rule(pattern = ["sudo"], decision = "forbidden", justification = "x")\n'
+  const SANDBOX_TOML = 'sandbox_mode = "workspace-write"\n'
+
+  // A home whose `.codex` holds a login, and a separate Codex directory that
+  // CODEX_HOME can name. Neither is the test process's own login.
+  function fixture(opts: { codexHomeAuth?: boolean } = {}) {
+    const realHome = tempDir('vinaya-codex-home-resolve-')
+    mkdirSync(join(realHome, '.codex', 'rules'), { recursive: true })
+    writeFileSync(join(realHome, '.codex', 'auth.json'), '{"tokens":{"access_token":"home-token"}}')
+    writeFileSync(join(realHome, '.codex', 'home-only.json'), '{}')
+    writeFileSync(
+      join(realHome, '.codex', 'rules', 'home.rules'),
+      'prefix_rule(pattern = ["a"], decision = "prompt")\n'
+    )
+    const codexHome = tempDir('vinaya-codex-home-resolve-env-')
+    mkdirSync(join(codexHome, 'rules'), { recursive: true })
+    if (opts.codexHomeAuth !== false) {
+      writeFileSync(join(codexHome, 'auth.json'), '{"tokens":{"access_token":"env-token"}}')
+    }
+    writeFileSync(join(codexHome, 'env-only.json'), '{}')
+    writeFileSync(join(codexHome, 'rules', 'env.rules'), 'prefix_rule(pattern = ["b"], decision = "prompt")\n')
+    const targetDir = join(tempDir('vinaya-codex-home-resolve-target-'), 'codex-home')
+    return { realHome, codexHome, targetDir }
+  }
+
+  function setMtime(path: string, seconds: number): void {
+    utimesSync(path, seconds, seconds)
+  }
+
+  describe('staging', () => {
+    it('with CODEX_HOME set, copies the login from that directory', () => {
+      const { realHome, codexHome, targetDir } = fixture()
+      const staged = stageCodexPolicyHome({
+        targetDir,
+        realHome,
+        execpolicyRules: RULES,
+        sandboxConfigToml: SANDBOX_TOML,
+        env: { CODEX_HOME: codexHome }
+      })
+      expect(staged).not.toBeNull()
+      expect(lstatSync(join(targetDir, 'auth.json')).isSymbolicLink()).toBe(false)
+      expect(readFileSync(join(targetDir, 'auth.json'), 'utf8')).toContain('env-token')
+      expect(lstatSync(join(targetDir, 'rules', 'env.rules')).isSymbolicLink()).toBe(true)
+      expect(existsSync(join(targetDir, 'rules', 'home.rules'))).toBe(false)
+    })
+
+    it("with CODEX_HOME set, links the operator's own entries from that directory", () => {
+      const { realHome, codexHome, targetDir } = fixture()
+      const staged = stageCodexPolicyHome({
+        targetDir,
+        realHome,
+        execpolicyRules: RULES,
+        env: { CODEX_HOME: codexHome }
+      })
+      expect(staged).not.toBeNull()
+      expect(readlinkSync(join(targetDir, 'auth.json'))).toBe(join(codexHome, 'auth.json'))
+      expect(readlinkSync(join(targetDir, 'env-only.json'))).toBe(join(codexHome, 'env-only.json'))
+      expect(existsSync(join(targetDir, 'home-only.json'))).toBe(false)
+      expect(readlinkSync(join(targetDir, 'rules', 'env.rules'))).toBe(join(codexHome, 'rules', 'env.rules'))
+      expect(existsSync(join(targetDir, 'rules', 'home.rules'))).toBe(false)
+    })
+
+    it('with CODEX_HOME unset, takes the login and entries from .codex under the home directory', () => {
+      const { realHome, targetDir } = fixture()
+      const staged = stageCodexPolicyHome({ targetDir, realHome, execpolicyRules: RULES, env: {} })
+      expect(staged).not.toBeNull()
+      expect(readlinkSync(join(targetDir, 'auth.json'))).toBe(join(realHome, '.codex', 'auth.json'))
+      expect(readlinkSync(join(targetDir, 'home-only.json'))).toBe(join(realHome, '.codex', 'home-only.json'))
+      expect(existsSync(join(targetDir, 'env-only.json'))).toBe(false)
+    })
+
+    it('with CODEX_HOME naming a directory without a login, returns null and never reads the home directory login', () => {
+      const { realHome, codexHome, targetDir } = fixture({ codexHomeAuth: false })
+      expect(
+        stageCodexPolicyHome({ targetDir, realHome, execpolicyRules: RULES, env: { CODEX_HOME: codexHome } })
+      ).toBeNull()
+      expect(
+        stageCodexPolicyHome({
+          targetDir,
+          realHome,
+          execpolicyRules: RULES,
+          sandboxConfigToml: SANDBOX_TOML,
+          env: { CODEX_HOME: codexHome }
+        })
+      ).toBeNull()
+      expect(existsSync(join(targetDir, 'auth.json'))).toBe(false)
+    })
+  })
+
+  describe('refreshing', () => {
+    function staged(): { realHome: string; codexHome: string; stagedHome: string } {
+      const { realHome, codexHome, targetDir } = fixture()
+      mkdirSync(targetDir, { recursive: true })
+      writeFileSync(join(targetDir, 'auth.json'), '{"tokens":{"access_token":"stale-token"}}')
+      setMtime(join(targetDir, 'auth.json'), 1_000)
+      return { realHome, codexHome, stagedHome: targetDir }
+    }
+
+    it('with CODEX_HOME set, compares and copies the login in that directory', () => {
+      const { realHome, codexHome, stagedHome } = staged()
+      setMtime(join(codexHome, 'auth.json'), 2_000)
+      // The home directory's login is older: only CODEX_HOME's is compared.
+      setMtime(join(realHome, '.codex', 'auth.json'), 500)
+      expect(refreshStagedCodexLogin({ realHome, codexHome: stagedHome, env: { CODEX_HOME: codexHome } })).toBe(true)
+      expect(readFileSync(join(stagedHome, 'auth.json'), 'utf8')).toContain('env-token')
+    })
+
+    it('with CODEX_HOME set to a directory whose login is older, leaves the copy even when the home directory login is newer', () => {
+      const { realHome, codexHome, stagedHome } = staged()
+      setMtime(join(codexHome, 'auth.json'), 500)
+      setMtime(join(realHome, '.codex', 'auth.json'), 2_000)
+      expect(refreshStagedCodexLogin({ realHome, codexHome: stagedHome, env: { CODEX_HOME: codexHome } })).toBe(false)
+      expect(readFileSync(join(stagedHome, 'auth.json'), 'utf8')).toContain('stale-token')
+    })
+
+    it('with CODEX_HOME unset, compares and copies the login in .codex under the home directory', () => {
+      const { realHome, stagedHome } = staged()
+      setMtime(join(realHome, '.codex', 'auth.json'), 2_000)
+      expect(refreshStagedCodexLogin({ realHome, codexHome: stagedHome, env: {} })).toBe(true)
+      expect(readFileSync(join(stagedHome, 'auth.json'), 'utf8')).toContain('home-token')
+    })
+
+    it('with CODEX_HOME naming a directory without a login, returns false and never reads the home directory login', () => {
+      const { realHome, stagedHome } = staged()
+      const empty = tempDir('vinaya-codex-home-resolve-empty-')
+      setMtime(join(realHome, '.codex', 'auth.json'), 2_000)
+      expect(refreshStagedCodexLogin({ realHome, codexHome: stagedHome, env: { CODEX_HOME: empty } })).toBe(false)
+      expect(readFileSync(join(stagedHome, 'auth.json'), 'utf8')).toContain('stale-token')
     })
   })
 })

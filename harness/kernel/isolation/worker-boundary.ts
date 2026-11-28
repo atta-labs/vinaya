@@ -32,6 +32,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path'
+import { operatorCodexAuthPath } from '../adapters/agents/codex/auth.js'
 import { devToolsSocketRoot } from '../tools/dev-tools-registration.js'
 import { sourceReceiptsPath, sourceStoreDir } from '../source-manifest.js'
 
@@ -182,6 +183,11 @@ export const CODEX_POLICY_RULES_FILE = 'vinaya-machine-state.rules'
  * a Codex dispatch that runs WITHOUT it — an attended start (an unattended
  * Codex start requires the boundary and refuses where it is unavailable) — so the child discovers the same floor either way.
  *
+ * The operator's Codex home is the directory holding the login
+ * `operatorCodexAuthPath` resolves from `env` (the process environment by
+ * default) and `realHome`: the directory `CODEX_HOME` names when it is set,
+ * else `.codex` under `realHome`. Below, `~/.codex` stands for that directory.
+ *
  * `targetDir` becomes a home that symlinks every entry of the operator's real
  * `~/.codex` (its `auth.json`, `config.toml`, plugins, sessions — so
  * authentication, configuration and `exec resume` behave exactly as an
@@ -190,8 +196,9 @@ export const CODEX_POLICY_RULES_FILE = 'vinaya-machine-state.rules'
  * run's machine-state floor. Most-restrictive-wins in Codex's own layering, so
  * a forbidding rule here only ever tightens.
  *
- * Returns `null` when the operator has no `~/.codex/auth.json` to re-home from
- * — a keychain-only login is keyed by the home PATH and cannot be re-pointed,
+ * Returns `null` when the operator has no login file in that directory to
+ * re-home from (with `CODEX_HOME` set, the login under `realHome` is never
+ * read in its place) — a keychain-only login is keyed by the home PATH and cannot be re-pointed,
  * so the caller leaves `CODEX_HOME` alone and logs the floor as unstaged rather
  * than breaking authentication. Never writes the operator's real `~/.codex`;
  * it only reads it and symlinks into `targetDir`.
@@ -237,9 +244,10 @@ export function stageCodexPolicyHome(input: {
   realHome: string
   execpolicyRules: string
   sandboxConfigToml?: string
+  env?: Readonly<Record<string, string | undefined>>
 }): { codexHome: string } | null {
-  const operatorHome = join(input.realHome, '.codex')
-  const operatorAuthPath = join(operatorHome, CODEX_AUTH_FILE_NAME)
+  const operatorAuthPath = operatorCodexAuthPath(input.env, input.realHome)
+  const operatorHome = dirname(operatorAuthPath)
   if (!existsSync(operatorAuthPath)) return null
   try {
     mkdirSync(input.targetDir, { recursive: true, mode: 0o700 })
@@ -287,16 +295,24 @@ export function stageCodexPolicyHome(input: {
 
 /**
  * Refreshes the login copy in an already-staged Codex home when the operator's
- * own `~/.codex/auth.json` is newer than the copy, so a re-login by the
+ * own login is newer than the copy, so a re-login by the
  * operator reaches the next dispatch of a task whose home was staged earlier.
  * Only modification times are compared; the file is copied as bytes and never
  * parsed. The copy is written to a sibling file and renamed over the staged
  * one, so the staged home never shares an inode with the operator's file or
  * with another home, and nothing is ever written back to the operator's home.
- * Returns `true` when the copy was replaced.
+ * The operator's login is the file `operatorCodexAuthPath` resolves from `env`
+ * (the process environment by default) and `realHome`, the same path
+ * `stageCodexPolicyHome` copies from: `auth.json` in the directory
+ * `CODEX_HOME` names when it is set, else in `.codex` under `realHome`, never
+ * both. Returns `true` when the copy was replaced.
  */
-export function refreshStagedCodexLogin(input: { realHome: string; codexHome: string }): boolean {
-  const operatorAuthPath = join(input.realHome, '.codex', CODEX_AUTH_FILE_NAME)
+export function refreshStagedCodexLogin(input: {
+  realHome: string
+  codexHome: string
+  env?: Readonly<Record<string, string | undefined>>
+}): boolean {
+  const operatorAuthPath = operatorCodexAuthPath(input.env, input.realHome)
   const stagedAuthPath = join(input.codexHome, CODEX_AUTH_FILE_NAME)
   const tempPath = `${stagedAuthPath}.refresh-${process.pid}`
   try {
