@@ -32,6 +32,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path'
+import { operatorCodexAuthPath } from '../adapters/agents/codex/auth.js'
 import { devToolsSocketRoot } from '../tools/dev-tools-registration.js'
 import { sourceReceiptsPath, sourceStoreDir } from '../source-manifest.js'
 
@@ -73,6 +74,13 @@ export const WORKER_ENV_ALLOWLIST_KEYS = [
 export const SUBSCRIPTION_LOGIN_AGENTS = ['claude', 'codex'] as const
 
 const CODEX_AUTH_FILE_NAME = 'auth.json'
+
+/**
+ * The environment the Codex login resolver reads when a caller passes none:
+ * empty, so the login is read from `.codex` under the caller's home and
+ * never from a `CODEX_HOME` the process environment happens to carry.
+ */
+const NO_ENVIRONMENT: Readonly<Record<string, string | undefined>> = Object.freeze({})
 /** The macOS Keychain service name Codex keeps its cached session under. */
 export const CODEX_KEYCHAIN_SERVICE = 'Codex Auth'
 
@@ -182,6 +190,15 @@ export const CODEX_POLICY_RULES_FILE = 'vinaya-machine-state.rules'
  * a Codex dispatch that runs WITHOUT it — an attended start (an unattended
  * Codex start requires the boundary and refuses where it is unavailable) — so the child discovers the same floor either way.
  *
+ * The Codex home read here is the directory holding the login the kernel's
+ * one Codex login resolver (`adapters/agents/codex/auth.ts`) returns for
+ * the caller's `env` and `realHome`: the directory `CODEX_HOME` names in that
+ * `env` when it is set, else `.codex` under `realHome`. The process
+ * environment is never read here: with no `env` passed, the login is read
+ * from `.codex` under `realHome`, so a caller staging from a made-up home
+ * never reaches a real login. A caller staging from the real home passes its
+ * own environment. Below, `~/.codex` stands for that directory.
+ *
  * `targetDir` becomes a home that symlinks every entry of the operator's real
  * `~/.codex` (its `auth.json`, `config.toml`, plugins, sessions — so
  * authentication, configuration and `exec resume` behave exactly as an
@@ -190,8 +207,8 @@ export const CODEX_POLICY_RULES_FILE = 'vinaya-machine-state.rules'
  * run's machine-state floor. Most-restrictive-wins in Codex's own layering, so
  * a forbidding rule here only ever tightens.
  *
- * Returns `null` when the operator has no `~/.codex/auth.json` to re-home from
- * — a keychain-only login is keyed by the home PATH and cannot be re-pointed,
+ * Returns `null` when that directory holds no login file to re-home from (with `CODEX_HOME` set, the login under `realHome` is never
+ * read in its place) — a keychain-only login is keyed by the home PATH and cannot be re-pointed,
  * so the caller leaves `CODEX_HOME` alone and logs the floor as unstaged rather
  * than breaking authentication. Never writes the operator's real `~/.codex`;
  * it only reads it and symlinks into `targetDir`.
@@ -237,10 +254,11 @@ export function stageCodexPolicyHome(input: {
   realHome: string
   execpolicyRules: string
   sandboxConfigToml?: string
+  env?: Readonly<Record<string, string | undefined>>
 }): { codexHome: string } | null {
-  const operatorHome = join(input.realHome, '.codex')
-  const operatorAuthPath = join(operatorHome, CODEX_AUTH_FILE_NAME)
-  if (!existsSync(operatorAuthPath)) return null
+  const loginPath = operatorCodexAuthPath(input.env ?? NO_ENVIRONMENT, input.realHome)
+  const operatorHome = dirname(loginPath)
+  if (!existsSync(loginPath)) return null
   try {
     mkdirSync(input.targetDir, { recursive: true, mode: 0o700 })
     // Idempotent across a resumed turn that reuses the same run-scoped path:
@@ -257,7 +275,7 @@ export function stageCodexPolicyHome(input: {
       // shared inode. `auth.json` is a real COPY (O7's own reasoning, above);
       // `config.toml` is this run's own generated content, never the
       // operator's file.
-      writeFileSync(join(input.targetDir, CODEX_AUTH_FILE_NAME), readFileSync(operatorAuthPath), { mode: 0o600 })
+      writeFileSync(join(input.targetDir, CODEX_AUTH_FILE_NAME), readFileSync(loginPath), { mode: 0o600 })
       writeFileSync(join(input.targetDir, 'config.toml'), input.sandboxConfigToml, { mode: 0o600 })
     } else {
       // Pre-O1, attended-only path (this task does not confine it, Boundary):
@@ -287,21 +305,29 @@ export function stageCodexPolicyHome(input: {
 
 /**
  * Refreshes the login copy in an already-staged Codex home when the operator's
- * own `~/.codex/auth.json` is newer than the copy, so a re-login by the
+ * own login is newer than the copy, so a re-login by the
  * operator reaches the next dispatch of a task whose home was staged earlier.
  * Only modification times are compared; the file is copied as bytes and never
  * parsed. The copy is written to a sibling file and renamed over the staged
  * one, so the staged home never shares an inode with the operator's file or
  * with another home, and nothing is ever written back to the operator's home.
- * Returns `true` when the copy was replaced.
+ * The login compared and copied is the file the kernel's one Codex login
+ * resolver returns for the caller's `env` (none passed: an empty one) and
+ * `realHome`, the same path `stageCodexPolicyHome` copies from: `auth.json` in the directory
+ * `CODEX_HOME` names when it is set, else in `.codex` under `realHome`, never
+ * both. Returns `true` when the copy was replaced.
  */
-export function refreshStagedCodexLogin(input: { realHome: string; codexHome: string }): boolean {
-  const operatorAuthPath = join(input.realHome, '.codex', CODEX_AUTH_FILE_NAME)
+export function refreshStagedCodexLogin(input: {
+  realHome: string
+  codexHome: string
+  env?: Readonly<Record<string, string | undefined>>
+}): boolean {
+  const loginPath = operatorCodexAuthPath(input.env ?? NO_ENVIRONMENT, input.realHome)
   const stagedAuthPath = join(input.codexHome, CODEX_AUTH_FILE_NAME)
   const tempPath = `${stagedAuthPath}.refresh-${process.pid}`
   try {
-    if (statSync(operatorAuthPath).mtimeMs <= statSync(stagedAuthPath).mtimeMs) return false
-    writeFileSync(tempPath, readFileSync(operatorAuthPath), { mode: 0o600 })
+    if (statSync(loginPath).mtimeMs <= statSync(stagedAuthPath).mtimeMs) return false
+    writeFileSync(tempPath, readFileSync(loginPath), { mode: 0o600 })
     renameSync(tempPath, stagedAuthPath)
     return true
   } catch {
@@ -318,9 +344,14 @@ export function refreshStagedCodexLogin(input: { realHome: string; codexHome: st
  * The reuse decision for a task's persistent Codex home: when `codexHome`
  * already carries a staged login, refreshes that copy against the operator's
  * own login (`refreshStagedCodexLogin`) and returns `codexHome` for reuse;
- * `null` when nothing is staged there yet and a fresh stage is due.
+ * `null` when nothing is staged there yet and a fresh stage is due. `env` is
+ * passed through to the refresh unchanged.
  */
-export function reuseStagedCodexHome(input: { realHome: string; codexHome: string }): string | null {
+export function reuseStagedCodexHome(input: {
+  realHome: string
+  codexHome: string
+  env?: Readonly<Record<string, string | undefined>>
+}): string | null {
   if (!existsSync(join(input.codexHome, CODEX_AUTH_FILE_NAME))) return null
   refreshStagedCodexLogin(input)
   return input.codexHome

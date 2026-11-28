@@ -4804,7 +4804,7 @@ export async function dispatchRole(
   // not newer: a re-login since the home was staged replaces the copy.
   const reusedCodexHome =
     codexHomeTargetDir !== null && codexStagedConfigDir !== undefined
-      ? reuseStagedCodexHome({ realHome: homedir(), codexHome: codexHomeTargetDir })
+      ? reuseStagedCodexHome({ realHome: homedir(), codexHome: codexHomeTargetDir, env: process.env })
       : null
   const codexHomeAlreadyStaged = reusedCodexHome !== null
   let codexHomeFailureReason: string | null = null
@@ -4813,6 +4813,9 @@ export async function dispatchRole(
     const staged = stageCodexPolicyHome({
       targetDir: codexHomeTargetDir as string,
       realHome: homedir(),
+      // Staged from the real home, so the login is wherever this process's
+      // own CODEX_HOME names, else `.codex` under the home directory.
+      env: process.env,
       execpolicyRules: codexExecpolicyRules,
       ...(codexRequireIsolation && codexConfinement?.ok === true
         ? {
