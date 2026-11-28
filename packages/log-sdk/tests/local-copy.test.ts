@@ -107,7 +107,12 @@ test('the local copy is synchronous OTLP JSON in record order', () => {
     handle.run.ended()
     expect(read()).toHaveLength(3)
     handle.run.stageChanged({ to: 'done' })
-    expect(read()).toEqual([
+    // One file per signal: the event after the span joins the events file, so record order is the sequence number.
+    expect(readdirSync(folder).sort()).toEqual([
+      `run-1~${handle.writerId}~000000000000.logs.jsonl`,
+      `run-1~${handle.writerId}~000000000001.traces.jsonl`
+    ])
+    expect(read().sort(([a], [b]) => Number(a) - Number(b))).toEqual([
       [1, 'vinaya.run.started'],
       [2, 'vinaya.run.alive'],
       [3, 'invoke_workflow'],
