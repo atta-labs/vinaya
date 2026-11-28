@@ -222,6 +222,44 @@ describe('the verdict', () => {
   })
 })
 
+describe("a round's schema and the validator name a confirmed finding the same way", () => {
+  type Confirmations = { maxItems?: number; items: { properties: { finding: { enum?: string[] } } } }
+  const confirmationsOf = (schema: Record<string, unknown>) =>
+    (schema as { properties: { planReview: { properties: { confirmations: Confirmations } } } }).properties.planReview
+      .properties.confirmations
+  const asking = (openFindings: string[]): PlanReviewBinding => ({ ...binding, scope: { tasks: [1, 2], openFindings } })
+  const confirmation = (finding: string) => ({ finding, status: 'resolved' as const, evidence: [code()] })
+
+  test('an asked id is among the allowed values and passes the validator', () => {
+    const allowed = confirmationsOf(planReviewJsonSchema(['f-1'])).items.properties.finding.enum
+    expect(allowed).toEqual(['f-1'])
+    const result = validatePlanReview(wrap(review({ confirmations: [confirmation('f-1')] })), asking(['f-1']))
+    expect(result.ok).toBe(true)
+  })
+
+  test('an id followed by other text is outside the allowed values and refused by the validator', () => {
+    const named = 'f-1 — the task names no test'
+    const allowed = confirmationsOf(planReviewJsonSchema(['f-1'])).items.properties.finding.enum
+    expect(allowed).not.toContain(named)
+    const result = validatePlanReview(wrap(review({ confirmations: [confirmation(named)] })), asking(['f-1']))
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('incomplete')
+      expect(result.errors).toContain(`confirmations.0: finding ${named} is not one this round asked to confirm`)
+    }
+  })
+
+  test('with nothing to confirm, an empty confirmations list fits the schema and passes the validator', () => {
+    const confirmations = confirmationsOf(planReviewJsonSchema([]))
+    expect(confirmations.maxItems).toBe(0)
+    expect(confirmations.items.properties.finding.enum).toBeUndefined()
+    const empty = review({ confirmations: [] })
+    expect(empty.confirmations.length).toBeLessThanOrEqual(confirmations.maxItems ?? Number.POSITIVE_INFINITY)
+    expect(validatePlanReview(wrap(empty), binding).ok).toBe(true)
+    expect(validatePlanReview(wrap(empty), asking([])).ok).toBe(true)
+  })
+})
+
 describe('the seat files', () => {
   const folder = join(import.meta.dir, '../../thinking/plan-reviewer')
 

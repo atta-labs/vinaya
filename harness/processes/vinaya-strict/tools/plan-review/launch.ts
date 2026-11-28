@@ -217,6 +217,8 @@ export function planReviewPrompt(
           '- Answer question 6 for the whole plan.',
           '- Confirm each finding below, once each, in `confirmations`: `resolved` or `open`, with evidence either way.',
           '  A finding is resolved only when your evidence shows it is. Put any new finding in `findings`.',
+          "- Each confirmation's `finding` field holds the finding's `id` exactly as the list below gives it, and nothing",
+          '  else: no summary, no question, no other text before or after it.',
           'Findings to confirm (JSON):',
           '```json',
           JSON.stringify(openFindings, null, 2),
@@ -283,7 +285,7 @@ export async function runPlanReviewRound(
         prompt: planReviewPrompt(request.draft, request.scope, request.openFindings),
         stagedDir: staged.dir,
         scratch: run,
-        outputSchema: planReviewJsonSchema(),
+        outputSchema: planReviewJsonSchema(request.scope?.openFindings ?? []),
         ...(request.model === undefined ? {} : { model: request.model }),
         timeoutMs: request.timeoutMs
       })

@@ -220,6 +220,73 @@ describe('one review round', () => {
     }
   })
 
+  test("a later round's prompt and session schema name a confirmed finding by its exact id", async () => {
+    type Confirmations = { maxItems?: number; items: { properties: { finding: { enum?: string[] } } } }
+    const confirmationsOf = (schema: Record<string, unknown> | undefined) =>
+      (schema as { properties: { planReview: { properties: { confirmations: Confirmations } } } }).properties.planReview
+        .properties.confirmations
+    const draft = makeDraft()
+    const brief = [
+      { id: 'f-1', question: 2, task: 1, resolution: 'fix it' },
+      { id: 'f-2', question: 6, task: null, resolution: 'cover it' }
+    ]
+    const later = planReviewPrompt(draft, { tasks: [1], openFindings: ['f-1', 'f-2'] }, brief)
+    expect(later).toContain(
+      "Each confirmation's `finding` field holds the finding's `id` exactly as the list below gives it, and nothing"
+    )
+    expect(later).toContain('"id": "f-1"')
+    expect(later).toContain('"id": "f-2"')
+    expect(planReviewPrompt(draft)).not.toContain("Each confirmation's `finding` field")
+
+    const { launch, seen } = fixtureLauncher(() => ({ raw: answerFor(draft) }))
+    await runPlanReviewRound(
+      { ...request('claude-code', draft), scope: { tasks: [1], openFindings: ['f-1', 'f-2'] }, openFindings: brief },
+      launch
+    )
+    await runPlanReviewRound(request('claude-code', draft), launch)
+    await runPlanReviewRound(
+      { ...request('codex', draft), scope: { tasks: [1], openFindings: [] }, openFindings: [] },
+      launch
+    )
+    const [asked, first, none] = seen.map((s) => confirmationsOf(s.outputSchema))
+    expect(asked?.items.properties.finding.enum).toEqual(['f-1', 'f-2'])
+    expect(asked?.maxItems).toBeUndefined()
+    for (const empty of [first, none]) {
+      expect(empty?.maxItems).toBe(0)
+      expect(empty?.items.properties.finding.enum).toBeUndefined()
+    }
+  })
+
+  test('a later round whose confirmation names an id with other text after it is no review', async () => {
+    const draft = makeDraft()
+    const evidence = {
+      kind: 'code' as const,
+      path: 'a.ts',
+      revision: draft.revision,
+      lineStart: 1,
+      lineEnd: 2,
+      passage: null
+    }
+    const { launch } = fixtureLauncher(() => ({
+      raw: answerFor(draft, {
+        confirmations: [{ finding: 'f-1 — the task names no test', status: 'resolved', evidence: [evidence] }]
+      })
+    }))
+    const outcome = await runPlanReviewRound(
+      {
+        ...request('claude-code', draft),
+        scope: { tasks: [1], openFindings: ['f-1'] },
+        openFindings: [{ id: 'f-1', question: 2, task: 1, resolution: 'fix it' }]
+      },
+      launch
+    )
+    expect(outcome.kind).toBe('no_review')
+    if (outcome.kind === 'no_review') {
+      expect(outcome.reason).toBe('incomplete')
+      expect(outcome.detail).toContain('is not one this round asked to confirm')
+    }
+  })
+
   test('a revision the repository does not hold is not staged', async () => {
     const { launch, seen } = fixtureLauncher(() => ({}))
     const draft = { ...makeDraft(), revision: 'b'.repeat(40) }
