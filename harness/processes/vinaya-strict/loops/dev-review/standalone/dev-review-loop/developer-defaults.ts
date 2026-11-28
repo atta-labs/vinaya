@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs'
 import { traceHasRefusingHook } from './git-defaults.js'
 import { rmSync } from 'node:fs'
 import { sanitizePublicPauseDetail } from './pause-resume.js'
-import { guardedSpawnSync } from '../driver-tool-guard.js'
+import { guardedSpawnSync } from '@harness/kernel/gates/checks/guarded-spawn.js'
 import { PushHookRefusal } from '../../actions/live-developer-context.js'
 import { LeasePushRejected } from '../../actions/live-developer-context.js'
 import type { LoopDeps } from './driver-deps.js'
@@ -253,7 +253,7 @@ export function pushBranchClassified(worktreePath: string, branch: string, lease
   const traceDir = mkdtempSync(join(tmpdir(), 'vinaya-push-trace-'))
   const tracePath = join(traceDir, 'trace.jsonl')
   try {
-    // Through the driver-tool guard: the push runs the pre-push hook and its
+    // Through the process guard (`guardedSpawnSync`): the push runs the pre-push hook and its
     // tests, and a stopped driver must not leave that run behind.
     const leaseArgs = lease === undefined ? [] : [`--force-with-lease=refs/heads/${branch}:${lease}`]
     const pushed = guardedSpawnSync(
