@@ -1147,8 +1147,8 @@ describe('VinayaConfigSchema.tokens — additive-only', () => {
     expect(parsed.success).toBe(false)
   })
 
-  // Round 3 (security review, PR #303): the grammar narrowed from "any
-  // shell command" to exactly "<interpreter> <script-path>" so content
+  // The grammar is exactly "<interpreter> <script-path>", never "any
+  // shell command", so content
   // pinning is rigorous, not heuristic.
   it('rejects a single token with no script path', () => {
     const parsed = VinayaConfigSchema.safeParse({ tokens: { collect: 'node' } })

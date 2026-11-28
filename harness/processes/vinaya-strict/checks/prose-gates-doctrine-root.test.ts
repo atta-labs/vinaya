@@ -138,7 +138,7 @@ describe('reader-resolvable-prose/retired-vocabulary doctrineRoot default — ta
   })
 })
 
-// Code review, PR #290 MINOR (round 2): `tests/diff-evidence.test.ts`
+// `tests/diff-evidence.test.ts`
 // unit-tests `resolveChangedFiles()` in isolation, but nothing exercised the
 // two real consumers (`check-reader-resolvable-prose.ts`/
 // `check-retired-vocabulary.ts`) end-to-end against a fixture with a genuine
@@ -232,7 +232,7 @@ for (const check of [
     // absolute via `resolveDoctrineRoot()`, so `resolve(pathBase, f.file)`
     // and the pre-fix `resolve(f.file)` are identical for every finding
     // regardless of `pathBase` — reverting the fix and re-running this test
-    // still passes, confirmed by the round-3 reviewer. Discriminating the
+    // still passes. Discriminating the
     // fix itself needs a RELATIVE `finding.file`, which requires a relative
     // `doctrineRoot` — and that combination is blocked by the separate,
     // out-of-scope `collect()` cwd-relative bug documented above.

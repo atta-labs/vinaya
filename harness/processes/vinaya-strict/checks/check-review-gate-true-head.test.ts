@@ -49,8 +49,7 @@ describe('check-review-gate — binds to the true branch head, not a stale headR
     const newSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim()
 
     g(['remote', 'add', 'origin', dir])
-    // `resolveBaseSha` now fails closed on an unresolvable base tip (round 2
-    // review, security MEDIUM) — the PR fixture below names `baseRefName:
+    // `resolveBaseSha` fails closed on an unresolvable base tip — the PR fixture below names `baseRefName:
     // 'main'`, so a real `main` ref must exist for `git ls-remote` to
     // resolve, or this test's own head-mismatch assertion would never be
     // reached.

@@ -213,8 +213,7 @@ describe('a PR that removes a topology file cannot narrow the sweep', () => {
   }, 60_000)
 
   /**
-   * The predicate itself, on the only shape that can observe it (round-3
-   * review finding 4). The three cases above all use a synthetic slug with no
+   * The predicate itself, on the only shape that can observe it. The three cases above all use a synthetic slug with no
    * Milestone, and the fill-in's own dedupe is keyed on `files` — so keying
    * `producedSlugs` on *enumerated* rather than *produced* candidates leaves
    * every one of them green while still being the defect the fix names.

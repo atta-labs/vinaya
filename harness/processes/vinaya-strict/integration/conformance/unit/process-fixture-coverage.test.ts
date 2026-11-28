@@ -643,12 +643,12 @@ const HAS_KILL_BUDGET = /killSignal\s*:\s*['"]SIGKILL['"]|\.kill\(\s*['"]SIGKILL
  * ln, chmod, a fake vendor binary"). `bun`/`node`/`vinaya` are deliberately
  * NEVER in this set — those are the exact risk-bearing invocations.
  *
- * Round 7 review — `sh`/`bash` do NOT belong here and are deliberately
+ * `sh`/`bash` do NOT belong here and are deliberately
  * absent. Unlike `git`/`chmod`/`mkdir`, a shell doesn't do one fixed thing:
  * it runs whatever string it's handed, so a `spawnSync('bash', ['-c', 'bun
- * ...'])` (or the same via `sh -c`) hid an arbitrary — possibly
+ * ...'])` (or the same via `sh -c`) would hide an arbitrary — possibly
  * risk-bearing — command from this scan behind a "safe" wrapper. A shell
- * spawn is now classified exactly like any other real process.
+ * spawn is classified exactly like any other real process.
  */
 const SAFE_UTILITY_COMMANDS = new Set([
   'git',
@@ -684,11 +684,11 @@ function commandHint(content: string, matchEnd: number): string | null {
  * `= 'git'` directly, or the `which git` idiom this codebase's own
  * `writeFakeGit`-style helpers use (`execFileSync('which', ['git']...)`).
  *
- * Round 8 security review, MEDIUM — the prior version matched on the
- * identifier's NAME alone (anything containing "git", case-insensitively,
- * short of "bun"/"node"/"vinaya"), so `spawnSync(gitLikeWrapper, ...)`
- * would score safe regardless of what `gitLikeWrapper` actually resolved to
- * at runtime — nothing tied the name to the value. This traces the
+ * Matching on the identifier's NAME alone (anything containing "git",
+ * case-insensitively, short of "bun"/"node"/"vinaya") would let
+ * `spawnSync(gitLikeWrapper, ...)` score safe regardless of what
+ * `gitLikeWrapper` actually resolves to at runtime — nothing would tie the
+ * name to the value. This traces the
  * identifier to its real assignment instead of trusting its spelling.
  */
 function identifierResolvesToGit(content: string, hint: string): boolean {

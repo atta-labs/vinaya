@@ -110,8 +110,7 @@ describe('check-review-gate — objectives-version binding (O3)', () => {
     g(['commit', '-qm', 'initial'])
     const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: d, encoding: 'utf8' }).trim()
     g(['remote', 'add', 'origin', d])
-    // `resolveBaseSha` now fails closed on an unresolvable base tip (round 2
-    // review, security MEDIUM) — every PR fixture below names `baseRefName:
+    // `resolveBaseSha` fails closed on an unresolvable base tip — every PR fixture below names `baseRefName:
     // 'main'`, so a real `main` ref must exist for `git ls-remote` to
     // resolve it, or every `exitCode` assertion in this file would see 1
     // for the wrong reason.

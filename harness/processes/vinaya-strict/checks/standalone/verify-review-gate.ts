@@ -99,10 +99,9 @@ export function main(prNumber: number): void {
     // Unlike objectivesVersion, this has no unconditional-skip value and needs
     // no extra fetch: `pr.comments` is already in scope, and
     // `newestPrincipalRulingOrdinal` is already imported from this same
-    // module and the configured Principal list is resolved above
-    // (review-validity-v1 task 3, #477, O2 — review
-    // round 2, BLOCKER: a hardcoded `0` here fails both directions, reading a
-    // stale pre-ruling verdict as bound and a correctly re-cast one as not).
+    // module and the configured Principal list is resolved above. A
+    // hardcoded `0` here would fail both directions, reading a stale
+    // pre-ruling verdict as bound and a correctly re-cast one as not.
     rulingOrdinal: newestPrincipalRulingOrdinal(
       pr.comments.map((c) => ({ body: c.body, author: c.author?.login ?? null })),
       principals.principals

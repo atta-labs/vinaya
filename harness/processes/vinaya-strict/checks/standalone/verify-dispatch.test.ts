@@ -702,12 +702,11 @@ describe('(#179) an outage reason outranks an incidental stderr line', () => {
 })
 
 /**
- * task 4, Issue #483, O3 — `resolvePremiseBriefText` is `--premise`'s
- * Issue-derived mode's own resolver, extracted so it never needs a spawned
- * `gh`/forge fixture to test (security review, PR #503 round 2, BLOCKER:
- * this exact seam previously matched only the literal retired-spelling frozen-brief marker,
- * so `--premise` hard-refused every dispatch of a task whose brief had been
- * corrected via `--supersede` — precisely the scenario that flag exists for).
+ * `resolvePremiseBriefText` is `--premise`'s Issue-derived mode's own
+ * resolver, extracted so it never needs a spawned `gh`/forge fixture to test.
+ * The seam must read every frozen-brief marker spelling, not only the literal
+ * retired one, or `--premise` hard-refuses every dispatch of a task whose brief had been
+ * corrected via `--supersede` — precisely the scenario that flag exists for.
  */
 describe('resolvePremiseBriefText (security review, PR #503 round 2, BLOCKER)', () => {
   const PRINCIPAL = 'daniboomerang'

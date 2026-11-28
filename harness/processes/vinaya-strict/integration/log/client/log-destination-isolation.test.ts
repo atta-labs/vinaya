@@ -453,8 +453,7 @@ function scanSource(content: string): ScannedSource {
  * character: a regex in keyword position — `return /…/.test(x)`, `await`,
  * `typeof`, `case` — follows a letter, and reading that as division opened a
  * spurious string on the first quote inside the pattern and blanked the rest
- * of the line. `tests/run-paths-only.test.ts` already had one (round 4
- * review, MINOR).
+ * of the line. `tests/run-paths-only.test.ts` holds one such regex.
  */
 function beginsRegexLiteral(previousToken: string): boolean {
   if (previousToken === '') return true
@@ -574,8 +573,7 @@ const READS_DEFAULT_DESTINATION = new RegExp(
     `${QUOTE}${NOT_QUOTE}*\\.vinaya${QUOTE}[\\s\\S]{0,4000}?\\.ndjson|` +
     // A read assembled from the exported helpers rather than spelled out:
     // `join(runtimeDirForThisRepo(), 'logs', segment, task + '.ndjson')` named
-    // the same folder while matching none of the shapes above (round 6 security
-    // review, LOW).
+    // the same folder while matching none of the shapes above.
     `runtimeDir[A-Za-z]*\\s*\\([^)]*\\)\\s*,\\s*${QUOTE}logs${QUOTE}|loopsRoot\\s*\\(`
 )
 
@@ -699,8 +697,8 @@ const WALKS_UP = new RegExp(`${QUOTE}\\.\\.(?:\\/[^\\u0027\\u0022\\u0060]*)?${QU
  * A repository root a file ASKS for rather than walks to: this repository's own
  * `repoRootSync`/`repoRoot` helpers, or `git rev-parse --show-toplevel`. Both
  * idioms already exist in this tree, and neither carries a module-path anchor,
- * so a root obtained either way was no root at all to this scan (round 6
- * review, MINOR).
+ * so without this a root obtained either way would be no root at all to this
+ * scan.
  */
 const CALL_DERIVED_ROOT = /\brepoRoot(?:Sync|Async)?\s*\(|rev-parse[^\n]{0,40}--show-toplevel/
 
@@ -1157,8 +1155,8 @@ function definitionBodyOf(name: string, code: string): { code: string; end: numb
  * default one? Resolved per call, in the blocks that enclose it, so a sink
  * built inside one test case does not vouch for a call in another
  * (`lib/log-destination.test.ts` builds one per case, and a call appended
- * outside them all resolves this repository's own configuration — the round 4
- * security review's own live proof).
+ * outside them all resolves this repository's own configuration, a leak shown
+ * live).
  *
  * `createLogSink()` with no argument at all is the default-deps sink and is not
  * one of these: it resolves exactly what the module-level `log()` resolves.
@@ -1292,8 +1290,7 @@ function producerCallNames(code: string): Map<string, string> {
   }
   // A plain local re-binding reaches the same producer: `const emit = log` then
   // `emit({…})`. The repository-root half of this file already follows one, and
-  // the two halves disagreeing on the same evasion is how it was found (round 6
-  // review, MINOR). Iterated, so a re-binding of a re-binding counts too.
+  // the two halves must not disagree on the same evasion. Iterated, so a re-binding of a re-binding counts too.
   for (let pass = 0; pass < 3; pass++) {
     const before = out.size
     for (const { name, initializer } of bindingsIn(code)) {
@@ -1331,9 +1328,8 @@ function callIsHandedALogDependency(code: string, index: number, producerNames: 
   let args = callArguments(code, open)
   // The ordinary idiom builds the deps object first: `const deps = { log: spy }`
   // then `await devReviewLoop(input, deps)`. Reading only the literal argument
-  // list reported that as an offender though it writes nowhere real, leaving
-  // inlining the object or a grandfather entry as the only ways out (round 6
-  // review, MINOR). An identifier argument is resolved to its own binding.
+  // list would report that as an offender though it writes nowhere real, leaving
+  // inlining the object or a grandfather entry as the only ways out. An identifier argument is resolved to its own binding.
   if (!/\b(?:log|record|command)\s*:/.test(args)) {
     // The class is written `[),]` rather than the other way round: the reverse
     // reads as retired vocabulary to the architecture test that scans this tree.
@@ -1352,8 +1348,7 @@ function callIsHandedALogDependency(code: string, index: number, producerNames: 
     else if (')]}'.includes(c)) depth--
     // Depth 2 is a property of an OBJECT that is itself an argument: `(` opens
     // the call, `{` the deps object. Deeper than that is a property of some
-    // nested object, which decides nothing about where this call writes (round
-    // 5 security review, LOW).
+    // nested object, which decides nothing about where this call writes.
     else if (
       depth === 2 &&
       !/[.\w$]/.test(args[i - 1] ?? '') &&
@@ -1462,8 +1457,7 @@ describe("no test reads this repository's own log destination", () => {
       // and an unattended one (whose local value the trust-anchor gate refuses,
       // falling back to the default folder) write to one path, not two. Asserted
       // by RUNNING the fixture rather than by pinning its source text, which
-      // failed on a rename or a reflow while the isolation was intact (round 6
-      // review, MINOR).
+      // would fail on a rename or a reflow while the isolation was intact.
       expect(fixture.logsDir).toBe(join(declared.logs?.folder as string, FIXTURE_REPO_SEGMENT))
     } finally {
       rmSync(fixture.home, { recursive: true, force: true })
