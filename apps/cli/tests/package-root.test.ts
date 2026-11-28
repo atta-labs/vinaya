@@ -151,7 +151,7 @@ describe('vinaya: an installed build defers to this repo’s own source (Issue #
   const REPO_ROOT = join(CLI_ROOT, '..', '..')
   const SRC_INDEX = join(CLI_ROOT, 'src', 'index.ts')
 
-  // Issue #660, O3 (round 5 review, MAJOR) — this process's own VINAYA_*
+  // This process's own VINAYA_*
   // environment is stripped before `extraEnv` is applied, and the
   // subprocess is bounded by an explicit budget that throws with its own
   // captured stdout/stderr on expiry, rather than a bare timeout.

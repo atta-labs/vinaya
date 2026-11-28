@@ -151,10 +151,9 @@ const LEGACY_BRIEF_MARKERS = [`<!-- ${FROZEN_BRIEF_MARKER.old}:start -->`, `<!--
 /**
  * Line-anchored, not a whole-body substring search: the real, structural
  * marker this retires always sat alone on its own line, immediately
- * preceding `## Reference — the dispatched brief`. A body that merely
- * *describes* the retired convention in prose — this very PR's own body
- * included, wrapped in backticks — must not trip the same refusal a real
- * leftover marker does (found live authoring this task's own PR body).
+ * preceding the body's brief Reference heading. A body that merely
+ * *describes* the retired convention in prose, wrapped in backticks, must
+ * not trip the same refusal a real leftover marker does.
  */
 function hasLegacyBriefMarkerLine(body: string, marker: string): boolean {
   const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

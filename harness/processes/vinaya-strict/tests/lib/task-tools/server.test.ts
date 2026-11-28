@@ -145,8 +145,8 @@ describe('dispatchToolCall — the grant gate runs on the real call path, before
 
 /**
  * `serve`'s per-line dispatch is the one place two DIFFERENT tasks' calls
- * can be in flight on this shared, multi-tenant server at once. Round 2
- * security review (HIGH): `resume.ts`/`cancel.ts`'s handlers mutate
+ * can be in flight on this shared, multi-tenant server at once.
+ * `resume.ts`/`cancel.ts`'s handlers mutate
  * `process.env.VINAYA_TASK` around their own `log()` call — safe only if no
  * OTHER call's own mutate/restore can land in between. This models that
  * exact shape (a handler that mutates the shared env, yields, then reads it
@@ -214,7 +214,7 @@ describe('serve — two different tasks never interleave through the shared per-
 })
 
 /**
- * Round 3 security review, HIGH: `serve`'s serialized dispatch chains every
+ * `serve`'s serialized dispatch chains every
  * line through one `Promise` (the fix for the interleaving race above), but
  * a chained `.then()` sequence skips every later queued callback once one
  * link rejects — so an unguarded failure anywhere in one line's processing

@@ -798,7 +798,7 @@ describe('renderBrief', () => {
     expect(validated.status).toBe('pass')
   })
 
-  // Round 2 review, BLOCKER: the covering file can be a COLOCATED test
+  // The covering file can be a COLOCATED test
   // (`packages/widgets/src/foo.test.ts`, the layout `packages/widgets` and
   // `packages/core` already use in this repo) with no `tests`/`specs`
   // ancestor to name — the prior fallback named the file's bare containing

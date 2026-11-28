@@ -434,12 +434,11 @@ describe('task_cancel handler', () => {
 })
 
 /**
- * Security review, round 3, HIGH: every test above injects a fake
- * `cancelDevReviewLoop`, so none of them ever exercised the REAL function's
- * own error-wrapping — which used to lose `ReplayedResolutionError`'s
- * identity (`new Error(...)` instead of rethrowing the same instance),
- * breaking `task_cancel`'s `instanceof` translation the instant it was
- * wired to the real default dependency. `cancelDevReviewLoop`'s own
+ * Every test above injects a fake `cancelDevReviewLoop`, so none of them
+ * exercises the REAL function's own error-wrapping — which must keep
+ * `ReplayedResolutionError`'s identity (rethrowing the same instance, never
+ * `new Error(...)`), or `task_cancel`'s `instanceof` translation breaks the
+ * instant it is wired to the real default dependency. `cancelDevReviewLoop`'s own
  * control-store reads default to this machine's real `~/.vinaya/` (`config.ts`'s
  * `GLOBAL_VINAYA_HOME` is a module-level constant frozen at first import —
  * `dev-review-loop.test.ts`'s own header explains why an in-process fixture
@@ -629,13 +628,11 @@ try {
     // exactly that: one process, one cancel for ISSUE, then a REAL
     // `task_resume` call (via `createTaskResumeHandler`, the actual code
     // path `server.ts` dispatches through) for a COMPLETELY DIFFERENT task.
-    // Round 2 review flagged an earlier version of this test for calling
-    // `log()` directly with `VINAYA_TASK` set by the fixture itself — a
-    // shape the real code path never took, since neither handler's own
-    // `emitOperationEvent` scoped `VINAYA_TASK` at all before this task's
-    // fix. Driving the real handler here means this test would have failed
-    // against that unfixed code (the ambient sentinel would have leaked into
-    // the 991 event) and now proves the fix.
+    // Calling `log()` directly with `VINAYA_TASK` set by the fixture itself
+    // would test a shape the real code path never takes: the variable is
+    // scoped by each handler's own `emitOperationEvent`. Driving the real
+    // handler here means a handler that stopped scoping it fails this test
+    // (the ambient sentinel would leak into the 991 event).
     const fixture = isolatedConfigFixture('vinaya-cancel-env-restore-')
     const home = fixture.home
     const scriptPath = join(import.meta.dir, `.cancel-env-restore-fixture-${process.pid}-${Date.now()}.ts`)

@@ -499,10 +499,10 @@ describe('listActiveTrancheSlugs', () => {
   })
 
   it('a single-word, mixed-case free-text title is also never listed as a phantom tranche', () => {
-    // Code review round 2: the shape guard first shipped by reusing
-    // PROJECT_SLUG, whose `i` flag matches capital letters — so a one-word
-    // title with no space and no dash ("MilestoneModel", "Vinaya") slipped
-    // through and still phantom-matched. Every real tranche slug in this
+    // A shape guard reusing PROJECT_SLUG, whose `i` flag matches capital
+    // letters, would let a one-word title with no space and no dash
+    // ("MilestoneModel", "Vinaya") slip through and phantom-match. Every
+    // real tranche slug in this
     // repo is lowercase, so the guard must be case-sensitive.
     mockGh([{ title: 'MilestoneModel', description: 'The goal.', state: 'open' }], [])
 
@@ -510,10 +510,10 @@ describe('listActiveTrancheSlugs', () => {
   })
 
   it('a lowercase, hyphenated free-text title with no version suffix is also never listed as a phantom tranche', () => {
-    // Code review round 3: a plausible kebab-case product-goal title
-    // ("improve-onboarding-flow") still phantom-matched, since every real
-    // tranche slug is ALSO lowercase and hyphenated — the shape guard needed
-    // one more property that distinguishes them: every real slug in this
+    // A plausible kebab-case product-goal title ("improve-onboarding-flow")
+    // would phantom-match on case alone, since every real tranche slug is
+    // ALSO lowercase and hyphenated — the shape guard needs one more
+    // property that distinguishes them: every real slug in this
     // repo ends in a `-v<N>` version suffix, which an ordinary free-text
     // title is unlikely to carry by accident.
     mockGh([{ title: 'improve-onboarding-flow', description: 'A product goal, not a tranche.', state: 'open' }], [])
@@ -811,8 +811,8 @@ describe('indexTrancheMilestonesAsync reads every page', () => {
     // What the paginated reader returns once it has walked past page 1.
     // Titled `tranche-N-v1` (not bare `tranche-N`) so this fixture still
     // matches TRANCHE_SLUG_SHAPE now that it requires the `-v<N>` suffix
-    // every real legacy Milestone title in this repo actually carries
-    // (round 3 code review) — the pagination behaviour under test is
+    // every real legacy Milestone title in this repo actually carries —
+    // the pagination behaviour under test is
     // unaffected by the title shape.
     const many = Array.from({ length: 137 }, (_, i) => ({
       title: `tranche-${i}-v1`,

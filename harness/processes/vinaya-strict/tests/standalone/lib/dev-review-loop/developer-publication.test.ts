@@ -767,8 +767,8 @@ describe('the beyond-Surface record when an input cannot be read', () => {
     '## Scope\n\nScope.\n\n<!-- VINAYA:BEYOND-SURFACE:START -->\n- `src/sneaked.ts` hand-added\n<!-- VINAYA:BEYOND-SURFACE:END -->\n\n**Tier:** 3\n'
 
   /**
-   * Runs a loop whose round-1 review blocks; between that review and the
-   * round-2 Developer dispatch the open body carries `handWritten` and
+   * Runs a loop whose first round's review blocks; between that review and
+   * the second round's Developer dispatch the open body carries `handWritten` and
    * `unreadable` replaces the reads, so the body returned is the one the
    * driver writes before that dispatch (its `**For:**` line update).
    */

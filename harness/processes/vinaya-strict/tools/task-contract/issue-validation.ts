@@ -1180,9 +1180,9 @@ const BOUNDARY_EXISTING_STATE_RE = /\b(already|currently|wired)\b/i
  * `inlineSpans: 'keep'` is load-bearing, not tidiness. `stripCode`'s DEFAULT
  * mode blanks inline backtick spans, and a Boundary states this kind of claim
  * in exactly that shape — "the signal is `already wired`, inert" — so the
- * default stripped the trigger words out of the very sentence the gate exists
- * to catch and passed the Issue with no premise at all (round 2 security
- * review, HIGH). Fenced and indented blocks are still removed: a trigger word
+ * default would strip the trigger words out of the very sentence the gate
+ * exists to catch and pass the Issue with no premise at all. Fenced and
+ * indented blocks are still removed: a trigger word
  * inside a worked example is not a claim about this task's surface, which is
  * the one exemption this check does want.
  */
@@ -2986,10 +2986,10 @@ function flagsIn(span: string): string[] {
  * of this binary at all.
  *
  * The BINARY's case is folded: a CLI name written `Vinaya` at the start of a
- * sentence is the same invocation as `vinaya`, and compared exactly, one
- * capital letter made the span parse as no invocation at all — an Issue could
+ * sentence is the same invocation as `vinaya`. Compared exactly, one capital
+ * letter would make the span parse as no invocation at all — an Issue could
  * introduce a wholly undocumented command, Surface never reaching the command
- * reference, by capitalising it (round 5 security review).
+ * reference, by capitalising it.
  *
  * The COMMAND WORDS must still be lower-case as written, and that is not an
  * oversight. A capitalised word run after the binary is how a proper name is

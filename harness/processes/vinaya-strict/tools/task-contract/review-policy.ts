@@ -98,12 +98,12 @@ export type PolicyFinding = { severity: string; location?: string }
  * A location shaped like a real file reference — a path ending in a
  * `.<ext>` segment, optionally followed by `:<line>` — the shape every
  * `findings.txt` location actually takes (`SEVERITY|file:line|description`).
- * Round 2 review, BLOCKER: `/\bcomment\b/i` alone matched `comment` as a
- * plain substring, so a real test file whose NAME happens to contain the
- * word (`harness/processes/vinaya-strict/tools/pull-request/bin/pr-create-brief-comment.test.ts`) was
+ * `/\bcomment\b/i` alone matches `comment` as a plain substring, so a real
+ * test file whose NAME happens to contain the word
+ * (`harness/processes/vinaya-strict/tools/pull-request/bin/pr-create-brief-comment.test.ts`) would be
  * wrongly treated as "the finding's location is a comment" and capped to
- * `MINOR` — exactly the trap O5's own brief forbids (never cap a source or
- * test file). Gating the comment pattern on "does NOT also look like a real
+ * `MINOR` — and a source or test file is never capped. Gating the comment
+ * pattern on "does NOT also look like a real
  * file" closes this: a genuine PR/review-comment location the reviewer
  * writes (`PR comment`, `a review comment`, bare `comment`) never carries a
  * file extension, so it is unaffected.
@@ -115,7 +115,7 @@ const FILE_SHAPED_LOCATION = /\.[a-zA-Z0-9]{1,10}(:\d+)?\s*$/
  * PR body or a PR/review comment — prose surfaces this evaluator caps at
  * `MINOR` before counting a finding toward the blocking threshold, regardless
  * of the severity the reviewer actually reported. Each of these, gated on
- * `FILE_SHAPED_LOCATION` below (a LOW round-2 review finding): a real file
+ * `FILE_SHAPED_LOCATION` below: a real file
  * whose own name happens to contain one of these words or phrases —
  * `harness/processes/vinaya-strict/tools/pull-request/bin/pr-create-brief-comment.test.ts`, or any of the
  * repo's own `pr-body-*.md` fixtures — is a source or test file, never

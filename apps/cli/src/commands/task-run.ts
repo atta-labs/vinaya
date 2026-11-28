@@ -40,7 +40,7 @@
  * (`lib/backend-rollback.js`), which refuses a task whose recorded runner is
  * not `atta-engine`.
  *
- * Exit codes (round 2 security review, HIGH): `0` publish OR a watched
+ * Exit codes: `0` publish OR a watched
  * pause's own genuine end (`'ended'` — merged, closed, or `--cancel`), `1`
  * the one un-watchable pause above, `2` a usage/argv error, `3` any other
  * failure (a refused preparation, an open-PR refusal, an internal contract
@@ -111,11 +111,10 @@ type ParsedFlags = {
 
 /**
  * `unknown` collects any `--flag`-shaped or stray token this parser does
- * not recognize — round 2 security review, MEDIUM: this command was not
- * given the same treatment `dispatch.ts`'s own `parseArgs` was, found live
- * on that sibling command, where an unrecognized flag was silently dropped
- * while every other flag still took effect. Refusing here closes the same
- * gap rather than reintroducing it on a second command.
+ * not recognize, and the command refuses it, the same as `dispatch.ts`'s
+ * own `parseArgs` does: a parser that silently dropped an unrecognized flag
+ * while every other flag still took effect would run a command the caller
+ * never asked for. Refusing here keeps that gap closed on this command too.
  *
  * `agentFlagPresent` distinguishes `--agent` never given at all (falls back
  * to `dispatch.agent` in config) from `--agent` given with no value (a
@@ -383,7 +382,7 @@ function resolveAgentOrReport(parsed: ParsedFlags): DispatchAgent | null {
  * <n>` for a tranche task, `task run --issue <n>` for a backlog one. That form
  * is rendered by `noPushResumeCommandFor` — the SAME `noPushResumeArgv` builder
  * the Issue pause comment and `task-tools`' permitted-next-actions already use,
- * never a second copy that hardcodes one address form (round 2 review: the
+ * never a second copy that hardcodes one address form (the
  * `--issue <n>` form alone is refused for a `vinaya/tranche:*` Issue, so a
  * tranche task needs the `<tranche> <n>` form). Either way it carries the
  * `--agent`/`--model` this run was invoked with unchanged (O1), and it never

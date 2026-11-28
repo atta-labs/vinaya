@@ -149,7 +149,7 @@ type ExemptAnchorField = (typeof EXEMPT_ANCHOR_FIELDS)[number]
  * the header block, before the first `##` heading; `TIER`/`EVIDENCE` sit
  * under their own named heading.
  *
- * Round 6 security review, HIGH: `anchoredRegionBounds` trusts ANY
+ * `anchoredRegionBounds` trusts ANY
  * well-formed `<!-- VINAYA:<FIELD>:START -->…<!-- VINAYA:<FIELD>:END -->` pair
  * anywhere in the body — correct and safe for its own designed purpose
  * (`harness/kernel/gates/checks/anchored-region.ts`'s own doc: value resolution,
@@ -227,21 +227,18 @@ function isInCanonicalSection(body: string, field: ExemptAnchorField, outerStart
 }
 
 /**
- * Round 8 security review, HIGH (round 6/7's own recommendation, finally
- * acted on — not a new finding, a real oversight last round: round 7's
- * push fixed the unrelated structural-field BLOCKER and never came back to
- * this one, even though it was reported live at that same head). Location
- * alone — `isInCanonicalSection` — never closed the decoy-anchor gap, only
- * narrowed the precondition: an attacker only has to make their decoy the
+ * Location alone — `isInCanonicalSection` — does not close the
+ * decoy-anchor gap, only narrows the precondition: an attacker only has to
+ * make their decoy the
  * FIRST anchor pair for that field INSIDE its own legitimate section, since
  * every one of these sections is itself a legitimate free-text zone.
- * Reproduced fresh: a decoy `VINAYA:PROJECT`/`VINAYA:CLOSES` pair in the header
+ * For example: a decoy `VINAYA:PROJECT`/`VINAYA:CLOSES` pair in the header
  * block, a decoy `VINAYA:TIER` pair under `## Scope`, a decoy `VINAYA:EVIDENCE`
  * pair under `## Evidence`, each wrapping a fabricated quantitative claim
- * with no trace of the field's own real declaration inside it — all scored
- * zero violations.
+ * with no trace of the field's own real declaration inside it — would all
+ * score zero violations on location alone.
  *
- * Closed the way round 7 closed the Tier/Project structural-field gap:
+ * Closed the same way as the Tier/Project structural-field gap below:
  * reuse, don't invent a new classifier. Every real anchored body already
  * repeats that field's own declaration INSIDE the pair, per the canonical
  * template (`harness/processes/vinaya-strict/artifacts/templates/pr-report-template.md`) itself — a decoy
@@ -409,15 +406,14 @@ function blankTokenReportSection(body: string): string {
  * body writes them bare, and `vinaya demo`'s own fixture PR
  * body writes a plain, unbolded `Tier: 1`).
  *
- * Round 6 security review, HIGH: this used to blank the WHOLE line once the
- * label matched. Round 7 found the round-6 fix (blank up to the first
- * clause-boundary punctuation) was still a guessable shape, not a closed
- * one — `Tier: 1 500 known regressions untriaged` (no punctuation between
- * the real value and the claim) scored zero violations, same bug, narrower
- * trigger. The actual fix, per this round: don't guess the value's
- * boundary at all — REUSE the exact grammar the field's own real reader
+ * Blanking the WHOLE line once the label matches would hide any claim
+ * appended after the value, and blanking up to the first clause-boundary
+ * punctuation is still a guessable shape, not a closed one — `Tier: 1 500
+ * known regressions untriaged` (no punctuation between the real value and
+ * the claim) would score zero violations. So this never guesses the value's
+ * boundary at all — it REUSES the exact grammar the field's own real reader
  * already validates against, the same "reuse a hardened primitive, don't
- * hand-roll a shape detector" discipline this whole task started from
+ * hand-roll a shape detector" discipline as the rest of this file
  * (`stripCode`/`maskCode`, `anchoredRegionBounds`).
  *
  * `Tier:` — `TIER_FIELD` (`@attalabs/process-vinaya`, `pr-tier.ts`) is the exact
@@ -466,7 +462,7 @@ function blankTierField(line: string): string {
   return line.slice(0, m.index) + ' '.repeat(m[0].length) + line.slice(m.index + m[0].length)
 }
 
-// Round 9 code review, BLOCKER: `PROJECT_SLUG` (`/^[a-z0-9][a-z0-9-]*$/i`)
+// `PROJECT_SLUG` (`/^[a-z0-9][a-z0-9-]*$/i`)
 // is the real, shared shape every genuine project name in this repo's own
 // registry satisfies — but it's also the shape ANY hyphenated claim
 // satisfies, with no comma or space needed to trip it: `we-fixed-4500-bugs`

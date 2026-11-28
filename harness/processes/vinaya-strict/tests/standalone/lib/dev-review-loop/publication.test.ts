@@ -1,10 +1,9 @@
 /**
- * Direct fixture coverage for `publication.ts`'s own manifest-binding gate
- * (round 2 review, security HIGH): `publishRound`'s two throw sites —
+ * Direct fixture coverage for `publication.ts`'s own manifest-binding gate:
+ * `publishRound`'s two throw sites —
  * "posted reviewer/security verdict does not bind to the round's manifest"
- * — sit on `bindingOfPosted`/`unboundFields`, which had no test anywhere in
- * the repo even though O3 (`#555`) names publication as one of the three
- * readers `compareManifest` must be fixture-proven under: base-only
+ * — sit on `bindingOfPosted`/`unboundFields`, and publication is one of the
+ * three readers `compareManifest` must be fixture-proven under: base-only
  * invalidation, a missing required echo refusing, and a stale field
  * refusing. `bindingOfPosted` deliberately never supplies `patchIdOf`
  * (its own doc comment) — a just-posted verdict must bind by exact

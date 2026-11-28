@@ -196,7 +196,7 @@ describe('vinaya demo break', () => {
     HOOK_TEST_BOUND_MS
   )
 
-  // F1 regression (security review HIGH, PR #713): a kill mid-demo leaves the
+  // A kill mid-demo leaves the
   // fixture STAGED but uncommitted on the demo branch — the exact window
   // between "stage" and "commit refused, guided fix pending". The old
   // recovery path did `git checkout <originalBranch>` with no `reset`/`clean`

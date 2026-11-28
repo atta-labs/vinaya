@@ -84,8 +84,7 @@ function writeFakeGh(dir: string, script: string): void {
  * fresh `bun -e` subprocess, with `binDir` prepended to that subprocess's
  * OWN spawn-time `PATH` — never this test process's `process.env.PATH`.
  *
- * Issue #660, O3 (round 4 review, round 5 Principal ruling) — this
- * process's own `VINAYA_*` environment is stripped before `PATH`/`extraEnv`
+ * This process's own `VINAYA_*` environment is stripped before `PATH`/`extraEnv`
  * are applied, and the subprocess is bounded by an explicit budget that
  * throws with its own captured stdout/stderr on expiry, rather than a bare
  * timeout.

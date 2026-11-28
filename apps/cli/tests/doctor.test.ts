@@ -1319,10 +1319,9 @@ describe('vinaya doctor — brief-schema divergence', () => {
   })
 })
 
-// O4 (PR #410 review, MAJOR and MINOR): the `doctrine: <root> (<source>)`
-// line had zero automated coverage — only a manually-pasted CLI transcript
-// in that PR's own evidence — and `--json` carried no doctrineInfo signal
-// at all, an inconsistency with text mode for the same command.
+// The `doctrine: <root> (<source>)` line needs automated coverage, not a
+// hand-pasted CLI transcript, and `--json` must carry the same doctrineInfo
+// signal text mode prints, so the two modes of one command never disagree.
 describe('vinaya doctor — doctrine root/source line (PR #410 review)', () => {
   async function runDoctorJsonFull(overrides: Partial<DoctorDeps> = {}): Promise<{
     healthy: boolean

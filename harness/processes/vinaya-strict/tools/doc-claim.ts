@@ -257,7 +257,7 @@ export function evaluateClaimBindings(
  * Both phases in one call: discover markers, report the malformed, evaluate
  * the rest. Returns `bindingCount` alongside the findings so a caller that
  * wants to report "how many bindings were verified" does not scan the corpus
- * a second time to count them (review round 1, MINOR) — this is the one
+ * a second time to count them — this is the one
  * entry point `verify-docs` needs, and the only one the package barrel
  * exports; the granular functions stay module-level for direct testing.
  */

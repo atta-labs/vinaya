@@ -531,7 +531,7 @@ describe('validateIssueContent — the content checks', () => {
   })
 })
 
-// Regression for the code-review BLOCKER on PR #159: `readSharedPackages`'s
+// `readSharedPackages`'s
 // `blastRadius.extraDomains` read must be scoped to the given repo root
 // ONLY — never the cwd-walking, ancestor-resolving `loadConfig()`, which
 // would fold a DIFFERENT repo's (or the adopter's machine-wide) config into
