@@ -1103,7 +1103,8 @@ export async function dispatchTask(
         task: prep.issue,
         promptFile,
         model: resolvedModel,
-        // This call is `vinaya task run`'s own unattended loop starting the Developer — nobody is
+        // This call is `vinaya task run`'s own unattended loop starting the
+        // Developer — nobody is
         // watching each tool call, so it must run inside the proven boundary
         // (`DispatchOpts.unattended`'s own doc comment).
         unattended: true

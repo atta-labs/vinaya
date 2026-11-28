@@ -3573,7 +3573,8 @@ export function postMarkedComment(kind: 'issue' | 'pr', ref: string, marker: str
  * postedBody)`) for a re-fetched comment against what this process itself
  * posted, but author-filtered first through the SAME `isPrincipal`/
  * `resolveTrustedPrincipals` machinery `principalBodies` (`review-post.ts`)
- * already uses for exactly this trust boundary: every effect this reconciler is wired to reconciles a comment THIS
+ * already uses for exactly this trust boundary: every effect this
+ * reconciler is wired to reconciles a comment THIS
  * process itself posted as an allowlisted principal, so a byte-identical
  * body from anyone else is not evidence of that — without this filter, any
  * actor able to comment on `ref` could pre-post a spoofed body and have

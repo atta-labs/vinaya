@@ -940,9 +940,9 @@ function hasTestPathForConsumer(text: string, consumerDir: string): boolean {
  * shim (`check-brief-shape.ts`) builds it once from the real workspace
  * dependency graph. Both the trigger and its satisfying test path/sentinel
  * are read from `§4` alone, never the whole body — scanning the whole body
- * let a brief's own §2 prose, quoting the sentinel grammar as an example of
- * the rule (exactly this task's own dispatched brief), silently satisfy the
- * rule it was merely describing. `§4` is where a surface map states its
+ * would let a brief's own §2 prose, quoting the sentinel grammar as an
+ * example of the rule, silently satisfy the rule it was merely describing.
+ * `§4` is where a surface map states its
  * blast radius; that is also where this rule's own answer belongs.
  */
 export function checkConsumerTests(prBody: string, consumersOf: (pkg: string) => string[]): BriefSectionResult {

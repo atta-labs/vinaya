@@ -1274,7 +1274,8 @@ describe('testRunCacheKey — a filename/content boundary shift never collides w
 // to `''` would make it indistinguishable from a real empty answer, so two
 // DIFFERENT unresolvable working trees running the identical command could
 // collide on the same cache key and one's cached output would be presented
-// as evidence for the other's run. So any git failure makes the whole key resolution `null`, which every caller
+// as evidence for the other's run. So any git failure makes the whole key
+// resolution `null`, which every caller
 // treats as "no caching this call" — never a key, so never a collision.
 describe('testRunCacheKey — a git failure disables caching, never fabricates a colliding key (round-2 security review, HIGH)', () => {
   it('two different non-git directories running the identical command never share a cached result', async () => {

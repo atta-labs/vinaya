@@ -762,7 +762,7 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     const decision = (out: string): { permissionDecision: string; permissionDecisionReason: string } | null =>
       out === '' ? null : (JSON.parse(out).hookSpecificOutput as never)
 
-    // Every alternate spelling round 3 security review found live, none of
+    // Every alternate spelling of a force push or a hook skip, none of
     // which any fixed-prefix `Bash(git push --force*)`-style settings-file
     // pattern can express: a flag after the remote/branch, git's own
     // `+refspec` force syntax with no `--force`/`-f` flag at all, and a

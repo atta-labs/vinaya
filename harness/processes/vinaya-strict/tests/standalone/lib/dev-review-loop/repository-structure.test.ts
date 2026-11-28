@@ -82,7 +82,8 @@ describe('devReviewLoop — the loop’s exit sites (O6)', () => {
   // `{attempts: 0/1, posted: false}` failure (a corrupt control-store
   // record, an epoch-acquisition throw — see `pause-resume.test.ts`'s own
   // structural tests) from the harmless `{attempts: 0/1, posted: true}`
-  // no-op/first-try-success case. The guard only skips logging when `posted` is true — asserted
+  // no-op/first-try-success case. The guard only skips logging when
+  // `posted` is true — asserted
   // directly here since a genuine reproduction needs the same real,
   // process-memoized control store `pause-resume.test.ts`'s own tests
   // avoid touching in-process for the identical reason.

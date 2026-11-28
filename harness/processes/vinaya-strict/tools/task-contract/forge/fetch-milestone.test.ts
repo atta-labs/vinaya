@@ -501,7 +501,8 @@ describe('listActiveTrancheSlugs', () => {
   it('a single-word, mixed-case free-text title is also never listed as a phantom tranche', () => {
     // A shape guard reusing PROJECT_SLUG, whose `i` flag matches capital
     // letters, would let a one-word title with no space and no dash
-    // ("MilestoneModel", "Vinaya") slip through and phantom-match. Every real tranche slug in this
+    // ("MilestoneModel", "Vinaya") slip through and phantom-match. Every
+    // real tranche slug in this
     // repo is lowercase, so the guard must be case-sensitive.
     mockGh([{ title: 'MilestoneModel', description: 'The goal.', state: 'open' }], [])
 

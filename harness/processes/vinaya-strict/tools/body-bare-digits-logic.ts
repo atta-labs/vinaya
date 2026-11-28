@@ -228,7 +228,8 @@ function isInCanonicalSection(body: string, field: ExemptAnchorField, outerStart
 
 /**
  * Location alone — `isInCanonicalSection` — does not close the
- * decoy-anchor gap, only narrows the precondition: an attacker only has to make their decoy the
+ * decoy-anchor gap, only narrows the precondition: an attacker only has to
+ * make their decoy the
  * FIRST anchor pair for that field INSIDE its own legitimate section, since
  * every one of these sections is itself a legitimate free-text zone.
  * For example: a decoy `VINAYA:PROJECT`/`VINAYA:CLOSES` pair in the header

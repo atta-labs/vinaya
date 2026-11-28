@@ -102,7 +102,8 @@ export type PolicyFinding = { severity: string; location?: string }
  * test file whose NAME happens to contain the word
  * (`harness/processes/vinaya-strict/tools/pull-request/bin/pr-create-brief-comment.test.ts`) would be
  * wrongly treated as "the finding's location is a comment" and capped to
- * `MINOR` — and a source or test file is never capped. Gating the comment pattern on "does NOT also look like a real
+ * `MINOR` — and a source or test file is never capped. Gating the comment
+ * pattern on "does NOT also look like a real
  * file" closes this: a genuine PR/review-comment location the reviewer
  * writes (`PR comment`, `a review comment`, bare `comment`) never carries a
  * file extension, so it is unaffected.

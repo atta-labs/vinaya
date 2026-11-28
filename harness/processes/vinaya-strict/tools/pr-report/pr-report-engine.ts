@@ -630,7 +630,8 @@ export type TestRunCacheRecord = {
    * later, narrower `bun test <files>` command ran at the same head/tree —
    * so a file that had already proven green minutes earlier, in the very
    * same `pr report` invocation, would be silently forced to re-run because
-   * the run that covered it was gone. `runs` prevents that: every run's own {files, output} stays independently
+   * the run that covered it was gone. `runs` prevents that: every run's
+   * own {files, output} stays independently
    * queryable, so a later command missing one run's coverage can still
    * match an EARLIER one — {@link findCoveringRun} — rather than only ever
    * the most recent. A reuse never synthesizes output by merging two runs'
@@ -759,7 +760,8 @@ export function defaultTestRunCache(): TestRunCache {
  * which is correct for its other callers but wrong here: this function's own
  * job is telling "the repo has no changes" apart from "the repo could not be
  * read", and folding both into `''` let a transient git failure produce a
- * cache key indistinguishable from a real one — two different heads or working trees that both hit the failure on
+ * cache key indistinguishable from a real one — two different heads or
+ * working trees that both hit the failure on
  * the same command would collide and reuse each other's output. `null` means
  * "could not resolve, don't know" and is never hashed into a key; only a
  * REAL zero-exit run — even one whose own stdout happens to be empty —
@@ -819,7 +821,8 @@ const NUL = String.fromCharCode(0)
 
 /**
  * Hashes ONE field as a fixed-width (4-byte, big-endian) length prefix
- * followed by its bytes — never a bare delimiter between fields. A delimiter chosen from a fixed alphabet (a
+ * followed by its bytes — never a bare delimiter between fields. A
+ * delimiter chosen from a fixed alphabet (a
  * space, a NUL) can still occur INSIDE a field whose content this function
  * does not control — `git diff HEAD`'s own output, an untracked file's own
  * name or bytes — so two genuinely different (field, field) pairs can
@@ -1888,7 +1891,8 @@ export type EvidenceReportOutcome =
  * the WHOLE driver mid-round — or, if a shutdown signal happened to land
  * while some earlier version of this code had globally monkey-patched
  * `process.exit` for the call's duration, hijack that unrelated signal's
- * own real exit into a thrown error instead (patching a process-global for a concurrently-running process is exactly
+ * own real exit into a thrown error instead (patching a process-global
+ * for a concurrently-running process is exactly
  * the shared-mutable-state hazard `defaultRunEvidenceReport`'s own doc
  * comment already calls out and avoids for `process.env`). Never
  * intercepting `process.exit` at all — rather than patching it — is what
