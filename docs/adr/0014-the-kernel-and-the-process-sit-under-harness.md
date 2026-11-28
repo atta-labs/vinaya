@@ -87,4 +87,4 @@ Every later move has a fixed destination and a rule that decides it, so two chan
 
 ## Where it is applied
 
-`harness/tests/architecture-ratchet.ts` holds the token list, the matching rule, the scope walk, the baseline writer and the base comparison; `harness/tests/architecture-baseline.json` is the committed baseline and `harness/tests/ownership-map.json` the committed ownership map. `harness/tests/architecture.test.ts` keeps the import checks and compares the counts with the baseline. The build job of `.github/workflows/ci.yml` runs the ratchet test and the base comparison on every pull request.
+`harness/kernel/tests/architecture-ratchet.ts` holds the token list, the matching rule, the scope walk, the baseline writer and the base comparison; `harness/kernel/tests/architecture-baseline.json` is the committed baseline and `harness/kernel/tests/ownership-map.json` the committed ownership map. `harness/kernel/tests/architecture.test.ts` keeps the import checks and compares the counts with the baseline. The build job of `.github/workflows/ci.yml` runs the ratchet test and the base comparison on every pull request.
