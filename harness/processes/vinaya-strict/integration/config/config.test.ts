@@ -1183,7 +1183,7 @@ describe('VinayaConfigSchema.tokens — additive-only', () => {
 })
 
 /**
- * Security review, HIGH: `runtimeDir` carries no repository segment — only
+ * `runtimeDir` carries no repository segment — only
  * `defaultRuntimeDir` adds one — so honouring it from the machine-global
  * config would collapse every repository on the host into one tree, and two
  * repositories' identically-numbered tasks would share a driver lock,

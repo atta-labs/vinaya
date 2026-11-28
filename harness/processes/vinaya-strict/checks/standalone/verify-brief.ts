@@ -129,8 +129,7 @@ const TASK_BRANCH_PATTERN = /^task\/[^/]+\/[^/]+$/
  * `--body-file` with a fumbled path (shell glob, tab-completion miss, wrong arg
  * order) would fall through to the empty-`PR_BODY` branch and exit 0, handing the
  * Planner a green on a brief nobody graded — the exact failure class this
- * gate exists to eliminate, reintroduced through its own new entry point
- * (PR #631 review MAJOR).
+ * gate exists to eliminate, reintroduced through its own new entry point.
  */
 type FlagRead = { state: 'absent' } | { state: 'value'; value: string } | { state: 'missing-value' }
 

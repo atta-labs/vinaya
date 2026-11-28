@@ -360,7 +360,7 @@ describe('body-bare-digits — masking-boundary integrity (normalization runs be
   })
 })
 
-// ---------- round 6 security review: the "kept" masking layers had laundering surface of their own ----------
+// ---------- the "kept" masking layers must not become a laundering surface of their own ----------
 
 describe('body-bare-digits — round 6: a decoy VINAYA:* anchor pair outside its documented section is not trusted', () => {
   it('does not let a decoy anchor for a field the body otherwise never anchors exempt a fabricated claim', () => {
@@ -741,7 +741,7 @@ describe('body-bare-digits — round 7: Tier:/Project: reuse the real field gram
     expect(checkBareDigits('Project: sample-core, cli, vinaya, forge-state').violations).toEqual([])
   })
 
-  // Round 9 code review, BLOCKER: PROJECT_SLUG's own shape
+  // PROJECT_SLUG's own shape
   // (/^[a-z0-9][a-z0-9-]*$/i) permits digits, so a hyphenated claim needs
   // no space or comma-adjacency trick at all to launder — it passes the
   // shape check exactly as a real project name would, unanchored AND

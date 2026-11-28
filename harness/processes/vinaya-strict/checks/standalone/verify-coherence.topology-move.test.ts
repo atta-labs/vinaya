@@ -36,7 +36,7 @@ import { LEGACY_TRANCHES_DIR } from '../../tools/legacy-paths'
  */
 
 /**
- * The fourth case below (round-3 review finding 4, then `#333`) needs a slug
+ * The fourth case below needs a slug
  * with a real Milestone AND real labeled Issues — the one thing the other
  * three cases' throwaway slugs deliberately lack. Reading that off this
  * repo's live forge state threw whenever no active Milestone carries labeled

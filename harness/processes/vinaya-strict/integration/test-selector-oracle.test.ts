@@ -346,8 +346,8 @@ describe('selectAffectedTestFiles replayed against the two recorded 2026-09-19 i
   }
 })
 
-// Round 2 review, BLOCKER — the a6d9640c change set above failed a SECOND
-// CI shard the first pass of this fixture never checked: GitHub Actions run
+// The a6d9640c change set above also failed a SECOND CI shard, one a fixture
+// checking only the first would miss: GitHub Actions run
 // 35434611919, shard 3, failed 6 assertions in
 // harness/processes/vinaya-strict/tests/commands/task-status.test.ts (reproduced live at that sha).
 // This was a DIFFERENT class of gap than log-callers — O2's: this file has no

@@ -10,14 +10,13 @@
  * budget) at that call's own scope, and requires every file with at least
  * one such call site to be named, by path, on `GRANDFATHERED_FILES` below.
  *
- * Round 5 review, BLOCKER F1 — the first version of this check compared the
- * env-strip and kill-budget PATTERNS against a file's WHOLE TEXT (or
- * treated any import of the shared helper as clearing the entire file),
- * which let one hardened call in a file hide a completely unrelated, fully
- * raw call elsewhere in the SAME file — exactly what happened to
+ * The env-strip and kill-budget PATTERNS are never compared against a file's
+ * WHOLE TEXT, and no import of the shared helper clears the entire file: a
+ * whole-file match lets one hardened call in a file hide a completely
+ * unrelated, fully raw call elsewhere in the SAME file — the shape
  * `conformance/harness.ts`'s `ensureCliBuilt`, `commands/dispatch-task.test.ts`'s
- * identical build spawn, and `package-root.test.ts`'s `run()` CLI helper.
- * This version instead:
+ * identical build spawn, and `package-root.test.ts`'s `run()` CLI helper
+ * each had. This check instead:
  *   - finds every real spawn call textually (skipping comments/strings so a
  *     doc comment that merely MENTIONS `spawn()` is never mistaken for one);
  *   - exempts a small set of inert setup utilities (`git`, `chmod`, `mkdir`,
@@ -63,43 +62,34 @@
  * work is the same later task the list's burn-down already is, not this
  * round's.
  *
- * Round 8 review closed two gaps the mechanism itself had, both in the
- * scan rather than in any one fixture:
- *   - HIGH (security) — `SPAWNS_REAL_PROCESS` matched neither `execSync`
- *     nor `exec`, though both run their argument through a shell exactly
- *     like the `sh -c`/`bash -c` case round 7 just closed; an
- *     `execSync('some command')` was completely invisible to the scan.
- *     Both are now matched. A bare `exec(` needed its own carve-out
+ * Two rules of the scan itself, rather than of any one fixture:
+ *   - `SPAWNS_REAL_PROCESS` matches `execSync` and `exec`, because both
+ *     run their argument through a shell exactly like the `sh -c`/`bash -c`
+ *     case above; without them an `execSync('some command')` would be
+ *     invisible to the scan. A bare `exec(` needs its own carve-out
  *     (`(?<!\.)`, see `SPAWNS_REAL_PROCESS`'s own comment) so it doesn't
  *     collide with the unrelated `RegExp.prototype.exec` idiom this very
  *     file (and six others) use for pattern matching.
- *   - MEDIUM (security) — `isSafeCommand`'s identifier fallback matched
- *     any hint merely containing "git" by NAME (`gitLikeWrapper` would
- *     have scored safe regardless of what it resolves to at runtime); it
- *     now requires the file to prove the identifier resolves to the real
- *     git binary by assignment (see `identifierResolvesToGit`).
- * Re-running the scan with both fixes found no new offender and no stale
- * grandfather entry — `GRANDFATHERED_FILES` is unchanged at 55 entries.
+ *   - `isSafeCommand`'s identifier fallback never accepts a hint merely
+ *     because it contains "git" by NAME (`gitLikeWrapper` would score safe
+ *     regardless of what it resolves to at runtime); it requires the file to
+ *     prove the identifier resolves to the real git binary by assignment
+ *     (see `identifierResolvesToGit`).
  *
- * Round 9 review closed three precision gaps in the scan, no fixture
- * changes:
- *   - `fileHasVinayaStrip`/the kill-budget scope test ran against raw
- *     `content`, so a comment merely NAMING `stripVinayaEnv`/`SIGKILL`
- *     could mark a file compliant with no such code present. They now run
- *     against `stripComments`'s output (comments blanked, strings left
+ * Three precision rules of the scan:
+ *   - `fileHasVinayaStrip`/the kill-budget scope test run against
+ *     `stripComments`'s output, never raw `content`, so a comment merely
+ *     NAMING `stripVinayaEnv`/`SIGKILL` cannot mark a file compliant with
+ *     no such code present (comments blanked, strings left
  *     intact — the real evidence is very often itself a string used as
- *     actual call/property syntax), and both patterns are tightened to
- *     require that call/property syntax rather than matching a bare word.
- *   - `SPAWNS_REAL_PROCESS` matched neither `execFile` in any form nor a
- *     member-call `exec` (`cp.exec(...)`) — the former is now in the main
+ *     actual call/property syntax); both patterns require that
+ *     call/property syntax rather than matching a bare word.
+ *   - `SPAWNS_REAL_PROCESS` matches `execFile` in any form and a
+ *     member-call `exec` (`cp.exec(...)`) — the former in the main
  *     alternation (a dotted call included, since `execFile` has no
  *     `RegExp.prototype`-style collision), the latter matched separately
  *     via `MEMBER_EXEC`, gated on the receiver provably resolving to
  *     `node:child_process` (`identifierResolvesToChildProcess`).
- *   - This comment and the changeset said ninety-two test files start a
- *     real process; the scan (as fixed above) reports ninety-one.
- * Re-running the fixed scan found no new offender and no stale grandfather
- * entry — `GRANDFATHERED_FILES` is unchanged at 55 entries after round 9.
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -537,10 +527,10 @@ function stripComments(content: string): string {
 /**
  * A real call — matched against `stripNonCode`'s output, never raw content.
  *
- * Round 8 security review, HIGH — `execSync`/`exec` were absent, despite
- * running their argument through a shell exactly like the `sh -c`/`bash -c`
- * case round 7 just closed; an `execSync('some command')` was completely
- * invisible to this scan. Both are now matched like every other real spawn.
+ * `execSync`/`exec` are matched like every other real spawn, because both
+ * run their argument through a shell exactly like the `sh -c`/`bash -c`
+ * case; without them an `execSync('some command')` would be invisible to
+ * this scan.
  * A bare `exec(` needs its own negative lookbehind (`(?<!\.)`) — unlike
  * `execSync`/`execFileSync`, the plain word `exec` collides with
  * `RegExp.prototype.exec`, e.g. this very file's own `re.exec(codeOnly)`
@@ -548,9 +538,9 @@ function stripComments(content: string): string {
  * keeps that member-call idiom out while still catching a bare imported
  * `exec(cmd, cb)`.
  *
- * Round 9 finding 2 — bare `execFile(` (never `execFileSync`, already
- * matched) was entirely absent, so `import { execFile } from
- * 'node:child_process'; execFile('ls', cb)` was invisible. It's now matched
+ * Bare `execFile(` (not only `execFileSync`) is matched too, or
+ * `import { execFile } from 'node:child_process'; execFile('ls', cb)` would
+ * be invisible. It's matched
  * like every other bare spawn name — including a DOTTED call
  * (`cp.execFile(...)`), since `\b` matches at the `.`→word-char boundary
  * just as readily as at a bare call's own start, and `execFile` never

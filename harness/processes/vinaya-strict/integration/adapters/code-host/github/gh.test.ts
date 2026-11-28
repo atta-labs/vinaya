@@ -185,7 +185,7 @@ describe('ghApiGetAllPagesAsync', () => {
  * Every other `tranchesAttachedToMilestone` test (`fetch-milestone.test.ts`)
  * mocks `ghApiGetAllPagesAsync` itself, which proves the caller's own logic
  * but nothing about the filter actually reaching `gh` or the walk actually
- * paging — the gap a round-2 review found.
+ * paging — the gap this test closes.
  */
 describe('tranchesAttachedToMilestone — the real paginated, filtered fetch, end to end', () => {
   const OVER_ONE_MEGABYTE = 'x'.repeat(1024 * 1024 + 1)

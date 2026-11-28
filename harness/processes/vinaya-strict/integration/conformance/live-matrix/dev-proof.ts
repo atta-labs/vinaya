@@ -356,7 +356,7 @@ function buildAgentLaunch(
       ...claudeDevToolsArgs(mcpConfigPath, [allowed]),
       ...(confinement.settingsPath ? ['--settings', confinement.settingsPath] : [])
     ]
-    // F1 (round 2 security review, MEDIUM): never spread the driver/operator's
+    // Never spread the driver/operator's
     // whole environment into the spawned agent — the agent's own sandbox
     // confines its tools' filesystem and network, never their env. Build the
     // child env from the SAME `buildWorkerEnv` named allowlist the confined

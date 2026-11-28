@@ -139,7 +139,7 @@ describe('core-parity: brief-shape vs bin/verify-brief.ts', () => {
     expect(binExit).toBe(1)
   })
 
-  // review round 1, finding 4: a failed `gh issue view` must not be treated
+  // A failed `gh issue view` must not be treated
   // uniformly — an Issue that genuinely doesn't resolve skips the comparison,
   // but any OTHER failure (network, auth, rate-limit) must hard-fail rather
   // than silently pass. Both entry points agree on both.

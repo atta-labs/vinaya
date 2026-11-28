@@ -459,13 +459,13 @@ function runC7(only?: ReadonlySet<string>): void {
  * The corpus C8 sweeps: every doctrine page under `harness/processes/vinaya-strict/`, and every
  * tracked `.ts`/`.md` file under `apps/` and `packages/`.
  *
- * Widened from a four-entry allowlist after review round 1 (Issue #434,
- * MAJOR): the allowlist covered every marker this change happened to add,
- * so it passed, while `documentation-coherence.md` told readers the check
- * was repo-wide. A marker added later a few directories away would have sat
- * outside the corpus and been verified by nothing — the doc overclaiming
- * what the code did, which is the exact defect this check exists to catch.
- * The corpus is now what the doctrine says it is.
+ * The corpus is repo-wide, not a short allowlist: an allowlist covering only
+ * the markers one change happened to add would pass, while
+ * `documentation-coherence.md` tells readers the check is repo-wide. A marker
+ * added later a few directories away would sit outside the corpus and be
+ * verified by nothing — the doc overclaiming what the code does, which is the
+ * exact defect this check exists to catch. The corpus is what the doctrine
+ * says it is.
  *
  * VINAYA:CLAIM: harness/processes/vinaya-strict/tools/reader-resolvable-prose.ts contains:export const PRODUCT_SLUG_SCOPE: readonly string[] = [
  * **Deliberately not `PRODUCT_SLUG_SCOPE`.** That export landed in `#436`
@@ -511,8 +511,7 @@ function runC8(only?: ReadonlySet<string>): void {
 
   if (files.length === 0) return
 
-  // A cited path is read ONLY when git tracks it (security review round 1,
-  // MEDIUM). Corpus discovery already went through `git ls-files`; the reader
+  // A cited path is read ONLY when git tracks it. Corpus discovery already went through `git ls-files`; the reader
   // did not, so a crafted `contains:` marker could aim it at any untracked
   // file present at check time and read pass/fail as one bit about that
   // file's content. Nothing is ever echoed, but the bit was real. Reading

@@ -98,7 +98,7 @@ export function compareEvidenceBlock(
   // `roles/developer.md` § After you open the PR), and it never binds to
   // any particular head, so there is nothing to bind to a head here yet.
   //
-  // Security review, HIGH: the placeholder's mere presence is NOT, on its
+  // The placeholder's mere presence is NOT, on its
   // own, proof that no report has ever landed — nothing stops a PR author
   // from hand-editing a REAL, already-posted block back to this exact
   // literal string to defeat the byte-comparison below forever. Trusted

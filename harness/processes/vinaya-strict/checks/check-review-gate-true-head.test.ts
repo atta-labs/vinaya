@@ -96,7 +96,7 @@ process.exit(1)
   })
 
   /**
-   * Round 2 review, security MEDIUM: `resolveBaseSha` used to return `null`
+   * A base that cannot be resolved must fail closed: `resolveBaseSha` used to return `null`
    * on a genuine resolution failure (both `git ls-remote` and the forge's
    * ref API failing), and that `null` was passed straight through as
    * `baseSha: null` — which `compareManifest`'s own `isBoundToBase` reads as

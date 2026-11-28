@@ -39,7 +39,7 @@ async function run(env: Record<string, string>, args: string[] = []): Promise<{ 
 }
 
 /**
- * `runIssueMode` (task-run-v1 21, #541, O2, round 2 review MAJOR): a
+ * `runIssueMode`: a
  * `task/issue-<n>` branch resolves `checkDispatchReadiness` straight off the
  * Issue itself — no topology row, no Milestone. A fake `gh` on `PATH`
  * answers `gh issue view <n> --json number,state,body,labels`; no other

@@ -82,8 +82,8 @@ const TESTS_ROOT = join(fileURLToPath(new URL('../../../../../../apps/cli/tests'
 /**
  * Test files living beside the code they cover, rather than under this
  * directory. They run in the same suite and can read a default destination or
- * spawn exactly as the files here do, so scanning only this directory left them
- * unguarded (round 5 security review, LOW). Only `*.test.ts` is taken from
+ * spawn exactly as the files here do, so scanning only this directory would
+ * leave them unguarded. Only `*.test.ts` is taken from
  * there: the production sources beside them are not this rule's subjects.
  */
 const COLOCATED_TESTS_ROOT = join(TESTS_ROOT, '..', 'src')
@@ -302,8 +302,7 @@ const GUARD_FILE = 'harness/processes/vinaya-strict/integration/log/client/log-d
  * `lib/dispatch/unattended.test.ts`, `lib/log-webhook-drain.test.ts`,
  * `lib/task-tools/cancel.test.ts`, `commands/dispatch.test.ts`,
  * `conformance/live-smoke.ts` and `conformance/harness.ts` — the last of which
- * became one when it started declaring its sandbox's own `logs` folder, and was
- * left out of this count for a round (round 5 review, MINOR). No colocated
+ * is one because it declares its sandbox's own `logs` folder. No colocated
  * `src/**` test reads a default destination today; the scan walks them anyway.
  */
 const SUBJECT_FLOOR = 11
@@ -343,10 +342,9 @@ function walk(dir: string, prefix: string): [string, string][] {
  *     file's own code: that program's `log()` call runs in a child.
  *
  * Both are produced by one scanner rather than by a regex, because a regex
- * cannot tell a `//` inside a string from a comment: `'https://x/y'` ended the
- * physical line for every earlier scan here, hiding whatever followed it,
- * including an unisolated spawn (round 3 review, MINOR; round 3 security
- * review, MEDIUM). Regex literals are tracked too — otherwise a pattern like
+ * cannot tell a `//` inside a string from a comment: `'https://x/y'` would end
+ * the physical line for a regex scan, hiding whatever followed it, including an
+ * unisolated spawn. Regex literals are tracked too — otherwise a pattern like
  * a character class holding a quote would open a string that swallows the rest
  * of the file — using the standard preceding-token heuristic, which is exact
  * for every shape in this tree: a `/` can only begin a regex where a value
@@ -596,9 +594,9 @@ const SPAWNS_REAL_PROCESS_SOURCE =
  * A FRESH matcher per scan, never one shared module-level global regex: a
  * global `RegExp` carries `lastIndex` between uses, and `String.matchAll`
  * starts from whatever the previous caller left there, so one `.test()` on a
- * shared instance made every later file's scan begin part-way in and skipped
+ * shared instance makes every later file's scan begin part-way in and skip
  * every call site before that offset — an order-dependent blind spot that
- * reported a non-compliant file as clean (round 2 security review, MEDIUM).
+ * reports a non-compliant file as clean.
  */
 function spawnMatcher(): RegExp {
   return new RegExp(SPAWNS_REAL_PROCESS_SOURCE, 'g')
@@ -685,9 +683,8 @@ function namesWorkingDirectory(args: string, argsWithStrings: string): boolean {
  * up. Both halves are required and their ORDER is not, because the real shapes
  * put them either way round — `join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'apps')` and
  * `fileURLToPath(new URL('../..', import.meta.url))` — and requiring the `..`
- * to come second meant the second form, which this file's own doc comment
- * claimed to recognise, never matched at all (round 4 security review,
- * MEDIUM). `__dirname` is an anchor too: `resolve(__dirname, '..', '..', '..', '..', '..', '..', 'apps')` is
+ * to come second would mean the second form, which this file's own doc comment
+ * claims to recognise, never matched at all. `__dirname` is an anchor too: `resolve(__dirname, '..', '..', '..', '..', '..', '..', 'apps')` is
  * the same walk in the other module system.
  *
  * A captured `process.cwd()` is deliberately NOT one of these: a fixture
@@ -712,8 +709,7 @@ const CALL_DERIVED_ROOT = /\brepoRoot(?:Sync|Async)?\s*\(|rev-parse[^\n]{0,40}--
  * third is what makes the answer transitive: a module-path anchor walked up, a
  * call that returns this repository's root, or ANY name already known to hold
  * one — so `join(REPO_ROOT, 'apps', 'cli')` is inside the repository, and a
- * `chdir` into it is not a move out of it (round 6 security review, MEDIUM
- * twice).
+ * `chdir` into it is not a move out of it.
  */
 function isRepositoryRootedExpression(expression: string, roots: ReadonlySet<string> = new Set()): boolean {
   if (MODULE_PATH_ANCHOR.test(expression) && WALKS_UP.test(expression)) return true
@@ -733,10 +729,9 @@ const NAMES_A_FILE = new RegExp(`${QUOTE}[^\\u0027\\u0022\\u0060/]+\\.[A-Za-z0-9
 /**
  * A binding's whole initializer, however many lines it spans: from the `=` to
  * the `;` or line end that closes it at bracket depth zero. Reading only to
- * the end of the physical line meant a `const repoRoot = join(` wrapped by the
- * formatter bound no name at all, and every use of it escaped the scan (round
- * 4 review, MINOR; round 4 security review, MEDIUM) — the offence this file
- * exists to catch, silenced by a reformat.
+ * the end of the physical line would mean a `const repoRoot = join(` wrapped by
+ * the formatter binds no name at all, and every use of it escapes the scan —
+ * the offence this file exists to catch, silenced by a reformat.
  */
 function initializerFrom(code: string, start: number): string {
   let depth = 0
@@ -768,9 +763,8 @@ function bindingsIn(code: string): { name: string; initializer: string }[] {
  * carrying one — grown to a fixed point from the roots already known, so a
  * derived subdirectory (`join(REPO_ROOT, 'apps', 'cli')`), a plain re-binding
  * (`const where = repoRoot`) and an options object (`{ cwd: repoRoot }`) all
- * carry this repository as far as the first name does. Each of those three was
- * its own escape at some point (round 4 security review, LOW; round 5 security
- * review, LOW; round 6 security review, MEDIUM).
+ * carry this repository as far as the first name does. Each of those three
+ * would otherwise be its own escape from the scan.
  */
 function namesCarryingARepositoryRoot(code: string, seeds: ReadonlySet<string>): Set<string> {
   const roots = new Set(seeds)
@@ -832,10 +826,9 @@ function repositoryRootedIdentifiers(rel: string, source: ScannedSource): string
       const original = parts[0]
       const local = parts[parts.length - 1]
       // The sibling module binds the ORIGINAL name; this file uses the LOCAL
-      // one. Looking the local name up over there resolved nothing the moment an
-      // import was renamed — and a `chdir` into that name was then read as a
-      // move OUT of the repository (round 6 review, MAJOR; round 6 security
-      // review, MEDIUM).
+      // one. Looking the local name up over there resolves nothing the moment an
+      // import is renamed — and a `chdir` into that name would then be read as a
+      // move OUT of the repository.
       if (original && local && bound.has(original)) seeds.add(local)
     }
   }
@@ -881,8 +874,8 @@ const CALLEES_THAT_RUN_NOTHING = new Set([
   'afterAll'
   // `chdir` is deliberately NOT here. It is the one call that really moves
   // this process, so `process.chdir(repoRoot)` is this repository being run
-  // in — the most literal form of the offence — and listing it here made the
-  // scan skip exactly that (round 3 review, MAJOR).
+  // in — the most literal form of the offence — and listing it here would make
+  // the scan skip exactly that.
 ])
 
 /** The call whose own argument list `index` sits directly inside: its callee's name (`null` for an anonymous one) and the offset of its opening parenthesis, so a caller can step outward to the call that encloses THAT one. */
@@ -911,10 +904,9 @@ const PATH_BUILDERS = new Set(['join', 'resolve', 'normalize', 'relative', 'file
  * that runs: `runFixtureScript(script, join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'apps'), env)`,
  * `{ cwd: join(import.meta.dir, '../../../../../../apps/cli') }`, `process.chdir(join(import.meta.dir, '../../../../../../apps/cli'))`.
  *
- * Tracking only NAMED roots left the offence this whole task is about
+ * Tracking only NAMED roots would leave the offence this scan is about
  * defeatable by inlining one expression — no `const` to bind, so nothing to
- * recognise (round 5 review, MAJOR twice; round 5 security review, MEDIUM
- * twice, each proved against the real scan). The walk starts at the module-path
+ * recognise. The walk starts at the module-path
  * anchor, steps outward through the path builders wrapping it, and asks what
  * the finished path is given to: a `cwd` key is by definition handed to
  * something that runs, and any other non-inert callee runs it too.
@@ -1023,12 +1015,11 @@ function escapeForRegExp(value: string): string {
  * file. An approximation of lexical scope good enough for this scan's two
  * questions — is there a `process.chdir` before this call in a block that
  * encloses it, and is the producer this call names bound to a sink of the
- * file's own there — and the reason both are decided PER CALL now: every
- * waiver here used to be file-wide, so one `chdir` or one injected dependency
- * anywhere in a file excused every producer call in it, including calls in
- * other functions and calls made after the process had been moved back (round
- * 4 review, MAJOR/MINOR; round 4 security review, MEDIUM twice, each proved
- * live by appending a real leaking call to a file the scan then kept passing).
+ * file's own there — and the reason both are decided PER CALL: a file-wide
+ * waiver would let one `chdir` or one injected dependency anywhere in a file
+ * excuse every producer call in it, including calls in other functions and
+ * calls made after the process had been moved back, so a real leaking call
+ * appended to such a file would keep passing the scan.
  */
 function enclosingBlocks(code: string, index: number): [number, number][] {
   const out: [number, number][] = []
@@ -1081,8 +1072,7 @@ function endOfBlock(code: string, start: number): number {
  * Names bound to a captured working directory — `const original = process.cwd()`.
  * A `process.chdir` back into one of these is the standard `afterEach` restore:
  * it puts the process back where it started, which in a test run is this
- * repository, so treating it as proof the process left was an inversion of the
- * rule (round 4 review, MAJOR; round 4 security review, MEDIUM).
+ * repository, so treating it as proof the process left would invert the rule.
  */
 function capturedWorkingDirectories(code: string): Set<string> {
   const out = new Set<string>()
@@ -1098,11 +1088,10 @@ function capturedWorkingDirectories(code: string): Set<string> {
  * directory, is not a move out — it is the offence, or the restore.
  *
  * The target is read as a whole EXPRESSION, in the view that still holds its
- * path literals. Matching only a bare identifier meant an inline
+ * path literals. Matching only a bare identifier would mean an inline
  * `process.chdir(join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'apps'))` — the most literal form of
- * the offence — captured `join`, which is in neither set, and so counted as a
- * move OUT and positively waived every producer call after it (round 5 review,
- * MAJOR; round 5 security review, MEDIUM).
+ * the offence — captures `join`, which is in neither set, and so counts as a
+ * move OUT and positively waives every producer call after it.
  */
 function movedOutOfRepositoryBefore(index: number, source: ScannedSource, repoRooted: Set<string>): boolean {
   const code = source.codeOnly
@@ -1237,8 +1226,8 @@ const IN_PROCESS_SITE = 'calls a Vinaya Log producer in this process without mov
  *
  * The vocabulary is cross-checked against `lib/log-callers.test.ts`'s own
  * `PRODUCER_BOUNDARIES` by a test below, since that table is what
- * `harness/kernel/log/log.md` treats as the authoritative producer list and this
- * one silently missed four of its boundaries (round 4 security review, LOW).
+ * `harness/kernel/log/log.md` treats as the authoritative producer list, so this
+ * one cannot silently miss any of its boundaries.
  */
 const SINK_PRODUCERS = ['log', 'drainLogSink', 'createLogSink'] as const
 const BOUNDARY_PRODUCERS = [
@@ -1284,8 +1273,8 @@ const SELF_TEST_BOUNDARY_TOKENS = new Set(['planted'])
  * Every name that reaches a producer inside this file, mapped to the producer
  * it reaches: the producer's own name, an alias it was imported under
  * (`import { log as writeLog }`), and a namespace import's member call
- * (`import * as sink` … `sink.log(…)`). Both aliases scanned clean before
- * (round 4 security review, LOW).
+ * (`import * as sink` … `sink.log(…)`). Without the two alias forms, either
+ * would scan clean.
  */
 function producerCallNames(code: string): Map<string, string> {
   const out = new Map<string, string>()
@@ -1388,13 +1377,11 @@ function callIsHandedALogDependency(code: string, index: number, producerNames: 
  * every in-process producer call that is neither handed a destination of its
  * own nor made with this process moved out of the repository.
  *
- * Each producer call is judged on its own, in its own scope. Every earlier
- * version of this decided it once per FILE, and every one of those waivers was
- * demonstrated live: a `chdir` in one function excusing a call in another, a
- * sink built in one test case excusing a call outside every case, a bare
- * `outboxRoot:` key — even one written into a config for a CHILD, or in a type
- * annotation — excusing the whole file (round 4 review, MAJOR and MINOR; round
- * 4 security review, MEDIUM twice).
+ * Each producer call is judged on its own, in its own scope. Deciding it once
+ * per FILE opens waivers each shown live: a `chdir` in one function excusing a
+ * call in another, a sink built in one test case excusing a call outside every
+ * case, a bare `outboxRoot:` key — even one written into a config for a CHILD,
+ * or in a type annotation — excusing the whole file.
  */
 function repositoryWorkingDirectorySites(rel: string, source: ScannedSource): string[] {
   const code = source.codeOnly

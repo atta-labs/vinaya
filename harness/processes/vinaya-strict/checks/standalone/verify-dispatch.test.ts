@@ -575,7 +575,7 @@ describe('(#179) the shape guard rejects a number that is not a count', () => {
 })
 
 /**
- * PR #179 security review, MEDIUM. A forge-degraded `verify-coherence` run
+ * A forge-degraded `verify-coherence` run
  * reports a SMALLER `failed` count, honestly arrived at from the tranches it
  * could see. Read as a finding count it under-reports, and `--check-baseline`
  * would compare it as if it were complete.

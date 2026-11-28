@@ -723,8 +723,7 @@ describe('Part 3 — unprovable shapes retain the whole-package edge (coarse fal
   })
 })
 
-// symbol-aware-test-selection-v1 1, round 2 review — regressions the never-miss
-// invariant hid until the reviewers surfaced them: an empty/comment-bearing named
+// Regressions the never-miss invariant can hide: an empty/comment-bearing named
 // list must fall back (not silently drop names), a non-source change inside a
 // package must still reach precisely-resolved importers, a re-export hop's own
 // module imports must be traversed, a whitespace-free clause must still parse, and
@@ -889,8 +888,7 @@ describe('Round 2 — fallback and never-miss holes', () => {
   })
 })
 
-// symbol-aware-test-selection-v1 1, round 3 review — the shapes that still
-// resolved to SILENCE rather than to the coarse edge (a quote inside a clause, a
+// The shapes that can resolve to SILENCE rather than to the coarse edge (a quote inside a clause, a
 // hop's own import under a clause the binding parser cannot read, a hop's bare
 // import of a package with no derivable entrypoint), the `exports` conditions
 // choice that was guessed rather than proved, and two precision residuals: a
@@ -1478,9 +1476,9 @@ describe('tests that read the repository tree are selected from what they scan (
   })
 })
 
-// Round 2 review, F1 — `import x = require('<spec>')` carries no `from`, no
-// quote directly after `import`, and no `import(` call, so it was the one shape
-// the text-scan graph could not see at all. A shape a graph cannot see
+// `import x = require('<spec>')` carries no `from`, no quote directly after
+// `import`, and no `import(` call, so it is the one shape the text-scan graph
+// cannot see at all. A shape a graph cannot see
 // contributes no edge, which is silence rather than the coarse fallback; the
 // compiler graph degraded it correctly but had no fixture proving it either.
 describe('`import x = require(...)` degrades to the coarse edge under BOTH resolvers (F1)', () => {

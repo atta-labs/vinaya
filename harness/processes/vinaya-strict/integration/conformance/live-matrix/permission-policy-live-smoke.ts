@@ -49,19 +49,18 @@
  *   5. A forbidden shape doctrine names (`git commit --no-verify`) is
  *      REFUSED — `permission_denials` populated, AND the denied tool call's
  *      own `command` is checked to actually BE the `--no-verify` commit
- *      (round 2 security review, LOW: a bare non-empty check alone would not
- *      catch a regression that denied a DIFFERENT command instead) — even
+ *      (a bare non-empty check alone would not catch a regression that
+ *      denied a DIFFERENT command instead) — even
  *      though a BROADER allow rule (`Bash(git commit:*)`) also matches the
  *      same command text, proving the deny rule's own precedence, not mere
  *      absence from the allow list.
  *   6. A real `Write` call INSIDE the granted directory actually creates the
- *      file (round 2 code review, BLOCKER: the settings-file `Write(<path>/
- *      **)` rule this task originally shipped never worked live — see
+ *      file (the settings-file `Write(<path>/**)` rule never worked live — see
  *      `buildRolePermissions`'s own doc comment in `dispatch.ts` for the full
  *      live-verified failure and the `PreToolUse`-hook fix this script now
  *      proves instead).
  *   7. `git push origin --force` (the force flag AFTER the remote/branch,
- *      not right after `push`) is REFUSED — round 3 security review, HIGH: a
+ *      not right after `push`) is REFUSED — a
  *      settings-file `Bash(git push --force*)` deny entry only ever matches
  *      that flag in the fixed position right after `push`; this shape slid
  *      through it and resolved allowed until `commandForcesGitOrSkipsVerify`
@@ -69,7 +68,7 @@
  *   8. `git push origin +HEAD:scratch-throwaway-branch` (git's own `+refspec`
  *      force-push syntax — no `--force`/`-f` flag present at all) is REFUSED
  *      the same way, for the same reason. A throwaway destination branch,
- *      never `main` — round 3's own live run found this MODEL never even
+ *      never `main` — a live run found this MODEL never even
  *      attempted the tool call for an equivalent `+feature:main` prompt,
  *      independently declining on its own safety grounds before the
  *      permission engine (or this hook) ever saw the call; a target this
@@ -334,7 +333,7 @@ async function main(): Promise<void> {
     )
   }
 
-  // Round 3 security review, HIGH: none of these ever matched a
+  // None of these ever matched a
   // `Bash(git push --force*)`-style settings-file deny entry, since that
   // grammar only ever matches a fixed prefix — the `git-force-or-skip-verify`
   // check in the background-deny hook (real token inspection, not a

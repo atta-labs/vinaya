@@ -85,7 +85,7 @@ describe('vinaya check --json — pipe flush (Issue #127)', () => {
   it('emits the complete JSON payload through a real node subprocess pipe, above the pipe buffer', async () => {
     const repoDir = writeFixtureRepo()
     try {
-      // Issue #660, O3 (round 5 review, MAJOR) — this process's own
+      // This process's own
       // VINAYA_* environment is stripped, and the subprocess is bounded by
       // an explicit budget that throws with its own captured stdout/stderr
       // on expiry, rather than falling through to bun:test's bare timeout.

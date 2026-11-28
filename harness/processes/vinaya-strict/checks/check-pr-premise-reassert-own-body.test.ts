@@ -11,7 +11,7 @@ import { reassertPrBodyPremise } from '../tools/premise-reassert-logic'
  * adds a check reading a PR body ships a test running that check over THAT
  * PR's own body — the one input a synthetic fixture the author also wrote
  * can never exercise, because the author's fixture agrees with the author's
- * mental model by construction (round 1 review, PR #473; precedent:
+ * mental model by construction (precedent:
  * `harness/processes/vinaya-strict/checks/test-plan-gate.test.ts`'s "a real PR's own body
  * (task 12, #387)").
  *

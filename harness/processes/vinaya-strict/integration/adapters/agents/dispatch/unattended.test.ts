@@ -99,10 +99,9 @@ function buildFixture(): Fixture {
 }
 
 /**
- * Issue #660, O3 round 3 (security review, HIGH) — all three real `vinaya
- * dispatch --unattended` fixtures below spread `...process.env` straight
- * into the spawned child with no `VINAYA_*` stripping and no
- * `execFileSync` timeout: the same `VINAYA_RUNTIME_DIR` leak/no-budget
+ * None of the three real `vinaya dispatch --unattended` fixtures below may
+ * spread `...process.env` straight into the spawned child with no `VINAYA_*`
+ * stripping and no `execFileSync` timeout: that is the same `VINAYA_RUNTIME_DIR` leak/no-budget
  * pattern already fixed in `apps/cli/tests/lib/dispatch.test.ts`'s own
  * `stripVinayaEnv` + budget.
  */
@@ -204,7 +203,7 @@ describe('vinaya dispatch --unattended — Claude confinement', () => {
       // `resolveClaudeConfinement`'s `warning` field, not observable through
       // this subprocess harness. What IS observable here, through the
       // fixture's own isolated outbox: the dispatch refuses before the vendor
-      // starts, AND (round 2 review, MAJOR) the missing confinement
+      // starts, AND the missing confinement
       // reaches the Vinaya Log itself, not only `writeLifecycle`'s own
       // stderr/driver.log mirror — a real `operation`/`completed` line,
       // read back from the SAME fixture `HOME` every other assertion in
@@ -486,7 +485,7 @@ describe('vinaya dispatch --unattended — O4 a Codex start never runs outside t
     expect(result.status).not.toBe(0)
     expect(existsSync(fixture.markerFile), 'the codex binary must never be spawned').toBe(false)
     expect(result.stderr).toContain('refused')
-    // O4 (task 4): Codex's own sandbox/network-proxy mechanism, resolved
+    // Codex's own sandbox/network-proxy mechanism, resolved
     // through `resolveCodexConfinement`, replaced the hand-built Seatbelt
     // boundary's own "worker isolation boundary" refusal wording.
     expect(result.stderr).toContain("Codex's own sandbox and network proxy")
