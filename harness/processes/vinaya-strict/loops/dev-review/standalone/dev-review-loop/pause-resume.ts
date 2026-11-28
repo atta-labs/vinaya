@@ -1363,6 +1363,8 @@ export type ResolveEscalationResult = {
  * `StaleEscalationError`/`WrongTargetResolutionError`/
  * `ReplayedResolutionError` on any of the three refusal conditions O2
  * requires; a caller that wants a non-throwing form wraps this itself.
+ * Once this call's own resolution is recorded it returns that resolution: a
+ * transition refused afterwards as stale is reported on stderr, not thrown.
  *
  * `expectedPr` is `null` for a pause recorded before any pull request existed
  * — the wrong-target check below is an equality against the escalation's own
@@ -1425,12 +1427,22 @@ export function resolveEscalation(
   if (outcome.outcome === 'already-consumed') {
     throw new ReplayedResolutionError(task, escalationId, outcome.record)
   }
-  appendTransition(deps, task, acquired.epoch, {
-    from: 'paused',
-    to: decision === 'resume' ? 'resumed' : 'cancelled',
-    detail: authenticatedFrom,
-    at: now
-  })
+  // The resolution above is this call's own and is on disk, so the claim stands from here on. A newer ownership
+  // number taken by another claimant between that record and this transition refuses the transition as stale; the
+  // refusal is reported and the result still returned, since the decision it would describe is already recorded.
+  try {
+    appendTransition(deps, task, acquired.epoch, {
+      from: 'paused',
+      to: decision === 'resume' ? 'resumed' : 'cancelled',
+      detail: authenticatedFrom,
+      at: now
+    })
+  } catch (err) {
+    if (!(err instanceof StaleEpochWriteError)) throw err
+    printDriverLockLine(
+      `task ${task}'s ${decision} resolution for escalation '${escalationId}' is recorded, but its transition was refused — ${err.message}; continuing`
+    )
+  }
   // An answer only for an actual resolution — a
   // cancellation ends the escalation without anyone ruling on it, a
   // different outcome the Log does not record as an answer. Reached at most once per

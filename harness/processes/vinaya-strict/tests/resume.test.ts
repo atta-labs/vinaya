@@ -2,13 +2,25 @@ import { fixtureDir } from '@harness/kernel/conformance/unit/test-temp-fixture'
 import { describe, expect, test } from 'bun:test'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import type { EscalationRecord, ResolutionRecord } from '@harness/kernel/connectors/checkpoint/control-store/index'
+import {
+  acquireOwnership,
+  type ControlStoreDeps,
+  defaultControlStoreDeps,
+  type EscalationRecord,
+  readCurrentOwnership,
+  readResolution,
+  type ResolutionRecord,
+  StaleEpochWriteError
+} from '@harness/kernel/connectors/checkpoint/control-store/index'
 import { createRunControl, type RunControl, type SpawnedProcessLike } from '@atta/executor-agent-spawn'
 import { loadProcess } from '@harness/kernel/dev-process-socket/loader/load-process'
 import type { ActionRegistry, ProcessAction } from '@harness/kernel/loops/runtimes/atta-engine/run-process'
 import {
+  escalationIdFor,
   readDriverLock,
   ReplayedResolutionError,
+  resolveEscalation,
+  writeEscalationRecord,
   writePauseState,
   type PauseState
 } from '../loops/dev-review/standalone/dev-review-loop/pause-resume'
@@ -871,5 +883,123 @@ describe('a run-engine --resume start ends the person span an earlier process as
     } finally {
       harness.cleanupWorlds()
     }
+  })
+})
+
+describe('resolving an escalation while a newer claim takes the ownership number', () => {
+  /**
+   * A control store whose root, read once `when` first holds, lets another claimant take the task's next ownership
+   * number before the read goes on: the claim under test then meets that newer number at its next store write.
+   */
+  async function racingStore(task: number, when: (base: ControlStoreDeps) => boolean) {
+    const { controlStoreRoot } = await import('@harness/kernel/effects/effects')
+    const base = defaultControlStoreDeps(controlStoreRoot)
+    let raced = false
+    const deps: ControlStoreDeps = {
+      ...base,
+      root: () => {
+        if (!raced && when(base)) {
+          raced = true
+          acquireOwnership(base, task, 'another-claimant')
+        }
+        return base.root()
+      }
+    }
+    return { deps, base, raced: () => raced }
+  }
+
+  type Pause = { task: number; pr: number | null; escalationId: string }
+
+  /** Runs `body` in a world whose pause's escalation record is written, and returns what stderr received. */
+  async function withEscalation<T>(body: (pause: Pause) => Promise<T>): Promise<{ result: T; stderr: string }> {
+    const harness = await import('./standalone/lib/dev-review-loop-harness')
+    const support = await import('./standalone/lib/person-span-support')
+    const world = harness.makeWorld()
+    const written: string[] = []
+    const write = process.stderr.write
+    try {
+      return await harness.withWorldEnv(world, async () => {
+        const facts = support.escalationFactsFor(world)
+        writeEscalationRecord(facts)
+        process.stderr.write = ((chunk: string | Uint8Array) => {
+          written.push(String(chunk))
+          return true
+        }) as typeof process.stderr.write
+        try {
+          const result = await body({
+            task: facts.task,
+            pr: facts.pr,
+            escalationId: escalationIdFor(facts.task, facts.round, facts.head)
+          })
+          return { result, stderr: written.join('') }
+        } finally {
+          process.stderr.write = write
+        }
+      })
+    } finally {
+      harness.cleanupWorlds()
+    }
+  }
+
+  test('a resume whose transition is refused after its own resolution was recorded returns that resolution', async () => {
+    const { result, stderr } = await withEscalation(async ({ task, pr, escalationId }) => {
+      const store = await racingStore(task, (base) => readResolution(base, task, escalationId).status === 'ok')
+      const resolved = resolveEscalation(task, escalationId, pr, 'resume', 'principal-1', `${pr}-1`, store.deps)
+      return {
+        resolved,
+        raced: store.raced(),
+        current: readCurrentOwnership(store.base, task),
+        recorded: readResolution(store.base, task, escalationId),
+        pr
+      }
+    })
+    expect(result.raced).toBe(true)
+    expect(result.current.record?.ownerId).toBe('another-claimant')
+    expect(result.resolved.epoch).toBe(result.current.epoch - 1)
+    expect(result.resolved.resolution).toMatchObject({
+      decision: 'resume',
+      authenticatedBy: 'principal-1',
+      authenticatedFrom: `${result.pr}-1`
+    })
+    expect(result.recorded).toEqual({ status: 'ok', value: result.resolved.resolution })
+    expect(stderr).toContain('is recorded, but its transition was refused')
+    expect(stderr).toContain('control-store: refusing a write')
+  })
+
+  test('a claim refused as stale before its resolution is recorded throws, and records nothing', async () => {
+    const { result } = await withEscalation(async ({ task, pr, escalationId }) => {
+      const store = await racingStore(
+        task,
+        (base) => readCurrentOwnership(base, task).record?.ownerId.includes(':resolution:') === true
+      )
+      let thrown: unknown = null
+      try {
+        resolveEscalation(task, escalationId, pr, 'resume', 'principal-1', `${pr}-1`, store.deps)
+      } catch (error) {
+        thrown = error
+      }
+      return { thrown, raced: store.raced(), recorded: readResolution(store.base, task, escalationId).status }
+    })
+    expect(result.raced).toBe(true)
+    expect(result.thrown).toBeInstanceOf(StaleEpochWriteError)
+    expect(result.recorded).toBe('absent')
+  })
+
+  test('a cancel after a recorded resume is refused as a replayed resolution, with the message it always had', async () => {
+    const { result } = await withEscalation(async ({ task, pr, escalationId }) => {
+      const store = await racingStore(task, (base) => readResolution(base, task, escalationId).status === 'ok')
+      const resumed = resolveEscalation(task, escalationId, pr, 'resume', 'principal-1', `${pr}-1`, store.deps)
+      let thrown: unknown = null
+      try {
+        resolveEscalation(task, escalationId, pr, 'cancel', 'principal-1', `${pr}-cancel`, store.base)
+      } catch (error) {
+        thrown = error
+      }
+      return { thrown, existing: resumed.resolution, task, escalationId }
+    })
+    expect(result.thrown).toBeInstanceOf(ReplayedResolutionError)
+    expect((result.thrown as Error).message).toBe(
+      `resolution refused — task ${result.task}'s escalation '${result.escalationId}' already has a consumed resolution (decision: resume, by ${result.existing.authenticatedBy}, at ${result.existing.consumedAt}) — the resume already happened; replay refused`
+    )
   })
 })
