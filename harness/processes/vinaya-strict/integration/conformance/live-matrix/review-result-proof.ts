@@ -498,6 +498,7 @@ function planReviewerLaunch(
       ? stageCodexPolicyHome({
           targetDir: codexHome,
           realHome: homedir(),
+          env: process.env,
           execpolicyRules: buildCodexExecpolicyRules(loopRole) ?? '',
           sandboxConfigToml: confinement.codexSandboxToml
         })

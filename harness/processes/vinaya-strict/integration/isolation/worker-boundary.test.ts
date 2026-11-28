@@ -727,6 +727,25 @@ describe('the operator Codex login is read from the directory CODEX_HOME names, 
       expect(existsSync(join(targetDir, 'env-only.json'))).toBe(false)
     })
 
+    it("with no environment passed, never reads the process environment's CODEX_HOME: a made-up home stages its own login", () => {
+      const { realHome, codexHome, targetDir } = fixture()
+      const saved = process.env.CODEX_HOME
+      process.env.CODEX_HOME = codexHome
+      try {
+        const staged = stageCodexPolicyHome({
+          targetDir,
+          realHome,
+          execpolicyRules: RULES,
+          sandboxConfigToml: SANDBOX_TOML
+        })
+        expect(staged).not.toBeNull()
+        expect(readFileSync(join(targetDir, 'auth.json'), 'utf8')).toContain('home-token')
+      } finally {
+        if (saved === undefined) delete process.env.CODEX_HOME
+        else process.env.CODEX_HOME = saved
+      }
+    })
+
     it('with CODEX_HOME naming a directory without a login, returns null and never reads the home directory login', () => {
       const { realHome, codexHome, targetDir } = fixture({ codexHomeAuth: false })
       expect(
@@ -776,6 +795,21 @@ describe('the operator Codex login is read from the directory CODEX_HOME names, 
       setMtime(join(realHome, '.codex', 'auth.json'), 2_000)
       expect(refreshStagedCodexLogin({ realHome, codexHome: stagedHome, env: {} })).toBe(true)
       expect(readFileSync(join(stagedHome, 'auth.json'), 'utf8')).toContain('home-token')
+    })
+
+    it("with no environment passed, never reads the process environment's CODEX_HOME", () => {
+      const { realHome, codexHome, stagedHome } = staged()
+      setMtime(join(codexHome, 'auth.json'), 2_000)
+      setMtime(join(realHome, '.codex', 'auth.json'), 500)
+      const saved = process.env.CODEX_HOME
+      process.env.CODEX_HOME = codexHome
+      try {
+        expect(refreshStagedCodexLogin({ realHome, codexHome: stagedHome })).toBe(false)
+        expect(readFileSync(join(stagedHome, 'auth.json'), 'utf8')).toContain('stale-token')
+      } finally {
+        if (saved === undefined) delete process.env.CODEX_HOME
+        else process.env.CODEX_HOME = saved
+      }
     })
 
     it('with CODEX_HOME naming a directory without a login, returns false and never reads the home directory login', () => {

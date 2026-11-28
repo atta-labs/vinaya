@@ -415,6 +415,7 @@ export function stageProofCodexHome(
       ? stageCodexPolicyHome({
           targetDir: codexHome,
           realHome: homedir(),
+          env: process.env,
           execpolicyRules: buildCodexExecpolicyRules('developer') ?? '',
           sandboxConfigToml: combinedToml
         })
