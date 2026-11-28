@@ -132,17 +132,38 @@ export type PlanReview = z.infer<typeof PlanReviewSchema>
  * The JSON Schema handed to the vendor CLI. `$schema` is dropped: neither CLI needs it. An answer and a finding
  * each carry at least one piece of evidence in the schema the agent writes against, so an answer with none cannot
  * be produced; the validator still refuses one that arrives anyway, with its own reason.
+ *
+ * `confirm` narrows the schema to one round: the ids of the findings that round asks the seat to confirm. Given
+ * ids, a confirmation's `finding` may only be one of them, exactly, as `confirmationErrors` requires. Given none,
+ * the `confirmations` list may hold no item at all, stated as a maximum of zero items: an empty list of allowed
+ * values is a form some strict schema formats refuse. Absent, the schema is the seat's general one, as its output
+ * schema file holds it.
  */
-export function planReviewJsonSchema(): Record<string, unknown> {
+export function planReviewJsonSchema(confirm?: readonly string[]): Record<string, unknown> {
   const { $schema: _dropped, ...rest } = z.toJSONSchema(PlanReviewOutputSchema, { target: 'draft-7' }) as Record<
     string,
     unknown
   >
-  type Node = { properties?: Record<string, Node>; items?: Node; minItems?: number }
+  type Node = {
+    properties?: Record<string, Node>
+    items?: Node
+    minItems?: number
+    maxItems?: number
+    enum?: string[]
+  }
   const review = (rest as Node).properties?.planReview
   for (const list of ['answers', 'findings']) {
     const evidence = review?.properties?.[list]?.items?.properties?.evidence
     if (evidence !== undefined) evidence.minItems = 1
+  }
+  if (confirm !== undefined) {
+    const confirmations = review?.properties?.confirmations
+    if (confirm.length === 0) {
+      if (confirmations !== undefined) confirmations.maxItems = 0
+    } else {
+      const finding = confirmations?.items?.properties?.finding
+      if (finding !== undefined) finding.enum = [...confirm]
+    }
   }
   return rest
 }
