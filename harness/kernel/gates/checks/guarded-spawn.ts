@@ -1,8 +1,8 @@
 /**
- * A process the runner's own commands start (a check run, an evidence
- * refresh) ends when the runner does. This reproduces, inside the harness,
- * the standalone driver's tool guard (`driver-tool-guard.ts`, beside the driver), which
- * the harness may not import.
+ * A process a caller's own commands start ends when that caller does. This is
+ * the one guard for four callers: the standalone driver's push (the pre-push
+ * hook and its tests), its check run and its report refresh, and the process's
+ * evidence refresh.
  *
  * A synchronous call blocks the caller's event loop, so a signal handler in
  * the caller cannot run until the child finishes, and a caller killed outright

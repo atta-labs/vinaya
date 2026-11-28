@@ -31,7 +31,7 @@ import { encodeExecutionRound } from '@harness/kernel/loops/runtimes/atta-engine
 import { runCliChecks } from '@harness/kernel/gates/checks/run-checks'
 import { processFolderFor, programForWords } from '../tools/programs'
 import { refreshPrEvidence } from './refresh-evidence'
-import { guardedSpawnSync } from '../loops/dev-review/standalone/driver-tool-guard'
+import { guardedSpawnSync } from '@harness/kernel/gates/checks/guarded-spawn'
 import { agentEnvAllowlist } from '@harness/kernel/adapters/agents/launch-env'
 import type { GeneratedAgentConfig, GeneratorPaths } from '@harness/kernel/isolation/policy'
 import {

@@ -1,4 +1,4 @@
-// Mirrors harness/processes/vinaya-strict/tests/standalone/lib/driver-shutdown-children.test.ts against the harness's own guard.
+// Proves the guard ends the processes a stopped or returning caller left behind, and passes the command's status and output through.
 import { spawn } from 'node:child_process'
 import { mkdtempSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
