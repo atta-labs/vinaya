@@ -186,17 +186,16 @@ export async function cancelDevReviewLoop(input: CancelInput, deps: Partial<Canc
   }
   // See the identical comment on the `--resume` path above.
   const escalationId = held.escalationId ?? escalationIdFor(task, held.round, held.head)
-  // Code review, round 2, MAJOR: the operator-typed `--agent` flag used to
-  // decide what gets terminated with nothing persisted to check it against.
-  // The escalation record now carries the agent the run was ACTUALLY
+  // The operator-typed `--agent` flag never decides on its own what gets
+  // terminated, since nothing typed is checked against anything persisted.
+  // The escalation record carries the agent the run was ACTUALLY
   // dispatched under (`EscalationFacts.agent`, written at pause time) — read
   // (peeked, never consumed) BEFORE `resolveEscalation` below so a mismatch
   // is refused before the resolution is ever consumed, not after: a
   // mistyped or stale `--agent` must never leave a genuine cancel decision
   // silently recorded while still refusing to act on it. `undefined` only
   // for an escalation record written before this field existed; that legacy
-  // case falls back to trusting the operator-supplied value, same as before
-  // this fix.
+  // case falls back to trusting the operator-supplied value.
   const peekedEscalation = readEscalationRecord(task, escalationId)
   const dispatchedAgent = peekedEscalation?.agent
   if (dispatchedAgent !== undefined && dispatchedAgent !== input.agent) {

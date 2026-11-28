@@ -1167,7 +1167,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       }
       publicationState.pendingConflictFiles = null
 
-      // O8 (round 2 review, BLOCKER): re-check staleness here too — a
+      // Re-check staleness here too — a
       // clean `dispatch_reviewers` → `publish` transition reaches this
       // point in the SAME iteration, with no loop-back to the top in
       // between, so the top-of-loop check alone never catches a base that
@@ -1256,8 +1256,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       // confidence, reappearance, no_push, objectives_changed,
       // ruling_posted, brief_superseded, policy_changed) and clears the
       // lock exactly as before — UNLESS the caller is the watching
-      // driver itself (`retainDriverLock`, issue-711 O4, code review
-      // round 1, BLOCKER): it is not done at ANY pause reason, it is
+      // driver itself (`retainDriverLock`): it is not done at ANY pause reason, it is
       // about to poll and likely call back in here itself, so the lock
       // stays held regardless of which reason this round paused for.
       // `runDriverLoop`'s own watch loop is what releases it, once it
@@ -1274,8 +1273,8 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       const pauseHead = d.resolveHead(branch)
       // O1: best-effort, same discipline as the crash-catch pause site —
       // written BEFORE `pause-state.json` so its own real `escalationId`
-      // (code review, round 2, MEDIUM — see `writeEscalation`'s own doc
-      // comment) can be carried on `PauseState`.
+      // (see `writeEscalation`'s own doc comment) can be carried on
+      // `PauseState`.
       let escalationRecord: EscalationRecord | null = null
       try {
         escalationRecord = writeEscalationRecord({

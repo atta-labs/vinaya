@@ -1506,9 +1506,8 @@ const MAX_FENCE_REACQUIRE_ATTEMPTS = 5
  * Best-effort per key otherwise: a key that no longer reads `'started'` by
  * the time this runs is simply skipped, never an error.
  *
- * **This call's OWN writes can still lose a narrower race (code review,
- * round 2, HIGH; narrowed in the same round's own fix).** `resolveEscalation`
- * now checks the durable resolution record BEFORE ever calling
+ * **This call's OWN writes can still lose a narrower race.** `resolveEscalation`
+ * checks the durable resolution record BEFORE ever calling
  * `acquireOwnership`, so an ordinary replay of an ALREADY-consumed decision
  * never bumps the epoch at all. What remains is the genuinely concurrent
  * case — two FIRST attempts racing past that check before either has
