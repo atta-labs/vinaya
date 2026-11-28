@@ -49,7 +49,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { isWaiverLabelActorVerified, WAIVER_LABEL } from '../../tools/task-contract/waiver-label'
 import { overrideActive } from '../../tools/task-contract/pr-tier'
-import { DOC_OWNERS_PATH, evaluateC5 } from '../../tools/doc-owners'
+import { DOC_OWNERS_PATH, evaluateC5, prBodyGiven } from '../../tools/doc-owners'
 import { fileDiffAgainst } from '@harness/kernel/connectors/git/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { resolveTrustedPrincipals } from '../../integration/config/compose'
@@ -154,8 +154,14 @@ function main(): void {
   if (changed.length === 0) process.exit(0)
 
   const content = existsSync(DOC_OWNERS_PATH) ? readFileSync(DOC_OWNERS_PATH, 'utf8') : null
-  const result = evaluateC5(changed, content, resolvePrBody(), existsSync, waiverActiveFromEnv(), (p) =>
-    fileDiffAgainst(ref, p)
+  const result = evaluateC5(
+    changed,
+    content,
+    resolvePrBody(),
+    existsSync,
+    waiverActiveFromEnv(),
+    (p) => fileDiffAgainst(ref, p),
+    prBodyGiven()
   )
 
   // Ring 0: warn-with-declared-intent, never a hard block on a finding — the

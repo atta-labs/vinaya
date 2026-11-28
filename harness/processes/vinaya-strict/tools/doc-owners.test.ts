@@ -8,7 +8,8 @@ import {
   isMechanicallyNeutralDiff,
   isUrlPointer,
   parseDocOwners,
-  pointerToPath
+  pointerToPath,
+  prBodyGiven
 } from './doc-owners'
 import { globToRegex } from '@harness/kernel/gates/glob-to-regex'
 
@@ -402,6 +403,115 @@ describe('evaluateC5 — the Doc-neutral two-sided verification story (task 677/
       }
     }
   )
+
+  describe('a run given no pull request body (the commit hook and the push hook)', () => {
+    it('passes a comment-only change on the evidence alone, with a note naming the owed Doc-neutral line', () => {
+      const r = evaluateC5(
+        [CHANGED_FILE],
+        OWNERS,
+        '',
+        fileExists,
+        false,
+        getDiff({ [CHANGED_FILE]: NEUTRAL_DIFF }),
+        false
+      )
+      expect(r.errors).toEqual([])
+      expect(r.notes.length).toBe(1)
+      expect(r.notes[0]).toMatch(/C5 doc-neutral-owed:/)
+      expect(r.notes[0]).toContain(`The pull request body owes \`Doc-neutral: ${POINTER} — <why>\``)
+    })
+
+    it('still fails a change that alters code', () => {
+      const r = evaluateC5(
+        [CHANGED_FILE],
+        OWNERS,
+        '',
+        fileExists,
+        false,
+        getDiff({ [CHANGED_FILE]: BEHAVIOR_DIFF }),
+        false
+      )
+      expect(r.errors.length).toBe(1)
+      expect(r.errors[0]).toMatch(/C5 doc-coverage/)
+      expect(r.notes).toEqual([])
+    })
+
+    it('still fails a comment-shaped code change the existing neutral test rejects', () => {
+      const generatorDiff = ['@@ -1,1 +1,1 @@', '-  gen() { return 1 }', '+  *gen() { return 2 }'].join('\n')
+      const r = evaluateC5(
+        [CHANGED_FILE],
+        OWNERS,
+        '',
+        fileExists,
+        false,
+        getDiff({ [CHANGED_FILE]: generatorDiff }),
+        false
+      )
+      expect(r.errors.length).toBe(1)
+      expect(r.errors[0]).toMatch(/C5 doc-coverage/)
+    })
+
+    it('still fails when there is no diff source to evidence the change', () => {
+      const r = evaluateC5([CHANGED_FILE], OWNERS, '', fileExists, false, undefined, false)
+      expect(r.errors.length).toBe(1)
+      expect(r.errors[0]).toMatch(/C5 doc-coverage/)
+    })
+  })
+
+  describe('a run given a body, an empty one included (the pull request CI run)', () => {
+    it('fails a comment-only change without the Doc-neutral line, as before', () => {
+      const r = evaluateC5(
+        [CHANGED_FILE],
+        OWNERS,
+        '',
+        fileExists,
+        false,
+        getDiff({ [CHANGED_FILE]: NEUTRAL_DIFF }),
+        true
+      )
+      expect(r.errors.length).toBe(1)
+      expect(r.errors[0]).toMatch(/C5 doc-coverage/)
+      expect(r.notes).toEqual([])
+    })
+
+    it('a caller that passes nothing new gets the strict result, identical to an explicit body given', () => {
+      for (const diff of [NEUTRAL_DIFF, BEHAVIOR_DIFF]) {
+        const implicit = evaluateC5([CHANGED_FILE], OWNERS, '', fileExists, false, getDiff({ [CHANGED_FILE]: diff }))
+        const explicit = evaluateC5(
+          [CHANGED_FILE],
+          OWNERS,
+          '',
+          fileExists,
+          false,
+          getDiff({ [CHANGED_FILE]: diff }),
+          true
+        )
+        expect(implicit).toEqual(explicit)
+        expect(implicit.errors.length).toBe(1)
+      }
+    })
+  })
+})
+
+describe('prBodyGiven — the one test of whether a run was given a body', () => {
+  it('reports no body only when neither body variable is present', () => {
+    expect(prBodyGiven({})).toBe(false)
+    expect(prBodyGiven({ PR_NUMBER: '12', OTHER: 'x' })).toBe(false)
+  })
+
+  it('reports a body for either variable when present, even when empty', () => {
+    expect(prBodyGiven({ PR_BODY: '' })).toBe(true)
+    expect(prBodyGiven({ PR_BODY_FILE: '' })).toBe(true)
+    expect(prBodyGiven({ PR_BODY: 'Closes #1' })).toBe(true)
+    expect(prBodyGiven({ PR_BODY_FILE: '/tmp/body.md' })).toBe(true)
+  })
+
+  it('both doc-coverage checks call it rather than deciding on their own', () => {
+    for (const name of ['check-doc-coverage.ts', 'check-doc-coverage-push.ts']) {
+      const src = readFileSync(join(import.meta.dir, '..', 'checks', 'bin', name), 'utf8')
+      expect(src).toContain('prBodyGiven()')
+    }
+  })
 })
 
 describe('the real manifest resolves at its configured path', () => {
