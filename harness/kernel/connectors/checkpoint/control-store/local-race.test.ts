@@ -1,10 +1,18 @@
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { readCurrentOwnership, type AcquireResult } from './local'
+import { startActor, waitForFile } from './fixtures/spawn-actor'
+import {
+  acquireOwnership,
+  defaultControlStoreDeps,
+  listStartedEffectKeys,
+  readCurrentOwnership,
+  readRun,
+  type AcquireResult
+} from './local'
 
 // `local.test.ts`'s own race fixture calls `attemptEpochClaim` twice,
 // sequentially, inside one process, both times naming the SAME fixed
@@ -103,5 +111,41 @@ describe('acquireOwnership, under genuine multi-process concurrency', () => {
     expect(onDisk.epoch).toBe(highest.epoch)
     expect(onDisk.record?.ownerId).toBe(highest.record.ownerId)
     expect(onDisk.corruptEpochs).toEqual([])
-  })
+  }, 30_000)
+})
+
+// A superseded owner's write is paused, in its own process, between its
+// ownership check and its write, and a newer owner claims the task from
+// another process meanwhile, then at once lists the run records and the
+// started effects. The claim takes the task's lock, which the paused write
+// holds from its check through its write, so the claim waits and the
+// listing holds the record. Without the lock the claim and the listing
+// finish inside the pause and the record lands after them.
+describe('a newer claim from another process while an older owner is between its check and its write', () => {
+  for (const what of ['run', 'started'] as const) {
+    it(`the ${what} record written under the older epoch is on disk before the newer claim returns, and so in the newer owner listing`, async () => {
+      const task = what === 'run' ? 601 : 602
+      const deps = defaultControlStoreDeps(() => dir)
+      const first = acquireOwnership(deps, task, 'old-owner')
+      if (!first.acquired) throw new Error('the first claim must win')
+
+      const writer = startActor('write-paused', dir, task, String(first.epoch), what)
+      await waitForFile(join(dir, `${task}-paused`), writer)
+      const claimer = startActor('claim-and-list', dir, task, 'new-owner')
+      const [listed] = (await claimer.done) as [{ claim: AcquireResult; runs: string[]; started: string[] }]
+      writeFileSync(join(dir, `${task}-go`), '')
+      const [written] = (await writer.done) as [{ paused: boolean; wrote: boolean }]
+
+      expect(written.paused).toBe(true)
+      expect(listed.claim.acquired).toBe(true)
+      // `r-0` is the one run record any actor here writes.
+      const runsOnDisk = readRun(deps, task, 'r-0').status === 'ok' ? ['r-0'] : []
+      expect(runsOnDisk).toEqual(listed.runs)
+      expect(listStartedEffectKeys(deps, task).sort()).toEqual(listed.started)
+      // The paused write either landed before the claim, and is listed, or was refused.
+      const key = what === 'run' ? 'r-0' : 'e-0'
+      const listedKeys = what === 'run' ? listed.runs : listed.started
+      expect(listedKeys.includes(key)).toBe(written.wrote)
+    }, 30_000)
+  }
 })

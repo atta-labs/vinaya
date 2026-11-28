@@ -44,6 +44,25 @@
  * throws `EEXIST`); every later write against a stale epoch is refused
  * inside `assertCurrentEpoch`, never left to the caller to remember to
  * check.
+ *
+ * **One lock per task joins each ownership check to the write it guards.**
+ * An epoch check alone is a read followed by a separate write: a second
+ * process could claim a newer epoch after the check passed and before the
+ * write landed, and a superseded owner's record would land after the
+ * takeover. So every ownership claim, every fenced write (its
+ * `assertCurrentEpoch` check and its write together), and the read and
+ * write of `markEffectUncertain` run under one per-task lock
+ * (`withTaskLock`): a lock file in the task's control folder, created
+ * exclusively and naming its holder's process id and host. Once a claim of
+ * a newer epoch has returned, no write made under an older one can land:
+ * that write either finished before the claim took the lock, or its check
+ * runs after the claim and refuses it. The lock fails closed and never
+ * strands a task: a lock whose holder no longer runs on this host is taken
+ * over by exactly one waiter (`removeDeadTaskLock`), and a lock a live
+ * process holds past `TASK_LOCK_WAIT_MS` makes the waiting call throw
+ * `TaskLockTimeoutError` with nothing written. Unfenced writes (the
+ * manifest, the loop state, the execution-round mirror) and every read take
+ * no lock.
  */
 
 import { randomUUID } from 'node:crypto'
@@ -117,6 +136,22 @@ export class StaleEpochWriteError extends Error {
       `control-store: refusing a write for task ${task} at epoch ${attemptedEpoch} — the current epoch is ${currentEpoch}`
     )
     this.name = 'StaleEpochWriteError'
+  }
+}
+
+/** Thrown when a task's lock stays held by a live process (or by a holder this host cannot probe) past `TASK_LOCK_WAIT_MS`: the waiting call writes nothing. */
+export class TaskLockTimeoutError extends Error {
+  constructor(
+    readonly task: number,
+    readonly holder: { pid: number; host: string } | null,
+    readonly waitedMs: number
+  ) {
+    super(
+      `control-store: task ${task}'s lock is still held ${
+        holder ? `by process ${holder.pid} on ${holder.host}` : 'by an unreadable holder'
+      } after waiting ${waitedMs}ms — nothing was written`
+    )
+    this.name = 'TaskLockTimeoutError'
   }
 }
 
@@ -624,6 +659,205 @@ function transitionPath(root: string, task: number, epoch: number, seq: number):
   return join(transitionsDir(root, task, epoch), `${String(seq).padStart(6, '0')}.json`)
 }
 
+function taskLockPath(root: string, task: number): string {
+  return join(taskRoot(root, task), 'task.lock')
+}
+
+/** How long a call waits for a task's lock held by a live process before it throws `TaskLockTimeoutError`. A holder keeps the lock only across one check and one write, so a wait this long means the holder is stuck, not busy. */
+export const TASK_LOCK_WAIT_MS = 10_000
+
+/** The slice a waiting call sleeps between two attempts at the lock. */
+const TASK_LOCK_SLICE_MS = 5
+
+/** Bounds the nesting of dead-holder take-overs: each level exists only because a previous taker died mid-take-over. */
+const MAX_TAKEOVER_DEPTH = 8
+
+/** Who holds a task's lock (or a take-over of one): `token` names this one hold, so a take-over can tell the dead hold it found from a newer one at the same name. */
+export type TaskLockHolder = { pid: number; host: string; token: string; acquiredAt: string }
+
+/** A hold of a task's lock. `tookOverFrom` names the dead holder this acquisition removed while waiting, or is `null` when it found the lock free or released. */
+export type TaskLockHold = { readonly tookOverFrom: TaskLockHolder | null; release(): void }
+
+function parseTaskLockHolder(raw: string | undefined): ParsedRecord<TaskLockHolder> {
+  if (raw === undefined) return { status: 'absent' }
+  try {
+    const value = JSON.parse(raw) as Partial<TaskLockHolder>
+    if (
+      typeof value.pid === 'number' &&
+      typeof value.host === 'string' &&
+      typeof value.token === 'string' &&
+      typeof value.acquiredAt === 'string'
+    ) {
+      return { status: 'ok', value: value as TaskLockHolder }
+    }
+    return { status: 'corrupt', reason: 'a lock holder lacks its pid, host, token or acquiredAt' }
+  } catch (err) {
+    return { status: 'corrupt', reason: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+function readTaskLockHolder(path: string): ParsedRecord<TaskLockHolder> {
+  return readRecord(path, parseTaskLockHolder)
+}
+
+/**
+ * Publishes `holder` at `path` only if nothing is there: its content is
+ * complete on a private temp file before one `linkSync` names it, so a
+ * waiter never reads a partial holder. Unlike `exclusiveCreateFile` nothing
+ * is `fsync`ed: a lock matters only while its holder runs, and a crash that
+ * loses it loses its holder too.
+ */
+function createLockFile(path: string, holder: TaskLockHolder, trustedRoot: string): boolean {
+  mkdirNoSymlinks(dirname(path), 0o700, trustedRoot)
+  const tmp = `${path}.claim-${process.pid}-${randomUUID()}`
+  const fd = openSync(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600)
+  try {
+    writeSync(fd, JSON.stringify(holder), null, 'utf8')
+  } finally {
+    closeSync(fd)
+  }
+  try {
+    linkSync(tmp, path)
+    return true
+  } catch (err) {
+    if (!isErrnoException(err, 'EEXIST')) throw err
+    return false
+  } finally {
+    try {
+      unlinkSync(tmp)
+    } catch {
+      // leftover temp file, harmless — never thrown from here
+    }
+  }
+}
+
+/** Signal 0 probes a process without touching it: `ESRCH` means no such process; any other answer, `EPERM` included, means one runs. */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return !isErrnoException(err, 'ESRCH')
+  }
+}
+
+/** A holder is dead only when it names this host and its process no longer runs; a holder on another host cannot be probed, so it counts as live. */
+function isHolderDead(holder: TaskLockHolder): boolean {
+  return holder.host === osHostname() && holder.pid !== process.pid && !isPidAlive(holder.pid)
+}
+
+/** A lock names the real process and host that hold it, never the injected `deps.pid`/`deps.hostname` an ownership record carries: only the real ones can be probed for liveness. */
+function newHolder(deps: ControlStoreDeps): TaskLockHolder {
+  return { pid: process.pid, host: osHostname(), token: randomUUID(), acquiredAt: deps.now().toISOString() }
+}
+
+/**
+ * Removes the lock at `path` if it still holds `dead`, and reports whether
+ * this call removed it. The removal itself is exclusive: the remover first
+ * creates `<path>.takeover-<dead token>`, so of two waiters that both found
+ * the same dead hold only one removes it, and a waiter that found it late
+ * sees a different token (or none) at `path` and removes nothing. A
+ * take-over marker whose own creator died is itself taken over the same
+ * way. The marker is deleted once the removal is done.
+ */
+function removeDeadTaskLock(deps: ControlStoreDeps, path: string, dead: TaskLockHolder, depth: number): boolean {
+  if (depth > MAX_TAKEOVER_DEPTH) {
+    throw new Error(`control-store: refusing to nest more than ${MAX_TAKEOVER_DEPTH} take-overs of ${path}`)
+  }
+  const marker = `${path}.takeover-${dead.token}`
+  if (!createLockFile(marker, newHolder(deps), deps.root())) {
+    const taker = readTaskLockHolder(marker)
+    if (taker.status === 'ok' && isHolderDead(taker.value)) {
+      removeDeadTaskLock(deps, marker, taker.value, depth + 1)
+    }
+    return false
+  }
+  try {
+    const now = readTaskLockHolder(path)
+    if (now.status !== 'ok' || now.value.token !== dead.token) return false
+    unlinkSync(path)
+    return true
+  } finally {
+    try {
+      unlinkSync(marker)
+    } catch {
+      // a marker left behind names a token no later hold reuses — harmless
+    }
+  }
+}
+
+function sleepSyncMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * Takes `task`'s lock, waiting in `TASK_LOCK_SLICE_MS` slices while another
+ * process holds it. A dead holder's lock is removed (`removeDeadTaskLock`)
+ * and the wait goes on; a live holder is never displaced, and once
+ * `TASK_LOCK_WAIT_MS` has passed the call throws `TaskLockTimeoutError`.
+ * The caller must `release()` the hold on every path; `withTaskLock` does.
+ * Not re-entrant: a call already holding the lock that asks for it again
+ * waits on itself until the bound and throws.
+ */
+export function acquireTaskLock(deps: ControlStoreDeps, task: number): TaskLockHold {
+  const path = taskLockPath(deps.root(), task)
+  const mine = newHolder(deps)
+  const started = Date.now()
+  let tookOverFrom: TaskLockHolder | null = null
+  for (;;) {
+    if (createLockFile(path, mine, deps.root())) {
+      return {
+        tookOverFrom,
+        release: () => {
+          const there = readTaskLockHolder(path)
+          if (there.status !== 'ok' || there.value.token !== mine.token) return
+          try {
+            unlinkSync(path)
+          } catch (err) {
+            if (!isErrnoException(err, 'ENOENT')) throw err
+          }
+        }
+      }
+    }
+    const holder = readTaskLockHolder(path)
+    if (holder.status === 'absent') continue
+    if (holder.status === 'ok' && isHolderDead(holder.value)) {
+      if (removeDeadTaskLock(deps, path, holder.value, 0)) {
+        tookOverFrom = holder.value
+        continue
+      }
+      // Another waiter is removing this dead hold: wait like any other.
+    }
+    const waited = Date.now() - started
+    if (waited >= TASK_LOCK_WAIT_MS) {
+      throw new TaskLockTimeoutError(
+        task,
+        holder.status === 'ok' ? { pid: holder.value.pid, host: holder.value.host } : null,
+        waited
+      )
+    }
+    sleepSyncMs(TASK_LOCK_SLICE_MS)
+  }
+}
+
+/** Runs `body` under `task`'s lock and releases it on every path; a release failure never hides an error `body` threw. */
+function withTaskLock<T>(deps: ControlStoreDeps, task: number, body: () => T): T {
+  const hold = acquireTaskLock(deps, task)
+  let result: T
+  try {
+    result = body()
+  } catch (err) {
+    try {
+      hold.release()
+    } catch {
+      // the error body threw is the one the caller needs
+    }
+    throw err
+  }
+  hold.release()
+  return result
+}
+
 /** The highest validly-parsing ownership epoch on disk, and every epoch number that exists but fails to parse (a corrupt or torn epoch file) — surfaced so a caller can tell "no owner yet" apart from "an owner's record is unreadable". */
 export function readCurrentOwnership(
   deps: Pick<ControlStoreDeps, 'root'>,
@@ -703,9 +937,15 @@ type ClaimOutcome =
  * and therefore reduce to two calls of THIS function with the identical
  * `epoch` argument — `local.test.ts` calls it directly, twice, with one
  * fixed epoch, to prove `O_EXCL` admits exactly one winner rather than
- * trusting the guarantee unverified.
+ * trusting the guarantee unverified. Takes the task's lock, as every claim
+ * does; `acquireOwnership`, which already holds it, calls `claimEpoch`.
  */
 export function attemptEpochClaim(deps: ControlStoreDeps, task: number, epoch: number, ownerId: string): ClaimOutcome {
+  return withTaskLock(deps, task, () => claimEpoch(deps, task, epoch, ownerId))
+}
+
+/** `attemptEpochClaim`'s body, run by a caller that already holds the task's lock. */
+function claimEpoch(deps: ControlStoreDeps, task: number, epoch: number, ownerId: string): ClaimOutcome {
   const path = ownershipEpochPath(deps.root(), task, epoch)
   const record: OwnershipRecord = {
     version: 1,
@@ -740,22 +980,27 @@ export function attemptEpochClaim(deps: ControlStoreDeps, task: number, epoch: n
  * already validly held reports the real winner truthfully rather than
  * retrying past it (see `attemptEpochClaim`'s own doc for how that race
  * resolves); a corrupt, crash-orphaned claim is reclaimed and the same
- * epoch retried, bounded by `MAX_ACQUIRE_ATTEMPTS`.
+ * epoch retried, bounded by `MAX_ACQUIRE_ATTEMPTS`. The whole claim runs
+ * under the task's lock, so it never lands between another process's
+ * ownership check and the write that check guards.
  */
 export function acquireOwnership(deps: ControlStoreDeps, task: number, ownerId: string): AcquireResult {
-  for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
-    const current = readCurrentOwnership(deps, task)
-    const nextEpoch = current.epoch + 1
-    const claim = attemptEpochClaim(deps, task, nextEpoch, ownerId)
-    if (claim.outcome === 'won') return { acquired: true, epoch: nextEpoch, record: claim.record }
-    if (claim.outcome === 'lost') {
-      return { acquired: false, currentEpoch: claim.record.epoch, currentOwnerId: claim.record.ownerId }
+  return withTaskLock(deps, task, () => {
+    for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
+      const current = readCurrentOwnership(deps, task)
+      const nextEpoch = current.epoch + 1
+      const claim = claimEpoch(deps, task, nextEpoch, ownerId)
+      if (claim.outcome === 'won') return { acquired: true, epoch: nextEpoch, record: claim.record }
+      if (claim.outcome === 'lost') {
+        return { acquired: false, currentEpoch: claim.record.epoch, currentOwnerId: claim.record.ownerId }
+      }
+      // 'reclaim' — the slot is now clear; loop retries the same nextEpoch.
     }
-    // 'reclaim' — the slot is now clear; loop retries the same nextEpoch.
-  }
-  throw new Error(`control-store: could not acquire an epoch for task ${task} after ${MAX_ACQUIRE_ATTEMPTS} attempts`)
+    throw new Error(`control-store: could not acquire an epoch for task ${task} after ${MAX_ACQUIRE_ATTEMPTS} attempts`)
+  })
 }
 
+/** The ownership check every fenced write makes first. Its caller holds the task's lock from this check through its write, so no newer claim lands between the two. */
 function assertCurrentEpoch(deps: ControlStoreDeps, task: number, epoch: number): void {
   const current = readCurrentOwnership(deps, task)
   if (current.record === null || current.epoch !== epoch) {
@@ -767,10 +1012,12 @@ export type RunInput = Omit<RunRecord, 'version' | 'kind' | 'task'>
 
 /** Refuses (`StaleEpochWriteError`) unless `epoch` is still the task's current epoch — a run record can only be written by whoever currently owns the task. */
 export function writeRun(deps: ControlStoreDeps, task: number, epoch: number, input: RunInput): RunRecord {
-  assertCurrentEpoch(deps, task, epoch)
-  const record: RunRecord = { version: 1, kind: 'run', task, ...input }
-  atomicWriteFile(runPath(deps.root(), task, input.runId), JSON.stringify(record), deps.root())
-  return record
+  return withTaskLock(deps, task, () => {
+    assertCurrentEpoch(deps, task, epoch)
+    const record: RunRecord = { version: 1, kind: 'run', task, ...input }
+    atomicWriteFile(runPath(deps.root(), task, input.runId), JSON.stringify(record), deps.root())
+    return record
+  })
 }
 
 export function readRun(deps: Pick<ControlStoreDeps, 'root'>, task: number, runId: string): ParsedRecord<RunRecord> {
@@ -780,10 +1027,12 @@ export function readRun(deps: Pick<ControlStoreDeps, 'root'>, task: number, runI
 export type InputInput = Omit<InputRecord, 'version' | 'kind' | 'task'>
 
 export function writeInput(deps: ControlStoreDeps, task: number, epoch: number, input: InputInput): InputRecord {
-  assertCurrentEpoch(deps, task, epoch)
-  const record: InputRecord = { version: 1, kind: 'input', task, ...input }
-  atomicWriteFile(inputPath(deps.root(), task, input.runId), JSON.stringify(record), deps.root())
-  return record
+  return withTaskLock(deps, task, () => {
+    assertCurrentEpoch(deps, task, epoch)
+    const record: InputRecord = { version: 1, kind: 'input', task, ...input }
+    atomicWriteFile(inputPath(deps.root(), task, input.runId), JSON.stringify(record), deps.root())
+    return record
+  })
 }
 
 export function readInput(
@@ -866,17 +1115,19 @@ export function appendTransition(
   epoch: number,
   input: TransitionInput
 ): TransitionRecord {
-  assertCurrentEpoch(deps, task, epoch)
-  const root = deps.root()
-  const dir = transitionsDir(root, task, epoch)
-  let seq = existsSync(dir) ? readdirSync(dir).length : 0
-  for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
-    const record: TransitionRecord = { version: 1, kind: 'transition', task, epoch, seq, ...input }
-    const result = exclusiveCreateFile(transitionPath(root, task, epoch, seq), JSON.stringify(record), root)
-    if (result.created) return record
-    seq++
-  }
-  throw new Error(`control-store: could not claim a transition seq for task ${task} epoch ${epoch}`)
+  return withTaskLock(deps, task, () => {
+    assertCurrentEpoch(deps, task, epoch)
+    const root = deps.root()
+    const dir = transitionsDir(root, task, epoch)
+    let seq = existsSync(dir) ? readdirSync(dir).length : 0
+    for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
+      const record: TransitionRecord = { version: 1, kind: 'transition', task, epoch, seq, ...input }
+      const result = exclusiveCreateFile(transitionPath(root, task, epoch, seq), JSON.stringify(record), root)
+      if (result.created) return record
+      seq++
+    }
+    throw new Error(`control-store: could not claim a transition seq for task ${task} epoch ${epoch}`)
+  })
 }
 
 /** Every transition recorded for `epoch`, in `seq` order — a corrupt entry is surfaced as its own `'corrupt'` element, never dropped and never conflated with "no more transitions". */
@@ -903,6 +1154,17 @@ export type EffectInput = Omit<EffectRecord, 'version' | 'kind' | 'task' | 'key'
  * no longer holds `task`'s current epoch.
  */
 export function writeEffect(
+  deps: ControlStoreDeps,
+  task: number,
+  epoch: number,
+  key: string,
+  input: EffectInput
+): EffectRecord {
+  return withTaskLock(deps, task, () => writeEffectHeld(deps, task, epoch, key, input))
+}
+
+/** `writeEffect`'s body, run by a caller that already holds the task's lock. */
+function writeEffectHeld(
   deps: ControlStoreDeps,
   task: number,
   epoch: number,
@@ -955,7 +1217,9 @@ export function listStartedEffectKeys(deps: Pick<ControlStoreDeps, 'root'>, task
  * write here — a caller must hold the CURRENT epoch (the one cancellation
  * itself just acquired) for this to succeed. A key that no longer parses as
  * `'started'` (already advanced, or corrupt) is left untouched and simply
- * omitted from the return value.
+ * omitted from the return value. The read and the write run under one hold
+ * of the task's lock, so a record another owner advances to `'verified'` is
+ * never overwritten as `'uncertain'`.
  */
 export function markEffectUncertain(
   deps: ControlStoreDeps,
@@ -963,15 +1227,17 @@ export function markEffectUncertain(
   epoch: number,
   key: string
 ): EffectRecord | null {
-  const existing = readEffect(deps, task, key)
-  if (existing.status !== 'ok' || existing.value.status !== 'started') return null
-  return writeEffect(deps, task, epoch, key, {
-    operation: existing.value.operation,
-    target: existing.value.target,
-    inputVersion: existing.value.inputVersion,
-    payloadDigest: existing.value.payloadDigest,
-    status: 'uncertain',
-    recordedAt: deps.now().toISOString()
+  return withTaskLock(deps, task, () => {
+    const existing = readEffect(deps, task, key)
+    if (existing.status !== 'ok' || existing.value.status !== 'started') return null
+    return writeEffectHeld(deps, task, epoch, key, {
+      operation: existing.value.operation,
+      target: existing.value.target,
+      inputVersion: existing.value.inputVersion,
+      payloadDigest: existing.value.payloadDigest,
+      status: 'uncertain',
+      recordedAt: deps.now().toISOString()
+    })
   })
 }
 
@@ -1071,6 +1337,16 @@ export function writeEscalation(
   epoch: number,
   input: EscalationInput
 ): EscalationRecord {
+  return withTaskLock(deps, task, () => writeEscalationHeld(deps, task, epoch, input))
+}
+
+/** `writeEscalation`'s body, run by a caller that already holds the task's lock. */
+function writeEscalationHeld(
+  deps: ControlStoreDeps,
+  task: number,
+  epoch: number,
+  input: EscalationInput
+): EscalationRecord {
   assertCurrentEpoch(deps, task, epoch)
   const canonicalId = input.escalationId
   const existing = readEscalation(deps, task, canonicalId)
@@ -1131,13 +1407,15 @@ export function consumeResolutionOnce(
   epoch: number,
   input: ResolutionInput
 ): ConsumeResolutionResult {
-  assertCurrentEpoch(deps, task, epoch)
-  const record: ResolutionRecord = { version: 1, kind: 'resolution', task, ...input }
-  const path = resolutionPath(deps.root(), task, input.escalationId)
-  const result = exclusiveCreateFile(path, JSON.stringify(record), deps.root())
-  if (result.created) return { outcome: 'consumed', record }
-  const existing = parseResolutionRecord(readIfExists(path))
-  return { outcome: 'already-consumed', record: existing.status === 'ok' ? existing.value : null }
+  return withTaskLock(deps, task, () => {
+    assertCurrentEpoch(deps, task, epoch)
+    const record: ResolutionRecord = { version: 1, kind: 'resolution', task, ...input }
+    const path = resolutionPath(deps.root(), task, input.escalationId)
+    const result = exclusiveCreateFile(path, JSON.stringify(record), deps.root())
+    if (result.created) return { outcome: 'consumed', record }
+    const existing = parseResolutionRecord(readIfExists(path))
+    return { outcome: 'already-consumed', record: existing.status === 'ok' ? existing.value : null }
+  })
 }
 
 export function readResolution(

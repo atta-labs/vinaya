@@ -2,8 +2,12 @@ import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, sym
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { startActor, waitForFile } from './fixtures/spawn-actor'
 import {
+  type AcquireResult,
   acquireOwnership,
+  defaultControlStoreDeps,
+  TaskLockTimeoutError,
   mkdirNoSymlinks,
   appendTransition,
   attemptEpochClaim,
@@ -938,5 +942,88 @@ describe('directory syncs — a published record name and a created store direct
     expect(report.runFiles).toEqual(['run-a.json'])
     expect(report.claimError).toBe('injected directory sync failure')
     expect(report.ownershipFiles).toEqual(['epoch-000001.json', 'epoch-000002.json'])
+  })
+})
+
+// The task's lock, exercised by real separate processes: one process cannot
+// play two actors inside one locked call without waiting on its own lock.
+describe('the task lock', () => {
+  // The older owner's verified write is paused between its ownership check
+  // and its write while a newer owner claims the task and marks every
+  // started effect uncertain. Under the lock the claim waits for the
+  // verified write, so the mark finds the effect verified and leaves it.
+  it('an effect recorded as verified while a newer owner marks started effects uncertain stays verified', async () => {
+    const task = 701
+    const real = defaultControlStoreDeps(() => dir)
+    const first = acquireOwnership(real, task, 'old-owner')
+    if (!first.acquired) throw new Error('the first claim must win')
+
+    const verifier = startActor('write-paused', dir, task, String(first.epoch), 'verified')
+    await waitForFile(join(dir, `${task}-paused`), verifier)
+    const canceller = startActor('claim-and-mark', dir, task, 'canceller')
+    const [cancelled] = (await canceller.done) as [{ claim: AcquireResult; marked: string[] }]
+    writeFileSync(join(dir, `${task}-go`), '')
+    const [written] = (await verifier.done) as [{ paused: boolean; wrote: boolean }]
+
+    expect(written.paused).toBe(true)
+    expect(cancelled.claim.acquired).toBe(true)
+    const read = readEffectResult(real, task, 'v-0')
+    const onDisk = read.status === 'ok' ? read.value.status : read.status
+    if (written.wrote) {
+      expect(onDisk).toBe('verified')
+      expect(cancelled.marked).toEqual([])
+    } else {
+      expect(onDisk).toBe('uncertain')
+      expect(cancelled.marked).toEqual(['v-0'])
+    }
+  }, 30_000)
+
+  it('a lock left by a process that no longer runs is taken over by exactly one of two waiters, and both then hold it in turn', async () => {
+    const task = 711
+    const dying = startActor('die-holding', dir, task)
+    const [died] = (await dying.done) as [{ pid: number }]
+    expect(existsSync(join(dir, String(task), 'control', 'task.lock'))).toBe(true)
+
+    const takers = [startActor('take', dir, task), startActor('take', dir, task)]
+    const results = (await Promise.all(takers.map((t) => t.done))).map(
+      ([line]) => line as { tookOverFrom: number | null; overlap: boolean }
+    )
+
+    expect(results.filter((r) => r.tookOverFrom === died.pid)).toHaveLength(1)
+    expect(results.filter((r) => r.tookOverFrom === null)).toHaveLength(1)
+    expect(results.every((r) => !r.overlap)).toBe(true)
+    expect(existsSync(join(dir, String(task), 'control', 'task.lock'))).toBe(false)
+  }, 30_000)
+
+  it('a lock a live process holds past the bound makes the waiting call throw the named error with nothing written', async () => {
+    const task = 721
+    const real = defaultControlStoreDeps(() => dir)
+    const first = acquireOwnership(real, task, 'run-a')
+    if (!first.acquired) throw new Error('the first claim must win')
+
+    const holder = startActor('hold', dir, task)
+    try {
+      expect(await holder.next()).toEqual({ held: true })
+
+      const write = () =>
+        writeRun(real, task, first.epoch, { runId: 'run-a', pid: 1, host: 'h', startedAt: clock.toISOString() })
+      expect(write).toThrow(TaskLockTimeoutError)
+      expect(readRun(real, task, 'run-a')).toEqual({ status: 'absent' })
+      expect(readCurrentOwnership(real, task).epoch).toBe(first.epoch)
+    } finally {
+      holder.child.kill('SIGKILL')
+      await holder.done
+    }
+  }, 30_000)
+
+  it('is released after a refused write, so the next call takes it at once', () => {
+    const first = acquireOwnership(deps, 731, 'run-a')
+    acquireOwnership(deps, 731, 'run-b')
+    const stale = first.acquired ? first.epoch : -1
+    expect(() =>
+      writeRun(deps, 731, stale, { runId: 'run-a', pid: 1, host: 'h', startedAt: clock.toISOString() })
+    ).toThrow(StaleEpochWriteError)
+    expect(existsSync(join(dir, '731', 'control', 'task.lock'))).toBe(false)
+    expect(acquireOwnership(deps, 731, 'run-c').acquired).toBe(true)
   })
 })
