@@ -205,6 +205,18 @@ export function prBodyGiven(env: Record<string, string | undefined> = process.en
   return env.PR_BODY !== undefined || env.PR_BODY_FILE !== undefined
 }
 
+const DOC_NEUTRAL_OWED_PREFIX = 'C5 doc-neutral-owed:'
+
+/**
+ * The notes of a C5 result that a check must show its author: each pass a
+ * run given no body granted on the evidence alone, naming the `Doc-neutral:`
+ * line the pull request body still owes. Both doc-coverage checks print
+ * these as warnings, so the pass is never silent.
+ */
+export function owedNeutralNotes(result: C5Result): string[] {
+  return result.notes.filter((n) => n.startsWith(DOC_NEUTRAL_OWED_PREFIX))
+}
+
 /**
  * Pure evaluator for the C5 doc-coverage check. The runtime wrapper reads
  * `.vinaya/doc-owners` from disk and `PR_BODY` from env; this
@@ -313,7 +325,7 @@ export function evaluateC5(
 
     if (!bodyGiven && evidenced()) {
       out.notes.push(
-        `C5 doc-neutral-owed: ${b.pointer} not required in this run for ${DOC_OWNERS_PATH}:${b.lineNum} (glob \`${b.glob}\`) — no pull request body was given, and the diff of ${matchedFiles.join(', ')} is comment/whitespace-only. The pull request body owes \`Doc-neutral: ${b.pointer} — <why>\`.`
+        `${DOC_NEUTRAL_OWED_PREFIX} ${b.pointer} not required in this run for ${DOC_OWNERS_PATH}:${b.lineNum} (glob \`${b.glob}\`) — no pull request body was given, and the diff of ${matchedFiles.join(', ')} is comment/whitespace-only. The pull request body owes \`Doc-neutral: ${b.pointer} — <why>\`.`
       )
       continue
     }

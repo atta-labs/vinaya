@@ -22,7 +22,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { isWaiverLabelActorVerified, WAIVER_LABEL } from '../../tools/task-contract/waiver-label'
-import { DOC_OWNERS_PATH, evaluateC5, prBodyGiven } from '../../tools/doc-owners'
+import { DOC_OWNERS_PATH, evaluateC5, owedNeutralNotes, prBodyGiven } from '../../tools/doc-owners'
 import { fileDiffAgainst } from '@harness/kernel/connectors/git/diff-evidence'
 import { CHECK_SCHEMA_VERSION, emitCheckError } from '@harness/kernel/gates/checks/contract'
 import { resolveTrustedPrincipals } from '../../integration/config/compose'
@@ -186,6 +186,20 @@ function main(): void {
     (p) => fileDiffAgainst(ref, p),
     prBodyGiven()
   )
+
+  // A pass granted on the evidence alone, in a run given no body, is shown as
+  // a warning: the pull request body still owes the `Doc-neutral:` line.
+  for (const message of owedNeutralNotes(result)) {
+    emitCheckError({
+      schema: CHECK_SCHEMA_VERSION,
+      check: CHECK_NAME,
+      severity: 'warning',
+      message,
+      agent_recovery_prompt:
+        'This change passes here on its comment/whitespace-only diff alone. Add the `Doc-neutral:` line this message ' +
+        'names to the pull request body, or the pull request run refuses it.'
+    })
+  }
 
   if (result.errors.length > 0) {
     for (const message of result.errors) {

@@ -8,6 +8,7 @@ import {
   isMechanicallyNeutralDiff,
   isUrlPointer,
   parseDocOwners,
+  owedNeutralNotes,
   pointerToPath,
   prBodyGiven
 } from './doc-owners'
@@ -505,12 +506,18 @@ describe('prBodyGiven — the one test of whether a run was given a body', () =>
     expect(prBodyGiven({ PR_BODY: 'Closes #1' })).toBe(true)
     expect(prBodyGiven({ PR_BODY_FILE: '/tmp/body.md' })).toBe(true)
   })
+  // That both doc-coverage checks route their decision through this function
+  // is pinned by behaviour, not source text: `checks/doc-neutral-ci-parity.test.ts`
+  // spawns each check with no body variable, then with an empty one, and
+  // asserts the two verdicts differ.
+})
 
-  it('both doc-coverage checks call it rather than deciding on their own', () => {
-    for (const name of ['check-doc-coverage.ts', 'check-doc-coverage-push.ts']) {
-      const src = readFileSync(join(import.meta.dir, '..', 'checks', 'bin', name), 'utf8')
-      expect(src).toContain('prBodyGiven()')
-    }
+describe('owedNeutralNotes — the notes a check must show', () => {
+  it('keeps only the passes granted on the evidence alone', () => {
+    const owed = 'C5 doc-neutral-owed: docs/x.md not required in this run'
+    const declared = 'C5 doc-neutral: docs/x.md not required'
+    expect(owedNeutralNotes({ errors: [], notes: [declared, owed] })).toEqual([owed])
+    expect(owedNeutralNotes({ errors: [], notes: [declared] })).toEqual([])
   })
 })
 

@@ -153,6 +153,51 @@ describe('C5 Doc-neutral parity between the blocking check and verify-docs (#122
   }
 })
 
+/** Run a bin with neither body variable in its environment, as the commit and push hooks do. */
+async function runCheckWithNoBody(bin: string, dir: string, base: string): Promise<{ code: number; stderr: string }> {
+  const env: Record<string, string | undefined> = { ...process.env, BASE_SHA: base, PR_NUMBER: '' }
+  delete env.PR_BODY
+  delete env.PR_BODY_FILE
+  const proc = Bun.spawn(['bun', bin], { cwd: dir, env, stdout: 'pipe', stderr: 'pipe' })
+  const stderr = await new Response(proc.stderr).text()
+  return { code: await proc.exited, stderr }
+}
+
+describe('C5 in a run given no pull request body', () => {
+  const OWED = 'C5 doc-neutral-owed'
+  const OWED_LINE = 'The pull request body owes `Doc-neutral: docs/x.md — <why>`'
+
+  for (const [label, bin] of Object.entries(BINS)) {
+    const blocking = label === 'blocking'
+
+    it(`[${label}] passes a comment-only change and shows the owed Doc-neutral line as a warning`, async () => {
+      const { dir, base } = repoWithFiredBinding('export const x = 1\n// a clarifying comment\n')
+      const r = await runCheckWithNoBody(bin, dir, base)
+      expect(r.code).toBe(0)
+      expect(r.stderr).toContain(OWED)
+      expect(r.stderr).toContain(OWED_LINE)
+      expect(r.stderr).toContain('"severity":"warning"')
+      expect(r.stderr).not.toContain('C5 doc-coverage:')
+    })
+
+    it(`[${label}] still fires on a code change`, async () => {
+      const { dir, base } = repoWithFiredBinding('export const x = 2\n')
+      const r = await runCheckWithNoBody(bin, dir, base)
+      if (blocking) expect(r.code).toBe(1)
+      expect(r.stderr).toContain('C5 doc-coverage:')
+      expect(r.stderr).not.toContain(OWED)
+    })
+
+    it(`[${label}] keeps the strict rule when an empty body is given`, async () => {
+      const { dir, base } = repoWithFiredBinding('export const x = 1\n// a clarifying comment\n')
+      const r = await runCheck(bin, dir, base, '')
+      if (blocking) expect(r.code).toBe(1)
+      expect(r.stderr).toContain('C5 doc-coverage:')
+      expect(r.stderr).not.toContain(OWED)
+    })
+  }
+})
+
 describe('C5 commit-time staged documentation coverage', () => {
   it('counts a staged owning document after a prior local code commit', async () => {
     const { dir, base } = repoWithFiredBinding('export const x = 2\n')
