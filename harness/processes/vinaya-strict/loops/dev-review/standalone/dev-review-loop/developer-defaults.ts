@@ -253,7 +253,7 @@ export function pushBranchClassified(worktreePath: string, branch: string, lease
   const traceDir = mkdtempSync(join(tmpdir(), 'vinaya-push-trace-'))
   const tracePath = join(traceDir, 'trace.jsonl')
   try {
-    // Through the driver-tool guard: the push runs the pre-push hook and its
+    // Through the process guard (`guardedSpawnSync`): the push runs the pre-push hook and its
     // tests, and a stopped driver must not leave that run behind.
     const leaseArgs = lease === undefined ? [] : [`--force-with-lease=refs/heads/${branch}:${lease}`]
     const pushed = guardedSpawnSync(
