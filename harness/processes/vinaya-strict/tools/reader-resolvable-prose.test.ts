@@ -870,17 +870,6 @@ describe("the repository's own history-narrating comment rules", () => {
     }
   })
 
-  // The places whose comments are not yet rewritten, as repository-relative
-  // path prefixes: a folder ends in `/`, a single file is named whole. Each
-  // entry is removed by the task that rewrites that place's comments, so the
-  // list only shrinks and never gains an entry. The log sink is bound to its
-  // own doc in `.vinaya/doc-owners`, and the commit hook's doc check runs
-  // with no pull request body, so even a comment-only edit to it cannot be
-  // declared doc-neutral at commit time; its comments are rewritten together
-  // with that doc.
-  const NOT_YET_SWEPT: readonly string[] = ['harness/kernel/log/log-sink.ts', 'packages/log-sdk/src/contract/schema.ts']
-  const notYetSwept = (path: string) => NOT_YET_SWEPT.some((prefix) => path.startsWith(prefix))
-
   // Every TypeScript file git tracks, so build output, dependency folders and
   // other worktrees are never read; a tracked file deleted in the working
   // tree has nothing to read.
@@ -889,13 +878,8 @@ describe("the repository's own history-narrating comment rules", () => {
       .split('\0')
       .filter((path) => path.endsWith('.ts') && existsSync(join(REPO_ROOT, path)))
 
-  it('names no place under the loops folder as not yet rewritten', () => {
-    const loops = 'harness/processes/vinaya-strict/loops/'
-    expect(NOT_YET_SWEPT.filter((prefix) => prefix.startsWith(loops) || loops.startsWith(prefix))).toEqual([])
-  })
-
-  it('finds none of the four forms in any comment of any tracked TypeScript file outside the places not yet rewritten', () => {
-    const files = trackedTypeScript().filter((path) => !notYetSwept(path))
+  it('finds none of the four forms in any comment of any tracked TypeScript file', () => {
+    const files = trackedTypeScript()
     expect(files.length).toBeGreaterThan(0)
     expect(files.some((path) => path.startsWith('harness/processes/vinaya-strict/loops/'))).toBe(true)
     const findings = files.flatMap((path) => {
