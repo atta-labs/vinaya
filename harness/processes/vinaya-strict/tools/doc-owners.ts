@@ -195,6 +195,29 @@ export function isMechanicallyNeutralDiff(diffText: string, path: string): boole
 }
 
 /**
+ * Whether a run was handed a pull request body: true when either body
+ * variable, `PR_BODY` or `PR_BODY_FILE`, is present in the environment,
+ * whatever it holds — an empty body is still a body given. The blocking
+ * doc-coverage check and the push-mode check both decide it here, so the
+ * two cannot drift.
+ */
+export function prBodyGiven(env: Record<string, string | undefined> = process.env): boolean {
+  return env.PR_BODY !== undefined || env.PR_BODY_FILE !== undefined
+}
+
+const DOC_NEUTRAL_OWED_PREFIX = 'C5 doc-neutral-owed:'
+
+/**
+ * The notes of a C5 result that a check must show its author: each pass a
+ * run given no body granted on the evidence alone, naming the `Doc-neutral:`
+ * line the pull request body still owes. Both doc-coverage checks print
+ * these as warnings, so the pass is never silent.
+ */
+export function owedNeutralNotes(result: C5Result): string[] {
+  return result.notes.filter((n) => n.startsWith(DOC_NEUTRAL_OWED_PREFIX))
+}
+
+/**
  * Pure evaluator for the C5 doc-coverage check. The runtime wrapper reads
  * `.vinaya/doc-owners` from disk and `PR_BODY` from env; this
  * function takes both as inputs and an injectable file-exists for unit tests.
@@ -214,6 +237,15 @@ export function isMechanicallyNeutralDiff(diffText: string, path: string): boole
  * absence never produces a pass: a declared-but-unevidenced neutral claim
  * fails the same as if it evidence didn't check out, preserving silence =
  * failure (state-machine.md Section 15).
+ *
+ * `bodyGiven` says whether the run was handed a pull request body at all —
+ * `prBodyGiven` above, read from the environment by each check. It defaults
+ * to true, so a caller that passes nothing gets the strict rule. With no body
+ * given (the commit hook and the push hook), a fired binding with no
+ * declaration still passes when the same comment/whitespace evidence holds,
+ * with a note that the `Doc-neutral:` line is owed in the pull request body;
+ * a run given a body (the pull request's CI run) still requires the
+ * declaration and the evidence together.
  */
 export function evaluateC5(
   changed: string[],
@@ -221,7 +253,8 @@ export function evaluateC5(
   prBody: string,
   fileExists: (p: string) => boolean,
   waiverActive: boolean,
-  getDiff?: (p: string) => string | null
+  getDiff?: (p: string) => string | null,
+  bodyGiven = true
 ): C5Result {
   const out: C5Result = { errors: [], notes: [] }
 
@@ -269,15 +302,16 @@ export function evaluateC5(
 
     if (changed.includes(pointerPath)) continue
 
+    const evidenced = (): boolean =>
+      getDiff !== undefined &&
+      matchedFiles.every((f) => {
+        const diff = getDiff(f)
+        return diff !== null && isMechanicallyNeutralDiff(diff, f)
+      })
+
     const declared = neutrals.find((n) => n.surface === b.pointer)
     if (declared) {
-      const evidenced =
-        getDiff !== undefined &&
-        matchedFiles.every((f) => {
-          const diff = getDiff(f)
-          return diff !== null && isMechanicallyNeutralDiff(diff, f)
-        })
-      if (evidenced) {
+      if (evidenced()) {
         out.notes.push(
           `C5 doc-neutral: ${b.pointer} not required for ${DOC_OWNERS_PATH}:${b.lineNum} (glob \`${b.glob}\`) — declared neutral ("${declared.note}"), diff of ${matchedFiles.join(', ')} confirmed comment/whitespace-only.`
         )
@@ -285,6 +319,13 @@ export function evaluateC5(
       }
       out.errors.push(
         `C5 doc-neutral-unverified: ${DOC_OWNERS_PATH}:${b.lineNum} (glob \`${b.glob}\` → ${b.pointer}) declared \`Doc-neutral: ${b.pointer} — ${declared.note}\`, but the diff of ${matchedFiles.join(', ')} contains changes beyond comments/whitespace. Update ${pointerPath}, or have a principal apply the \`${WAIVER_LABEL}\` label.`
+      )
+      continue
+    }
+
+    if (!bodyGiven && evidenced()) {
+      out.notes.push(
+        `${DOC_NEUTRAL_OWED_PREFIX} ${b.pointer} not required in this run for ${DOC_OWNERS_PATH}:${b.lineNum} (glob \`${b.glob}\`) — no pull request body was given, and the diff of ${matchedFiles.join(', ')} is comment/whitespace-only. The pull request body owes \`Doc-neutral: ${b.pointer} — <why>\`.`
       )
       continue
     }
