@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { connect } from '../src/index.js'
 import { resetCleanedFolders } from '../src/local-copy/file-exporters.js'
-import { deliveryStateOf, sendLocalCopy } from '../src/sender/send.js'
+import { deliveryStateOf, FINISHED_FILES, sendLocalCopy } from '../src/sender/send.js'
 
 type Attribute = { key: string; value: { stringValue?: string; intValue?: number | string } }
 type RecordData = {
@@ -220,7 +220,8 @@ test('cleaning removes the delivery state a real send wrote for an old file', as
     resetCleanedFolders()
     connect({ runId: 'run-s', repository: 'acme/widgets', repoRoot: join(runtimeDir, 'repo'), runtimeDir })
     expect(existsSync(join(folder, name))).toBe(false)
-    expect(readdirSync(state)).toEqual([])
+    // Only the sender's summary of finished files stays; the next send drops the removed file from it.
+    expect(readdirSync(state)).toEqual([FINISHED_FILES])
   } finally {
     rmSync(runtimeDir, { recursive: true, force: true })
   }

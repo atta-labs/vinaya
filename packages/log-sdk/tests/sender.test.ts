@@ -1,8 +1,21 @@
 import { afterEach, expect, test } from 'bun:test'
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync
+} from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { sendLocalCopy, type SendLocalCopyOptions } from '../src/sender/send.js'
+import { FINISHED_FILES, REQUESTS_IN_FLIGHT, sendLocalCopy, type SendLocalCopyOptions } from '../src/sender/send.js'
 
 const roots: string[] = []
 afterEach(() => {
@@ -141,7 +154,8 @@ test('retries transient failures and isolates rejected and unfinished lines', as
   const initial = await send()
   expect(initial.sent).toBe(0)
   expect(initial.failures.map((failure) => failure.reason)).toEqual(['HTTP 503'])
-  expect(initial.setAside.map((rejection) => rejection.reason)).toEqual(['HTTP 400', 'invalid JSON'])
+  // Requests run side by side, so the order records are set aside in is not fixed.
+  expect(initial.setAside.map((rejection) => rejection.reason).sort()).toEqual(['HTTP 400', 'invalid JSON'])
   expect(posted).toEqual([1, 2])
   appendFileSync(file, '}\n')
   first = false
@@ -164,4 +178,145 @@ test('a writer can append while a request stalls and the deadline leaves both li
   expect(report.sent).toBe(0)
   expect(report.failures.some(({ reason }) => reason === 'deadline reached')).toBe(true)
   expect((await sendLocalCopy({ ...options, fetch: async () => new Response() })).sent).toBe(2)
+})
+
+const segmentPath = (dir: string, index: number) =>
+  join(dir, `run~writer~${String(index).padStart(12, '0')}.logs.jsonl`)
+const markerPath = (dir: string, index: number, suffix: 'seen' | 'done') =>
+  join(dir, '.otlp-delivery', `run~writer~${String(index).padStart(12, '0')}.logs.${suffix}`)
+const record = (id: string) => JSON.stringify({ resourceLogs: [], id })
+const accept: SendLocalCopyOptions['fetch'] = async () => new Response(null, { status: 204 })
+const refuseAll: SendLocalCopyOptions['fetch'] = async () => {
+  throw new Error('no record should be posted')
+}
+
+test('a later send opens no finished file, size marker or delivered receipt and rewrites no marker', async () => {
+  const options = fixture()
+  const count = 200
+  for (let index = 0; index < count; index++) writeFileSync(segmentPath(options.dir, index), `${record(`r${index}`)}\n`)
+  expect(await sendLocalCopy({ ...options, fetch: accept })).toEqual({ sent: count, setAside: [], failures: [] })
+
+  const state = join(options.dir, '.otlp-delivery')
+  const markers: string[] = []
+  for (let index = 0; index < count; index++) {
+    chmodSync(segmentPath(options.dir, index), 0)
+    markers.push(markerPath(options.dir, index, 'seen'), markerPath(options.dir, index, 'done'))
+  }
+  for (const path of markers) chmodSync(path, 0)
+  const sent = readdirSync(state).filter((name) => name.endsWith('.sent'))
+  expect(sent).toHaveLength(count)
+  for (const name of sent) chmodSync(join(state, name), 0)
+  const inodes = markers.map((path) => statSync(path).ino)
+
+  expect(await sendLocalCopy({ ...options, fetch: refuseAll })).toEqual({ sent: 0, setAside: [], failures: [] })
+  expect(markers.map((path) => statSync(path).ino)).toEqual(inodes)
+})
+
+test('a file that grew has only its new record posted, without opening its delivered receipts', async () => {
+  const options = fixture()
+  const file = segmentPath(options.dir, 0)
+  writeFileSync(file, `${record('a')}\n${record('b')}\n`)
+  expect((await sendLocalCopy({ ...options, fetch: accept })).sent).toBe(2)
+  const state = join(options.dir, '.otlp-delivery')
+  for (const name of readdirSync(state).filter((name) => name.endsWith('.sent'))) chmodSync(join(state, name), 0)
+  appendFileSync(file, `${record('c')}\n`)
+  const posted: string[] = []
+  const report = await sendLocalCopy({
+    ...options,
+    fetch: async (_url, init) => {
+      posted.push(String(init.body))
+      return new Response(null, { status: 204 })
+    }
+  })
+  expect(report).toEqual({ sent: 1, setAside: [], failures: [] })
+  expect(posted).toEqual([record('c')])
+})
+
+test('a send with its summary deleted posts no delivered record again and writes the summary back', async () => {
+  const options = fixture()
+  for (let index = 0; index < 5; index++) writeFileSync(segmentPath(options.dir, index), `${record(`r${index}`)}\n`)
+  expect((await sendLocalCopy({ ...options, fetch: accept })).sent).toBe(5)
+  const summary = join(options.dir, '.otlp-delivery', FINISHED_FILES)
+  const written = readFileSync(summary, 'utf8')
+  unlinkSync(summary)
+  expect(await sendLocalCopy({ ...options, fetch: refuseAll })).toEqual({ sent: 0, setAside: [], failures: [] })
+  expect(readFileSync(summary, 'utf8')).toBe(written)
+})
+
+test('a send posts the newest file first, before staging older files, and earlier-staged records after it', async () => {
+  const options = fixture()
+  const delivered = 50
+  const base = Date.now() / 1000 - 10_000
+  for (let index = 0; index < delivered; index++) {
+    writeFileSync(segmentPath(options.dir, index), `${record(`old${index}`)}\n`)
+    utimesSync(segmentPath(options.dir, index), base + index, base + index)
+  }
+  const waiting = segmentPath(options.dir, delivered)
+  writeFileSync(waiting, `${record('waiting1')}\n${record('waiting2')}\n`)
+  utimesSync(waiting, base + delivered, base + delivered)
+  const first = await sendLocalCopy({
+    ...options,
+    fetch: async (_url, init) => new Response(null, { status: String(init.body).includes('waiting') ? 503 : 204 })
+  })
+  expect(first.sent).toBe(delivered)
+  expect(first.failures.map(({ reason }) => reason)).toEqual(['HTTP 503', 'HTTP 503'])
+
+  // Without the summary and their completion markers, the delivered files are staged again by this send.
+  unlinkSync(join(options.dir, '.otlp-delivery', FINISHED_FILES))
+  for (let index = 0; index < delivered; index++) unlinkSync(markerPath(options.dir, index, 'done'))
+  const newest = segmentPath(options.dir, delivered + 1)
+  writeFileSync(newest, `${record('new')}\n`)
+  utimesSync(newest, base + 1000, base + 1000)
+
+  const posted: string[] = []
+  let oldestDoneAtFirstRequest: boolean | undefined
+  const report = await sendLocalCopy({
+    ...options,
+    fetch: async (_url, init) => {
+      oldestDoneAtFirstRequest ??= existsSync(markerPath(options.dir, 0, 'done'))
+      posted.push(String(init.body))
+      return new Response(null, { status: 204 })
+    }
+  })
+  expect(report).toEqual({ sent: 3, setAside: [], failures: [] })
+  expect(posted[0]).toBe(record('new'))
+  expect(posted.slice(1).sort()).toEqual([record('waiting1'), record('waiting2')])
+  expect(oldestDoneAtFirstRequest).toBe(false)
+  expect(existsSync(markerPath(options.dir, 0, 'done'))).toBe(true)
+})
+
+test('a send keeps eight requests in flight and never nine, posting each record once', async () => {
+  const options = fixture()
+  const total = 20
+  for (let index = 0; index < total; index++) writeFileSync(segmentPath(options.dir, index), `${record(`r${index}`)}\n`)
+  const posted: string[] = []
+  const held: Array<() => void> = []
+  let inFlight = 0
+  let most = 0
+  let released = 0
+  const report = await sendLocalCopy({
+    ...options,
+    fetch: async (_url, init) => {
+      posted.push(String(init.body))
+      inFlight++
+      most = Math.max(most, inFlight)
+      const answered = new Promise<void>((resolve) => held.push(resolve))
+      // Hold every request until as many as can be in flight are, then give a ninth time to start.
+      if (held.length === Math.min(REQUESTS_IN_FLIGHT, total - released)) {
+        setTimeout(() => {
+          for (const resolve of held.splice(0)) {
+            released++
+            inFlight--
+            resolve()
+          }
+        }, 20)
+      }
+      await answered
+      return new Response(null, { status: 204 })
+    }
+  })
+  expect(REQUESTS_IN_FLIGHT).toBe(8)
+  expect(most).toBe(8)
+  expect(report).toEqual({ sent: total, setAside: [], failures: [] })
+  expect(posted.sort()).toEqual(Array.from({ length: total }, (_, index) => record(`r${index}`)).sort())
 })

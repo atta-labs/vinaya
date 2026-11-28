@@ -105,6 +105,13 @@ The local copy is cleaned after the keep window, `logs.keepDays` (§ 5). When a 
 
 Delivery state is kept in `.otlp-delivery` inside the repository's folder, with a receipt per line: a line sent once is not sent again, and a line set aside has a rejected receipt and is never posted by a later call. A segment missing from the middle of a writer's numbering is reported as lost. The report holds `sent`, `setAside` and `failures`.
 
+A send does no work for what an earlier send finished. One summary in `.otlp-delivery`, `finished-files.json`, lists each local-copy file staged to its end with the size it had then; a send reads it once, takes each file's size and last write from a stat that opens nothing, and neither reads nor marks again a file the summary lists at its size on disk now. A record whose `.sent` or rejected receipt is in the folder's listing is not opened again. The summary is replaced whole after each send's staging; when it is missing or unreadable, the send judges each file from its own size markers and writes the summary back, and the `.sent` receipts in the listing keep a delivered record from being posted again. A removed file the summary lists is not reported as lost.
+
+A send stages files newest first by last write and posts each record as soon as it is staged, then posts what earlier sends staged and left unsent; it never waits for the whole local copy to be staged. Up to eight requests are in flight at once, each still one record with its own receipt, so a refused record is set aside on its own and a resend is still stored once. A send stopped by its deadline or by the process ending keeps every receipt it wrote.
+
+<!-- VINAYA:CLAIM: packages/log-sdk/src/sender/send.ts contains:export const FINISHED_FILES = 'finished-files.json' -->
+<!-- VINAYA:CLAIM: packages/log-sdk/src/sender/send.ts contains:export const REQUESTS_IN_FLIGHT = 8 -->
+
 <!-- VINAYA:CLAIM: packages/log-sdk/src/sender/send.ts contains:const state = join(directory, '.otlp-delivery') -->
 <!-- VINAYA:CLAIM: packages/log-sdk/src/sender/send.ts contains:const retryableClientStatuses = new Set([401, 403, 404, 408, 429]) -->
 

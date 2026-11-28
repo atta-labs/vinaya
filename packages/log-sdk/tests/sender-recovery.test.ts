@@ -68,6 +68,38 @@ test.each(['before', 'during', 'after', 'between the answer and its receipt for'
   }
 )
 
+test('a send stopped by its deadline keeps its receipts and the next send delivers the rest once', async () => {
+  const { options, segment } = fixture()
+  const records = Array.from({ length: 12 }, (_, index) => trace.replace('beef', `be${String(index).padStart(2, '0')}`))
+  for (let index = 0; index < 4; index++) segment(index, ...records.slice(index * 3, index * 3 + 3))
+  const answered = new Set<string>()
+  let requests = 0
+  const stopped = await sendLocalCopy({
+    ...options,
+    deadline: Date.now() + 500,
+    fetch: async (_url, init) => {
+      if (requests++ >= 3) return new Promise<Response>(() => {})
+      answered.add(String(init.body))
+      return new Response()
+    }
+  })
+  expect(stopped.sent).toBe(3)
+  expect(stopped.failures.some(({ reason }) => reason === 'deadline reached')).toBe(true)
+
+  const rest: string[] = []
+  const next = await sendLocalCopy({
+    ...options,
+    fetch: async (_url, init) => {
+      rest.push(String(init.body))
+      return new Response()
+    }
+  })
+  expect(next).toEqual({ sent: 9, setAside: [], failures: [] })
+  expect(rest.filter((body) => answered.has(body))).toEqual([])
+  expect(new Set([...answered, ...rest])).toEqual(new Set(records))
+  expect(rest).toHaveLength(9)
+})
+
 test('retries staged records after their source segment is removed', async () => {
   const { options, fetch, segment, observed } = fixture()
   const source = segment(0, trace)

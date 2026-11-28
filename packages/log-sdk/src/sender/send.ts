@@ -272,6 +272,39 @@ async function post(
   }
 }
 
+/**
+ * The one file in the delivery folder that lists each local-copy file staged to its end, with the size it had then.
+ * A send reads it once instead of opening two size markers per file, and rebuilds it from those markers when it is
+ * missing or unreadable.
+ */
+export const FINISHED_FILES = 'finished-files.json'
+/** How many records a send has posted and not yet heard back about, at most. */
+export const REQUESTS_IN_FLIGHT = 8
+/** How many staged records may wait for a request before staging pauses. */
+const queuedRecordsBound = 1024
+
+type Queued = {
+  name: string
+  key: string
+  signal: Signal
+  identity: { file: string; offset: number }
+  /** The staged line with its newline, when this send staged it; otherwise read from the pending receipt. */
+  bytes?: Buffer
+}
+
+function readFinishedFiles(bytes: Buffer): Map<string, number> {
+  const document = JSON.parse(bytes.toString('utf8')) as { files?: unknown }
+  const files = document.files
+  if (typeof files !== 'object' || files === null || Array.isArray(files)) throw new Error('Unreadable summary')
+  const sizes = new Map<string, number>()
+  for (const [name, size] of Object.entries(files)) {
+    if (!segmentName.test(name) || !Number.isSafeInteger(size) || (size as number) < 0)
+      throw new Error('Unreadable summary')
+    sizes.set(name, size as number)
+  }
+  return sizes
+}
+
 /** Send immutable, newline-terminated records without taking a writer or sender lock. */
 export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<LocalCopyReport> {
   const directory = join(options.folder, repoSegment(options.repository))
@@ -284,15 +317,26 @@ export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<Loca
   async function send(): Promise<void> {
     const home = options.home ?? homedir()
     const endpoints = { traces: otlpSignalUrl(options.url, 'traces'), logs: otlpSignalUrl(options.url, 'logs') }
+    const endpointHashes = {
+      traces: createHash('sha256').update(endpoints.traces).digest('hex'),
+      logs: createHash('sha256').update(endpoints.logs).digest('hex')
+    }
     const headers = new Headers(options.headers)
     headers.set('content-type', 'application/json')
     const files = await list(directory)
     await checkState(state)
     const entries = await list(state)
+    // Receipts are judged by the listing: a record whose `.sent` or rejected receipt is listed is not opened.
+    const listed = new Set<string>()
+    for (const entry of entries) if (entry.isFile()) listed.add(entry.name)
     const observed = new Map<string, string>()
     const writers = new Map<string, Set<number>>()
     const seen = new Set<string>()
-    const marker = (name: string, suffix: string) => join(state, `${name.slice(0, -6)}.${suffix}`)
+    const markerName = (name: string, suffix: string) => `${name.slice(0, -6)}.${suffix}`
+    const marker = (name: string, suffix: string) => join(state, markerName(name, suffix))
+    const sentName = (key: string, signal: Signal) => `${key}.${endpointHashes[signal]}.sent`
+    const finishedRecord = (key: string, signal: Signal) =>
+      listed.has(sentName(key, signal)) || listed.has(`${key}.rejected.json`)
     async function fullyStaged(name: string): Promise<boolean> {
       const size = await snapshot(marker(name, 'seen'))
       const complete = await snapshot(marker(name, 'done'))
@@ -313,6 +357,50 @@ export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<Loca
       if (!entry.isFile()) continue
       if (entry.name.endsWith('.seen')) remember(`${entry.name.slice(0, -5)}.jsonl`, false)
     }
+
+    // One read of the summary replaces two marker opens per finished file. Without a readable summary, a file's
+    // own markers say how far it was staged, and the summary is written back from them below.
+    const summaryPath = join(state, FINISHED_FILES)
+    let summary = new Map<string, number>()
+    let summaryText: string | undefined
+    try {
+      const bytes = await snapshot(summaryPath)
+      if (bytes) {
+        summary = readFinishedFiles(bytes)
+        summaryText = bytes.toString('utf8')
+      }
+    } catch {
+      summary = new Map()
+    }
+    async function stagedThrough(name: string): Promise<number | undefined> {
+      const listedSize = summary.get(name)
+      if (listedSize !== undefined) return listedSize
+      if (!listed.has(markerName(name, 'seen')) || !listed.has(markerName(name, 'done'))) return undefined
+      try {
+        const size = await snapshot(marker(name, 'seen'))
+        const complete = await snapshot(marker(name, 'done'))
+        if (size === undefined || complete === undefined) return undefined
+        const through = Number(complete.toString())
+        return Number.isSafeInteger(through) && through >= Number(size.toString()) ? through : undefined
+      } catch {
+        return undefined
+      }
+    }
+    // A stat opens nothing: it gives each file's size, to skip what is finished, and its last write, to stage the
+    // newest first.
+    const onDisk = new Map<string, { size: number; modified: number }>()
+    const finished = new Map<string, number>()
+    for (const name of seen) {
+      if (stopped || Date.now() >= deadline) return
+      const stat = await lstat(join(directory, name)).catch((error) => {
+        if (missing(error)) return undefined
+        throw error
+      })
+      if (!stat?.isFile()) continue
+      onDisk.set(name, { size: stat.size, modified: stat.mtimeMs })
+      if ((await stagedThrough(name)) === stat.size) finished.set(name, stat.size)
+    }
+
     async function lost(name: string, writer: string) {
       const failure = { file: join(directory, name), reason: `lost segment from writer ${writer}` }
       const key = createHash('sha256').update(name).digest('hex')
@@ -322,15 +410,13 @@ export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<Loca
     }
     for (const [name, writer] of observed) {
       if (stopped || Date.now() >= deadline) return
+      if (finished.has(name)) continue
       if (seen.has(name)) {
         await mkdir(state, { recursive: true, mode: 0o700 })
-        const stat = await lstat(join(directory, name)).catch((error) => {
-          if (missing(error)) return undefined
-          throw error
-        })
-        if (stat?.isFile()) await recordReceipt(marker(name, 'seen'), String(stat.size))
-        else if (!(await fullyStaged(name))) await lost(name, writer)
-      } else if (!(await fullyStaged(name)) && !(await hasReceipt(join(directory, name)))) {
+        const stat = onDisk.get(name)
+        if (stat) await recordReceipt(marker(name, 'seen'), String(stat.size))
+        else if (!summary.has(name) && !(await fullyStaged(name))) await lost(name, writer)
+      } else if (!summary.has(name) && !(await fullyStaged(name)) && !(await hasReceipt(join(directory, name)))) {
         await lost(name, writer)
       }
     }
@@ -353,95 +439,71 @@ export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<Loca
         expected = index + 1
       }
     }
-    const pending = new Map<string, { signal: Signal; file: string; offset: number }>()
-    for (const entry of entries) {
-      const match = /^([a-f0-9]{64})\.(traces|logs)\.pending$/.exec(entry.name)
-      if (match?.[1] && entry.isFile())
-        pending.set(entry.name, { file: match[1], offset: 0, signal: match[2] as Signal })
+
+    // Requests start as soon as a record is staged; staging goes on while up to REQUESTS_IN_FLIGHT are answered.
+    const queue: Queued[] = []
+    const queued = new Set<string>()
+    let staging = true
+    let wakeWorkers = () => {}
+    let workAvailable = new Promise<void>((resolve) => (wakeWorkers = resolve))
+    let wakeStager = () => {}
+    let spaceAvailable = new Promise<void>((resolve) => (wakeStager = resolve))
+    const halted = () => stopped || Date.now() >= deadline
+    function notifyWorkers() {
+      const wake = wakeWorkers
+      workAvailable = new Promise<void>((resolve) => (wakeWorkers = resolve))
+      wake()
     }
-    for (const entry of files) {
-      if (stopped || Date.now() >= deadline) return
-      const match = segmentName.exec(entry.name)
-      const signal = match?.[4] as Signal | undefined
-      if (!signal || !entry.isFile()) continue
-      try {
-        const data = await snapshot(join(directory, entry.name))
-        if (!data) {
-          if (!(await fullyStaged(entry.name))) await lost(entry.name, match?.[2] ?? 'unknown')
-          continue
-        }
-        let offset = 0
-        while (offset < data.length) {
-          if (stopped || Date.now() >= deadline) return
-          const end = await nextNewline(data, offset, stop.signal)
-          if (end === -1) break
-          const identity = { file: entry.name, offset }
-          const line = data.subarray(offset, end)
-          offset = end + 1
-          // A replacement with different bytes gets its own receipt. No position
-          // in this file can mark a different file or an earlier line delivered.
-          const key = await lineKey(identity, line, stop.signal)
-          if (!key || stopped || Date.now() >= deadline) return
-          const name = `${key}.${signal}.pending`
-          const path = join(state, name)
-          if (!pending.has(name)) {
-            if (await hasReceipt(join(state, `${key}.rejected.json`))) continue
-            if (await hasReceipt(deliveryPath(key, signal))) continue
-            await mkdir(state, { recursive: true, mode: 0o700 })
-            // Include the newline so even an empty invalid line has a nonempty receipt.
-            await recordReceipt(path, data.subarray(identity.offset, offset))
-          }
-          pending.set(name, { ...identity, signal })
-        }
-        if (!stopped && offset === data.length) {
-          await recordReceipt(marker(entry.name, 'done'), String(data.length))
-        }
-      } catch {
-        if (!stopped) report.failures.push({ file: entry.name, reason: 'local copy or delivery state unavailable' })
-      }
+    function notifyStager() {
+      const wake = wakeStager
+      spaceAvailable = new Promise<void>((resolve) => (wakeStager = resolve))
+      wake()
+    }
+    function enqueue(item: Queued) {
+      if (queued.has(item.name)) return
+      queued.add(item.name)
+      queue.push(item)
+      notifyWorkers()
     }
 
-    function deliveryPath(key: string, signal: Signal): string {
-      return join(state, `${key}.${createHash('sha256').update(endpoints[signal]).digest('hex')}.sent`)
-    }
-
-    for (const [name, { signal, ...identity }] of pending) {
-      if (stopped || Date.now() >= deadline) return
+    async function deliver({ name, key, signal, identity, bytes: staged }: Queued): Promise<void> {
       try {
-        const key = name.slice(0, 64)
         const rejected = join(state, `${key}.rejected.json`)
-        const delivered = deliveryPath(key, signal)
-        if ((await hasReceipt(rejected)) || (await hasReceipt(delivered))) continue
-        const bytes = await snapshot(join(state, name))
-        if (!bytes || stopped || Date.now() >= deadline) continue
+        const delivered = join(state, sentName(key, signal))
+        let bytes = staged
+        if (!bytes) {
+          if ((await hasReceipt(rejected)) || (await hasReceipt(delivered))) return
+          bytes = await snapshot(join(state, name))
+          if (!bytes || halted()) return
+        }
         const line = bytes.subarray(0, -1)
         const large = line.length > 64 * 1024
         const inspection = large
           ? await inspectLargeLine(line, home, stop.signal)
           : inspectLine(line, home, reservedNamesOf, redact)
-        if (stopped || Date.now() >= deadline) return
+        if (halted()) return
         const failure = inspection.valid ? checkReservedNames(inspection.names) : null
         let reason: string
         if (!inspection.valid) reason = 'invalid JSON'
         else if (failure) reason = `contract: ${describeContractFailure(failure)}`
         else {
-          if (rejectedBeforePost(rejected)) continue
+          if (rejectedBeforePost(rejected)) return
           const status = await post(options.fetch ?? fetch, endpoints[signal], headers, inspection.body, deadline)
           if (stopped) return
           if (typeof status !== 'number') {
             report.failures.push({ ...identity, reason: status })
-            continue
+            return
           }
           if (status >= 200 && status < 300) {
             await mkdir(state, { recursive: true, mode: 0o700 })
             await recordReceipt(delivered, 'sent\n')
             if (!stopped) report.sent++
-            continue
+            return
           }
           reason = `HTTP ${status}`
           if (status < 400 || status >= 500 || retryableClientStatuses.has(status)) {
             report.failures.push({ ...identity, reason })
-            continue
+            return
           }
         }
         const refusal = { ...identity, reason }
@@ -452,6 +514,120 @@ export async function sendLocalCopy(options: SendLocalCopyOptions): Promise<Loca
       } catch {
         if (!stopped) report.failures.push({ ...identity, reason: 'local copy or delivery state unavailable' })
       }
+    }
+
+    async function worker(): Promise<void> {
+      try {
+        for (;;) {
+          if (halted()) return
+          const item = queue.shift()
+          if (!item) {
+            if (!staging) return
+            await workAvailable
+            continue
+          }
+          notifyStager()
+          // Each request carries one record and gets its own receipt.
+          await deliver(item)
+        }
+      } finally {
+        notifyStager()
+      }
+    }
+    const workers = Array.from({ length: REQUESTS_IN_FLIGHT }, worker)
+
+    async function stage(name: string): Promise<void> {
+      const match = segmentName.exec(name)
+      const signal = match?.[4] as Signal | undefined
+      if (!signal) return
+      try {
+        const data = await snapshot(join(directory, name))
+        if (!data) {
+          if (!summary.has(name) && !(await fullyStaged(name))) await lost(name, match?.[2] ?? 'unknown')
+          return
+        }
+        let offset = 0
+        while (offset < data.length) {
+          if (halted()) return
+          const end = await nextNewline(data, offset, stop.signal)
+          if (end === -1) break
+          const identity = { file: name, offset }
+          const line = data.subarray(offset, end)
+          offset = end + 1
+          // A replacement with different bytes gets its own receipt. No position
+          // in this file can mark a different file or an earlier line delivered.
+          const key = await lineKey(identity, line, stop.signal)
+          if (!key || halted()) return
+          if (finishedRecord(key, signal)) continue
+          const pendingName = `${key}.${signal}.pending`
+          if (!listed.has(pendingName)) {
+            if (await hasReceipt(join(state, `${key}.rejected.json`))) continue
+            if (await hasReceipt(join(state, sentName(key, signal)))) continue
+            await mkdir(state, { recursive: true, mode: 0o700 })
+            // Include the newline so even an empty invalid line has a nonempty receipt.
+            await recordReceipt(join(state, pendingName), data.subarray(identity.offset, offset))
+          }
+          while (queue.length >= queuedRecordsBound && !halted()) await spaceAvailable
+          enqueue({
+            name: pendingName,
+            key,
+            signal,
+            identity,
+            bytes: Buffer.from(data.subarray(identity.offset, offset))
+          })
+        }
+        if (!stopped && offset === data.length) {
+          await recordReceipt(marker(name, 'done'), String(data.length))
+          finished.set(name, data.length)
+        }
+      } catch {
+        if (!stopped) report.failures.push({ file: name, reason: 'local copy or delivery state unavailable' })
+      }
+    }
+
+    try {
+      const newestFirst = [...onDisk]
+        .filter(([name]) => !finished.has(name))
+        .sort(([a, x], [b, y]) => y.modified - x.modified || (a < b ? 1 : a > b ? -1 : 0))
+        .map(([name]) => name)
+      for (const name of newestFirst) {
+        if (halted()) return
+        await stage(name)
+      }
+      if (halted()) return
+
+      // The summary is replaced whole. A removed file it lists stays listed while its size marker remains.
+      const summaryFiles: Record<string, number> = {}
+      for (const name of [...new Set([...finished.keys(), ...summary.keys()])].sort()) {
+        const size = finished.get(name) ?? (onDisk.has(name) ? undefined : summary.get(name))
+        if (size === undefined) continue
+        if (!onDisk.has(name) && !listed.has(markerName(name, 'seen'))) continue
+        summaryFiles[name] = size
+      }
+      const text = JSON.stringify({ files: summaryFiles })
+      if (text !== summaryText) {
+        try {
+          await mkdir(state, { recursive: true, mode: 0o700 })
+          await recordReceipt(summaryPath, text)
+        } catch {
+          // The summary saves work only; without it the next send reads the markers again.
+        }
+      }
+
+      // Records staged by an earlier send go after this send's own.
+      for (const name of listed) {
+        if (halted()) return
+        const match = /^([a-f0-9]{64})\.(traces|logs)\.pending$/.exec(name)
+        if (!match?.[1]) continue
+        const signal = match[2] as Signal
+        if (queued.has(name) || finishedRecord(match[1], signal)) continue
+        while (queue.length >= queuedRecordsBound && !halted()) await spaceAvailable
+        enqueue({ name, key: match[1], signal, identity: { file: match[1], offset: 0 } })
+      }
+    } finally {
+      staging = false
+      notifyWorkers()
+      await Promise.all(workers)
     }
   }
 
