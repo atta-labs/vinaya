@@ -34,6 +34,7 @@ import { loopHistoryFromComments } from '../loops/dev-review/standalone/dev-revi
 import {
   acquireDriverLockAtomic,
   readDriverLock,
+  type PauseState,
   readPauseState,
   writeDriverLock,
   writePauseState
@@ -64,9 +65,14 @@ import {
   roleTimeouts,
   runIdentityOfTask,
   takeDriverLock,
+  liveResumeDeps,
+  watchForRuling,
   watchPublishedPullRequest,
-  type RecoveryDeps
+  type RecoveryDeps,
+  type ResumeDeps,
+  type RulingWatch
 } from '../bin/run-lifecycle'
+import type { EscalationRecord, ResolutionRecord } from '@harness/kernel/connectors/checkpoint/control-store/index'
 import {
   heldPullRequestConflictsLive,
   runEngine,
@@ -1535,5 +1541,127 @@ describe("an Engine runner launch's turn records the review input versions of it
     const turns = turnsOf(world)
     expect(turns).toHaveLength(2)
     for (const span of turns) expect(versionsOf(span)).toEqual(expectedOf(manifest))
+  })
+})
+
+// --- the ruling watch tells its own resolution from another claimant's ----------------
+
+describe('the ruling watch knows the resolution its own claim recorded', () => {
+  const WATCH_TASK = 41
+  const WATCH_PR = 410
+  const ESCALATION = 'esc-watch'
+
+  const held: PauseState = {
+    task: WATCH_TASK,
+    round: 1,
+    head: 'abc',
+    branch: `task/issue-${WATCH_TASK}`,
+    prNumber: WATCH_PR,
+    reason: 'escalation',
+    pausedAt: '2026-01-01T00:00:00.000Z',
+    agent: 'claude',
+    escalationId: ESCALATION
+  }
+
+  const recordOf = (decision: 'resume' | 'cancel', by: string, from: string): ResolutionRecord => ({
+    version: 1,
+    kind: 'resolution',
+    task: WATCH_TASK,
+    escalationId: ESCALATION,
+    decision,
+    authenticatedBy: by,
+    authenticatedFrom: from,
+    consumedAt: '2026-01-01T00:00:00.000Z'
+  })
+
+  /**
+   * A pause whose ruling is posted before the first forge read. `claim` stands in for the claim the watch makes;
+   * `onPoll` runs on each sleep, so a test records a resolution between two passes; `recorded` is the resolution
+   * the store already holds when the watch starts.
+   */
+  async function watchWith(
+    claim: (store: { resolution: ResolutionRecord | null }, by: string, from: string) => void,
+    onPoll: (store: { resolution: ResolutionRecord | null }, poll: number) => void = () => {},
+    recorded: ResolutionRecord | null = null
+  ) {
+    const store = { resolution: recorded }
+    const claims: Array<{ by: string; from: string }> = []
+    const narrated: string[] = []
+    const deps: ResumeDeps = {
+      ...liveResumeDeps,
+      readPauseState: () => held,
+      readEscalationRecord: () => ({ rulingOrdinal: 0 }) as EscalationRecord,
+      readResolution: () => store.resolution,
+      resolveEscalation: (_task, escalationId, _pr, _decision, by, from) => {
+        claims.push({ by, from })
+        claim(store, by, from)
+        return { escalation: {} as EscalationRecord, resolution: store.resolution!, epoch: 1 }
+      },
+      fetchPrState: () => 'OPEN',
+      fetchNewestRulingOrdinal: () => 1,
+      fetchNewestRulingAuthor: () => 'principal-1'
+    }
+    const stop = new AbortController()
+    let polls = 0
+    const watch: RulingWatch = {
+      deps,
+      pollMs: 1,
+      sleep: async () => {
+        polls += 1
+        onPoll(store, polls)
+        if (polls > 20) stop.abort()
+      }
+    }
+    const result = await watchForRuling(fixtureDir('ruling-watch-'), WATCH_TASK, watch, stop.signal, (line) =>
+      narrated.push(line)
+    )
+    return { result, claims, narrated }
+  }
+
+  test('a claim that recorded the resume resolution and then failed ends the watch as ruled', async () => {
+    const { result, claims, narrated } = await watchWith((store, by, from) => {
+      store.resolution = recordOf('resume', by, from)
+      throw new Error('the transition after the resolution could not be written')
+    })
+    expect(result).toEqual({ kind: 'ruled', escalationId: ESCALATION })
+    expect(claims).toEqual([{ by: 'principal-1', from: `${WATCH_PR}-1` }])
+    expect(narrated.some((line) => line.startsWith('claiming the resolution failed'))).toBe(true)
+  })
+
+  test('a resume resolution another claimant recorded after a failed claim ends the watch as consumed', async () => {
+    const { result, claims } = await watchWith(
+      () => {
+        throw new Error('the store could not be read')
+      },
+      (store, poll) => {
+        if (poll === 1) store.resolution = recordOf('resume', 'driver-self', `${WATCH_PR}-host-repaired`)
+      }
+    )
+    expect(result).toEqual({ kind: 'consumed' })
+    expect(claims).toHaveLength(1)
+  })
+
+  test('a resume resolution recorded before the watch claimed anything ends it as consumed, even with the same authority', async () => {
+    const { result, claims } = await watchWith(
+      () => {
+        throw new Error('the watch claims no resolution already recorded')
+      },
+      () => {},
+      recordOf('resume', 'principal-1', `${WATCH_PR}-1`)
+    )
+    expect(result).toEqual({ kind: 'consumed' })
+    expect(claims).toEqual([])
+  })
+
+  test('a cancel resolution recorded after a failed claim ends the watch as cancelled', async () => {
+    const { result } = await watchWith(
+      () => {
+        throw new Error('the store could not be read')
+      },
+      (store, poll) => {
+        if (poll === 1) store.resolution = recordOf('cancel', 'principal-1', `${WATCH_PR}-1`)
+      }
+    )
+    expect(result).toEqual({ kind: 'cancelled' })
   })
 })

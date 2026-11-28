@@ -556,7 +556,8 @@ const authenticatedFromOrdinal = (held: PauseState, task: number, ordinal: numbe
  * anything and no run continues. On a ruling it
  * claims the pause's resolution once with `resolveEscalation` — a loss to another claimant ends the watch without a
  * second resume — and returns so the caller continues the run from its checkpoint. A read that fails is tried again
- * on the next poll; it never ends the watch.
+ * on the next poll; it never ends the watch. A claim whose call failed after recording its resolution is still the
+ * watch's own: a resume resolution holding the author and source the watch passed to it ends the watch as ruled.
  *
  * A pause for an agent's usage limit whose reset is within the standalone loop's bound is the one exception that
  * needs no ruling: the watch sleeps to the recorded reset, then claims the resolution as the runner's own, at most
@@ -629,9 +630,18 @@ export async function watchForRuling(
   // The first forge read is due at once; each later one waits as long as the last or twice as long, up to the ceiling.
   let forgeWaitMs = watch.pollMs
   let sinceForgeReadMs = forgeWaitMs
+  // What this watch last passed to a resume claim: a claim whose call failed may still have recorded it, and a
+  // resolution holding the same authority is then this watch's own, not another claimant's.
+  let claimed: { authenticatedBy: string; authenticatedFrom: string } | null = null
+  const isOwnResume = (record: ResolutionRecord | null): boolean =>
+    claimed !== null &&
+    record?.decision === 'resume' &&
+    record.authenticatedBy === claimed.authenticatedBy &&
+    record.authenticatedFrom === claimed.authenticatedFrom
   while (!stop.aborted) {
     const resolution = tolerate(() => deps.readResolution(task, escalationId), null)
     if (resolution?.decision === 'cancel') return { kind: 'cancelled' }
+    if (isOwnResume(resolution)) return { kind: 'ruled', escalationId }
     if (resolution !== null) return { kind: 'consumed' }
     // The pause's pull request, read again each tick so a pause bound to one since it was raised is watched too.
     const pr = tolerate(() => deps.readPauseState(root, task)?.prNumber ?? held.prNumber, held.prNumber)
@@ -666,14 +676,20 @@ export async function watchForRuling(
     if (newest !== null) {
       baseline ??= newest
       if (newest > baseline) {
+        const authority = {
+          authenticatedBy: tolerate(() => rulingAuthorOf(deps, held, task), null) ?? 'unknown-principal',
+          authenticatedFrom: authenticatedFromOrdinal(held, task, newest)
+        }
+        // Set before the call: a resolution the call records stays this watch's own even when the call then throws.
+        claimed = authority
         try {
           deps.resolveEscalation(
             task,
             escalationId,
             escalationPrOf(held),
             'resume',
-            tolerate(() => rulingAuthorOf(deps, held, task), null) ?? 'unknown-principal',
-            authenticatedFromOrdinal(held, task, newest)
+            authority.authenticatedBy,
+            authority.authenticatedFrom
           )
           return { kind: 'ruled', escalationId }
         } catch (error) {
