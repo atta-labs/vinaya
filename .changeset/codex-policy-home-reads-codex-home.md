@@ -1,5 +1,0 @@
----
-"@attalabs/vinaya": patch
----
-
-The loop dispatch now finds the operator's Codex login in the directory `CODEX_HOME` names, and in `.codex` under the home directory when it is unset. That covers staging a Codex home and refreshing its login copy before a later dispatch, and they use the same `operatorCodexAuthPath` rule as the rest of the kernel. An operator whose login is in another directory is no longer told there is no login. If `CODEX_HOME` names a directory with no login, staging returns null and refreshing changes nothing; the login under the home directory is not used instead. `stageCodexPolicyHome`, `refreshStagedCodexLogin` and `reuseStagedCodexHome` take an optional `env` input and never read the process environment themselves. With no `env` they read `.codex` under the home they are given, as before, so the grading sandbox and the sandbox-conformance program still stage only their own placeholder login. The dispatch and the live conformance proofs stage from the real home and pass their process environment.

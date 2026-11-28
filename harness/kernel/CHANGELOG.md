@@ -1,5 +1,26 @@
 # @attalabs/harness
 
+## 0.0.5
+
+### Patch Changes
+
+- Updated dependencies [15d3609]
+- Updated dependencies [2b4ba6b]
+- Updated dependencies [5abef8d]
+- Updated dependencies [3432004]
+- Updated dependencies [1362cbb]
+- Updated dependencies [cefb5be]
+- Updated dependencies [86bd515]
+- Updated dependencies [00bed3b]
+- Updated dependencies [494e719]
+- Updated dependencies [ec1a558]
+- Updated dependencies [98d6dc1]
+- Updated dependencies [abdcc4e]
+- Updated dependencies [b6d8a9c]
+- Updated dependencies [b43cdae]
+  - @attalabs/vinaya-log-sdk@0.47.0
+  - @attalabs/test-selection@0.5.0
+
 ## 0.0.4
 
 ### Patch Changes
