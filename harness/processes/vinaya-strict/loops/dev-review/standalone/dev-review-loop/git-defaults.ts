@@ -137,7 +137,7 @@ export function scanStreamToString(stream: Buffer | string | null | undefined): 
 export function defaultRunSecurityScanSubprocess(command: readonly string[], scanTargetDir: string): SecurityScanRun {
   const exe = command[0]
   if (exe === undefined) return { ok: false, reason: 'the configured securityScan.command is empty' }
-  // Round-2 security review, HIGH: the scan target is a PULL-REQUEST-AUTHORED
+  // The scan target is a PULL-REQUEST-AUTHORED
   // checkout, so it must never steer the subprocess's own config resolution.
   // `npx --yes <pkg>@<ver>` reads `.npmrc` from the process cwd AND its
   // ancestors AND from `$HOME`; a pull request that committed an `.npmrc`
@@ -673,7 +673,7 @@ export function ownChangesRangeBase(worktreePath: string, pushedBase: string | n
  * failure, so the scan simply has nothing to read rather than treating an
  * unreadable diff as clean.
  *
- * Round 3 review, LOW: `git diff` never lists an untracked file regardless
+ * `git diff` never lists an untracked file regardless
  * of flags, so a recognized credential value written into a brand-new
  * unstaged file would otherwise reach the driver's commit unscanned. Each
  * untracked file's own raw content (`git ls-files --others

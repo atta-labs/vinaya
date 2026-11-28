@@ -358,7 +358,7 @@ export async function dispatchDeveloperOnce(
     // recovered — never one line per attempt, and never logged at all for
     // the common case (no connection failure this dispatch).
     //
-    // round 2 review, MAJOR: `outcome` reads off whether the LAST attempt
+    // `outcome` reads off whether the LAST attempt
     // still carries ANY `failureReason`, never specifically
     // `'connection-failed'` — the retry loop's own condition only re-enters
     // on `'connection-failed'`, so its exit can land on a genuine success

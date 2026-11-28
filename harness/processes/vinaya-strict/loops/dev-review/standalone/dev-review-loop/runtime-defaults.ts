@@ -301,7 +301,7 @@ export async function defaultRunEvidenceReport(
 }
 
 /**
- * O1 (widened after a round-3 review found a MAJOR/HIGH gap): every role this driver ever
+ * Every role this driver ever
  * dispatches through `dispatchRole` — developer AND both reviewers, which
  * run concurrently — is a candidate for an in-flight launch a shutdown
  * signal could orphan. `terminateInFlightLaunchesOnShutdown`'s default

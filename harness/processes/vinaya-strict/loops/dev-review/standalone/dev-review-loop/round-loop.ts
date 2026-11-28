@@ -170,8 +170,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
                 : // `isGateRedRetry` is false here only when this dispatch came from
                   // `assessVerdicts`' review-findings fallback, which requires
                   // `dispatch_reviewers` to have already run and set `lastReviewContext`
-                  // — so it is never null in this branch (code review, round 1, MINOR:
-                  // the prior 'CI was red...' fallback below this was unreachable).
+                  // — so it is never null in this branch, and no further fallback is needed.
                   `Round ${c.round} review findings:\n\n${c.lastReviewContext}\n`,
           handoff.length > 0
             ? `Finding ids in this handoff — cite the ones you address in your turn result's \`addressedFindingIds\`:\n${handoff.map((f) => `- ${f.id}: ${f.line}`).join('\n')}`
@@ -453,12 +452,12 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       }
       c.firstPass = false
 
-      // O4/O7 (round 2 review, BLOCKER): mergeability is checked BEFORE
-      // the CI gate is ever waited on — `waitForGreenGate` below used to
-      // run unconditionally here, so even round 1 burned the full CI poll
-      // budget on a head that might already be `CONFLICTING`, and the
-      // mergeability read at the `dispatch_reviewers` branch (below) never
-      // ran until a whole extra iteration later. Checked here, every time
+      // Mergeability is checked BEFORE the CI gate is ever waited on —
+      // running `waitForGreenGate` below unconditionally would burn the full
+      // CI poll budget even in round 1 on a head that might already be
+      // `CONFLICTING`, and the mergeability read at the `dispatch_reviewers`
+      // branch (below) would not run until a whole extra iteration later.
+      // Checked here, every time
       // this branch runs (fresh round-1 entry, a conflict-retry, or a
       // genuine next round), so a conflicting head is sent back before any
       // CI wait, never after one.
@@ -712,9 +711,8 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       // the process package, out of this task's declared Surface) — but
       // `driverDecidedPauseEvents` logs the same
       // `stop_condition_met`/`paused`/`round_ended`/`journal_finalized`
-      // events every policy-decided pause gets (a round-2 code-review MAJOR
-      // finding: the driver used to build this `pause` decision by hand
-      // and skip the log entirely). No verdict is held or published for
+      // events every policy-decided pause gets, so this `pause` decision is
+      // never built by hand and never skips the log. No verdict is held or published for
       // this round, and the round number does not advance.
       let verdicts: [{ verdict: RoundVerdictParse }, { verdict: RoundVerdictParse }] | null = null
       /** Set when one reviewer role failed while its sibling finished: names the sibling's kept verdict for the pause detail. */
@@ -726,16 +724,15 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       // this copy is taken. `null` when no local worktree exists on
       // this machine (a fresh attach with nothing dispatched here yet)
       // OR the local worktree's own head no longer matches the round's
-      // resolved candidate sha (round 2 review, MAJOR: a diverged local
-      // worktree copied blind would hand both reviewers content the
-      // manifest's `headSha` never actually pinned, with nothing else
-      // in this mechanism positioned to catch it) — `dispatchReviewer`
-      // then omits `cwd` entirely, the same as every round before this
-      // task.
+      // resolved candidate sha, because a diverged local worktree copied
+      // blind would hand both reviewers content the manifest's `headSha`
+      // never actually pinned, with nothing else in this mechanism
+      // positioned to catch it — `dispatchReviewer` then omits `cwd`
+      // entirely.
       const candidateSourceDir = worktreePathForBranch(c)
       // `buildVerifiedReviewerCandidate` (reviewer-isolation.ts) checks
       // the worktree's head both before AND after the copy — the local
-      // worktree can advance mid-copy (round 2 review, MINOR), and a
+      // worktree can advance mid-copy, and a
       // candidate caught that way is discarded rather than handed to
       // both reviewers as bytes the manifest's own `headSha` never
       // actually pinned.
@@ -884,11 +881,11 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
         // its own `role_attempt` line is the only durable record of the
         // attempt at all. `usage`/`attempt` stay honestly unavailable at
         // this generic catch site, but `effect_id`/`duration_ms` are the
-        // failing attempt's own REAL values (round 2 review, MAJOR: a
-        // freshly minted id here could never be joined back to the
+        // failing attempt's own REAL values, because a freshly minted id
+        // here could never be joined back to the
         // `dispatch`/`role_attempt`/`usage` lines `dispatchRole` already
         // logged for that same attempt, and the whole round's elapsed
-        // time is not this attempt's own duration) — carried on the
+        // time is not this attempt's own duration — carried on the
         // thrown error by `buildVerdictFromReview`'s own `handle`
         // parameter (`ReviewerResultRejected`) or the last dispatch
         // attempt in `dispatchReviewer`'s retry loop
@@ -1170,7 +1167,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       }
       publicationState.pendingConflictFiles = null
 
-      // O8 (round 2 review, BLOCKER): re-check staleness here too — a
+      // Re-check staleness here too — a
       // clean `dispatch_reviewers` → `publish` transition reaches this
       // point in the SAME iteration, with no loop-back to the top in
       // between, so the top-of-loop check alone never catches a base that
@@ -1259,8 +1256,7 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       // confidence, reappearance, no_push, objectives_changed,
       // ruling_posted, brief_superseded, policy_changed) and clears the
       // lock exactly as before — UNLESS the caller is the watching
-      // driver itself (`retainDriverLock`, issue-711 O4, code review
-      // round 1, BLOCKER): it is not done at ANY pause reason, it is
+      // driver itself (`retainDriverLock`): it is not done at ANY pause reason, it is
       // about to poll and likely call back in here itself, so the lock
       // stays held regardless of which reason this round paused for.
       // `runDriverLoop`'s own watch loop is what releases it, once it
@@ -1277,8 +1273,8 @@ export async function runRoundLoop(c: LoopRunContext): Promise<LoopResult> {
       const pauseHead = d.resolveHead(branch)
       // O1: best-effort, same discipline as the crash-catch pause site —
       // written BEFORE `pause-state.json` so its own real `escalationId`
-      // (code review, round 2, MEDIUM — see `writeEscalation`'s own doc
-      // comment) can be carried on `PauseState`.
+      // (see `writeEscalation`'s own doc comment) can be carried on
+      // `PauseState`.
       let escalationRecord: EscalationRecord | null = null
       try {
         escalationRecord = writeEscalationRecord({

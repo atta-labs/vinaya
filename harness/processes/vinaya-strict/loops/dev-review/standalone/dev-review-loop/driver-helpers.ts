@@ -59,8 +59,7 @@ export function deferredEntriesForRound(round: number, verdicts: VerdictObservat
  * `devReviewLoop` caller that never resolved one — `dispatchRole` already
  * treats an absent `model` as "run this vendor's own default," unchanged.
  *
- * `retainDriverLock` (issue-711 O4, code review round 1, BLOCKER; round 2,
- * MAJOR/security LOW) — set ONLY by `runDriverLoop`'s own internal calls
+ * `retainDriverLock` — set ONLY by `runDriverLoop`'s own internal calls
  * (both the first and every resume attempt), never by the CLI or a direct
  * caller: it carries the one-driver-per-task lock TOKEN `runDriverLoop`
  * itself generated once, at its own start, and tells THIS call "keep the
@@ -103,7 +102,7 @@ export type LoopResult = { finalDecision: Decision; prNumber: number; task: numb
 /**
  * The exact argv `checkStaleDriver`'s re-exec hands to a fresh `vinaya
  * dev-review-loop` process — pulled out as its own pure function
- * (a round-2 review MINOR finding) so the one thing that
+ * so the one thing that
  * actually regresses easily — a flag silently dropped across the restart —
  * is unit-testable without driving the whole re-exec/driver-lock path.
  * Carries the ORIGINAL invocation's `--json` intent through: dropping it

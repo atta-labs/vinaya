@@ -168,7 +168,7 @@ export async function initializeRunBody(c: LoopRunContext): Promise<void> {
    * comment, or the telemetry outbox — the Log is telemetry and is never
    * read to recover a run.
    *
-   * Deliberately NEVER called on `--resume` (round 2 review, BLOCKER):
+   * Deliberately NEVER called on `--resume`:
    * `resumeFrom.round` is the exact round the paused process was on before
    * it exited — its developer round marker is already on the forge, so
    * seeding here, then letting this same resumed run recompute and append
@@ -189,15 +189,15 @@ export async function initializeRunBody(c: LoopRunContext): Promise<void> {
    * gate passes against the pull request's CURRENT head, objectives version,
    * newest ruling, frozen brief and policy.
    *
-   * Never gated on a round having merely decided `publish` (round 2 review,
-   * BLOCKER): the control store's own `loop_state.phase` reads `'publish'`
+   * Never gated on a round having merely decided `publish`: the control
+   * store's own `loop_state.phase` reads `'publish'`
    * the moment `assessRound` decides it, written before `publishRound` ever
    * runs, so it can never stand for "actually published." `publishRound`
    * posts the summary last, after both verdicts, so a crash mid-publish (a
    * `gh` failure) leaves NO summary and the rounds still seed — never
-   * mistaking that crash for a completion, the exact case that once silently
-   * dropped every round from the published table and restarted numbering at
-   * `1` on the next attach.
+   * mistaking that crash for a completion, which would silently drop every
+   * round from the published table and restart numbering at `1` on the next
+   * attach.
    *
    * The gate half is what makes a REOPENED pull request seed too: a summary
    * posted for an older head, with a red gate, a ruling posted after it or a
@@ -235,17 +235,16 @@ export async function initializeRunBody(c: LoopRunContext): Promise<void> {
   // `heldResultIdentity`/`deliveredFindingsIdentity` below (identical to
   // `'absent'`'s own defaults there) — never as license to guess a real
   // budget. The actual refusal is thrown from INSIDE the `try` block below
-  // (round 2 review, BLOCKER): this call site sits before that `try` even
+  // because this call site sits before that `try` even
   // starts, so a throw here would escape `devReviewLoop` uncaught instead
   // of reaching the outer `catch` that turns it into a decided
-  // `pause{reason:'infrastructure'}` — the one thing every comment on this
-  // path already claimed it did. THAT catch persists whatever this
+  // `pause{reason:'infrastructure'}`. THAT catch persists whatever this
   // process's own `infrastructureRetries` variable holds at the moment of
   // the throw (`persistCurrentLoopState`) — so seeding it at `0` for
   // `'corrupt'`, the same default `'absent'` gets, would silently WRITE
   // BACK a healed, zeroed budget over the very record just refused as
-  // untrustworthy (round 2 review, security HIGH: "a corrupted record
-  // self-heals to a low count"). `infrastructureRetries` alone therefore
+  // untrustworthy, so a corrupted record would self-heal to a low count.
+  // `infrastructureRetries` alone therefore
   // seeds `'corrupt'` at `MAX_INFRASTRUCTURE_RETRIES` — already "at the
   // bound," a real, JSON-safe number (unlike `--resume`'s own in-memory-only
   // `Number.POSITIVE_INFINITY` comparison, this value IS persisted) that
@@ -270,8 +269,8 @@ export async function initializeRunBody(c: LoopRunContext): Promise<void> {
   /**
    * O2: never reset by a restart — seeded from the control store, never
    * hardcoded to `0` the way a fresh in-memory run otherwise would be.
-   * Floored against `resumeFrom.infrastructureRetries` (round 3 review,
-   * MAJOR): on `--resume`, `resumeFrom` is the SAME `pause-state.json`
+   * Floored against `resumeFrom.infrastructureRetries`: on `--resume`,
+   * `resumeFrom` is the SAME `pause-state.json`
    * record the gate check above (`infrastructureRetriesSoFar`) already
    * floors its own comparison against — a different write path than
    * `persistLoopState`'s control-store one, so a control-store write that
@@ -449,9 +448,9 @@ export async function initializeRunBody(c: LoopRunContext): Promise<void> {
    * the control-store entry is re-baselined after each driver tool call
    * the turn makes (`startTurnWriteAttribution`). Keyed by role, never a single shared slot: `code-reviewer` and
    * `security` dispatch CONCURRENTLY in one `Promise.all`, and a shared
-   * scalar here let the second snapshot silently overwrite the first, so
-   * both roles' checks ran against whichever role's entries/baseline
-   * happened to be written last (round 2 review, MAJOR). No entry for a
+   * scalar here would let the second snapshot silently overwrite the first,
+   * so both roles' checks would run against whichever role's
+   * entries/baseline happened to be written last. No entry for a
    * role before its first dispatch of the loop, and no entry whenever
    * `protectedPathsForTurn` resolves to no entries for it (never treated
    * as "unchanged" by omission; the comparison below is simply a no-op in
@@ -496,7 +495,6 @@ export async function initializeRunBody(c: LoopRunContext): Promise<void> {
   // real OS signal) is deliberate: without it, a second delivery of the
   // same signal would be Node's own default (immediate termination,
   // uncatchable) rather than this line ever finishing its write.
-  // O1 (widened after a round-3 review found a MAJOR/HIGH gap):
   // `terminateInFlightLaunchesOnShutdown` runs FIRST, before either the
   // exit trace or `process.exit` — it terminates whichever role's
   // dispatched child is genuinely in flight (developer, or either
@@ -524,7 +522,7 @@ export async function initializeRunBody(c: LoopRunContext): Promise<void> {
     process.exit(130)
   })
 
-  // Round 2 review, BLOCKER: `firstPass`/`pendingCompletionEvents` are
+  // `firstPass`/`pendingCompletionEvents` are
   // declared here, in this function's own scope — never inside the `try`
   // block opened just below — because `runRoundLoop` (a sibling function
   // declaration that closes over both as mutable state) needs them

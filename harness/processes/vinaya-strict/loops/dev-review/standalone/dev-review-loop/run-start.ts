@@ -85,7 +85,7 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
   } = c
   try {
     // A corrupt control-store loop-state record is refused HERE, first
-    // thing inside the `try` (round 2 review, BLOCKER) — never at the
+    // thing inside the `try` — never at the
     // earlier `recoverLoopState` call site, which sits before this `try`
     // even starts and would let the throw escape uncaught. Thrown here,
     // it reaches the SAME outer `catch` below as every other setup
@@ -225,15 +225,14 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
         reconcileDeveloperResume(c, true)
         applyLoopHistory(c)
 
-        // O4 (task 3): a prior process may have
-        // dispatched round k's reviewers, held REQUEST-CHANGES verdicts on
+        // A prior process may have dispatched round k's reviewers, held REQUEST-CHANGES verdicts on
         // disk, and dispatched the developer — then crashed or was
         // restarted before ever observing whether the developer pushed a
         // fix. Left alone, `round` stays at its default of 1 and this
         // attach would re-run round 1's OWN gate check on a head that may
-        // be several real rounds deep (previously, every attach
-        // after a fix push re-delivered round 1's stale findings and
-        // drifted into a confidence-collapse pause). Recovered here
+        // be several real rounds deep, so every attach after a fix push
+        // would re-deliver round 1's stale findings and drift into a
+        // confidence-collapse pause. Recovered here
         // instead, from the durable, machine-local held-verdict files.
         const held = latestHeldRequestChanges(root, task)
         if (held) {
@@ -432,11 +431,10 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
             // posted a refusal/escalation instead — end the loop now, on the
             // Issue (there is no PR to comment on), never entering the poll.
             const detail = err.detail
-            // O1 (round 2 review, security MEDIUM): the local record is
-            // written BEFORE the post here too — this is the one pause/
-            // escalation call site in this file that used to post straight
-            // to the forge with no prior `writeEscalationRecord`/
-            // `writePauseState`, unlike every other one. `head: 'unknown'`
+            // The local record is written BEFORE the post here too, as at
+            // every other pause/escalation call site in this file, so a
+            // post that lands is never left without its
+            // `writeEscalationRecord`/`writePauseState`. `head: 'unknown'`
             // mirrors the crash-handler's own sentinel (above) — no branch
             // ever reached the remote here, so there is no real head to
             // resolve. Best-effort exactly like the general pause branch:
@@ -568,12 +566,12 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
      */
 
     /**
-     * O10 (round 2 review, BLOCKER): every event this driver emits is
+     * Every event this driver emits is
      * whatever `logEvents` is explicitly told to log — nothing synthesizes
      * the terminal event a genuinely uncaught error skips on its own. Left
-     * alone, a crash mid-round left the log with `loop_started` and
+     * alone, a crash mid-round would leave the log with `loop_started` and
      * `round_started` but no `paused`/`journal_finalized` at all,
-     * permanently — exactly the shape O10 calls a test failure.
+     * permanently — a log that never ends.
      * Deliberately `driverCrashEvents`, never `driverDecidedPauseEvents`:
      * the latter also fabricates a `round_ended`, wrong the moment the
      * crash strikes AFTER a real one already logged (`publishRound`
@@ -616,9 +614,8 @@ export async function startRun(c: LoopRunContext): Promise<LoopResult> {
         //    the existing re-run behavior for an unmoved head — a genuine
         //    fresh round, its own `publishRound` call discovering nothing
         //    new to post via its own idempotent effect keys — is
-        //    unaffected, on purpose (round 2 review: this exact path,
-        //    unshortcut, is load-bearing test behavior elsewhere in this
-        //    suite).
+        //    unaffected, on purpose: this exact path, unshortcut, is
+        //    load-bearing test behavior elsewhere in this suite.
         //  - `heldClean.round === round` — `round` here already reflects
         //    every OTHER recovery this function ran above (the
         //    `historyApplies` forge-marker bump, the control-store

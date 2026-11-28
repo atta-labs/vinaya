@@ -19,13 +19,13 @@ import { existsSync } from 'node:fs'
 import { addedDiffLines } from '@harness/kernel/isolation/worker-boundary.js'
 
 /**
- * O11 (round 2 review, MAJOR): whether THIS prompt carries the context
+ * Whether THIS prompt carries the context
  * block above is never gated on `devResumeId !== null` (the vendor
  * session's own `-r <id>` eligibility) — a `--resume <pr>` run's very
  * first developer dispatch (the ruling-resume prompt) has no durable
  * resume record either (this driver never reads one for that path,
- * only the `existingPr` attach branch does), so gating on it silently
- * skipped the context block for exactly the prompt's own Origin
+ * only the `existingPr` attach branch does), so gating on it would silently
+ * skip the context block for exactly the prompt's own Origin
  * note was about. Every `dispatchDeveloper` call defaults
  * to carrying it; the one call site that must NOT (the genuinely fresh
  * round-1 dispatch, opening a brand-new session onto a brand-new
@@ -76,7 +76,7 @@ export function snapshotTurnConfinement(c: LoopRunContext, role: Role, roundNum:
  * snapshotted for `role` (no dispatch of it has happened yet this loop) —
  * never a reason to treat this check as silently passed OR to refuse a
  * turn for a problem this check does not itself diagnose. Keyed by role
- * (round 2 review, MAJOR) so `code-reviewer` and `security`'s
+ * so `code-reviewer` and `security`'s
  * concurrent dispatches never read each other's snapshot.
  */
 export function checkTurnConfinement(

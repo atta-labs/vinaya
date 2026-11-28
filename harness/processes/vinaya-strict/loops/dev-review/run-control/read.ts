@@ -192,11 +192,10 @@ export function whereTheRunIs(row: TaskStatusRow): {
  * schema directly) — they are set here, once, rather than through the
  * generic `Observed<T>` wrapper above, which would double them.
  *
- * `runIdentity`/`inputVersions` come from the durable `EscalationRecord`
- * (code review, round 2, MEDIUM: this was the one read path meant to serve
- * a recipient with no chat history, and it never read the control-store
- * record a prior round added — only `pause-state.json`'s own, narrower
- * fields) — `null` on either when no record exists yet for this pause (a
+ * `runIdentity`/`inputVersions` come from the durable `EscalationRecord`,
+ * because this read path serves a recipient with no chat history and
+ * `pause-state.json`'s own fields are narrower — `null` on either when no
+ * record exists yet for this pause (a
  * `PauseState` written before that adoption, or a best-effort escalation
  * write that itself failed at pause time; the pause itself is still fully
  * reported either way, just without those two extra facts). Read through a

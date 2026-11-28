@@ -90,11 +90,11 @@ function sleepSyncMs(ms: number): void {
  * this driver makes) — this is the write-side counterpart, new here
  * because no write in this driver retried at all before this task.
  *
- * round 2 review, security MEDIUM: a `poster()` call that actually landed
+ * A `poster()` call that actually landed
  * remotely but threw locally (the response lost after the write went
  * through — the exact hazard `EffectExecutor`'s own doc comment names as
  * "remote success followed by a lost local acknowledgement duplicates the
- * write") used to be retried blind, inside this SAME `execute()` call,
+ * write") would otherwise be retried blind, inside this SAME `execute()` call,
  * with no chance to notice the first attempt already succeeded —
  * `EffectExecutor.postAndRecord` only reconciles against the remote on a
  * LATER, separate `execute()` call, never between two attempts this
@@ -444,8 +444,8 @@ export function renderNoPushStopComment(
  * record let `EffectExecutor` skip posting entirely (still `posted: true` —
  * the comment already exists), `1` on an ordinary first-try success or on a
  * failure that never reached `postWithRetry`/`reconcileRetry` at all (a
- * corrupt existing record, an epoch-acquisition failure — round 5 review,
- * MAJOR/MINOR: `attempts` is normalized to `1` rather than left at `0` for
+ * corrupt existing record, an epoch-acquisition failure — `attempts` is
+ * normalized to `1` rather than left at `0` for
  * these, since the `infrastructure_retry` schema requires a positive count
  * and `0` would otherwise be indistinguishable from the idempotent-skip
  * case above), and more once `postWithRetry`/`reconcileRetry` actually
@@ -510,15 +510,13 @@ export function postIssuePauseComment(
   )
   let attempts = 0
   try {
-    // round 5 review, MAJOR: `createEffectExecutor` (which can itself throw
-    // — a contended control-store epoch, e.g. two driver processes around a
-    // stale-driver re-exec handoff) used to be called BEFORE this `try`,
-    // so that throw escaped this function entirely, reaching the outer
-    // crash handler and clobbering `writePauseState`'s already-correct
-    // reason with a synthetic `'infrastructure'` one — the exact
-    // reason-clobbering failure O1 exists to eliminate. Now inside the try,
-    // exactly like every other `EffectExecutor` failure this function
-    // already catches.
+    // `createEffectExecutor` can itself throw — a contended control-store
+    // epoch, e.g. two driver processes around a stale-driver re-exec
+    // handoff. Called before this `try`, that throw would escape this
+    // function entirely, reaching the outer crash handler and clobbering
+    // `writePauseState`'s already-correct reason with a synthetic
+    // `'infrastructure'` one. It sits inside the try, exactly like every
+    // other `EffectExecutor` failure this function catches.
     const deps = defaultControlStoreDeps(controlStoreRoot)
     const executor = createEffectExecutor(deps, task, `dev-review-loop:${task}:${key}`)
     executor.execute({
@@ -534,14 +532,13 @@ export function postIssuePauseComment(
           }
         ),
       reconcile,
-      // round 2/round 4 review, MAJOR: a crash mid-post that left this
-      // effect's own record 'started', followed by a still-unreachable
-      // remote on THIS attempt's own `reconcile` read, used to skip
-      // `postWithRetry`'s bounded backoff loop entirely (`effects.ts`'s
-      // `reconcileExisting` consulted `reconcile` exactly once) — this
-      // widens that SAME bound to the reconcile read too, so this reachable
-      // double-failure combination gets the identical bounded retry O1
-      // promises for an ordinary post failure.
+      // A crash mid-post that left this effect's own record 'started',
+      // followed by a still-unreachable remote on THIS attempt's own
+      // `reconcile` read, would otherwise skip `postWithRetry`'s bounded
+      // backoff loop entirely (`effects.ts`'s `reconcileExisting` consults
+      // `reconcile` exactly once) — this widens that SAME bound to the
+      // reconcile read too, so this reachable double-failure combination
+      // gets the identical bounded retry an ordinary post failure gets.
       reconcileRetry: {
         attempts: retryAttempts,
         backoffMs: retryBackoffMs,
@@ -552,7 +549,7 @@ export function postIssuePauseComment(
     })
     return { attempts, posted: true }
   } catch {
-    // round 5 review, MINOR: a failure that never reaches `postWithRetry`
+    // A failure that never reaches `postWithRetry`
     // or `reconcileRetry` at all (a corrupt existing record,
     // `createEffectExecutor`'s own epoch-acquisition throw above, or any
     // other setup-time error) leaves `attempts` at its initial `0` —
@@ -571,8 +568,8 @@ export function postIssuePauseComment(
 
 /**
  * Keyed by `round-head`, the pause INSTANCE — not the fixed literal `'pause'`
- * a prior version used, which keyed the idempotency record by task alone
- * (a code-review BLOCKER finding): a task pauses, resumes, and pauses again
+ * that would key the idempotency record by task alone and so swallow a
+ * second pause: a task pauses, resumes, and pauses again
  * with a resumed loop still at the same `round` but a new `head` (the
  * resumed developer pushes fixes before pausing a second time), so `head`
  * is what tells two real pauses apart. A genuine rerun of the SAME pause —
@@ -621,8 +618,8 @@ export function postPauseComment(
   )
   let attempts = 0
   try {
-    // round 5 review, MAJOR: see `postIssuePauseComment`'s identical doc
-    // comment — `createEffectExecutor` moved inside this `try` too.
+    // See `postIssuePauseComment`'s identical doc comment —
+    // `createEffectExecutor` sits inside this `try` too.
     const deps = defaultControlStoreDeps(controlStoreRoot)
     const executor = createEffectExecutor(deps, task, `dev-review-loop:${task}:${key}`)
     executor.execute({
@@ -638,8 +635,8 @@ export function postPauseComment(
           }
         ),
       reconcile,
-      // See `postIssuePauseComment`'s identical doc comment (round 2/round
-      // 4 review, MAJOR): widens the SAME bounded backoff to a 'started'
+      // See `postIssuePauseComment`'s identical doc comment: widens the
+      // SAME bounded backoff to a 'started'
       // record's own reconcile read, not only to `poster`.
       reconcileRetry: {
         attempts: retryAttempts,
@@ -651,7 +648,7 @@ export function postPauseComment(
     })
     return { attempts, posted: true }
   } catch {
-    // round 5 review, MINOR: see `postIssuePauseComment`'s identical doc
+    // See `postIssuePauseComment`'s identical doc
     // comment — a failure this early leaves `attempts` at `0`, which the
     // `infrastructure_retry` schema's own `positive()` constraint forbids
     // logging; `1` here is honest (one whole attempt was made and failed
@@ -683,8 +680,7 @@ export type PauseState = {
   effort?: string
   /**
    * The escalation record's OWN `escalationId` — not necessarily
-   * `escalationIdFor(task, round, head)` any more (code review, round 2,
-   * MEDIUM): `writeEscalation` claims a disambiguating `-<n>` suffix when a
+   * `escalationIdFor(task, round, head)`: `writeEscalation` claims a disambiguating `-<n>` suffix when a
    * genuinely different escalation collides on that natural key (a
    * self-resumed pause that hits a second, different pause condition before
    * the head moves), and this is the only place that real id is durably
@@ -697,7 +693,7 @@ export type PauseState = {
   escalationId?: string
   /**
    * The in-memory `infrastructureRetries` count at the moment of this pause
-   * (round 2 review, security HIGH) — a second, independent source for
+   * — a second, independent source for
    * `--resume`'s bound check, alongside `recoverLoopState`'s control-store
    * read. `writePauseState` is a plain `writeFileSync`, not the control
    * store's own effect-executor machinery `persistLoopState` swallows
@@ -899,7 +895,7 @@ export function recoverLoopState(
  * stale record is taken over rather than blocking forever.
  */
 /**
- * `token` (issue-711 O4, code review round 2, MAJOR/security LOW) — a
+ * `token` — a
  * per-acquisition identifier, never derived from the pid alone: a bare
  * `pid === process.pid` match is not proof of ownership — if the OS
  * reissues a crashed driver's exact pid to a fresh, unrelated
@@ -934,7 +930,7 @@ export function writeDriverLock(root: string, task: number, lock: DriverLock): v
 }
 
 /**
- * issue-711 O4, security review (MEDIUM): an ATOMIC claim — `wx` (exclusive
+ * An ATOMIC claim — `wx` (exclusive
  * create) fails outright if the file already exists, so two processes
  * racing to take an ABSENT (or just-cleared) lock can never both believe
  * they won: the filesystem's own exclusive-create guarantee decides it, a
@@ -1265,13 +1261,13 @@ export function writeEscalationRecord(facts: EscalationFacts): EscalationRecord 
  * The durable escalation record for `escalationId`, or `null` — never
  * thrown; a caller that needs to distinguish absent from corrupt reads
  * `readEscalation` from `@attalabs/process-vinaya` directly. Takes the id itself,
- * never `(round, head)` alone (code review, round 2, MEDIUM) — a colliding
+ * never `(round, head)` alone — a colliding
  * escalation can live at a disambiguating `-<n>` suffix, so a caller reads
  * `PauseState.escalationId` (falling back to `escalationIdFor(task, round,
  * head)` only for a `PauseState` written before that field existed).
  *
  * `deps` defaults to the real global control store but is overridable
- * (code review, round 2, MEDIUM) — `task-tools/read.ts`'s own
+ * because `task-tools/read.ts`'s own
  * `readEscalationPacket` takes an explicit, fixture-testable outbox `root`
  * and must never let ITS OWN reads reach past that root into this
  * machine's real `~/.vinaya/control-store/` regardless.
@@ -1399,7 +1395,7 @@ export function resolveEscalation(
   if (escalation.value.pr !== expectedPr) {
     throw new WrongTargetResolutionError(task, escalationId, escalation.value.pr, expectedPr)
   }
-  // Code review, round 2, HIGH: a concurrent duplicate/replayed resolution
+  // A concurrent duplicate/replayed resolution
   // attempt must never move state it was already consumed for — checked
   // BEFORE ever acquiring ownership, so a replay of an ALREADY-consumed
   // decision is refused without bumping the task's shared epoch at all. This
@@ -1510,9 +1506,8 @@ const MAX_FENCE_REACQUIRE_ATTEMPTS = 5
  * Best-effort per key otherwise: a key that no longer reads `'started'` by
  * the time this runs is simply skipped, never an error.
  *
- * **This call's OWN writes can still lose a narrower race (code review,
- * round 2, HIGH; narrowed in the same round's own fix).** `resolveEscalation`
- * now checks the durable resolution record BEFORE ever calling
+ * **This call's OWN writes can still lose a narrower race.** `resolveEscalation`
+ * checks the durable resolution record BEFORE ever calling
  * `acquireOwnership`, so an ordinary replay of an ALREADY-consumed decision
  * never bumps the epoch at all. What remains is the genuinely concurrent
  * case — two FIRST attempts racing past that check before either has

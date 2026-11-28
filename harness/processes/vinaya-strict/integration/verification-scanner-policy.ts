@@ -229,5 +229,6 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     trigger: 'content'
   },
   { test: 'harness/processes/vinaya-strict/checks/no-binary-sources.test.ts', roots: ['.'], trigger: 'content' },
-  { test: 'harness/processes/vinaya-strict/checks/retired-vocabulary.test.ts', roots: ['.'], trigger: 'content' }
+  { test: 'harness/processes/vinaya-strict/checks/retired-vocabulary.test.ts', roots: ['.'], trigger: 'content' },
+  { test: 'harness/processes/vinaya-strict/tools/reader-resolvable-prose.test.ts', roots: ['.'], trigger: 'content' }
 ]

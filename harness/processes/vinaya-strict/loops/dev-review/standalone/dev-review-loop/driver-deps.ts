@@ -317,7 +317,7 @@ export type LoopDeps = {
     branch: string
   ) => Promise<{ ok: true; gatesFailed: boolean } | { ok: false; reason: string }>
   /**
-   * O1 (widened after a round-3 review found a MAJOR/HIGH gap): called from the
+   * Called from the
    * driver's own `SIGTERM`/`SIGINT` handlers, before it exits. Terminates
    * whichever of `developer`/`code-reviewer`/`security`'s launches is
    * genuinely in flight and marks its launch record `interrupted` — never

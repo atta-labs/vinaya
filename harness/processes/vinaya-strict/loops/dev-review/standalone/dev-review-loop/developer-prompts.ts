@@ -203,7 +203,7 @@ export function unpushedFailureMessage(
 }
 
 /**
- * A round-2 review MAJOR finding: records the driver's own mid-round
+ * Records the driver's own mid-round
  * resume as a real `dev_review_loop` telemetry event —
  * `unpushed_work_resume` (`schema.ts`) — not only the marked PR comment
  * below, so the resume leaves a durable observation in the Log. This
@@ -242,11 +242,10 @@ export async function logUnpushedWorkResume(c: LoopRunContext, roundNum: number,
  * duplicate: logging a durable `infrastructure_retry` event whenever
  * `result` shows something notable — a retry genuinely happened
  * (`attempts > 1`), OR the post never landed at all (`posted: false`,
- * regardless of `attempts` — round 5 review, MINOR: a corrupt-record
- * refusal or an epoch-acquisition failure reports `attempts: 1` with
- * `posted: false`, and used to be silently dropped by an `attempts <=
- * 1` check that could not tell that apart from an ordinary first-try
- * success). The truly common case — a boring first-try success,
+ * regardless of `attempts` — a corrupt-record refusal or an
+ * epoch-acquisition failure reports `attempts: 1` with `posted: false`,
+ * which an `attempts <= 1` check would silently drop, unable to tell that
+ * apart from an ordinary first-try success). The truly common case — a boring first-try success,
  * `posted: true` with `attempts` `0` (idempotent no-op) or `1` — is the
  * only one that stays silent, exactly as O3 intends.
  */

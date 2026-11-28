@@ -230,14 +230,14 @@ export function resolveFrozenPauseBoundRuling(
  * auth failure, malformed JSON) — is a returned failure the check fails
  * closed on (`severity:infra`, exit `1`), the identical fail-closed treatment
  * `resolveObjectivesVersion` already gives its own fetch failure, and for
- * the identical reason (a round-3 review finding): the prior version caught
- * every exception into `null`, and `isBoundToBriefHash` treats a `null`
- * current hash as "skip the binding" — collapsing "the fetch failed" and
- * "no brief was ever posted" into the same permissive skip let a transient
+ * the identical reason: `isBoundToBriefHash` treats a `null` current hash
+ * as "skip the binding", so catching every exception into `null` would
+ * collapse "the fetch failed" and "no brief was ever posted" into the same
+ * permissive skip, letting a transient
  * `gh` hiccup at merge time silently disarm the whole brief-hash freshness
  * check, passing a PR whose frozen brief was actually superseded. Never
  * invoked when `waived` is `true`, so the waiver's own escape hatch stays
- * reachable even though this fails closed (a MAJOR finding, reapplied here).
+ * reachable even though this fails closed.
  */
 function resolveBriefHash(pr: PrView, principalAllowlist: readonly string[]): Resolved<string | null> {
   const { issue } = extractIssue(pr.body, REGION_PREFIXES)
@@ -296,8 +296,7 @@ function resolveBriefHash(pr: PrView, principalAllowlist: readonly string[]): Re
  * Never invoked when an actor-verified `vinaya/waiver:review` label is
  * present, precisely so this fail-closed path cannot make the waiver's own
  * escape hatch unreachable for exactly the case the waiver exists to rescue:
- * a linked Issue that got deleted or renumbered (a security-review MAJOR
- * finding).
+ * a linked Issue that got deleted or renumbered.
  */
 function resolveObjectivesVersion(pr: PrView, objectivesSinceIssue: number | null): Resolved<string | null> {
   const { issue } = extractIssue(pr.body, REGION_PREFIXES)
@@ -435,8 +434,8 @@ function fetchWaiverLabelActor(prNumber: number, label: string): string | null {
  *
  * The waiver pre-check sits in front of those last two deliberately: both fail
  * closed, and calling either unconditionally would make a `gh` hiccup able to
- * block an actor-verified waiver's own escape hatch (a security-review MAJOR
- * finding). Do not move either resolver ahead of it.
+ * block an actor-verified waiver's own escape hatch. Do not move either
+ * resolver ahead of it.
  */
 export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssembly {
   // Given an incomplete forge snapshot the gate fails closed before any read
@@ -477,10 +476,9 @@ export function assembleReviewGateInput(prNumber: number): ReviewGateInputAssemb
   // failed), never a legitimate base-less case. Passing that failure through
   // as `baseSha: null` would make `compareManifest`'s own "nothing to bind
   // against" skip (`isBoundToBase`) silently revert the gate to base-blind
-  // behavior on a transient `gh`/`git` hiccup — the same base-blind-fallback
-  // bug a prior MAJOR finding already closed for `resolveObjectivesVersion`
-  // (round 2 review, security MEDIUM). Fails closed the same way the head
-  // resolution above does.
+  // behavior on a transient `gh`/`git` hiccup — the same base-blind fallback
+  // `resolveObjectivesVersion` already refuses. Fails closed the same way the
+  // head resolution above does.
   const baseSha = resolveBaseSha(pr)
   if (!baseSha) {
     return failure(

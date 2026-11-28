@@ -559,7 +559,7 @@ export function createTaskResumeHandler(
     // resumable through `vinaya dev-review-loop --resume` directly; this is
     // a deliberately narrower, more conservative gate for the Operator path.
     //
-    // Security review, round 3, MEDIUM: `rulings.length > 0` alone only
+    // `rulings.length > 0` alone only
     // proves SOME principal ruling exists on this PR at some point in its
     // history — never that it says anything about THIS escalation. A ruling
     // left over from an earlier, already-addressed round would satisfy that

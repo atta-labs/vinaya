@@ -501,8 +501,8 @@ export function rateLimitWaitMs(resetEpochSeconds: number | null, nowMs: number)
  *   product escalation; it must NOT be confused with a same-round follow-up
  *   resume failing after this round's own earlier dispatch succeeded.
  *
- * The round is LATCHED to the FIRST success and never overwritten (round-3
- * review MAJOR): a most-recent-success tracker would move to the current round
+ * The round is LATCHED to the FIRST success and never overwritten: a
+ * most-recent-success tracker would move to the current round
  * when round ≥2's own main resume succeeds, after which that round's
  * same-round `COMMIT_AND_PUSH` resume failing would wrongly read as a
  * first-resume failure even though an earlier round genuinely succeeded.
@@ -854,8 +854,8 @@ export function loadLoopState(task: number): ParsedRecord<LoopStateRecord> {
  * the SAME schema enum members every policy-decided bounded pause already
  * reuses for confidence/reappearance/no_progress/max_rounds — never a new
  * schema value, so these events validate and land in the outbox exactly
- * like a policy-decided pause's do (a round-2 review MAJOR finding:
- * this pause used to skip the log entirely). `state` is read only for its
+ * like a policy-decided pause's do, so this pause never skips the log.
+ * `state` is read only for its
  * running totals; it is never written back, since the loop returns
  * immediately after this — a resume starts a fresh `LoopState` regardless
  * (`initialLoopState`, called fresh in the `--resume` path above).
@@ -908,7 +908,7 @@ export function driverDecidedPauseEvents(
 /**
  * `paused`/`journal_finalized` for a genuinely UNCAUGHT error — the
  * `finally`-adjacent catch wrapping the whole round loop in
- * `dev-review-loop.ts` (a round-2 review BLOCKER finding).
+ * `dev-review-loop.ts`.
  * Deliberately NOT `driverDecidedPauseEvents`: that helper also logs its
  * own `round_ended` with a hardcoded `outcome: 'changes_requested'` and
  * bumps `journal_finalized.rounds` by one, both correct only when the

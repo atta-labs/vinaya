@@ -47,8 +47,7 @@ import type { LoopRunContext } from './run-context.js'
  * blocker only the Principal can settle (`reviewBlockerNeedsRuling`): the
  * controller records it as this role's escalation at once, never retried.
  *
- * Deliberately does NOT call `writeHeldVerdict` itself (a round-1 review
- * BLOCKER finding): both roles run inside one `Promise.all` in
+ * Deliberately does NOT call `writeHeldVerdict` itself: both roles run inside one `Promise.all` in
  * the caller, so a role that finishes clean can resolve before its
  * sibling's own retry exhausts and throws — writing the held verdict file
  * here would leave one on disk for a round that pauses as infrastructure,
@@ -99,7 +98,7 @@ export async function dispatchReviewer(
   }
   const lastMissing: string[] = []
   let lastRejection: ReviewerResultRejected | null = null
-  // Round 2 review, MAJOR: captured so a `ReviewerInfrastructureFailure`
+  // Captured so a `ReviewerInfrastructureFailure`
   // thrown after the loop can carry the LAST attempt's own real
   // effect_id/durationMs, rather than the caller inventing a fresh id
   // and timing it against the whole round.
