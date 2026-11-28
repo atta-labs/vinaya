@@ -43,7 +43,7 @@ The GenAI conventions version the SDK stamps on its records is:
 | `log.round.started` | span `vinaya.round {n}` starts | Round, starting commit |
 | `log.round.ended` | that span ends | Files changed, lines added and removed, outcome |
 | `log.phase.ended` | span `vinaya.phase {phase}` | Developer, local checks, review, push, CI, other; step |
-| `log.agent.sent` | span `invoke_agent {seat}` starts | `gen_ai.agent.name` (the seat), `gen_ai.provider.name`, `gen_ai.request.model`, the coding agent and its version, round |
+| `log.agent.sent` | span `invoke_agent {seat}` starts | `gen_ai.agent.name` (the seat), `gen_ai.provider.name`, `gen_ai.request.model`, the coding agent and its version, the effort the turn was given (`vinaya.agent.effort`), round |
 | `log.agent.stepStarted` | span `execute_tool {tool}` starts, under the agent | `gen_ai.tool.name`, `gen_ai.tool.call.id`; kind (reading, searching, editing, creating, removing, running tests, type-checking, git, GitHub, tool request, skill, fetching, delegating, reporting, running, writing, checking, publishing); file or command |
 | `log.agent.stepEnded` | that span ends | Worked or failed (`error.type`), first error line |
 | `log.agent.returned` | the agent span ends | What came out (change opened, round pushed, verdict, escalation, plan, done), attempt, `gen_ai.response.model` |
@@ -75,6 +75,8 @@ The GenAI conventions version the SDK stamps on its records is:
 | `log.action.verified` | event `vinaya.action.verified` | One outside action: success, failure, uncertain |
 | `log.command.completed` | event `vinaya.command.completed` | A command: ok, error, refused, timeout, cancelled, unavailable |
 | `log.custom.recorded` | event `<namespace>.<name>` | A declared event and its fields; the record is marked reported whatever the handle's provenance. A refused event writes no such record: it writes one `vinaya.command.completed` record, action `log.emit`, result `refused`, the refusal's reason as its error type, and the event's name as target only when it is shaped like a declared name |
+
+<!-- VINAYA:CLAIM: packages/log-sdk/src/writer/agent.ts contains:[A.agentEffort]: options.effort, -->
 
 The handle also has `flush()`, `shutdown()` and `writeSpan()` (a span whose start and end times the caller already has), which record nothing of their own.
 
