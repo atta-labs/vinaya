@@ -200,6 +200,8 @@ const SITES: Record<string, number> = {
   'harness/processes/vinaya-strict/integration/log/log-sink.test.ts createLogSink embedded': 2,
   'harness/processes/vinaya-strict/integration/log/client/log-sync-folder-source.test.ts createLogSink code': 2,
   'harness/processes/vinaya-strict/integration/log/log-sink-doctrine-identity.test.ts createLogSink code': 1,
+  // The task tools server's start turns the branch fallback off: a sink whose own reader names a task's Issue shows it.
+  'harness/processes/vinaya-strict/tests/lib/task-tools/server.test.ts createLogSink code': 1,
   // Run for the Log client's own sink and the Engine runner's, each taken as a loop value and called once per case.
   'harness/processes/vinaya-strict/integration/log/client/log-sink-off.test.ts createLogSink reference': 1,
   // Samples the destination-isolation analyzer reads as text; nothing runs them.
