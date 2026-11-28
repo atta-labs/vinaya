@@ -146,9 +146,10 @@ function readIfExists(path: string): string | undefined {
  * BEFORE its own try/catch is in scope (`recoverLoopState` in
  * `dev-review-loop.ts`, most concretely). Left raw, such a fault escapes
  * uncaught instead of becoming a decided pause — the same failure malformed
- * JSON would cause, through a different trigger. A real read failure is "something is there but untrustworthy," the
- * same fact `parseWith` already reports as `'corrupt'` for torn JSON or a
- * schema violation — never `'absent'`, and never left to erupt uncaught out
+ * JSON would cause, through a different trigger. A real read failure is
+ * "something is there but untrustworthy," the same fact `parseWith` already
+ * reports as `'corrupt'` for torn JSON or a schema violation — never
+ * `'absent'`, and never left to erupt uncaught out
  * of every caller of every record kind this store has.
  */
 function readRecord<T>(path: string, parse: (raw: string | undefined) => ParsedRecord<T>): ParsedRecord<T> {

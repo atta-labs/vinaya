@@ -495,8 +495,9 @@ let memoizedThisRepo: string | null = null
  * `deps.root()` at twenty separate sites — twice per `writeEffect`, twice
  * per `acquireOwnership` attempt — so evaluating the repo before reaching
  * the cache would turn a pure string join into several subprocess forks per
- * control-store operation, and hundreds per loop round. Worse, a transient fork failure yields the `unresolved`
- * segment, so an epoch check and the write it guards could resolve two
+ * control-store operation, and hundreds per loop round. Worse, a transient
+ * fork failure yields the `unresolved` segment, so an epoch check and the
+ * write it guards could resolve two
  * different trees inside one `writeEffect`. Caching the answer removes both:
  * the fork happens at most once per process, and every later call returns
  * the identical string.
@@ -514,8 +515,9 @@ export function runtimeDirForThisRepo(): string {
  * Every run-file directory goes through here rather than a bare
  * `mkdirSync(..., { recursive: true })`. Under `~/.vinaya/outbox` — itself
  * `0700` — a lax mode on a child would be moot; under a configurable
- * `runtimeDir` whose documented example is `/var/lib/vinaya/runs` it is not. With a `umask` of `002` a
- * no-mode `mkdirSync` produces `0775`, which would let any other local
+ * `runtimeDir` whose documented example is `/var/lib/vinaya/runs` it is
+ * not. With a `umask` of `002` a no-mode `mkdirSync` produces `0775`, which
+ * would let any other local
  * account read an unpublished security verdict, replace a
  * `rounds/<n>/reviewer.md` that `publishRound` later posts verbatim, or
  * plant a `driver.pid.json`. `recursive: true` applies `mode` only to
