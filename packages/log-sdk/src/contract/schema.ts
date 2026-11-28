@@ -577,8 +577,8 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
   // only (a Principal resuming a PAUSED loop). This is the driver acting on
   // its own, still inside the same round, never a pause/resume pair: the
   // round simply continues once the developer's next turn produces a new
-  // head. Named `unpushed_work_resume` so a
-  // Principal reading the journal can tell "stopped after real, uncommitted
+  // head. Named `unpushed_work_resume` so a Principal reading the journal
+  // can tell "stopped after real, uncommitted
   // or unpushed work" apart from every other mid-round event.
   z
     .object({

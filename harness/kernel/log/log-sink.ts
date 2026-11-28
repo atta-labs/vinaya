@@ -354,16 +354,17 @@ async function safeLoadTrustAnchorConfig(): Promise<ProvidedConfig | null> {
  * The pure decision behind `LogSinkDeps.resolveLogDestination` — a `url`
  * destination is honoured only when the repository's default branch
  * declares the identical one for an unattended caller (the same rule
- * `runtimeDir` already carries: a pull request under review cannot redirect where an unattended
- * run's telemetry is delivered by editing its own diff). An attended caller
+ * `runtimeDir` already carries: a pull request under review cannot redirect
+ * where an unattended run's telemetry is delivered by editing its own
+ * diff). An attended caller
  * — a human running `vinaya`, choosing to trust their own working tree —
  * honours the local value unchecked, the same trust level running
  * `vinaya.config.json`'s own `dispatch.agent` already carries.
  *
  * An unattended caller whose LOCAL config declares no `logs` setting at all
  * still honours the default branch's own declared destination, because a
- * working tree that OMITS the setting is exactly
- * as untrustworthy as one that redirects it: a pull request diff can delete
+ * working tree that OMITS the setting is exactly as untrustworthy as one
+ * that redirects it: a pull request diff can delete
  * a line as easily as it can edit one, and an unattended run whose telemetry
  * silently reverted to the local default folder the moment `logs` went
  * missing from a diff would let the very branch under review switch off the
@@ -381,8 +382,8 @@ async function safeLoadTrustAnchorConfig(): Promise<ProvidedConfig | null> {
  * A `folder` naming the repository itself, or anything inside it, is refused
  * outright — for either caller, attended or unattended — exactly
  * `resolveRuntimeDir`'s own `isInsideRepo` rule: a confined role granted
- * write access to a path under the working
- * tree (a worktree checkout included) must never also be able to forge or
+ * write access to a path under the working tree (a worktree checkout
+ * included) must never also be able to forge or
  * tamper with the append-only log recording its own task's events by writing
  * into a `logs.folder` that happens to resolve there. Falls back to
  * `defaultFolder`, the same as "no `logs` setting at all."
@@ -514,8 +515,8 @@ export function resolveLogDestinationFrom(input: {
  * Unlike `run-paths.ts`'s own `resolveRuntimeDirUncached`, the trust-anchor
  * read here cannot be gated on whether `logs` is configured LOCALLY: a
  * working tree that OMITS the setting is precisely the case this destination
- * must still catch (see
- * `resolveLogDestinationFrom`'s own doc comment), so the anchor is read for
+ * must still catch (see `resolveLogDestinationFrom`'s own doc comment),
+ * so the anchor is read for
  * every unattended caller regardless of what the local config says. Already
  * bounded to one read per process either way — `createLogSink`'s own
  * `context()` calls this function once, into its memoized `contextCache`, so
@@ -910,8 +911,8 @@ export function outboxPathFor(
  * it is called after the child exits and before its scratch directory is
  * removed.
  *
- * OWN-PATH-ONLY: the driver delivers ONLY the
- * one relative path its OWN `(repo, issue)` names — the same leaf `log()`
+ * OWN-PATH-ONLY: the driver delivers ONLY the one relative path its OWN
+ * `(repo, issue)` names — the same leaf `log()`
  * resolves inside the child (`outboxPathFor`) — and ignores every OTHER file
  * the confined agent may have written into its writable spool scratch, whether
  * under another task's `<owner>-<repo>/<issue>` path or under any name at all.
@@ -1081,8 +1082,8 @@ let branchIssueFallbackEnabled = true
  * whose own synthetic env drops `VINAYA_TASK` — so a process dispatching N
  * task-less roles paid N+1 `git rev-parse` reads and, on a tranche branch,
  * N+1 `gh` round trips, each against its own deadline. Keyed by `cwd`
- * because that is the
- * only input the read has: two sinks reading the same directory cannot
+ * because that is the only input the read has: two sinks reading the same
+ * directory cannot
  * honestly disagree, and two reading different worktrees must not share.
  *
  * A branch switch inside one process's lifetime is therefore not observed —
@@ -1801,8 +1802,8 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
         // Checked BEFORE the branch lookup below, never after: a process
         // recording nothing must spend no `git rev-parse`, and above all
         // no credentialed `gh issue list`, resolving an attribution no
-        // event will ever carry. The CI
-        // job deliberately built to hold no delivery credential is
+        // event will ever carry. The CI job deliberately built to hold no
+        // delivery credential is
         // exactly the one that would otherwise pay that forge call on
         // every check it runs. `writeEvent` names why nothing is recorded.
         if (ctx.destination.kind === 'none') {
