@@ -100,13 +100,12 @@ export class EffectRetryRefusedError extends Error {
 
 /**
  * Opt-in, bounded retry-with-backoff around a `reconcile` call that comes
- * back `'ambiguous'` — round 2/round 4 review, MAJOR/MEDIUM (`effects.ts:240`):
- * a prior `'started'` record's own reconciliation used to be consulted
- * EXACTLY ONCE, so a crash mid-post followed by a still-unreachable remote
- * on the very next attempt marked the record `'uncertain'` and refused
+ * back `'ambiguous'`. Consulting a prior `'started'` record's reconciliation
+ * EXACTLY ONCE means a crash mid-post followed by a still-unreachable remote
+ * on the very next attempt marks the record `'uncertain'` and refuses
  * immediately — skipping `poster`'s own bounded retry loop entirely for
- * this one reachable double-failure combination (the exact gap `O1`'s
- * "retried with backoff for a bounded period" promises against). Absent by
+ * this one reachable double-failure combination, although a post is meant
+ * to be retried with backoff for a bounded period. Absent by
  * default, preserving every OTHER `EffectExecutor` caller's existing
  * single-attempt-then-`'uncertain'` behavior unchanged (`publishRound`,
  * `broker.ts`) — only a caller that explicitly opts in (`pause-resume.ts`'s
@@ -186,9 +185,8 @@ export class EffectExecutor {
       // "cannot tell" case O2 refuses to blindly replay past, so it is
       // treated the same as a reconciliation that came back ambiguous,
       // never silently as if nothing had ever been attempted — including
-      // the SAME observed/uncertain log line that branch emits (round 2
-      // review, MAJOR: this branch used to throw with no log event at all,
-      // leaving a real refused-replay outcome invisible in the Vinaya Log).
+      // the SAME observed/uncertain log line that branch emits, so a real
+      // refused-replay outcome is never invisible in the Vinaya Log.
       this.logFinal('uncertain', identity)
       throw new EffectRetryRefusedError(this.task, key, `existing effect record is corrupt: ${existing.reason}`)
     }
@@ -242,11 +240,10 @@ export class EffectExecutor {
       inputVersion: recorded.inputVersion,
       payloadDigest: recorded.payloadDigest
     }
-    // round 2/round 4 review, MAJOR/MEDIUM: `reconcile` used to be
-    // consulted exactly once here — a crash mid-post (this branch) followed
-    // by a still-unreachable remote on the very next attempt read
-    // 'ambiguous' and refused immediately, never giving `poster`'s own
-    // bounded retry loop a chance to run. When the caller opts in
+    // Consulting `reconcile` exactly once here would let a crash mid-post
+    // (this branch) followed by a still-unreachable remote on the very next
+    // attempt read 'ambiguous' and refuse immediately, never giving
+    // `poster`'s own bounded retry loop a chance to run. When the caller opts in
     // (`reconcileRetry`), an 'ambiguous' outcome is retried with backoff up
     // to `attempts` times before falling through to the SAME
     // `'uncertain'`/refuse handling below — absent, this loop runs exactly

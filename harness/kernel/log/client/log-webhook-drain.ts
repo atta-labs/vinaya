@@ -54,7 +54,7 @@ import { configProvider } from '../../config/loader/config-provider.js'
 /** One POST body capped well under common reverse-proxy/body-size limits (most default to 1-10 MiB). A queue larger than this is not a failure any more — it is delivered as however many chunks of at most this size it takes, each acknowledged and removed on its own. */
 export const MAX_WEBHOOK_BODY_BYTES = 5 * 1024 * 1024
 
-/** Bounds the POST itself (round-2 security review, MEDIUM) — an unresponsive or intentionally slow endpoint would otherwise hang this call, and with it every later drain queued behind it on the sink's drain chain, indefinitely. Applies per chunk: a multi-chunk drain is bounded by this per POST, never once for the whole backlog. */
+/** Bounds the POST itself — an unresponsive or intentionally slow endpoint would otherwise hang this call, and with it every later drain queued behind it on the sink's drain chain, indefinitely. Applies per chunk: a multi-chunk drain is bounded by this per POST, never once for the whole backlog. */
 export const WEBHOOK_FETCH_TIMEOUT_MS = 30_000
 
 const SAFE_PATH_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
@@ -112,8 +112,8 @@ function tryCreateLock(lockPath: string, token: string): boolean {
 }
 
 /**
- * Cross-process mutual exclusion for the read-then-truncate below (round-2
- * security review, BLOCKER) — two OS processes, each running their own
+ * Cross-process mutual exclusion for the read-then-truncate below — two OS
+ * processes, each running their own
  * `log-sink.ts` instance against the SAME `<owner>-<repo>/<task>.ndjson`
  * queue file (`dev-review-loop.ts` runs the reviewer and security roles
  * inside one `Promise.all`, each with its own `vinaya` invocations), can
@@ -188,7 +188,7 @@ export function acquireDrainLock(lockPath: string): string | null {
 
 /**
  * Exported for `log-webhook-drain.test.ts` — verifies ownership before
- * deleting (round-3 security review, MEDIUM). A holder stalled past
+ * deleting. A holder stalled past
  * `WEBHOOK_DRAIN_LOCK_STALE_MS` (plausible on a resource-contended host, not
  * only a genuine crash) can have `acquireDrainLock` steal its lock out from
  * under it; that holder's own `finally` still runs once it resumes, and an

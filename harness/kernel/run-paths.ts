@@ -289,10 +289,9 @@ export function scopeFromSegment(segment: string): RunScope {
  * Set by every driver on ITSELF, first thing, before it resolves a single
  * path — `markProcessUnattended` below is the one writer, and
  * `devReviewLoop`/`cancelDevReviewLoop`/`runTask`/`startBackgroundRun` are
- * its callers. Round 2 review (MAJOR) and security review (MEDIUM) both
- * found this key exported with no writer at all, which left the driver —
- * the one caller the default-branch rule exists to protect — classified
- * ATTENDED and honouring the working tree's `runtimeDir` unchecked.
+ * its callers. Without a writer, the driver — the one caller the
+ * default-branch rule exists to protect — would be classified ATTENDED and
+ * honour the working tree's `runtimeDir` unchecked.
  */
 export const UNATTENDED_ENV_KEY = 'VINAYA_UNATTENDED'
 
@@ -490,14 +489,13 @@ let memoizedThisRepo: string | null = null
  * against — the production entry point every seam that has no repo in hand
  * already reaches for.
  *
- * Memoized in its OWN right, not just through `runtimeDirForRepo` (round 2
- * review, MAJOR). Resolving the repo is itself a `git` fork, and this
- * function is handed to `defaultControlStoreDeps` as a CALLBACK: the control
- * store invokes `deps.root()` at twenty separate sites — twice per
- * `writeEffect`, twice per `acquireOwnership` attempt — so evaluating the
- * repo before reaching the cache turned what used to be a pure string join
- * into several subprocess forks per control-store operation, and hundreds
- * per loop round. Worse, a transient fork failure yields the `unresolved`
+ * Memoized in its OWN right, not just through `runtimeDirForRepo`.
+ * Resolving the repo is itself a `git` fork, and this function is handed to
+ * `defaultControlStoreDeps` as a CALLBACK: the control store invokes
+ * `deps.root()` at twenty separate sites — twice per `writeEffect`, twice
+ * per `acquireOwnership` attempt — so evaluating the repo before reaching
+ * the cache would turn a pure string join into several subprocess forks per
+ * control-store operation, and hundreds per loop round. Worse, a transient fork failure yields the `unresolved`
  * segment, so an epoch check and the write it guards could resolve two
  * different trees inside one `writeEffect`. Caching the answer removes both:
  * the fork happens at most once per process, and every later call returns
@@ -514,10 +512,9 @@ export function runtimeDirForThisRepo(): string {
  * that already exists.
  *
  * Every run-file directory goes through here rather than a bare
- * `mkdirSync(..., { recursive: true })` (security review, MEDIUM). While
- * these paths all sat under `~/.vinaya/outbox` — itself `0700` — a lax mode
- * on a child was moot; under a configurable `runtimeDir` whose documented
- * example is `/var/lib/vinaya/runs` it is not. With a `umask` of `002` a
+ * `mkdirSync(..., { recursive: true })`. Under `~/.vinaya/outbox` — itself
+ * `0700` — a lax mode on a child would be moot; under a configurable
+ * `runtimeDir` whose documented example is `/var/lib/vinaya/runs` it is not. With a `umask` of `002` a
  * no-mode `mkdirSync` produces `0775`, which would let any other local
  * account read an unpublished security verdict, replace a
  * `rounds/<n>/reviewer.md` that `publishRound` later posts verbatim, or
@@ -531,7 +528,7 @@ export function runtimeDirForThisRepo(): string {
  * co-tenant able to plant a low-mode child under a shared `runtimeDir` can
  * instead pre-plant a symlink at any missing ancestor, which a bare
  * `mkdirSync(..., { recursive: true })` treats as already-present and
- * silently follows (security review, CRITICAL); every writer that reaches
+ * silently follows; every writer that reaches
  * this directory next then operates inside whatever real directory that
  * symlink resolves to. `mkdirNoSymlinks` refuses instead of following.
  *

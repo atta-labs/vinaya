@@ -29,9 +29,8 @@ const NO_DOCUMENTATION_SENTINEL_RE = /^none\b/i
  * routinely contains an unspaced hyphen (`agent-sdk`, `cost-tracking`);
  * against the old `\s*[-—–]\s*` shape, the lazy source capture stopped at
  * the FIRST such in-URL hyphen, truncating the source and corrupting the
- * mechanism text (round 2 review, BLOCKER, O1/O2 — verified live:
- * `https://code.claude.com/docs/en/agent-sdk/cost-tracking` split at
- * `.../agent`). Requiring `\s+-\s+` for the hyphen form specifically closes
+ * mechanism text (`https://code.claude.com/docs/en/agent-sdk/cost-tracking`
+ * split at `.../agent`). Requiring `\s+-\s+` for the hyphen form specifically closes
  * that gap: no URL contains a literal space, so an in-path hyphen can never
  * satisfy it, while a real hand-written ` - ` separator still does. An
  * OPTIONAL trailing `(O<n>[, O<m>])` citation follows — same grammar Parts

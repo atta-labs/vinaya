@@ -1,9 +1,8 @@
 /**
  * Wires an unattended `dispatchRole` launch (`dispatch.ts`, O1) to the
  * OS-level confinement `harness/kernel/isolation/isolation.md` specifies and
- * `harness/kernel/isolation/isolation-probe.ts` proves (task 1) — the
- * surface that file's own "What this task does not change" section named
- * as a later task's job. This module (task 3) is that later task.
+ * `harness/kernel/isolation/isolation-probe.ts` proves — the surface that
+ * probe leaves to its callers.
  *
  * Deliberately does NOT import `harness/kernel/isolation/isolation-probe.ts`: that
  * directory is a dev-only script tree, excluded from the published package
@@ -36,7 +35,7 @@ import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path'
 import { devToolsSocketRoot } from '../tools/dev-tools-registration.js'
 import { sourceReceiptsPath, sourceStoreDir } from '../source-manifest.js'
 
-/** The same allowlist discipline `harness/kernel/gates/checks/runner.ts`'s `buildCheckEnv` already applies to a custom check's child — named here again, deliberately, rather than imported: `checks/runner.ts` sits outside this task's surface (`apps/cli/src/checks` is explicitly named `out:` in the dispatched brief), and this list is small enough that naming it twice costs less than reaching across that boundary. `harness/kernel/isolation/isolation.md` §2 documents this precedent as the pattern this module extends to the Worker/Reviewer dispatch path. */
+/** The same allowlist discipline `harness/kernel/gates/checks/runner.ts`'s `buildCheckEnv` already applies to a custom check's child — named here again, deliberately, rather than imported: this list is small enough that naming it twice costs less than making the isolation module depend on the check runner. `harness/kernel/isolation/isolation.md` §2 documents this precedent as the pattern this module extends to the Worker/Reviewer dispatch path. */
 export const WORKER_ENV_ALLOWLIST_KEYS = [
   'PATH',
   'LANG',
@@ -175,10 +174,9 @@ export function resolveCodexAccessToken(
 export const CODEX_POLICY_RULES_FILE = 'vinaya-machine-state.rules'
 
 /**
- * Round 2 review (Reviewer MAJOR / Security HIGH, F1): the
- * machine-state execpolicy floor must ride EVERY Codex dispatch, the way a
- * Claude dispatch's `permissions.deny` rides `--settings` on every run — not
- * only inside the worker-isolation boundary. the Codex confinement
+ * The machine-state execpolicy floor must ride EVERY Codex dispatch, the way
+ * a Claude dispatch's `permissions.deny` rides `--settings` on every run —
+ * not only inside the worker-isolation boundary. The Codex confinement
  * stages a run-scoped `CODEX_HOME` (with the rules) only when that boundary
  * runs (`opts.unattended && requireIsolation`); this stages the equivalent for
  * a Codex dispatch that runs WITHOUT it — an attended start (an unattended
@@ -207,7 +205,7 @@ export const CODEX_POLICY_RULES_FILE = 'vinaya-machine-state.rules'
  * `runRealCodexLoginWithAccessToken` already carries; a run-scoped `CODEX_HOME`
  * with `exec resume` is the shape the Codex confinement already ships.
  *
- * **O1–O3, O7 (task 4):** when the caller names `sandboxConfigToml`, `auth.json`
+ * When the caller names `sandboxConfigToml`, `auth.json`
  * and `config.toml` are excluded from the generic symlink-through loop above
  * and handled differently instead:
  *
@@ -331,8 +329,7 @@ export function reuseStagedCodexHome(input: { realHome: string; codexHome: strin
 export type CodexAuthPreflightResult = { ok: true } | { ok: false; reason: string }
 
 /**
- * Round 5 review, BLOCKER: a bare `CODEX_ACCESS_TOKEN`
- * environment variable is not itself a session Codex's real CLI accepts —
+ * A bare `CODEX_ACCESS_TOKEN` environment variable is not itself a session Codex's real CLI accepts —
  * live-verified against `codex-cli 0.152.1` on this authoring host (`codex
  * --help` documents no such env-var auth path at all): the vendor CLI only
  * ever authenticates from `auth.json` inside its `CODEX_HOME`, written by
@@ -380,7 +377,7 @@ function runRealCodexLoginWithAccessToken(input: {
 }
 
 /**
- * Round 7 review, BLOCKER: a bare `hooks.json` file dropped at `CODEX_HOME`
+ * A bare `hooks.json` file dropped at `CODEX_HOME`
  * root is never loaded by the real Codex CLI — live-verified on this
  * authoring host (`codex-cli 0.152.1`): every real hooks.json this host
  * carries lives inside an INSTALLED PLUGIN's own directory (e.g. a
@@ -1761,7 +1758,7 @@ export async function probeAgentSandbox(
   return readCodexSandboxProbe(run)
 }
 
-// --- O1/O2/O4/O5 (task 4): Codex's half of the provider-neutral confinement
+// --- Codex's half of the provider-neutral confinement
 // interface ----------------------------------------------------------------
 
 /**
@@ -2327,7 +2324,7 @@ export function controllerStoreReachableBy(controllerDir: string, writableRoots:
  * repo-local nor a global config) drops ONLY the one config-file entry —
  * every other entry here reads straight off `runtimeDir`/`task`/`role` and
  * owes nothing to the config file's own existence, so an unreadable config
- * must never fail the WHOLE per-turn check open (round 2 review, MINOR).
+ * must never fail the WHOLE per-turn check open.
  */
 function protectedPathsForTurn(
   policies: WorkerBoundaryPolicies,

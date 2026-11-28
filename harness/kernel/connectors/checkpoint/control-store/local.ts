@@ -140,14 +140,13 @@ function readIfExists(path: string): string | undefined {
 
 /**
  * Every direct `parse<X>Record(readIfExists(path))` read in this file goes
- * through here instead (round 3 review, BLOCKER): `readIfExists` rethrows a
- * real filesystem fault (permission denied, an unreadable special file, an
- * EIO) raw, and every one of `parseWith`'s callers sits upstream of a caller
- * that reads that record BEFORE its own try/catch is in scope (`recoverLoopState`
- * in `dev-review-loop.ts`, most concretely) — the exact "escapes uncaught
- * instead of becoming a decided pause" failure class round 1's BLOCKER
- * already named for malformed JSON, reopened here through a different
- * trigger. A real read failure is "something is there but untrustworthy," the
+ * through here instead: `readIfExists` rethrows a real filesystem fault
+ * (permission denied, an unreadable special file, an EIO) raw, and every one
+ * of `parseWith`'s callers sits upstream of a caller that reads that record
+ * BEFORE its own try/catch is in scope (`recoverLoopState` in
+ * `dev-review-loop.ts`, most concretely). Left raw, such a fault escapes
+ * uncaught instead of becoming a decided pause — the same failure malformed
+ * JSON would cause, through a different trigger. A real read failure is "something is there but untrustworthy," the
  * same fact `parseWith` already reports as `'corrupt'` for torn JSON or a
  * schema violation — never `'absent'`, and never left to erupt uncaught out
  * of every caller of every record kind this store has.
@@ -165,10 +164,9 @@ function readRecord<T>(path: string, parse: (raw: string | undefined) => ParsedR
  * through — a pre-existing REAL directory (never a symlink; that is
  * `mkdirNoSymlinks`'s own `isDirectory()` check, applied before this one)
  * can still be a co-tenant's plant: owning it, or leaving it world-writable,
- * hands that co-tenant the same control over its contents a symlink would
- * (security review, round 3 — the type check alone "never followed a
- * symlink" but said nothing about who could still tamper with a directory
- * of the right type).
+ * hands that co-tenant the same control over its contents a symlink would.
+ * The type check alone never follows a symlink but says nothing about who
+ * could still tamper with a directory of the right type.
  *
  * Two independent properties, both required:
  *
@@ -296,10 +294,9 @@ export function segmentTrustedOverflowUid(
 /**
  * Creates `dir` and every missing ancestor, refusing to traverse through a
  * pre-existing symlink — or a pre-existing real directory with an untrusted
- * owner or mode — at or below `trustedRoot` (security review, CRITICAL then
- * round 3; the operating-system-owned-temp-root exemption above it added
- * once an untouched checkout's default temp root turned out to already be
- * such a symlink).
+ * owner or mode — at or below `trustedRoot`. Above it, an
+ * operating-system-owned temp root is exempt, because an untouched
+ * checkout's default temp root can already be such a symlink.
  * `mkdirSync(dir, { recursive: true })` treats an existing symlink-to-directory
  * as already present and silently follows it — every writer that reaches
  * this store's own `openSync`/`writeSync`/`renameSync`/`linkSync` next then
@@ -1055,9 +1052,9 @@ const MAX_ESCALATION_COLLISION_ATTEMPTS = 8
  * self-resumed reasons (`objectives_changed`, `ruling_posted`,
  * `stale_driver`, `brief_superseded`, `policy_changed`), which dispatch no
  * developer and so never guarantee a new head — is never silently
- * overwritten (code review, round 2, MEDIUM: the earlier pause's own
- * reason/detail/evidence would otherwise become unrecoverable except
- * through chat history, exactly what O1 exists to avoid). Instead it claims
+ * overwritten: the earlier pause's own reason/detail/evidence would
+ * otherwise become unrecoverable except through chat history, which a
+ * recorded pause exists to make unnecessary. Instead it claims
  * the next free `<escalationId>-<n>` suffix via the same exclusive-create
  * discipline `attemptEpochClaim`/`appendTransition`'s own seq-slot claim
  * uses — never `atomicWriteFile` for this branch, so two colliding writers
