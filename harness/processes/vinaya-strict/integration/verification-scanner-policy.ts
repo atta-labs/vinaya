@@ -157,7 +157,19 @@ export const SCANNER_DECLARATIONS: readonly ScannerDeclaration[] = [
     ],
     trigger: 'listed-files'
   },
-  { test: 'apps/cli/tests/import-boundary.test.ts', roots: ['apps/cli/'], trigger: 'content' },
+  // The command line's import guard scans the command line's own folder and
+  // reads every other application's manifest for the package name it refuses,
+  // so each of those manifests is a root here too.
+  {
+    test: 'apps/cli/tests/import-boundary.test.ts',
+    roots: [
+      'apps/cli/',
+      'apps/log-server/package.json',
+      'apps/vinaya-portal/package.json',
+      'apps/vinaya-studio/package.json'
+    ],
+    trigger: 'content'
+  },
   {
     test: 'harness/processes/vinaya-strict/integration/log/client/log-entry-paths.test.ts',
     roots: ['.github/workflows/', '.vinaya/hooks/', '.claude/settings.json', 'vinaya.config.json'],
