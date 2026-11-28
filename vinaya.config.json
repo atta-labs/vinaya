@@ -704,6 +704,36 @@
           "means": "state the decision in plain words instead of citing a decision identifier",
           "scopes": ["spec", "source-comment"],
           "severity": "error"
+        },
+        {
+          "id": "comment-review-round",
+          "pattern": "\\bround[ -][0-9]+ (?:security |code )?review\\b|\\bround [0-9]+/round [0-9]+ review\\b|\\breview,? round [0-9]+\\b",
+          "flags": "i",
+          "means": "say what the code guards against and why, instead of naming the review round that asked for it",
+          "scopes": ["source-comment"],
+          "severity": "error"
+        },
+        {
+          "id": "comment-review-severity",
+          "pattern": "\\breview,? \\(?(?:BLOCKER|CRITICAL|MAJOR|MEDIUM|HIGH)\\b|\\breview round [0-9]+,? \\(?(?:BLOCKER|CRITICAL|MAJOR|MEDIUM|HIGH)\\b",
+          "means": "say what the code guards against and why, instead of quoting a review finding's severity",
+          "scopes": ["source-comment"],
+          "severity": "error"
+        },
+        {
+          "id": "comment-task-number",
+          "pattern": "\\(task [0-9]+\\)",
+          "means": "say what the code guards against and why, instead of naming the numbered task that added it",
+          "scopes": ["source-comment"],
+          "severity": "error"
+        },
+        {
+          "id": "comment-dispatched-brief",
+          "pattern": "\\bdispatched brief\\b",
+          "flags": "i",
+          "means": "say what the code guards against and why, instead of citing what a dispatched brief asked for",
+          "scopes": ["source-comment"],
+          "severity": "error"
         }
       ]
     }

@@ -1,7 +1,9 @@
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { readdirSync, readFileSync } from 'node:fs'
+import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'bun:test'
+import { type ProseRulesConfig, resolveProseRules } from './prose-rules'
+import { proseRulesIssues } from './prose-rules-config'
 import {
   checkReaderResolvableProse,
   checkSourceComments,
@@ -784,6 +786,109 @@ describe('checkSourceComments — the source-comment class (Issue #575)', () => 
       { path: 'packages/core/src/x.ts', content: '// a closed union now covers every failure class' }
     ])
     expect(fixed).toEqual([])
+  })
+})
+
+describe("the repository's own history-narrating comment rules", () => {
+  const HISTORY_RULE_IDS = [
+    'comment-review-round',
+    'comment-review-severity',
+    'comment-task-number',
+    'comment-dispatched-brief'
+  ] as const
+  const repoConfig = JSON.parse(readFileSync(join(REPO_ROOT, 'vinaya.config.json'), 'utf8')) as {
+    proseGates?: { rules?: ProseRulesConfig }
+  }
+  const repoRules = repoConfig.proseGates?.rules
+  const rules = resolveProseRules(repoRules, { repoRoot: REPO_ROOT })
+  const historyFindings = (path: string, content: string) =>
+    checkSourceComments([{ path, content }], [], { rules }).filter((finding) =>
+      (HISTORY_RULE_IDS as readonly string[]).includes(finding.rule)
+    )
+
+  it('the rule list holds all four, each a valid blocking source-comment rule whose message says how to rephrase', () => {
+    expect(proseRulesIssues(repoRules)).toEqual([])
+    for (const id of HISTORY_RULE_IDS) {
+      const rule = rules.rules.find((candidate) => candidate.id === id)
+      expect(rule, id).toBeDefined()
+      expect(rule!.custom).toBe(true)
+      expect(rule!.severity['source-comment']).toBe('error')
+      expect(rule!.message).toContain('say what the code guards against')
+    }
+  })
+
+  const refused: [string, string][] = [
+    ['comment-review-round', '// added after the round 3 review asked for it'],
+    ['comment-review-round', '// the round-2 security review found this gap'],
+    ['comment-review-round', '// effects retry (round 2/round 4 review)'],
+    ['comment-review-round', '// guarded since code review, round 2'],
+    ['comment-review-severity', '// a read fault is refused as corrupt (security review, CRITICAL)'],
+    ['comment-review-severity', '// see the review round 5, BLOCKER finding'],
+    ['comment-task-number', '/** This module (task 3) wires the boundary. */'],
+    ['comment-dispatched-brief', '// the dispatched brief names this path out of scope']
+  ]
+  for (const [id, comment] of refused) {
+    it(`${id} refuses ${JSON.stringify(comment)}`, () => {
+      const findings = historyFindings('packages/core/src/x.ts', `${comment}\nexport const a = 1`)
+      expect(
+        findings.map((finding) => finding.rule),
+        JSON.stringify(findings)
+      ).toContain(id)
+      const finding = findings.find((candidate) => candidate.rule === id)!
+      expect(finding.blocking).toBe(true)
+      expect(finding.message).toContain('say what the code guards against')
+    })
+  }
+
+  it("refuses each form even in a sentence about the review loop's own behaviour", () => {
+    const loopSentences: [string, string][] = [
+      ['comment-review-round', '// the loop stops a task once its round 3 review still finds a blocker'],
+      ['comment-review-severity', '// a reviewer quoting a review, BLOCKER finding pauses the loop'],
+      ['comment-task-number', '// the driver dispatches the next developer turn (task 4) after a ruling'],
+      ['comment-dispatched-brief', '// the developer reads the dispatched brief before its first turn']
+    ]
+    for (const [id, comment] of loopSentences) {
+      const ids = historyFindings('harness/kernel/loop.ts', comment).map((finding) => finding.rule)
+      expect(ids, comment).toContain(id)
+    }
+  })
+
+  it('leaves ordinary sentences about a review, a round, a task or a brief alone', () => {
+    const ordinary = [
+      '// the reviewer posts one verdict per review round',
+      '// a round ends when both reviews approve',
+      '// round 3 is the last round the budget allows',
+      '// every task carries a frozen brief',
+      '// the brief is dispatched once the plan is ready',
+      '// a BLOCKER finding pauses the loop until a ruling lands',
+      '// the task number lives on the branch name',
+      '/** Runs the review, then records it. */'
+    ]
+    for (const comment of ordinary) {
+      expect(historyFindings('packages/core/src/x.ts', comment), comment).toEqual([])
+    }
+  })
+
+  // The log sink is bound to its own doc in `.vinaya/doc-owners`, and the
+  // commit hook's doc check runs with no pull request body, so even a
+  // comment-only edit to it cannot be declared doc-neutral at commit time.
+  // Its comments are rewritten separately, together with that doc; until
+  // then it is the one kernel file this sweep leaves out.
+  const NOT_YET_SWEPT = new Set(['harness/kernel/log/log-sink.ts'])
+
+  it('finds none of the four forms in any comment of any TypeScript file under the kernel', () => {
+    const kernelRoot = join(REPO_ROOT, 'harness/kernel')
+    const files = (readdirSync(kernelRoot, { recursive: true }) as string[])
+      .map((entry) => entry.split(sep).join('/'))
+      .filter((entry) => entry.endsWith('.ts') && !entry.split('/').includes('node_modules'))
+      .map((entry) => `harness/kernel/${entry}`)
+      .filter((path) => !NOT_YET_SWEPT.has(path))
+    expect(files.length).toBeGreaterThan(0)
+    const findings = files.flatMap((path) => {
+      const comments = extractComments(path, readFileSync(join(REPO_ROOT, path), 'utf8'))
+      return historyFindings(path, comments).map((finding) => `${finding.file}:${finding.line} ${finding.message}`)
+    })
+    expect(findings).toEqual([])
   })
 })
 
