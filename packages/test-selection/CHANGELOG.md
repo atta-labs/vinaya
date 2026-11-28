@@ -1,5 +1,15 @@
 # @attalabs/test-selection
 
+## 0.5.0
+
+### Minor Changes
+
+- b6d8a9c: Selection takes a table of path aliases (`SelectionPolicy.pathAliases`, `FileSelectionOptions.pathAliases`, and the `pathAliases` key of the consumer config) and follows an aliased import the way it follows a relative one, in both its compiler walk and its text-scan walk. `resolveAliasedSpecifier` maps an aliased specifier to the repository path it names. With no table, nothing changes.
+
+### Patch Changes
+
+- 2b4ba6b: A process builds the compiler graph once per set of inputs: a repeated selection over the same files, manifests, entrypoints, compiler and workspace links reuses the graph and reports a program time of 0, and any change to one of them builds it again. `GraphInput` gains an optional `workspaceKey`; a direct caller of `buildCompilerGraph` that omits it still builds afresh on every call.
+
 ## 0.4.0
 
 ### Minor Changes

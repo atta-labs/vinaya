@@ -1,6 +1,6 @@
 {
   "name": "@attalabs/vinaya",
-  "version": "0.46.0",
+  "version": "0.47.0",
   "description": "Vinaya \u2014 deterministic checks every AI coding agent must satisfy before merge.",
   "type": "module",
   "license": "FSL-1.1-ALv2",
@@ -89,7 +89,7 @@
     "verify-published-lifecycle": "bun scripts/verify-published-lifecycle.ts"
   },
   "dependencies": {
-    "@attalabs/vinaya-log-sdk": "0.46.0",
+    "@attalabs/vinaya-log-sdk": "0.47.0",
     "gray-matter": "^4.0.3",
     "safe-regex2": "5.1.1",
     "zod": "3.25.76"

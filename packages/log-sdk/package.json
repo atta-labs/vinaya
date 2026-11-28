@@ -1,6 +1,6 @@
 {
   "name": "@attalabs/vinaya-log-sdk",
-  "version": "0.46.0",
+  "version": "0.47.0",
   "description": "Record, send, read and narrate workflow events with OpenTelemetry from Node.js or the command line.",
   "type": "module",
   "license": "FSL-1.1-ALv2",

@@ -1,5 +1,0 @@
----
-"@attalabs/vinaya": patch
----
-
-A harness record written by a process that was given no repository now names the repository of the checkout it runs in: when `VINAYA_REPO` is unset, the run recorder reads the `origin` remote from the checkout's git config file — found by walking up from the working directory, a linked worktree's included — once per process and without spawning `git`, so the record is kept in that repository's local copy and sent instead of being kept as `unresolved`. A checkout with no GitHub `origin` still records as `unresolved`. An OpenTelemetry address whose `logs.otlp.headers` name a credential variable that is not set no longer resolves on any host, not only on CI, so no record is ever posted unauthenticated; the records wait in the local copy until the variable is set. `vinaya doctor` reports a `[logs-otlp]` finding beside `[logs]`: whether this host resolves an OpenTelemetry address for its run's records, through the same rule the sender uses, and when it does, which environment variable its credential is read from and whether that variable is set, never its value.
