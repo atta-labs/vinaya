@@ -224,3 +224,44 @@ test("every reader of an SDK writer's local copy, read from its start, reports n
     rmSync(runtimeDir, { recursive: true, force: true })
   }
 })
+
+test("a follow polled after each of a writer's alternating events and spans hands every record once, in sequence, with no gap", async () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'log-sdk-reader-order-'))
+  try {
+    const errors: unknown[] = []
+    const handle = connect({
+      runId: 'run-1',
+      repository: 'acme/widgets',
+      repoRoot: join(runtimeDir, 'repo'),
+      runtimeDir,
+      onError: (error) => errors.push(error)
+    })
+    const folder = join(runtimeDir, 'logs', 'acme-widgets')
+    const reader = createReader(createFolderSource({ folder, runId: 'run-1' }), { patience: 1 })
+    const handed: OtelRecord[] = []
+    const gaps: { kind: string }[] = []
+    const poll = async () => {
+      const update = await reader.pull()
+      handed.push(...update.records)
+      gaps.push(...update.gaps)
+    }
+    for (let i = 0; i < 5; i++) {
+      handle.run.stageChanged({ to: `stage ${i}` })
+      await poll()
+      handle.phase.ended({ phase: 'developer', step: `step ${i}` })
+      await poll()
+    }
+    await handle.flush()
+    await poll()
+    expect(errors).toEqual([])
+    // The writer kept one events file and one spans file, both growing while the follow read them.
+    expect(readdirSync(folder)).toHaveLength(2)
+    expect(gaps).toEqual([])
+    expect(handed.map(({ seq }) => seq)).toEqual(Array.from({ length: 10 }, (_, i) => i + 1))
+    expect(handed.map(({ kind }) => kind)).toEqual(
+      Array.from({ length: 10 }, (_, i) => (i % 2 === 0 ? 'event' : 'span'))
+    )
+  } finally {
+    rmSync(runtimeDir, { recursive: true, force: true })
+  }
+})

@@ -236,3 +236,74 @@ test("a file listed but unreadable keeps the offset already read in the writer's
   expect(second.records).toEqual([])
   expect(second.position).toBe(first.position)
 })
+
+test("a follow polled between a span in one of a writer's files and an event in the other hands both, each once, with no gap", async () => {
+  const path = folder()
+  const reader = createReader(createFolderSource({ folder: path, runId: 'run-1' }))
+  writeFileSync(join(path, name('a', 0)), line('a', 1, 1))
+  expect(labels((await reader.pull()).records)).toEqual(['a1'])
+  writeFileSync(join(path, name('a', 1, 'traces')), line('a', 2, 2))
+  expect(labels((await reader.pull()).records)).toEqual(['a2'])
+  // The writer goes back to its events file, which is still growing below the later spans file.
+  appendFileSync(join(path, name('a', 0)), line('a', 3, 3))
+  const event = await reader.pull()
+  expect(labels(event.records)).toEqual(['a3'])
+  expect(event.gaps).toEqual([])
+  // A span half-written while the events file grows is waited for, then handed whole.
+  const span = line('a', 4, 4)
+  appendFileSync(join(path, name('a', 1, 'traces')), span.slice(0, 40))
+  appendFileSync(join(path, name('a', 0)), line('a', 5, 5))
+  const between = await reader.pull()
+  expect(between.gaps.filter(({ kind }) => kind === 'unreadable_line')).toEqual([])
+  appendFileSync(join(path, name('a', 1, 'traces')), span.slice(40))
+  const finished = await reader.pull()
+  expect(finished.gaps).toEqual([])
+  expect([...labels(between.records), ...labels(finished.records)]).toEqual(['a4', 'a5'])
+  expect((await reader.pull()).records).toEqual([])
+  expect((await reader.readAll()).gaps).toEqual([])
+})
+
+test('a position the earlier source saved, resumed on a folder in the earlier layout, skips and repeats no record', async () => {
+  const path = folder()
+  // The earlier writer moved to the next index on every signal change, so only its last file grew.
+  writeFileSync(join(path, name('a', 0)), line('a', 1, 1) + line('a', 2, 2))
+  writeFileSync(join(path, name('a', 1, 'traces')), line('a', 3, 3))
+  writeFileSync(join(path, name('a', 2)), line('a', 4, 4))
+  writeFileSync(join(path, name('b', 0, 'traces')), line('b', 1, 5))
+  // The earlier source's position after reading a4 and b1: one place per writer.
+  const earlier = JSON.stringify({ v: 1, w: { a: [2, line('a', 4, 4).length], b: [0, line('b', 1, 5).length] } })
+  appendFileSync(join(path, name('a', 2)), line('a', 5, 6))
+  writeFileSync(join(path, name('a', 3, 'traces')), line('a', 6, 7))
+  writeFileSync(join(path, name('b', 1)), line('b', 2, 8))
+  const reader = createReader(createFolderSource({ folder: path, runId: 'run-1' }), { position: earlier, patience: 1 })
+  const resumed = await reader.pull()
+  expect(resumed.gaps).toEqual([])
+  expect(labels(resumed.records).sort()).toEqual(['a5', 'a6', 'b2'])
+  expect((await reader.pull()).records).toEqual([])
+  appendFileSync(join(path, name('a', 3, 'traces')), line('a', 7, 9))
+  expect(labels((await reader.pull()).records)).toEqual(['a7'])
+  expect((await reader.readAll()).gaps).toEqual([])
+})
+
+test("a half-written last line in a writer's span file is not abandoned while the only later file is its event file", async () => {
+  const path = folder()
+  writeFileSync(join(path, name('a', 0, 'traces')), line('a', 1, 1) + line('a', 2, 2).slice(0, 30))
+  writeFileSync(join(path, name('a', 1)), line('a', 3, 3))
+  // Patient enough that the records behind the half line stay held until the end.
+  const reader = createReader(createFolderSource({ folder: path, runId: 'run-1' }), { patience: 10 })
+  const first = await reader.pull()
+  expect(first.gaps.filter(({ kind }) => kind === 'unreadable_line')).toEqual([])
+  expect(labels(first.records)).toEqual(['a1'])
+  appendFileSync(join(path, name('a', 1)), line('a', 4, 4))
+  expect((await reader.pull()).gaps.filter(({ kind }) => kind === 'unreadable_line')).toEqual([])
+  // The writer goes on in a later span file: the half line is abandoned, reported once.
+  writeFileSync(join(path, name('a', 2, 'traces')), line('a', 5, 5))
+  const abandoned = await reader.pull()
+  expect(abandoned.gaps.filter(({ kind }) => kind === 'unreadable_line').map(({ place }) => place)).toEqual([
+    `${name('a', 0, 'traces')}@${line('a', 1, 1).length}`
+  ])
+  expect((await reader.pull()).gaps.filter(({ kind }) => kind === 'unreadable_line')).toEqual([])
+  const flushed = await reader.readAll()
+  expect(flushed.gaps.map(({ place }) => place)).toEqual(['writer a sequence 2'])
+  expect(labels(flushed.records)).toEqual(['a3', 'a4', 'a5'])
+})
