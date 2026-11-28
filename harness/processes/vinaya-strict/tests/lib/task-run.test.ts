@@ -299,7 +299,7 @@ describe("describeModelResolution (issue-661, O1) — the driver's first log lin
   })
 })
 
-// O1 (task-run-v1 21, #541, round 2 review MAJOR): the identical
+// The identical
 // composition story, off `{ issue }` instead of `{ tranche, n }` — a
 // backlog Issue with no tranche runs through `prepareIssueTask`/
 // `assembleAndRenderBriefForIssue` rather than `prepareTask`/

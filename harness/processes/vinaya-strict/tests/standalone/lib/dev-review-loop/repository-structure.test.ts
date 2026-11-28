@@ -77,13 +77,12 @@ describe('devReviewLoop — the loop’s exit sites (O6)', () => {
     expect(body).toMatch(/return \{ finalDecision: decision, prNumber, task \}/)
   })
 
-  // Round 5 review, MINOR: `logPauseCommentRetryIfNotable`'s own guard used
-  // to read `if (result.attempts <= 1) return` — indistinguishable from a
-  // genuine `{attempts: 0/1, posted: false}` failure (a corrupt
-  // control-store record, an epoch-acquisition throw — see
-  // `pause-resume.test.ts`'s own structural tests for that fix) and the
-  // harmless `{attempts: 0/1, posted: true}` no-op/first-try-success case.
-  // The fixed guard only skips logging when `posted` is true — asserted
+  // `logPauseCommentRetryIfNotable`'s own guard must not read
+  // `if (result.attempts <= 1) return` alone: that cannot tell a genuine
+  // `{attempts: 0/1, posted: false}` failure (a corrupt control-store
+  // record, an epoch-acquisition throw — see `pause-resume.test.ts`'s own
+  // structural tests) from the harmless `{attempts: 0/1, posted: true}`
+  // no-op/first-try-success case. The guard only skips logging when `posted` is true — asserted
   // directly here since a genuine reproduction needs the same real,
   // process-memoized control store `pause-resume.test.ts`'s own tests
   // avoid touching in-process for the identical reason.

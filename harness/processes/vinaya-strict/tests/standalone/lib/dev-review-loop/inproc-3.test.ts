@@ -233,10 +233,9 @@ describe('devReviewLoop — round 1 blocked, round 2 genuinely resumes', () => {
     const round2Prompt = developerPrompts[1] as string
     expect(round2Prompt).toMatch(/BLOCKER/)
     expect(round2Prompt).toMatch(/deliberate round-1 blocker/)
-    // O11 (task-run-v1 21, #541, round 2 review MAJOR): the round-findings
-    // resume prompt names the task/branch/worktree/head context AND the
-    // exact tool expected — not just "push fixes" in prose. O4: the tool is
-    // the driver-run `publish_changes`, not a self-push.
+    // The round-findings resume prompt names the task/branch/worktree/head
+    // context AND the exact tool expected — not just "push fixes" in prose.
+    // The tool is the driver-run `publish_changes`, not a self-push.
     expect(round2Prompt).toMatch(new RegExp(`^Resuming task Issue #${world.task}\\.$`, 'm'))
     expect(round2Prompt).toMatch(new RegExp(`^Branch: \`${world.branch}\`$`, 'm'))
     expect(round2Prompt).toMatch(/^Worktree: `.*\.worktrees\//m)

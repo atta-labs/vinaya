@@ -7,7 +7,7 @@
  * `world.prState` and fast, near-zero poll/backoff intervals so a real
  * driver-watch cycle runs in test time, never a real wall-clock wait.
  *
- * Code review round 1 (BLOCKER/MEDIUM): the watching driver must hold the
+ * The watching driver must hold the
  * one-driver-per-task lock for its whole life, never clearing it between a
  * pause and the resumed round — the first test below asserts the lock is
  * present, naming this process, on every single poll tick, and that a
@@ -112,23 +112,22 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
       {
         sleep: async (ms) => {
           sleepCalls += 1
-          // Code review round 1 (BLOCKER): the lock this driver's own round
-          // 1 wrote must still be here, still naming THIS process, on every
+          // The lock this driver's own first round wrote must still be
+          // here, still naming THIS process, on every
           // single poll tick — the exact invariant a clear-then-resume gap
           // would break.
           const lock = readDriverLock(world.runtimeDir, world.task)
           lockNamedThisProcessOnEveryTick.push(lock !== null && lock.pid === process.pid)
 
           if (sleepCalls === 1) {
-            // Code review round 1 (BLOCKER): another owner for the SAME task
+            // Another owner for the SAME task
             // arriving while this one still watches is refused — simulated
             // with this live pid but without this run's ownership token,
             // then calling `devReviewLoop` fresh exactly as a second
             // `task run`/`dev-review-loop --task` would. This driver's own
             // real lock (pid + token) is captured first so it can be
-            // restored exactly — code review round 2 (MAJOR/security LOW)
-            // is precisely about that token mattering, so this test must
-            // never lose it either.
+            // restored exactly — the token is what tells this driver's own
+            // lock from a stranger's, so this test must never lose it.
             const ownLock = readDriverLock(world.runtimeDir, world.task)
             writeDriverLock(world.runtimeDir, world.task, { pid: process.pid, startedAt: new Date(0).toISOString() })
             await expect(runLoopInProcess(world, { task: world.task, agent: 'claude' })).rejects.toThrow(
@@ -326,7 +325,7 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
     // Round 1 stayed paused — no resumed dispatch ever ran.
     expect(world.dispatchCountByRole['code-reviewer']).toBe(1)
     expect(world.publishedRounds).toEqual([])
-    // Code review round 1 (BLOCKER): the driver's own lock — held through
+    // The driver's own lock — held through
     // the whole watch — is released the ONE place `devReviewLoop`'s own
     // `finally` never ran for: `runDriverLoop` clears it itself once the
     // watch loop decides the task is genuinely over.
@@ -425,7 +424,7 @@ describe('runDriverLoop — issue-711 O4: a pause never ends the driver; it watc
 
     expect(result.finalDecision).toEqual({ type: 'ended', reason: 'cancelled' })
     expect(world.publishedRounds).toEqual([])
-    // Code review round 1 (BLOCKER): `--cancel` still ends the watcher AND
+    // `--cancel` still ends the watcher AND
     // its lock is still released — the SAME `runDriverLoop`-owned release
     // every other `'ended'` exit gets, never left dangling because this one
     // reason resolved through a different code path (`resolveEscalation`

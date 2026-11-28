@@ -878,15 +878,7 @@ describe("the repository's own history-narrating comment rules", () => {
   // with no pull request body, so even a comment-only edit to it cannot be
   // declared doc-neutral at commit time; its comments are rewritten together
   // with that doc.
-  const NOT_YET_SWEPT: readonly string[] = [
-    'harness/processes/vinaya-strict/tools/',
-    'harness/processes/vinaya-strict/tests/',
-    'harness/processes/vinaya-strict/thinking/',
-    'harness/processes/vinaya-strict/retrospecting/',
-    'apps/cli/',
-    'harness/kernel/log/log-sink.ts',
-    'packages/log-sdk/src/contract/schema.ts'
-  ]
+  const NOT_YET_SWEPT: readonly string[] = ['harness/kernel/log/log-sink.ts', 'packages/log-sdk/src/contract/schema.ts']
   const notYetSwept = (path: string) => NOT_YET_SWEPT.some((prefix) => path.startsWith(prefix))
 
   // Every TypeScript file git tracks, so build output, dependency folders and

@@ -1572,10 +1572,9 @@ describe('devReviewLoop — a reviewer that wrote nothing cast no verdict (O1/O2
       // Nothing held or published for this round: no security verdict file
       // ever got written, and the round never advanced past 1. The code-review
       // role finishes clean well before security's own retry exhausts — its
-      // held verdict must not survive on disk either (round 1 review finding,
-      // BLOCKER, PR #489: `writeHeldVerdict` used to run inside `dispatchReviewer`
-      // itself, so the succeeding role's file was already written by the time
-      // its sibling failed).
+      // held verdict must not survive on disk either: were `writeHeldVerdict`
+      // to run inside `dispatchReviewer` itself, the succeeding role's file
+      // would already be written by the time its sibling failed.
       expect(existsSync(join(ipRoundDir(world, 1), 'reviewer.md'))).toBe(false)
       expect(existsSync(join(ipRoundDir(world, 1), 'security.md'))).toBe(false)
       const pauseState = JSON.parse(readFileSync(join(ipControlDir(world), 'pause-state.json'), 'utf8')) as Record<

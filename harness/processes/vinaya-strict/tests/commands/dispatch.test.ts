@@ -37,14 +37,14 @@ function tempDir(prefix: string): string {
 type CliResult = { status: number; stdout: string; stderr: string }
 
 /**
- * Issue #660, O3 round 3 (security review, HIGH) — unlike the sibling
- * `apps/cli/tests/lib/dispatch.test.ts` (fixed with a `stripVinayaEnv`
- * helper and an explicit budget), this file spread `...process.env`
- * straight into its own real `vinaya dispatch` subprocess: a leaked
+ * Like the sibling `apps/cli/tests/lib/dispatch.test.ts`, this file strips
+ * the `VINAYA_*` environment and bounds its real `vinaya dispatch`
+ * subprocess with an explicit budget. Spreading `...process.env` straight
+ * into that subprocess would be unsafe: a leaked
  * `VINAYA_RUNTIME_DIR` from a dispatched session's own environment survives
  * past this fixture's `HOME` override (`resolveRuntimeDirUncached` checks it
  * first), redirecting this fixture's writes into the real, shared runtime
- * directory; and with no `spawnSync` timeout, a stuck child was only ever
+ * directory; and with no `spawnSync` timeout, a stuck child would only be
  * caught by bun:test's bare default, with no captured output.
  */
 function stripVinayaEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

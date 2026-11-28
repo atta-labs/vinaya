@@ -222,7 +222,7 @@ describe('vinaya task run --issue — argv parsing (task-run-v1 task 15, O1)', (
 // `dev-review-loop --resume <pr>`; the one pause with no pull request yet — the
 // pre-first-push escalation, `prNumber` `0` or `-1` — continues with a fresh
 // `vinaya task run` in whichever address form its own branch takes, never a
-// broken `--resume 0`/`--resume -1`. Round 2 review: the form is the SAME
+// broken `--resume 0`/`--resume -1`. The form comes from the SAME
 // `noPushResumeArgv` builder the pause comment uses, so a tranche task (whose
 // `--issue <n>` form the brief-assembler refuses) gets the working
 // `task run <tranche> <n>`, not a hardcoded `--issue <n>`.

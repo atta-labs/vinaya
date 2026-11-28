@@ -537,11 +537,11 @@ describe('computeGroupC — extracts and runs, end to end', () => {
     })
   })
 
-  // Round 3 review, F2 (test-honesty): a `[agent]` command that itself reads
-  // `PR_BODY` (any `vinaya check` invocation, e.g. `closes-n`) used to always
-  // see an empty body here — `runAgentCommand`'s own env never carried it —
-  // so Group C's own evidence could never demonstrate a Test Plan's
-  // "→ exits 0" claim for such a command, no matter when it ran.
+  // A `[agent]` command that itself reads `PR_BODY` (any `vinaya check`
+  // invocation, e.g. `closes-n`) must see the graded body here: were
+  // `runAgentCommand`'s own env not to carry it, the command would always
+  // see an empty body, and Group C's own evidence could never demonstrate a
+  // Test Plan's "→ exits 0" claim for such a command, no matter when it ran.
   it('threads the graded body through as PR_BODY, so a command that reads it sees the SAME text Group C extracted its own command list from', async () => {
     const body = ['## Test Plan', '', '```', 'echo "body was: $PR_BODY"', '```'].join('\n')
     const groupC = await computeGroupC(body, undefined, {}, memoryTestRunCache())
@@ -835,13 +835,12 @@ describe('runAgentCommand — per-file reuse of a recorded green run (O1, Issue 
     expect(coverage?.source).toBe('pre-push')
   })
 
-  // Round-2 review, MAJOR: writing a green run's own coverage record used to
-  // `cache.set` a brand-new record every time, discarding whatever an
-  // EARLIER run at the identical head/tree had already proven — so a
-  // second, narrower `bun test <files>` command run moments later inside
-  // the SAME `pr report` invocation silently erased the first command's own
-  // coverage, forcing a real re-run for a file that had already run green
-  // seconds earlier. This test holds the fix: two non-overlapping commands
+  // Writing a green run's own coverage record must never `cache.set` a
+  // brand-new record that discards whatever an EARLIER run at the identical
+  // head/tree had already proven — or a second, narrower `bun test <files>`
+  // command run moments later inside the SAME `pr report` invocation would
+  // silently erase the first command's own coverage, forcing a real re-run
+  // for a file that had already run green seconds earlier. Two non-overlapping commands
   // both stay reusable, and a third command asking for the FIRST command's
   // own file still reuses it — never re-runs it just because a second,
   // unrelated command wrote to the same state key in between.
@@ -1019,12 +1018,11 @@ describe('pr report --write then pr create --validate-only — the written body 
   })
 })
 
-// Round-2 review, BLOCKER — O3 promises reuse "in the pre-push hook or an
-// earlier pr report", but nothing ever wrote a `source: 'pre-push'` record.
+// A test run is reused "in the pre-push hook or an earlier pr report", so
+// something must write a `source: 'pre-push'` record.
 // `recordGreenTestRun` is what the hook's own `pre-push-cache-test-run.ts`
 // calls; these tests prove the write it makes is the SAME cache a later
-// `computeGroupC` reads from — the hook-then-report sequence the finding
-// said was unreachable.
+// `computeGroupC` reads from — the hook-then-report sequence is reachable.
 describe('recordGreenTestRun — the pre-push hook half of O3 reuse (round-2 review, BLOCKER)', () => {
   it('a run recorded with source "pre-push" is reused by a later computeGroupC, named as such', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pr-report-prepush-reuse-'))
@@ -1084,12 +1082,12 @@ describe('recordGreenTestRun — the pre-push hook half of O3 reuse (round-2 rev
   })
 })
 
-// Round-3 security review, MEDIUM — `defaultTestRunCache` used to scope its
-// file by `PR_NUMBER` when one was set, but the pre-push hook's own writer
-// never sets one (it runs at push time, often before a PR exists) — so the
-// hook always wrote the unscoped file while `pr report --push` on a real
-// open PR set `PR_NUMBER` and read/wrote a DIFFERENT, PR-scoped file. Fixed:
-// one shared, always-unscoped file for every caller.
+// `defaultTestRunCache` never scopes its file by `PR_NUMBER`: the pre-push
+// hook's own writer never sets one (it runs at push time, often before a PR
+// exists), so a PR-scoped file would leave the hook writing the unscoped
+// file while `pr report --push` on a real open PR set `PR_NUMBER` and
+// read/wrote a DIFFERENT, PR-scoped file. One shared, always-unscoped file
+// serves every caller.
 describe('defaultTestRunCache — one shared file regardless of PR_NUMBER (round-3 security review, MEDIUM)', () => {
   it('a run the pre-push hook recorded is reused by buildReport even when PR_NUMBER is set, the real `pr report --push` shape', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pr-report-scope-consistency-'))
@@ -1141,12 +1139,12 @@ describe('defaultTestRunCache — one shared file regardless of PR_NUMBER (round
   })
 })
 
-// Round-3 security review, LOW — git's default `--porcelain` output QUOTES
+// Git's default `--porcelain` output QUOTES
 // any path with a space, a quote, or a non-ASCII byte (`"a file.txt"`,
 // escapes and all); reading that quoted text straight off `git status` and
 // joining it onto the working directory always misses the real file, so
-// such a path fell back to the constant `'MISSING'` hash contribution and a
-// content-only edit to it never invalidated a cached result. Fixed: `-z`
+// such a path would fall back to the constant `'MISSING'` hash contribution
+// and a content-only edit to it would never invalidate a cached result. `-z`
 // disables the quoting and NUL-terminates each record instead.
 describe('testRunCacheKey — a quoted/escaped path from git status still invalidates reuse (round-3 security review, LOW)', () => {
   it('editing the content of an untracked file whose name contains a space invalidates reuse', async () => {
@@ -1169,7 +1167,7 @@ describe('testRunCacheKey — a quoted/escaped path from git status still invali
   })
 })
 
-// Round-4 security review, HIGH/MEDIUM — a co-tenant on a shared, writable
+// A co-tenant on a shared, writable
 // `runtimeDir` who cannot touch this process's own hardened directories can
 // still pre-plant a SYMLINK at the cache's exact leaf path. A plain
 // `writeFileSync` there follows it and overwrites whatever it points at
@@ -1232,15 +1230,15 @@ describe('fileBackedTestRunCache — a pre-planted symlink at the cache path is 
   })
 })
 
-// Round-5 security review, HIGH — the per-file loop hashed a file's own
-// name directly against its own content with no delimiter between them
-// (`hash.update(f)` immediately followed by `hash.update(content)`), and
-// the outer fields (hostname/head/status/diff/command) were joined by a
-// bare literal space that can itself occur inside any of those free-form
-// values. Either shape lets two GENUINELY DIFFERENT working-tree states
+// Hashing a file's own name directly against its own content with no
+// delimiter between them (`hash.update(f)` immediately followed by
+// `hash.update(content)`), or joining the outer fields
+// (hostname/head/status/diff/command) by a bare literal space that can
+// itself occur inside any of those free-form values, would let two
+// GENUINELY DIFFERENT working-tree states
 // concatenate to the IDENTICAL byte stream and hash identically — exactly
 // this test's own scenario: an untracked file named `foo` holding `barX`
-// versus one named `foobar` holding `X`. Fixed: every field is now hashed
+// versus one named `foobar` holding `X`. So every field is hashed
 // as a fixed-width length prefix followed by its bytes (`hashField`), which
 // cannot be reinterpreted as spanning a different split between fields.
 describe('testRunCacheKey — a filename/content boundary shift never collides with a different working tree (round-5 security review, HIGH)', () => {
@@ -1272,12 +1270,11 @@ describe('testRunCacheKey — a filename/content boundary shift never collides w
   })
 })
 
-// Round-2 security review, HIGH — `git()` collapsed ANY failure (a lock, a
-// missing binary, a broken worktree) to `''`, indistinguishable from a real
-// empty answer, so two DIFFERENT unresolvable working trees running the
-// identical command could collide on the same cache key and one's cached
-// output would be presented as evidence for the other's run. Fixed: any git
-// failure now makes the whole key resolution `null`, which every caller
+// Collapsing ANY git failure (a lock, a missing binary, a broken worktree)
+// to `''` would make it indistinguishable from a real empty answer, so two
+// DIFFERENT unresolvable working trees running the identical command could
+// collide on the same cache key and one's cached output would be presented
+// as evidence for the other's run. So any git failure makes the whole key resolution `null`, which every caller
 // treats as "no caching this call" — never a key, so never a collision.
 describe('testRunCacheKey — a git failure disables caching, never fabricates a colliding key (round-2 security review, HIGH)', () => {
   it('two different non-git directories running the identical command never share a cached result', async () => {
@@ -1310,11 +1307,11 @@ describe('testRunCacheKey — a git failure disables caching, never fabricates a
   })
 })
 
-// Round-2 security review, MEDIUM — the cache key's working-tree hash
-// excluded gitignored paths entirely (`git status` with no `--ignored`), so
-// a behavioral change confined to a single gitignored file (a `.env`, a
-// locally patched generated file) was invisible to the key: the tree read
-// as unchanged and a stale cached result kept being reused.
+// The cache key's working-tree hash covers gitignored paths too: excluding
+// them (`git status` with no `--ignored`) would make a behavioral change
+// confined to a single gitignored file (a `.env`, a locally patched
+// generated file) invisible to the key, so the tree would read as unchanged
+// and a stale cached result would keep being reused.
 describe("testRunCacheKey — an ignored file's own content is part of the working-tree hash (round-2 security review, MEDIUM)", () => {
   it('editing a gitignored file invalidates reuse', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pr-report-ignored-'))
@@ -1433,7 +1430,7 @@ describe('runAgentCommand — output-buffer overflow is its own outcome, never a
     expect(result.overflowed).toBe(false)
   })
 
-  // Round-5 security review, LOW — the tests above prove the overflow-vs-
+  // The tests above prove the overflow-vs-
   // timeout DISTINCTION with a custom, tiny `maxBufferBytes` override for
   // speed; none of them exercised the REAL production budget
   // (`AGENT_COMMAND_MAX_BUFFER_BYTES`, 32 MiB — every `[agent]` command a

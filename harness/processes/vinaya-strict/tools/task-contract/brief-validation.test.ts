@@ -170,7 +170,7 @@ describe('checkTestPlanExclusivity', () => {
   })
 
   it('ignores checkbox items in a pasted reference-brief copy outside the VINAYA:TEST-PLAN anchor (found live)', () => {
-    // The template instructs pasting the dispatched brief verbatim as a
+    // The template instructs pasting the frozen brief verbatim as a
     // reference copy (a `<details>` block at the bottom of the PR body). A
     // brief whose REAL Test Plan is `unit-tests-only`, anchored, must not fail
     // just because that reference copy also contains tagged checkboxes —
@@ -1122,7 +1122,7 @@ O3. A brief carries the Issue's \`## Objectives\` byte-for-byte; every numbered 
 O4. \`thinking/planner/doctrine.md\`, \`thinking/planner/reference.md\`, \`artifacts/templates/issue-rationale-template.md\` and \`artifacts/templates/brief-template.md\` state the rule in the same words the gates enforce.
 `
 
-/** A minimal §6 shape matching this task's own dispatched brief: Parts 1-4 each cite one objective, Part 5 (an administrative changeset/push step) cites none. */
+/** A minimal §6 shape of a frozen brief: Parts 1-4 each cite one objective, Part 5 (an administrative changeset/push step) cites none. */
 const SECTION_6 = `## 6. Numbered parts — commit after EACH part; push once, before opening the PR
 
 Part 1 (O2) — the parser.

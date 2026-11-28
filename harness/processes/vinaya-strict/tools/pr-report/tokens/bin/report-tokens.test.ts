@@ -249,9 +249,8 @@ describe('resolveTranscriptPath', () => {
  * the exact function `import.meta.main` calls — rather than rebuilding an
  * equivalent object from `hardenedMeteringDeps()` directly: a hand-rebuilt
  * object still passes if `realDeps()` itself regresses back to the
- * unguarded pair, which is the one line this PR actually changes
- * (caught by review round 1: reverting that line left all of these
- * green). Foreign-owner refusal is not re-tested here: it's proven once,
+ * unguarded pair: reverting that one line would leave such a rebuilt
+ * object green. Foreign-owner refusal is not re-tested here: it's proven once,
  * against a faked stat, in `metering-io-guard.test.ts`, and is inherited
  * automatically now that `realDeps()` consumes that same factory rather
  * than re-deriving its own I/O.

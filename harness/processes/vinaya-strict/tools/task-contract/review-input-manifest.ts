@@ -263,7 +263,7 @@ export function isBoundToHead(echoed: { headSha: string | null }, headSha: strin
  *
  * Callers that use this to decide whether a base move is TOLERATED (a
  * genuine rebase) must only consult it when the candidate is NOT already
- * an exact-head match (a round-3 review BLOCKER finding) — see
+ * an exact-head match — see
  * `compareManifest`'s own comment on `patchHead`. Called with the SAME sha
  * on both sides (an unchanged head), `patchIdOf` trivially reports equal
  * values for any deterministic implementation, which is never evidence of
@@ -422,10 +422,10 @@ export function compareManifest(
   // abbreviated echoed base that does not prefix the current base remains
   // fail-closed (corrupt or stale abbreviation).
   //
-  // `patchHead` is only ever consulted when `exactHead` is false (a round-3
-  // review BLOCKER finding) — a genuine rebase is "different revision,
-  // same patch." Computing `isBoundByPatchIdentity` unconditionally and
-  // gating `base`'s bypass on its bare result was wrong: on an UNCHANGED
+  // `patchHead` is only ever consulted when `exactHead` is false — a
+  // genuine rebase is "different revision, same patch." Computing
+  // `isBoundByPatchIdentity` unconditionally and gating `base`'s bypass on
+  // its bare result would be wrong: on an UNCHANGED
   // head, `patchIdOf` is called with the identical sha on both sides,
   // trivially reporting equal for any deterministic implementation — not
   // evidence of a rebase, just a self-comparison. That made `patchHead`

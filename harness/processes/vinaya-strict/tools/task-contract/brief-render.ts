@@ -562,10 +562,9 @@ function renderSection3(facts: BriefFacts): string {
 // this repo's own `harness/processes/vinaya-strict/tools/sources` already uses,
 // with no `tests`/`specs` ancestor to name) has no directory form
 // `hasTestPathForConsumer`'s `testDirRe` accepts, but its own `.test.<ext>`
-// path already matches `filePathRe` — a prior version of this fallback
-// named the bare containing directory instead, satisfying neither regex and
-// producing a brief `checkConsumerTests` rejected, reopening the exact class
-// of bug O6 exists to close (round `2` review, BLOCKER).
+// path already matches `filePathRe` — naming the bare containing directory
+// instead would satisfy neither regex and produce a brief
+// `checkConsumerTests` rejects.
 function nearestTestDir(path: string): string {
   const segments = path.split('/')
   let idx = -1

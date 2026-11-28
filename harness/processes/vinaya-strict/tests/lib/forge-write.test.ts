@@ -333,13 +333,12 @@ describe('the issueRationale builtin grades the single-fix form when the labels 
 })
 
 // ---------------------------------------------------------------------------
-// Round-3 review finding (MEDIUM) — a `gh` fetch failure inside the O5
-// sibling-overlap lookup used to call `refuse()` directly, discarding every
-// finding `collectTaskIssueErrors` had already pushed into its union (the
-// schema group's own findings, computed just before this lookup runs) —
-// recreating the exact stop-at-first-group cost O1 exists to remove, one
-// layer down inside the content group. The fetch failure must fold into the
-// SAME union instead.
+// A `gh` fetch failure inside the sibling-overlap lookup must fold into the
+// SAME union `collectTaskIssueErrors` builds, never call `refuse()`
+// directly: that would discard every finding already pushed into the union
+// (the schema group's own findings, computed just before this lookup runs)
+// and stop at the first failing group, one layer down inside the content
+// group.
 // ---------------------------------------------------------------------------
 
 describe('a gh fetch failure inside the content group folds into the union instead of discarding prior findings', () => {
@@ -408,7 +407,7 @@ exit 1
 })
 
 // ---------------------------------------------------------------------------
-// Round-3 review finding (MINOR) — the O2 audit below exercises
+// The audit below exercises
 // `validateForgeWrite`'s and `validateIssueContent`'s real output, but the
 // rendered-brief-shape group's real (non-injected) output was only ever
 // proven compliant by a hand-built fixture. This drives the REAL render
@@ -875,12 +874,11 @@ exit 1
     expect(blocking).toEqual([])
   })
 
-  // Round 2 review, BLOCKER — the plan-time premise gate filtered deferred
-  // premises out, and then this SAME write re-checked them, unfiltered,
-  // through the pre-write brief render. These two run the whole
-  // `issue create`/`issue edit` aggregation with the REAL render path (default
-  // deps), which is the only place that regression was ever visible: a unit
-  // test of the content gate alone cannot see it.
+  // The plan-time premise gate filters deferred premises out, and this SAME
+  // write must not re-check them, unfiltered, through the pre-write brief
+  // render. These two run the whole `issue create`/`issue edit` aggregation
+  // with the REAL render path (default deps), the only place such a
+  // mismatch is visible: a unit test of the content gate alone cannot see it.
   const bodyWithDeferredPremise = bodyWithOpenDependency.replace(
     RATIONALE_WITH_OPEN_DEPENDENCY,
     [
@@ -1210,7 +1208,7 @@ describe('the Developer-runnable rule reads the command reference, never a typed
 })
 
 // ---------------------------------------------------------------------------
-// `reconcileGhComment` (security review, round 2, HIGH) — the `gh`-backed
+// `reconcileGhComment` — the `gh`-backed
 // `EffectReconciler` `harness/kernel/effects/effects.ts`'s `EffectExecutor` calls
 // on recovery. A fake `gh` answers `{issue,pr} view --json comments` with a
 // fixed comment list, and the default branch's `vinaya.config.json` with

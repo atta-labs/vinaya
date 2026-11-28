@@ -101,7 +101,7 @@ export function collectLaunchedChildren(dir: string): LaunchedChild[] {
  * `pid > 0` first (`spawnSync`'s own `0` "never spawned" sentinel would
  * otherwise make `-pid` target THIS process's own group).
  *
- * Round 2 security review, MEDIUM (Issue #670) — never signals a pid whose
+ * It never signals a pid whose
  * recorded identity no longer matches a FRESH re-read of that same pid: this
  * host is demonstrably shared with other real processes in one pid
  * namespace, and a fake vendor that already exited earlier in its own test
@@ -135,7 +135,7 @@ export function killLaunchedChild(child: LaunchedChild): void {
 export type CliResult = { status: number; stdout: string; stderr: string }
 
 /**
- * Round 2 review, MAJOR (Issue #660, O3) — this process's OWN environment,
+ * This process's OWN environment,
  * when it is itself a dispatched Developer/Reviewer session, carries
  * `VINAYA_RUNTIME_DIR` (checked before `$HOME` by `resolveRuntimeDirUncached`).
  * Spreading `...process.env` into a fixture's real subprocess hands it THIS

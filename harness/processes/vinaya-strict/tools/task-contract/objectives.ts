@@ -223,12 +223,11 @@ export function renderObjectives(objectives: Objective[]): string {
  * caller to treat as "nothing to compare"; the second means the comparison
  * was SKIPPED, not that it passed, and a caller that conflates the two
  * silently stops enforcing whenever enforcement is hardest to verify (a
- * flaky network, an expiring token) — exactly the gap review round 1
- * found independently in both `verify-brief.ts` and `check-brief-shape.ts`
- * (review finding 4). One shared, tested classifier — not a second
- * hand-written copy per caller — is what keeps the two from silently
- * drifting apart on which error strings mean which case (review round 2,
- * MINOR).
+ * flaky network, an expiring token) — a gap both `verify-brief.ts` and
+ * `check-brief-shape.ts` would otherwise open. One shared, tested
+ * classifier — not a second hand-written copy per caller — is what keeps
+ * the two from silently drifting apart on which error strings mean which
+ * case.
  *
  * Pure: takes the already-caught error, never runs `gh` itself — each
  * caller keeps its own tiny `execFileSync` invocation (this module stays

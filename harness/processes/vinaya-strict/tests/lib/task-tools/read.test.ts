@@ -68,7 +68,7 @@ function writeRunFile(root: string, task: number, name: string, content: string)
 /**
  * Writes a fixture `EscalationRecord` at the SAME `dirname(root)/control-
  * store/<task>/escalation/<escalationId>.json` path `readEscalationPacket`
- * itself derives from `root` (code review, round 2, MEDIUM) — proves the
+ * itself derives from `root` — proves the
  * derivation is a real, fixture-testable sibling of `root`, never a read
  * that escapes to this machine's real global control store.
  */

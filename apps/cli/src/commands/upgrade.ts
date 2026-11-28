@@ -159,9 +159,8 @@ function readManifest(repoRoot: string): ConfigRead {
 // means the opposite of what it now reads as, in both directions: the
 // starter's own `false` (old "run") would silently start SKIPPING a ring it
 // was never meant to skip, and an adopter's deliberate `true` (old "opt-in
-// to skip") would silently start RUNNING a ring they chose to turn off —
-// review round 2 (BLOCKER) caught the first version of this migration
-// handling only the `false` case. The fix is symmetric: any explicit boolean
+// to skip") would silently start RUNNING a ring they chose to turn off, so
+// handling only the `false` case is not enough. The migration is symmetric: any explicit boolean
 // on a config still below manifest version 3 gets negated, whichever value
 // it holds. Gated on `manifest.version` (bumped to 3 for this exact fix),
 // never on the rings values alone: a config already at version 3 is never

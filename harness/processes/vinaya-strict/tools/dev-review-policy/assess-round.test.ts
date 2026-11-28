@@ -146,7 +146,7 @@ describe('assessRound — Part 1 (O1, O5): green path', () => {
     const kinds = events.map((e) => e.event)
     expect(kinds).toContain('stop_condition_met')
     expect(kinds).toContain('paused')
-    // Round 2 review, BLOCKER: an escalation pause is a terminal event like
+    // An escalation pause is a terminal event like
     // every other pause reason — it must close the journal, not leave the
     // task looking unfinished with no `journal_finalized` ever logged.
     expect(events.some((e) => e.event === 'journal_finalized' && 'result' in e && e.result === 'stopped')).toBe(true)

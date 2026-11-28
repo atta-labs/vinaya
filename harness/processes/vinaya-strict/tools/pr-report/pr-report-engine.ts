@@ -624,14 +624,13 @@ export type TestRunCacheRecord = {
   /**
    * Every distinct green `bun test <files>` run ever recorded at this exact
    * state (head/tree/machine), oldest first — set only on the file-coverage
-   * record. A round-2 review finding: writing a SECOND run at the same
-   * state used to overwrite the coverage record wholesale, discarding a
-   * broader run's file list (the pre-push hook's own wide selection, most
-   * often) the moment ANY later, narrower `bun test <files>` command ran at
-   * the same head/tree — so a file that had already proven green minutes
-   * earlier, in the very same `pr report` invocation, was silently forced
-   * to re-run because the run that covered it was gone. `runs` is what
-   * fixes that: every run's own {files, output} stays independently
+   * record. Writing a SECOND run at the same state must not overwrite the
+   * coverage record wholesale: that would discard a broader run's file list
+   * (the pre-push hook's own wide selection, most often) the moment ANY
+   * later, narrower `bun test <files>` command ran at the same head/tree —
+   * so a file that had already proven green minutes earlier, in the very
+   * same `pr report` invocation, would be silently forced to re-run because
+   * the run that covered it was gone. `runs` prevents that: every run's own {files, output} stays independently
    * queryable, so a later command missing one run's coverage can still
    * match an EARLIER one — {@link findCoveringRun} — rather than only ever
    * the most recent. A reuse never synthesizes output by merging two runs'
@@ -665,7 +664,7 @@ export type TestRunCache = {
 /**
  * The cache's leaf file, read and written directly — never through
  * `mkdirNoSymlinks` (a DIRECTORY check; this is one file) — so both halves
- * close their own symlink gap by hand (round-4 security review, HIGH/MEDIUM):
+ * close their own symlink gap by hand:
  * on a shared, configurable `runtimeDir` a co-tenant able to write anywhere
  * under it (never this process's own already-hardened directories, only
  * files) could pre-plant a SYMLINK at this exact leaf path. A plain
@@ -734,14 +733,13 @@ export function fileBackedTestRunCache(path: string, runtimeDir: string): TestRu
 /**
  * The default cache location for a live process: this repository's own
  * runtime directory, always `'unscoped'` — deliberately NOT scoped by PR
- * number (round-3 security review, MEDIUM). A PR-scoped path looked
- * reasonable in isolation, but the pre-push hook's own writer
- * (`pre-push-cache-test-run.ts`) never has a PR number to set — it runs at
- * push time, often before a PR even exists — so it always wrote the
- * unscoped file while `pr report --push` on a real open PR set `PR_NUMBER`
- * and read/wrote a DIFFERENT, PR-scoped one: two files for the same repo
- * state, so a run the hook already proved green was never found by the
- * primary real-PR evidence path. The cache key itself (`testRunCacheKey`)
+ * number. A PR-scoped path looks reasonable in isolation, but the pre-push
+ * hook's own writer (`pre-push-cache-test-run.ts`) never has a PR number to
+ * set — it runs at push time, often before a PR even exists — so it would
+ * always write the unscoped file while `pr report --push` on a real open PR
+ * set `PR_NUMBER` and read/wrote a DIFFERENT, PR-scoped one: two files for
+ * the same repo state, so a run the hook already proved green would never
+ * be found by the primary real-PR evidence path. The cache key itself (`testRunCacheKey`)
  * already disambiguates every dimension that matters — head, working tree,
  * command, machine — so a second axis of separation by PR number was never
  * load-bearing for correctness, only for tidiness; one shared file per repo
@@ -761,8 +759,7 @@ export function defaultTestRunCache(): TestRunCache {
  * which is correct for its other callers but wrong here: this function's own
  * job is telling "the repo has no changes" apart from "the repo could not be
  * read", and folding both into `''` let a transient git failure produce a
- * cache key indistinguishable from a real one (round-2 security review,
- * HIGH) — two different heads or working trees that both hit the failure on
+ * cache key indistinguishable from a real one — two different heads or working trees that both hit the failure on
  * the same command would collide and reuse each other's output. `null` means
  * "could not resolve, don't know" and is never hashed into a key; only a
  * REAL zero-exit run — even one whose own stdout happens to be empty —
@@ -789,8 +786,7 @@ async function gitOrNull(args: string[], cwd?: string, trim = true): Promise<str
  * exact command text, the head it would run against, a hash of the working
  * tree's own content, and the machine running it — `null` when any of that
  * cannot be established, which the caller must treat as "skip the cache
- * entirely for this call" (round-2 security review, HIGH — see
- * {@link gitOrNull}).
+ * entirely for this call" (see {@link gitOrNull}).
  *
  * The working-tree hash covers tracked changes (`git diff HEAD`), every
  * UNTRACKED file's own content (from `git status --porcelain=v1 -uall -z`),
@@ -807,7 +803,7 @@ async function gitOrNull(args: string[], cwd?: string, trim = true): Promise<str
  * presence/absence still changes the key; a content change to a file NESTED
  * inside it does not. A known, accepted gap, not a silent one.
  *
- * `-z` (round-3 security review, LOW): git's DEFAULT `--porcelain` quotes any
+ * `-z`: git's DEFAULT `--porcelain` quotes any
  * path containing a space, a double quote, or a non-ASCII byte, wrapping it
  * in `"…"` with C-style escapes — a real path read that way still carries
  * its quotes and escape sequences, so `readFileSync` on it always misses and
@@ -823,8 +819,7 @@ const NUL = String.fromCharCode(0)
 
 /**
  * Hashes ONE field as a fixed-width (4-byte, big-endian) length prefix
- * followed by its bytes — never a bare delimiter between fields (round-5
- * security review, HIGH). A delimiter chosen from a fixed alphabet (a
+ * followed by its bytes — never a bare delimiter between fields. A delimiter chosen from a fixed alphabet (a
  * space, a NUL) can still occur INSIDE a field whose content this function
  * does not control — `git diff HEAD`'s own output, an untracked file's own
  * name or bytes — so two genuinely different (field, field) pairs can
@@ -1025,10 +1020,10 @@ function findCoveringRun(
 
 /**
  * Builds the file-coverage record a fresh green run's write should replace
- * the existing one with — round-2 review, MAJOR: the prior code simply
- * `cache.set` a brand-new record on every green `bun test <files>` run,
- * which silently discarded every EARLIER run's own coverage at the same
- * state the moment a narrower run came along, forcing a real re-run for a
+ * the existing one with. Simply `cache.set`-ing a brand-new record on every
+ * green `bun test <files>` run would silently discard every EARLIER run's
+ * own coverage at the same state the moment a narrower run came along,
+ * forcing a real re-run for a
  * file that had already proven green minutes earlier in the very same `pr
  * report` invocation. This appends the new run to `runs` (never drops an
  * earlier one) and keeps the top-level `files`/`output`/`recordedAt`/`source`
@@ -1087,9 +1082,9 @@ export function agentCommandText(line: string): string {
  * `AGENT_COMMAND_OUTPUT_MAX_CHARS`, since the observable a §9 item states
  * (`→ summary line ends "0 fail"`) is conventionally the tail of the run,
  * never the head — never silently dropped, marked when cut. Kept the tail,
- * not the whole run (task 1): task `12` measured a `47` KB PR body
- * from six-command §9 lists whose full output rode into `VINAYA:EVIDENCE`
- * uncut at `4_000` chars each; `renderGroupC` below puts the pass/fail
+ * not the whole run: six-command §9 lists whose full output rode into
+ * `VINAYA:EVIDENCE` uncut at `4_000` chars each made a PR body of
+ * tens of kilobytes; `renderGroupC` below puts the pass/fail
  * status first in the block, so cutting the tail harder never costs the one
  * fact a reviewer actually reads first.
  */
@@ -1117,8 +1112,8 @@ export function truncateAgentOutput(output: string): string {
  * `process.env` (Principal ruling, PR `open-1` addendum). This command's
  * text came from a PR body; nothing in `VINAYA:EVIDENCE`'s trust model lets a
  * body author choose what secrets its own §9 line can read, so
- * `GH_TOKEN`/`GITHUB_TOKEN` never reach it. `extraEnv` (round 3 review,
- * F2 test-honesty) is never a secret — `PR_BODY` is the exact text this
+ * `GH_TOKEN`/`GITHUB_TOKEN` never reach it. `extraEnv`
+ * is never a secret — `PR_BODY` is the exact text this
  * command was extracted FROM, not new information the body author could
  * leverage — and is what makes a `[agent]` command that itself calls
  * `vinaya check` (reading `PR_BODY`, e.g. `closes-n`/`test-plan`) grade
@@ -1313,7 +1308,7 @@ export async function runAgentCommand(
  * the O3 reuse clause's other half real: without it, `source: 'pre-push'`
  * was a value `TestRunCacheRecord` could type but no code path ever wrote,
  * so a run the hook already proved green still re-ran the first time a `pr
- * report` built evidence for that same head (round-2 code review, BLOCKER).
+ * report` built evidence for that same head.
  * A `null` key (see {@link testRunCacheKey}) records nothing rather than
  * guessing — an unresolvable git state is never a reason to fabricate a
  * cache entry, on this path any more than on `runAgentCommand`'s own.
@@ -1366,7 +1361,7 @@ export async function recordGreenTestRun(
 /**
  * Extracts the command list from `prBody` and runs each one from `cwd` — the
  * one place this module actually executes PR-body content. `extraEnv`
- * (round 3 review, F2) threads `PR_BODY` (always — it is `prBody` itself,
+ * threads `PR_BODY` (always — it is `prBody` itself,
  * the exact text these commands were extracted from) and, when the caller
  * has them, `PR_NUMBER`/`BRANCH`: a `[agent]` command that itself invokes
  * `vinaya check` needs these to grade the SAME PR the rest of this report is
@@ -1557,7 +1552,7 @@ export function renderGroupC(groupC: GroupC): string {
             : c.exitCode !== 0
               ? `[exit ${c.exitCode}]`
               : null
-    // Status FIRST (task 5): the one fact a reviewer reads is
+    // Status FIRST: the one fact a reviewer reads is
     // pass/fail, and a tail-truncated 600-char block should never bury it
     // below output text — put it at the top of the fence, not the bottom.
     const output = [...(status ? [status] : []), c.output].join('\n')
@@ -1893,8 +1888,7 @@ export type EvidenceReportOutcome =
  * the WHOLE driver mid-round — or, if a shutdown signal happened to land
  * while some earlier version of this code had globally monkey-patched
  * `process.exit` for the call's duration, hijack that unrelated signal's
- * own real exit into a thrown error instead (round 3 review, MAJOR/HIGH:
- * patching a process-global for a concurrently-running process is exactly
+ * own real exit into a thrown error instead (patching a process-global for a concurrently-running process is exactly
  * the shared-mutable-state hazard `defaultRunEvidenceReport`'s own doc
  * comment already calls out and avoids for `process.env`). Never
  * intercepting `process.exit` at all — rather than patching it — is what
@@ -1951,7 +1945,7 @@ export async function runReportForOpenPr(
     return { kind: 'splice-refused', message: err instanceof Error ? err.message : String(err) }
   }
 
-  // O1 (task 17): the outgoing spliced bytes go through the SAME registry
+  // The outgoing spliced bytes go through the SAME registry
   // runner `pr create`/`pr edit` do before `gh pr edit` ever sees them — a
   // body this function sends is, by construction, a body CI's own
   // `vinaya-checks.yml`/`vinaya-body-checks.yml` also accepts. Goes through

@@ -1,7 +1,7 @@
 /**
  * `fenceStartedEffectsAsUncertain`'s own resilience to a concurrent
  * duplicate/replayed `--cancel` bumping the task's shared control-store
- * epoch mid-flight (code review, round 2, HIGH — `#556`): `resolveEscalation`
+ * epoch mid-flight: `resolveEscalation`
  * always calls `acquireOwnership` before it knows whether its own
  * resolution will be consumed or refused as a replay, so a losing call can
  * still advance the epoch a WINNING call is already fencing under. Exercised

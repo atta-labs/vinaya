@@ -909,7 +909,7 @@ export async function runBodyChecks(
  * able to exit underneath it (`pr-report-engine.ts`'s
  * `bodyCheckRefusalMessage`, called from the developer-review loop's own
  * long-lived driver, where `refuse()`'s `process.exit(1)` would kill the
- * whole driver instead of just this one write, round 3 review MAJOR/HIGH).
+ * whole driver instead of just this one write).
  */
 export async function collectBodyCheckErrors(
   body: string,
@@ -2470,12 +2470,11 @@ function resolveLabelMilestoneFromForge(labels: string[]): string | null {
  * label, no explicit flag) still resolves a real target instead of leaving
  * O5 dormant.
  *
- * Security review, round 2, HIGH: the prior version only ever
- * read the explicit flag, so a normal `task_issue_create --label
- * vinaya/tranche:<slug>` — the label-driven auto-attach path
- * `resolveMilestoneAttachArgs` itself resolves at write time — left
- * `milestoneTitle` `null` and the overlap check dead on `create` in the
- * common case. Same fail-open-to-dormant posture as
+ * Reading only the explicit flag is not enough: a normal
+ * `task_issue_create --label vinaya/tranche:<slug>` — the label-driven
+ * auto-attach path `resolveMilestoneAttachArgs` itself resolves at write
+ * time — would leave `milestoneTitle` `null` and the overlap check dead on
+ * `create` in the common case. Same fail-open-to-dormant posture as
  * `resolveMilestoneAttachArgs`: a lookup failure degrades to "no Milestone
  * known" rather than refusing a create over a `gh api` hiccup.
  */
@@ -2496,10 +2495,9 @@ function resolveMilestoneTitleForCreate(ghArgs: string[], labels: string[]): str
  * outside it, so the query itself (not just a client-side filter afterward)
  * only ever returns candidates that could actually matter.
  *
- * Security review, round 2, MEDIUM: the prior version queried
- * `gh issue list` repo-wide with a flat `--limit 200` and filtered by
- * Milestone client-side — a genuinely overlapping sibling past the 200th
- * open Issue repo-wide was silently missed. Scoping the query itself to the
+ * Querying `gh issue list` repo-wide with a flat `--limit 200` and
+ * filtering by Milestone client-side would silently miss a genuinely
+ * overlapping sibling past the 200th open Issue repo-wide. Scoping the query itself to the
  * Milestone shrinks the realistic result size by orders of magnitude for any
  * repo with more than one active Milestone; `--limit` is raised well past
  * any plausible single-Milestone open-Issue count as a second margin, and
@@ -2635,7 +2633,7 @@ export type OpenPullRow = {
  * renderer's own functions (`brief-render.ts` and `brief-assembly.ts`
  * respectively, the pair that builds a brief's own §4 file list), so what the
  * collision gate calls "this task's files" is by construction the same set
- * the dispatched brief will pin — never a second parser of the same prose.
+ * the frozen brief will pin — never a second parser of the same prose.
  */
 export function pinnedFilesOf(body: string, allTrackedFiles: string[]): string[] {
   return resolveBoundaryPaths(extractBoundaryFilePaths(parseRationaleFields(body).boundary ?? ''), allTrackedFiles)
@@ -3575,8 +3573,7 @@ export function postMarkedComment(kind: 'issue' | 'pr', ref: string, marker: str
  * postedBody)`) for a re-fetched comment against what this process itself
  * posted, but author-filtered first through the SAME `isPrincipal`/
  * `resolveTrustedPrincipals` machinery `principalBodies` (`review-post.ts`)
- * already uses for exactly this trust boundary (security review, round 2,
- * HIGH): every effect this reconciler is wired to reconciles a comment THIS
+ * already uses for exactly this trust boundary: every effect this reconciler is wired to reconciles a comment THIS
  * process itself posted as an allowlisted principal, so a byte-identical
  * body from anyone else is not evidence of that — without this filter, any
  * actor able to comment on `ref` could pre-post a spoofed body and have

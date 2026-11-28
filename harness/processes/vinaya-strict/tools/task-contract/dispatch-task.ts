@@ -629,7 +629,7 @@ export function assignIssueAtRunStart(issue: number, deps: IssueAssignmentDeps =
  * must be non-empty and single-line regardless of which path is preparing
  * the task, same authorization/corruption reasoning either way.
  *
- * A security-review MEDIUM finding: the reason is spliced into a
+ * The reason is spliced into a
  * SINGLE header line (`Supersedes: <url> — <reason>`) that every reader
  * (`frozenBriefContent`/`contentAfterNLines`) counts as exactly one of the
  * fixed three header lines for a v2+ comment. A `\n`/`\r` in the reason
@@ -1103,8 +1103,7 @@ export async function dispatchTask(
         task: prep.issue,
         promptFile,
         model: resolvedModel,
-        // O1/O3 (task 3): this call is `vinaya
-        // task run`'s own unattended loop starting the Developer — nobody is
+        // This call is `vinaya task run`'s own unattended loop starting the Developer — nobody is
         // watching each tool call, so it must run inside the proven boundary
         // (`DispatchOpts.unattended`'s own doc comment).
         unattended: true

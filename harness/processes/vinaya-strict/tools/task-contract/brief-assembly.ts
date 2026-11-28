@@ -629,7 +629,7 @@ function workspaceGlobs(): string[] {
  * exact enumeration both `assembleAndRenderBrief*` functions already build
  * inline, exported so `forge-write.ts`'s pre-write
  * `checkBriefSections` call uses the SAME consumer enumeration
- * `checkConsumerTests` grades a dispatched brief against, rather than a
+ * `checkConsumerTests` grades a rendered brief against, rather than a
  * second, independently-derived one.
  */
 export function buildWorkspaceConsumersOf(): (pkg: string) => string[] {

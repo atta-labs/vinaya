@@ -66,7 +66,7 @@ describe('reassertPremiseFile', () => {
 })
 
 /**
- * MAJOR (round 1 review, PR #473): `reassertPremiseFile` now has two real
+ * `reassertPremiseFile` has two real
  * callers registered under two different names — `dispatch-readiness`'s
  * `PREMISE_FILE` path and `pr-premise-reassert`'s PR-body path. Each
  * caller's own recovery prompt must cite ITS OWN `checkName`, in all three

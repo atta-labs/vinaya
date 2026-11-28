@@ -533,7 +533,7 @@ function parseArgs(args: string[]): { json: boolean; issueRef: string; op: EditO
       )
     ])
   }
-  // Security review, round 2, HIGH: this same reason is later
+  // This same reason is later
   // handed to `prepareTask`'s own O6 supersede call, which refuses a
   // `\r`/`\n` reason for the header-corruption hazard `dispatch-task.ts`
   // documents at its own check. Checked here too, before ANY write, so a

@@ -298,10 +298,9 @@ describe('devReviewLoop — escalation pauses, --resume continues after a ruling
     const resumePrompt = devPrompts[0]!
     expect(resumePrompt).toMatch(/Principal ruling on this pause/)
     expect(resumePrompt).toMatch(/Go ahead and fix it\./)
-    // O11 (task-run-v1 21, #541, round 2 review MAJOR): the ruling-resume
-    // prompt names the task/branch/worktree/head context AND the exact tool
-    // expected — not just "push fixes" in prose. O4: the tool is the
-    // driver-run `publish_changes`, not a self-push.
+    // The ruling-resume prompt names the task/branch/worktree/head context
+    // AND the exact tool expected — not just "push fixes" in prose. The tool
+    // is the driver-run `publish_changes`, not a self-push.
     expect(resumePrompt).toMatch(new RegExp(`^Resuming task Issue #${world.task}\\.$`, 'm'))
     expect(resumePrompt).toMatch(new RegExp(`^Branch: \`${world.branch}\`$`, 'm'))
     expect(resumePrompt).toMatch(/^Worktree: `.*\.worktrees\//m)

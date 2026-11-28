@@ -74,10 +74,10 @@ describe('the frozen decision archives are not documentation', () => {
 })
 
 describe('the restored per-product logs are still archives', () => {
-  // Review round 5: renaming these back to their original names silently
-  // defeated a suffix-based exclusion, and the assertions that would have
-  // caught it had been repointed at a synthetic path. Both real files are
-  // named here so the predicate cannot stop applying without a test failing.
+  // Renaming these back to their original names would silently defeat a
+  // suffix-based exclusion, and assertions pointed at a synthetic path would
+  // not catch it. Both real files are named here so the predicate cannot
+  // stop applying without a test failing.
   it('excludes them from the doc set, the spec set, and tier derivation', () => {
     for (const p of ['apps/herald-ai/docs/herald-decisions-legacy.md', 'apps/vada-ai/docs/vada-decisions-legacy.md']) {
       expect(isDocFile(p), p).toBe(false)

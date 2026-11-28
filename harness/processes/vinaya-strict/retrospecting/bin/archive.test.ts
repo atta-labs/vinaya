@@ -222,11 +222,10 @@ describe('vinaya archive — provenance posting (fake `gh` on PATH)', () => {
   })
 
   it('capable-but-empty: still posts provenance and still closes the Issue — only the Tokens line degrades to DANGLING', async () => {
-    // PR #305 review (BLOCKER): an earlier version refused the whole post
-    // here, leaving the merged PR with no provenance comment and the Issue
-    // still open — collateral damage to a duty this feature has nothing to
-    // do with, over one missing token row. The brief's own §10 names that
-    // trade-off as a Principal-only call; the fix never forces it.
+    // Refusing the whole post here would leave the merged PR with no
+    // provenance comment and the Issue still open — collateral damage to a
+    // duty this feature has nothing to do with, over one missing token row.
+    // That trade-off is a Principal-only call, so the archive never forces it.
     const emptyCapability: MeteringCapability = {
       capable: true,
       transcriptPath: '/tmp/fake.jsonl',

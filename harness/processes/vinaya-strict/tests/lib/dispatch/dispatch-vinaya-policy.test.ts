@@ -793,10 +793,9 @@ describe('dispatchRole — O1 (#543): background-execution deny rule', () => {
     expect(decision(run('git push origin main; git push origin +feature:main'))?.permissionDecision).toBe('deny')
     expect(decision(run('git commit -am fix # --no-verify'))).toBeNull()
 
-    // Round 4 security review, HIGH, found live: a newline was never treated
-    // as a statement separator, so a forbidden git command on its own line,
-    // after an innocuous first line, ran as one un-split statement and
-    // matched neither subcommand's token scan.
+    // A newline is a statement separator: were it not, a forbidden git
+    // command on its own line, after an innocuous first line, would run as
+    // one un-split statement and match neither subcommand's token scan.
     expect(decision(run('echo build ok\ngit push origin --force'))?.permissionDecision).toBe('deny')
     expect(decision(run('echo build ok\ngit commit -am fix --no-verify'))?.permissionDecision).toBe('deny')
   })
@@ -2214,7 +2213,7 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
   }
 
   /**
-   * O1/O3 honesty (round 2 review, Security MEDIUM F2): when neither path can
+   * Honest reporting: when neither path can
    * carry the floor — no worker boundary (attended here, and non-Darwin) AND no
    * operator `~/.codex/auth.json` to re-home from (this fresh HOME has none, the
    * keychain-only edge `stageCodexPolicyHome` returns null for) — the lifecycle
@@ -2251,7 +2250,7 @@ describe('writeDispatchSettings — Issue #663, O1/O3: the permission policy is 
   })
 
   /**
-   * O1 (round 2 review, Reviewer MAJOR / Security HIGH F1): with no worker
+   * With no worker
    * boundary but an operator `~/.codex/auth.json` to re-home from, the floor
    * IS staged on this every-run path — the Codex child receives a run-scoped
    * `CODEX_HOME` whose `rules/` carries the machine-state deny floor, with the
@@ -2631,12 +2630,11 @@ describe('dispatchRole — Issue #625, O2: Documentation source read-gate', () =
     }
   })
 
-  // round 2 review, BLOCKER (O1/O2, Issue #625) — the source string this
-  // gate compares a real `WebFetch` call against comes from
-  // `parseIssueDocumentation`, not from this file's own logic; a doc-page
-  // URL with an unspaced hyphen (the common, real shape) used to be
-  // truncated there, which corrupted the sources file below and made a
-  // genuine fetch of the real URL unable to ever satisfy the Stop hook.
+  // The source string this gate compares a real `WebFetch` call against
+  // comes from `parseIssueDocumentation`, not from this file's own logic; a
+  // doc-page URL with an unspaced hyphen (the common, real shape) truncated
+  // there would corrupt the sources file below and leave a genuine fetch of
+  // the real URL unable to ever satisfy the Stop hook.
   it('a hyphenated documentation URL is recorded, fetched and cleared correctly end to end', () => {
     const home = tempDir('vinaya-dispatch-home-')
     const cwd = tempDir('vinaya-dispatch-cwd-')

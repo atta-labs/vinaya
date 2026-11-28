@@ -393,8 +393,7 @@ export function runLoopNoPauseCommentRetry(home: string, cwd: string, path: stri
 }
 
 /**
- * Round 2 review, BLOCKER (task-run-v1 21, `#541`, O9); reconstruction source
- * updated by [task-files-v1] 4 (Issue #651): the reattach rebuilds round
+ * The reattach rebuilds round
  * numbering from the pull request's own principal-authored developer round
  * marker (`pr view --json comments`, replayed from `$HOME/.fake-gh-posted-
  * comments`), never from a log line — the local outbox this test separately
@@ -1158,7 +1157,7 @@ export function resolutionRecordPath(home: string, task: number, round: number, 
   return join(controlDir(home, task), 'resolution', `${task}-${round}-${head}.json`)
 }
 
-/** Every `epoch-NNNNNN.json` ownership claim on disk for `task`, sorted — used to prove a replayed/refused resolution attempt never bumps the shared epoch (code review, round 2, HIGH). */
+/** Every `epoch-NNNNNN.json` ownership claim on disk for `task`, sorted — used to prove a replayed/refused resolution attempt never bumps the shared epoch. */
 export function ownershipEpochFiles(home: string, task: number): string[] {
   const dir = join(controlDir(home, task), 'ownership')
   if (!existsSync(dir)) return []
