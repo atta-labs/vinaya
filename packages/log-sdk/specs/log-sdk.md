@@ -97,6 +97,11 @@ Each writer of a run has its own numbered segments, so two processes never write
 
 A run id that is not safe as a file-name part is written as `unresolved`.
 
+A writer keeps at most one open file per signal: a run that alternates spans and events appends to the same traces file and the same logs file, and a signal moves to a new file only when its file would pass 8 MiB or after a failed write. Both signals share the writer's index counter, which advances only when a file is created, so a writer's files are numbered without a gap; record order is each record's sequence number, never file order. A copy written before this rule moved to the next index on every signal change too, and reads the same way.
+
+<!-- VINAYA:CLAIM: packages/log-sdk/src/local-copy/file-exporters.ts contains:const active = new Map<Signal, Segment>() -->
+<!-- VINAYA:CLAIM: packages/log-sdk/src/local-copy/file-exporters.ts contains:const MAX_BYTES = 8 * 1024 * 1024 -->
+
 The local copy is cleaned after the keep window, `logs.keepDays` (§ 5). When a handle opens with recording on, it deletes from the repository's folder every traces and logs file last written longer ago than the window, together with that file's delivery state (§ 4); every newer file stays, the handle's own included. Age is the file's last write, never the run id or the name. It looks at nothing outside the folder and follows no symbolic link, runs at most once per process for one folder, and a failure goes to `onError` without stopping the handle. Sending never deletes.
 
 ## 4. Sending
@@ -130,6 +135,11 @@ A passed destination still replaces a file's `logs: false`, so a caller that pas
 ## 6. Reading and narrating
 
 `createReader` over `createFolderSource` (the local copy) or `createOtlpSource` (any system that supplies OTLP JSON) returns the records in order. `pull()` reads incrementally, `readAll()` takes a snapshot, and `follow({ signal })` is an async iterator; a saved `position` resumes a read. A read from a run's start expects each writer's first record to be numbered 1, the number every SDK writer gives its first record, so a writer read from its start reports no gap; `firstSequence` names another first number. A writer whose records start at 0, as an earlier copy converted to the contract can, has its record 0 handed as early, so it is still read in full with no gap. A record that fails the contract is not handed out: it is reported in `gaps` as kind `contract` with its place, writer and first failing name.
+
+The folder source keeps, for each writer, a place in each signal's files, since both of a writer's open files can still grow: a follow that polls between a span written to one file and an event written to the other hands both, each once. A last line without its newline waits for the writer to finish it, and is reported as abandoned (kind `unreadable_line`) only once the same writer has a later file of the same signal. A position saved by the earlier source, one place per writer, is still read: as that place for both signals, so a follow resumed from it on a copy written in the earlier layout skips and repeats no record. The source saves its position in the new form.
+
+<!-- VINAYA:CLAIM: packages/log-sdk/src/reader/folder-source.ts contains:if (place !== undefined) places.set(writer, { traces: place, logs: place }) -->
+<!-- VINAYA:CLAIM: packages/log-sdk/src/reader/folder-source.ts contains:segment.index !== lastOf.get(segment.signal) -->
 
 `narrate(record, seatNames, earlier)` returns one line, a kind and a sentence, for any record the SDK writes, and `null` for anything else. It never throws. `seatNames` maps a seat to the reading's name for it; a step's agent is read from the agent's started record among `earlier`. A value the wording does not know reads as its code. The signature is:
 

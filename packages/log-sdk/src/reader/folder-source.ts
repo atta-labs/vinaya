@@ -23,8 +23,24 @@ export type FolderSourceOptions = {
   canonicalFolder?: boolean
 }
 
-/** A writer's place: the index of the file it was reading and the byte offset after the last whole line read there. */
+/** A place in one signal's files: the index of the file being read and the byte offset after its last whole line read. */
 type Place = readonly [index: number, offset: number]
+
+type Signal = 'traces' | 'logs'
+const SIGNALS: readonly Signal[] = ['traces', 'logs']
+
+/** A writer's places, one per signal, since a writer keeps one growing file of each. */
+type Places = Partial<Record<Signal, Place>>
+
+function placeOf(value: unknown): Place | undefined {
+  return Array.isArray(value) &&
+    Number.isInteger(value[0]) &&
+    Number.isInteger(value[1]) &&
+    value[0] >= 0 &&
+    value[1] >= 0
+    ? [value[0], value[1]]
+    : undefined
+}
 
 function runSegment(runId: string): string {
   return SAFE_SEGMENT.test(runId) && !runId.includes('..') ? runId : 'unresolved'
@@ -34,22 +50,33 @@ function escaped(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function readPosition(position: string | undefined): Map<string, Place> {
-  const places = new Map<string, Place>()
+/**
+ * Reads a saved position. Version 2 holds one place per signal for each writer, `{ traces: [i, o], logs: [i, o] }`.
+ * The earlier version 1 holds one `[i, o]` per writer, the file it was reading in a layout where every later file was
+ * unread: it is read as that place for both signals, so a file of either signal numbered after it is read from its
+ * start, the file itself from the offset, and every earlier file is skipped.
+ */
+function readPosition(position: string | undefined): Map<string, Places> {
+  const places = new Map<string, Places>()
   if (position === undefined) return places
   try {
     const parsed: unknown = JSON.parse(position)
+    const version = (parsed as { v?: unknown } | null)?.v
     const writers = (parsed as { w?: Record<string, unknown> } | null)?.w
     if (writers === undefined || writers === null || typeof writers !== 'object') return places
-    for (const [writer, place] of Object.entries(writers)) {
-      if (
-        Array.isArray(place) &&
-        Number.isInteger(place[0]) &&
-        Number.isInteger(place[1]) &&
-        place[0] >= 0 &&
-        place[1] >= 0
-      )
-        places.set(writer, [place[0], place[1]])
+    for (const [writer, value] of Object.entries(writers)) {
+      if (version === 2) {
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) continue
+        const entry: Places = {}
+        for (const signal of SIGNALS) {
+          const place = placeOf((value as Record<string, unknown>)[signal])
+          if (place !== undefined) entry[signal] = place
+        }
+        places.set(writer, entry)
+      } else {
+        const place = placeOf(value)
+        if (place !== undefined) places.set(writer, { traces: place, logs: place })
+      }
     }
   } catch {
     // An unreadable position reads from the start.
@@ -57,13 +84,18 @@ function readPosition(position: string | undefined): Map<string, Place> {
   return places
 }
 
-function writePosition(places: Map<string, Place>): string {
-  const w: Record<string, Place> = {}
-  for (const writer of [...places.keys()].sort()) w[writer] = places.get(writer) as Place
-  return JSON.stringify({ v: 1, w })
+function writePosition(places: Map<string, Places>): string {
+  const w: Record<string, Places> = {}
+  for (const writer of [...places.keys()].sort()) {
+    const entry = places.get(writer) as Places
+    const out: Places = {}
+    for (const signal of SIGNALS) if (entry[signal] !== undefined) out[signal] = entry[signal]
+    if (Object.keys(out).length > 0) w[writer] = out
+  }
+  return JSON.stringify({ v: 2, w })
 }
 
-type Segment = { writer: string; index: number; file: string }
+type Segment = { writer: string; index: number; signal: Signal; file: string }
 
 async function bytesFrom(path: string, offset: number): Promise<{ bytes: Buffer; size: number }> {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
@@ -95,20 +127,25 @@ async function bytesFrom(path: string, offset: number): Promise<{ bytes: Buffer;
  * A run's local copy in a Log folder, read without changing anything in it.
  *
  * The writer of each process appends to files named
- * `<run>~<writer>~<index>.<signal>.jsonl`, moving to the next index when the
- * signal changes, when a file is full or after a failed write. The source
- * keeps one place per writer, the index of the file it was reading and the
- * byte offset after the last whole line it read there, so a poll reads on
- * from there: the rest of that file, then every later file of the writer, and
- * never a line twice. A last line without its newline is left unread until
- * the writer finishes it; when the writer has moved on to a later file the
- * line is abandoned and reported. A numbered file that is missing is reported.
+ * `<run>~<writer>~<index>.<signal>.jsonl`, keeping one open file per signal
+ * and moving that signal to the next free index when its file is full or
+ * after a failed write; the index counter is shared by both signals. An
+ * earlier writer moved to the next index on every signal change too, and its
+ * files read the same way. The source keeps, for each writer, one place per
+ * signal, the index of that signal's file it was reading and the byte offset
+ * after the last whole line it read there, so a poll reads on from there: the
+ * rest of both growing files, then every later file of the writer, and never
+ * a line twice. A last line without its newline is left unread until the
+ * writer finishes it; when the writer has gone on to a later file of the same
+ * signal the line is abandoned and reported. A numbered file that is missing
+ * is reported. A position saved with one place per writer, as the earlier
+ * source saved it, is read as that place for both signals.
  */
 export function createFolderSource(options: FolderSourceOptions): RecordSource {
   const name = options.name ?? `local copy of ${options.runId}`
   const lines = createLineReader(name, options.home === undefined ? {} : { home: options.home })
   const pattern = new RegExp(
-    `^${escaped(runSegment(options.runId))}~([A-Za-z0-9._-]+)~(\\d{12})\\.(?:traces|logs)\\.jsonl$`
+    `^${escaped(runSegment(options.runId))}~([A-Za-z0-9._-]+)~(\\d{12})\\.(traces|logs)\\.jsonl$`
   )
 
   async function segments(): Promise<Map<string, Segment[]>> {
@@ -124,7 +161,7 @@ export function createFolderSource(options: FolderSourceOptions): RecordSource {
       if (match === null) continue
       const writer = match[1] as string
       const list = byWriter.get(writer) ?? []
-      list.push({ writer, index: Number(match[2]), file })
+      list.push({ writer, index: Number(match[2]), signal: match[3] as Signal, file })
       byWriter.set(writer, list)
     }
     for (const list of byWriter.values()) list.sort((a, b) => a.index - b.index)
@@ -146,13 +183,19 @@ export function createFolderSource(options: FolderSourceOptions): RecordSource {
 
       for (const writer of [...byWriter.keys()].sort()) {
         const list = byWriter.get(writer) as Segment[]
-        const last = list[list.length - 1] as Segment
-        const place = places.get(writer)
-        let expected = place === undefined ? 0 : place[0] + 1
+        // The highest index of each signal: only that file can still grow, so only a line it left half-written waits.
+        const lastOf = new Map<Signal, number>()
+        for (const segment of list) lastOf.set(segment.signal, segment.index)
+        const entry: Places = { ...places.get(writer) }
+        places.set(writer, entry)
+        // Every index up to the highest place was seen in an earlier read; only files numbered after it are new.
+        const high = Math.max(-1, ...SIGNALS.map((signal) => entry[signal]?.[0] ?? -1))
+        let expected = high + 1
         for (const segment of list) {
+          const place = entry[segment.signal]
           if (place !== undefined && segment.index < place[0]) continue
           const current = place !== undefined && segment.index === place[0]
-          if (!current) {
+          if (segment.index > high) {
             if (segment.index > expected) {
               problems.push({
                 kind: 'file_missing',
@@ -164,7 +207,7 @@ export function createFolderSource(options: FolderSourceOptions): RecordSource {
             expected = segment.index + 1
           }
           const path = join(folder, segment.file)
-          const offset = place !== undefined && segment.index === place[0] ? place[1] : 0
+          const offset = current ? (place as Place)[1] : 0
           let read: { bytes: Buffer; size: number }
           try {
             read = await bytesFrom(path, offset)
@@ -176,7 +219,7 @@ export function createFolderSource(options: FolderSourceOptions): RecordSource {
               detail: `${segment.file} was listed but could not be read`
             })
             // Keep the offset already read when this is the file being read on.
-            if (!(place !== undefined && segment.index === place[0])) places.set(writer, [segment.index, 0])
+            if (!current) entry[segment.signal] = [segment.index, 0]
             continue
           }
           const { bytes } = read
@@ -201,8 +244,8 @@ export function createFolderSource(options: FolderSourceOptions): RecordSource {
             start = end + 1
             consumed = start
           }
-          if (start < bytes.length && segment !== last) {
-            // The writer finished this file with a half-written line and went on in a later one.
+          if (start < bytes.length && segment.index !== lastOf.get(segment.signal)) {
+            // The writer finished this file with a half-written line and went on in a later file of the same signal.
             problems.push({
               kind: 'unreadable_line',
               writerId: writer,
@@ -211,7 +254,7 @@ export function createFolderSource(options: FolderSourceOptions): RecordSource {
             })
             consumed = bytes.length
           }
-          places.set(writer, [segment.index, offset + consumed])
+          entry[segment.signal] = [segment.index, offset + consumed]
         }
       }
       return { records, problems, position: writePosition(places) }

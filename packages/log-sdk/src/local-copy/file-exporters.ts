@@ -152,7 +152,8 @@ export function createFileExporters(options: FileCopyOptions): { spans: SpanExpo
   const suffixBytes = Buffer.byteLength(`~${writerId}~${'0'.repeat(INDEX_WIDTH)}.traces.jsonl`)
   const run = runSegment(options.runId, writerId)
   let nextIndex = 0
-  let active: Segment | undefined
+  // One open file per signal: a run that alternates spans and events keeps appending to the same two files.
+  const active = new Map<Signal, Segment>()
 
   function directory(): string {
     const target = copyFolder(options)
@@ -187,19 +188,20 @@ export function createFileExporters(options: FileCopyOptions): { spans: SpanExpo
       ) {
         throw new Error(`Unsafe Log file: ${path}`)
       }
-      // Start a new file on a signal change so filename order preserves record order.
-      // An oversized record occupies one whole file, and the next record rolls over.
+      // Each signal keeps its own open file. The index counter is shared and advances only when a file is created,
+      // so a writer's files stay numbered without a gap, and each record's sequence number keeps record order.
+      // An oversized record occupies one whole file, and the next record of its signal rolls over.
       if (!previous) nextIndex += 1
       // If a write fails, leave any partial line at the end of this file.
-      // Later records start a new segment and retain their original sequence numbers.
-      active = undefined
+      // Later records of this signal start a new segment and retain their original sequence numbers.
+      active.delete(signal)
       let offset = 0
       while (offset < line.length) {
         const count = writeSync(fd, line, offset, line.length - offset)
         if (count === 0) throw new Error(`Log append made no progress: ${path}`)
         offset += count
       }
-      active = { path, signal, bytes: Number(stat.size) + line.length, dev: stat.dev, ino: stat.ino }
+      active.set(signal, { path, signal, bytes: Number(stat.size) + line.length, dev: stat.dev, ino: stat.ino })
     } finally {
       closeSync(fd)
     }
@@ -211,7 +213,8 @@ export function createFileExporters(options: FileCopyOptions): { spans: SpanExpo
     if (payload === undefined) throw new Error('OTLP JSON serializer returned no payload')
     const line = Buffer.concat([payload, Buffer.from('\n')])
     const folder = directory()
-    const reuse = active?.signal === signal && active.bytes + line.length <= MAX_BYTES ? active : undefined
+    const current = active.get(signal)
+    const reuse = current !== undefined && current.bytes + line.length <= MAX_BYTES ? current : undefined
     write(folder, signal, line, reuse)
   }
 

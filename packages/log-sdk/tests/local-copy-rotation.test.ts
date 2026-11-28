@@ -114,6 +114,51 @@ test('three size rollovers preserve each record and seal earlier files', () => {
   }
 })
 
+test('a writer alternating spans and events keeps one file per signal and still rolls over at 8 MiB', () => {
+  const { options, folder } = setup()
+  const errors: unknown[] = []
+  const payload = 'é'.repeat(490)
+  try {
+    const handle = connect({ ...options, onError: (error) => errors.push(error) })
+    for (let i = 0; i < 20; i++) {
+      handle.run.stageChanged({ to: `stage ${i}` })
+      handle.phase.ended({ phase: 'developer', step: `step ${i}` })
+    }
+    const alternating = readdirSync(folder).sort()
+    expect(alternating).toEqual([
+      `run~${handle.writerId}~000000000000.logs.jsonl`,
+      `run~${handle.writerId}~000000000001.traces.jsonl`
+    ])
+    expect(readFileSync(join(folder, alternating[0]!), 'utf8').trimEnd().split('\n')).toHaveLength(20)
+    expect(readFileSync(join(folder, alternating[1]!), 'utf8').trimEnd().split('\n')).toHaveLength(20)
+
+    // Events fill their file past 8 MiB while spans keep arriving in between: only the events' file rolls over,
+    // into the next free index, and the spans keep their one file.
+    const stages = Array.from({ length: 20 }, (_, i) => `stage ${i}`)
+    while (readdirSync(folder).length < 3 && stages.length < 100_000) {
+      const stage = `${stages.length} ${payload}`
+      stages.push(stage)
+      handle.run.stageChanged({ to: stage })
+      handle.phase.ended({ phase: 'developer' })
+    }
+    handle.run.stageChanged({ to: 'after the rollover' })
+    stages.push('after the rollover')
+    const files = readdirSync(folder).sort()
+    expect(files).toEqual([
+      `run~${handle.writerId}~000000000000.logs.jsonl`,
+      `run~${handle.writerId}~000000000001.traces.jsonl`,
+      `run~${handle.writerId}~000000000002.logs.jsonl`
+    ])
+    const full = fs.statSync(join(folder, files[0]!)).size
+    expect(full).toBeLessThanOrEqual(8 * 1024 * 1024)
+    expect(full).toBeGreaterThan(8 * 1024 * 1024 - 4096)
+    expect(records(folder, [files[0]!, files[2]!]).map(({ stage }) => stage)).toEqual(stages)
+    expect(errors).toEqual([])
+  } finally {
+    rmSync(options.runtimeDir, { recursive: true, force: true })
+  }
+})
+
 test('writers in the same process and in child processes keep independent files', async () => {
   const { options, folder } = setup()
   try {
