@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'bun:test'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
+import { createLogSink, setBranchIssueFallback } from '@harness/kernel/log/log-sink.js'
 import { UnknownSeatError } from '@harness/kernel/tools/host/seat-host.js'
 import {
   createTaskToolsMcpServer,
@@ -288,9 +292,14 @@ describe('the seat a launch serves', () => {
   })
 
   it('the stdio program refuses an undeclared seat argument before it serves', async () => {
-    await expect(serveTaskToolsStdio('0.0.0-test', ['--seat', 'reviewer'])).rejects.toThrow(
-      'this process declares: operator, planner'
-    )
+    try {
+      await expect(serveTaskToolsStdio('0.0.0-test', ['--seat', 'reviewer'])).rejects.toThrow(
+        'this process declares: operator, planner'
+      )
+    } finally {
+      // The server's start turned the branch fallback off for this process.
+      setBranchIssueFallback(true)
+    }
   })
 
   it('a launch with no seat argument reports the Operator server name it always has', async () => {
@@ -342,3 +351,74 @@ function noopHandlers(): TaskToolHandlers {
     task_start: stub
   }
 }
+
+/**
+ * The server serves several tasks from the main checkout, so its start turns
+ * the sink's branch-derived Issue fallback off before any sink is built: a
+ * record it writes with no task named must carry no Issue, whatever task the
+ * checkout's branch names. The undeclared-seat launch reaches the server's
+ * start without taking over this process's stdout.
+ */
+describe('serve — a task-less record carries no Issue, whatever branch the checkout is on', () => {
+  const DISPATCHED = {
+    kind: 'dispatch' as const,
+    event: 'dispatched' as const,
+    payload: {},
+    target_role: 'developer' as const,
+    model: 'sonnet',
+    effect_id: 'e1',
+    prompt_hash: 'sha256:abc'
+  }
+
+  function taskBranchSink(onRead: () => void) {
+    const dir = mkdtempSync(join(tmpdir(), 'vinaya-task-tools-fallback-'))
+    const outbox = join(dir, 'outbox')
+    const sink = createLogSink({
+      outboxRoot: () => outbox,
+      resolveLogDestination: () => ({ kind: 'folder', folder: outbox }),
+      home: () => dir,
+      hostname: () => 'test-host',
+      cwd: () => dir,
+      now: () => new Date('2026-09-05T00:00:00.000Z'),
+      env: () => ({ VINAYA_ROLE: 'operator' }),
+      resolveRepo: () => Promise.resolve({ owner: 'atta-labs', repo: 'vinaya' }),
+      // The checkout sits on a branch naming task Issue 792.
+      resolveBranchIssue: () => {
+        onRead()
+        return Promise.resolve(792)
+      },
+      vinayaVersion: () => '0.0.0-test',
+      stderr: () => {}
+    })
+    return { sink, files: join(outbox, 'atta-labs-vinaya') }
+  }
+
+  it('after the server starts, the record lands under none with issue null and no branch read', async () => {
+    setBranchIssueFallback(true)
+    try {
+      let beforeReads = 0
+      const before = taskBranchSink(() => {
+        beforeReads += 1
+      })
+      before.sink.log(DISPATCHED)
+      await before.sink.drain()
+      expect(beforeReads).toBe(1)
+      expect(existsSync(join(before.files, '792.ndjson'))).toBe(true)
+
+      await expect(serveTaskToolsStdio('0.0.0-test', ['--seat', 'reviewer'])).rejects.toThrow(UnknownSeatError)
+
+      let afterReads = 0
+      const after = taskBranchSink(() => {
+        afterReads += 1
+      })
+      after.sink.log(DISPATCHED)
+      await after.sink.drain()
+      expect(afterReads).toBe(0)
+      expect(existsSync(join(after.files, '792.ndjson'))).toBe(false)
+      const line = JSON.parse(readFileSync(join(after.files, 'none.ndjson'), 'utf8').trim())
+      expect(line.subject.issue).toBeNull()
+    } finally {
+      setBranchIssueFallback(true)
+    }
+  })
+})

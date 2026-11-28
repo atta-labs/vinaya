@@ -1987,7 +1987,7 @@ const defaultSinkSlot = createDefaultLogSinkSlot(process.env.VINAYA_RUN_ID || ra
 
 /**
  * Installs the factory the module-level default sink — and so `log`,
- * `logSync`, `warmupLogSink` — is built from, on first use. Called once by
+ * `logSync` — is built from, on first use. Called once by
  * each entry point (the CLI's, each process runner's) before any command or
  * run starts.
  */
@@ -2031,18 +2031,6 @@ export function currentRunId(): string {
  */
 export function defaultLogSink(): LogSink {
   return defaultSinkSlot.sink()
-}
-
-/**
- * Starts the default sink's one-time context resolution (repo, doctrine,
- * destination) now rather than on its first `log()` call, so it is usually
- * settled before a batch of checks starts finishing (`runChecks` calls this
- * first). An optimisation only — that resolution never blocks the event
- * loop, so calling it late, or not at all, is still correct. A no-op on
- * every subsequent call in the same process.
- */
-export function warmupLogSink(): void {
-  defaultSinkSlot.sink().warmup()
 }
 
 /**

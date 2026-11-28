@@ -52,6 +52,7 @@ import {
   validateSeatTable
 } from '@harness/kernel/tools/host/seat-host.js'
 import { Writable } from 'node:stream'
+import { setBranchIssueFallback } from '@harness/kernel/log/log-sink.js'
 import { defaultTaskCancelHandler } from '../loops/dev-review/run-control/cancel.js'
 import type { TaskToolCallResult } from '../loops/dev-review/run-control/handlers.js'
 import { taskEscalationReadHandler, taskStatusHandler } from '../loops/dev-review/run-control/handlers.js'
@@ -359,8 +360,15 @@ export function createTaskToolsMcpServer(opts: CreateTaskToolsMcpServerOptions):
  * (`--seat <name>`) picks the seat, and none serves the Operator. The seat is
  * resolved before any stream is touched, so a launch naming an undeclared
  * seat refuses to start with the declared seats named, rather than serving.
+ *
+ * Its first step turns the sink's branch-derived Issue fallback off for this
+ * process, before any sink is built or used: the server holds calls for
+ * several tasks from the main checkout, so a record it writes with no task
+ * named keeps `issue: null` instead of taking whatever task the checkout's
+ * branch names (`setBranchIssueFallback`, `harness/kernel/log/log.md`).
  */
 export async function serveTaskToolsStdio(serverVersion: string, argv: readonly string[] = []): Promise<void> {
+  setBranchIssueFallback(false)
   const seat = readSeatArgument(argv)
   const callerContext = resolveCallerFromEnv(process.env)
   const server = createTaskToolsMcpServer({ serverVersion, callerContext, seat })

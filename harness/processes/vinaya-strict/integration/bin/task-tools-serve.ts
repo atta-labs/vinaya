@@ -6,6 +6,11 @@
  * every human-facing line the rest of the CLI prints would corrupt the
  * protocol stream, so this program writes none.
  *
+ * When it starts, before it serves a call, the server turns the Log sink's
+ * branch-derived Issue fallback off for this process (`serveTaskToolsStdio`):
+ * it serves several tasks from the main checkout, so a record it writes with
+ * no task named carries no Issue, whatever branch the checkout is on.
+ *
  * The caller identity is resolved from the invocation context (the process
  * environment, `CALLER_ENV_VAR`), never from a tool argument — the transport
  * authenticates, not the payload (`server.ts`). An attended operator exports
