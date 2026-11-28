@@ -353,18 +353,18 @@ async function safeLoadTrustAnchorConfig(): Promise<ProvidedConfig | null> {
 /**
  * The pure decision behind `LogSinkDeps.resolveLogDestination` — a `url`
  * destination is honoured only when the repository's default branch
- * declares the identical one for an unattended caller (round-2 security
- * review, HIGH, the same rule `runtimeDir` already
- * carries: a pull request under review cannot redirect where an unattended
- * run's telemetry is delivered by editing its own diff). An attended caller
+ * declares the identical one for an unattended caller (the same rule
+ * `runtimeDir` already carries: a pull request under review cannot redirect
+ * where an unattended run's telemetry is delivered by editing its own
+ * diff). An attended caller
  * — a human running `vinaya`, choosing to trust their own working tree —
  * honours the local value unchecked, the same trust level running
  * `vinaya.config.json`'s own `dispatch.agent` already carries.
  *
  * An unattended caller whose LOCAL config declares no `logs` setting at all
- * still honours the default branch's own declared destination (round-3
- * security review, HIGH) — a working tree that OMITS the setting is exactly
- * as untrustworthy as one that redirects it: a pull request diff can delete
+ * still honours the default branch's own declared destination, because a
+ * working tree that OMITS the setting is exactly as untrustworthy as one
+ * that redirects it: a pull request diff can delete
  * a line as easily as it can edit one, and an unattended run whose telemetry
  * silently reverted to the local default folder the moment `logs` went
  * missing from a diff would let the very branch under review switch off the
@@ -381,9 +381,9 @@ async function safeLoadTrustAnchorConfig(): Promise<ProvidedConfig | null> {
  *
  * A `folder` naming the repository itself, or anything inside it, is refused
  * outright — for either caller, attended or unattended — exactly
- * `resolveRuntimeDir`'s own `isInsideRepo` rule (round-2 security review,
- * HIGH): a confined role granted write access to a path under the working
- * tree (a worktree checkout included) must never also be able to forge or
+ * `resolveRuntimeDir`'s own `isInsideRepo` rule: a confined role granted
+ * write access to a path under the working tree (a worktree checkout
+ * included) must never also be able to forge or
  * tamper with the append-only log recording its own task's events by writing
  * into a `logs.folder` that happens to resolve there. Falls back to
  * `defaultFolder`, the same as "no `logs` setting at all."
@@ -515,8 +515,8 @@ export function resolveLogDestinationFrom(input: {
  * Unlike `run-paths.ts`'s own `resolveRuntimeDirUncached`, the trust-anchor
  * read here cannot be gated on whether `logs` is configured LOCALLY: a
  * working tree that OMITS the setting is precisely the case this destination
- * must still catch (round-3 security review, HIGH — see
- * `resolveLogDestinationFrom`'s own doc comment), so the anchor is read for
+ * must still catch (see `resolveLogDestinationFrom`'s own doc comment),
+ * so the anchor is read for
  * every unattended caller regardless of what the local config says. Already
  * bounded to one read per process either way — `createLogSink`'s own
  * `context()` calls this function once, into its memoized `contextCache`, so
@@ -911,8 +911,8 @@ export function outboxPathFor(
  * it is called after the child exits and before its scratch directory is
  * removed.
  *
- * OWN-PATH-ONLY (round 3 security review, LOW): the driver delivers ONLY the
- * one relative path its OWN `(repo, issue)` names — the same leaf `log()`
+ * OWN-PATH-ONLY: the driver delivers ONLY the one relative path its OWN
+ * `(repo, issue)` names — the same leaf `log()`
  * resolves inside the child (`outboxPathFor`) — and ignores every OTHER file
  * the confined agent may have written into its writable spool scratch, whether
  * under another task's `<owner>-<repo>/<issue>` path or under any name at all.
@@ -923,7 +923,7 @@ export function outboxPathFor(
  * telemetry-integrity gap confinement had removed and an unconfined run never
  * had across tasks.
  *
- * SYMLINK-REFUSING (round 2 security review, LOW): the spool lives inside the
+ * SYMLINK-REFUSING: the spool lives inside the
  * agent's OWN granted scratch, so the confined agent could plant a symlink —
  * the spool root itself, the `<owner>-<repo>` directory, or the leaf file —
  * pointing OUTSIDE the spool, which would make this trusted, unconfined driver
@@ -1011,15 +1011,15 @@ export async function resolveLogAppendPath(
   // Nothing is recorded for this process, so nothing is attributed either:
   // the same rule `log()` applies one step earlier, and the reason a job
   // deliberately holding no delivery credential spends no `git` read and no
-  // credentialed `gh` call here (round 5 review, MINOR — the ordering fix
-  // had been applied in `log()` alone).
+  // credentialed `gh` call here: this check comes before every read below,
+  // in the same order `log()` keeps.
   if (destination.kind === 'none') return outboxPathFor({ outboxRoot: () => root }, repo, issue)
   // The branch fallback decides which FILE an event lands in, so this
   // mirror has to make the same decision or it stops naming the file
   // `log()` writes — a caller polling for its own line would watch
   // `none.ndjson` while the sink wrote `<branch issue>.ndjson`, and a
   // confined caller would grant the sandbox one exact file while its child
-  // appended to another (round 3 review, MAJOR). Same condition `log()`
+  // appended to another. Same condition `log()`
   // applies: only when the caller named no issue AND the environment names
   // no task, and only for a process where the fallback is on at all.
   const branchIssue =
@@ -1068,8 +1068,7 @@ function defaultStderr(message: string): void {
  * back would file them under whatever unrelated task the main checkout
  * happens to be on — and the answer is memoised, so one early lookup would
  * fix that wrong Issue for the life of the server, surviving every branch
- * switch. `issue: null` is the honest record there (round 3 security
- * review, HIGH).
+ * switch. `issue: null` is the honest record there.
  */
 let branchIssueFallbackEnabled = true
 
@@ -1082,9 +1081,9 @@ let branchIssueFallbackEnabled = true
  * default one, the loop driver's, a cancel's, one per `dispatchRole` call
  * whose own synthetic env drops `VINAYA_TASK` — so a process dispatching N
  * task-less roles paid N+1 `git rev-parse` reads and, on a tranche branch,
- * N+1 `gh` round trips, each against its own deadline (round 4 review,
- * MINOR; round 4 security review, LOW). Keyed by `cwd` because that is the
- * only input the read has: two sinks reading the same directory cannot
+ * N+1 `gh` round trips, each against its own deadline. Keyed by `cwd`
+ * because that is the only input the read has: two sinks reading the same
+ * directory cannot
  * honestly disagree, and two reading different worktrees must not share.
  *
  * A branch switch inside one process's lifetime is therefore not observed —
@@ -1630,7 +1629,7 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
   // pick up a CONCURRENT caller's task/run value if that caller's own
   // mutation lands between this synchronous call and the microtask
   // below. Snapshotting here closes that race regardless of what
-  // `process.env` does afterward (round 2 security review, HIGH).
+  // `process.env` does afterward.
   const snapshot = (attribution?: LaunchLogAttribution): CallSnapshot => {
     const env = deps.env()
     return {
@@ -1803,8 +1802,8 @@ export function createLogSink(overrides: LogSinkOverrides): LogSink {
         // Checked BEFORE the branch lookup below, never after: a process
         // recording nothing must spend no `git rev-parse`, and above all
         // no credentialed `gh issue list`, resolving an attribution no
-        // event will ever carry (round 1 security review, LOW) — the CI
-        // job deliberately built to hold no delivery credential is
+        // event will ever carry. The CI job deliberately built to hold no
+        // delivery credential is
         // exactly the one that would otherwise pay that forge call on
         // every check it runs. `writeEvent` names why nothing is recorded.
         if (ctx.destination.kind === 'none') {

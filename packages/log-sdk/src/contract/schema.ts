@@ -572,14 +572,13 @@ export const DevReviewLoopEventSchema = z.discriminatedUnion('event', [
       by: z.literal('principal')
     })
     .strict(),
-  // A round-2 review MAJOR finding: the
-  // driver's own mid-round resume of a developer who stopped without
+  // The driver's own mid-round resume of a developer who stopped without
   // pushing — distinct from `resumed` above, which is `by: 'principal'`
   // only (a Principal resuming a PAUSED loop). This is the driver acting on
   // its own, still inside the same round, never a pause/resume pair: the
   // round simply continues once the developer's next turn produces a new
-  // head. Named `unpushed_work_resume` per the objective's own wording so a
-  // Principal reading the journal can tell "stopped after real, uncommitted
+  // head. Named `unpushed_work_resume` so a Principal reading the journal
+  // can tell "stopped after real, uncommitted
   // or unpushed work" apart from every other mid-round event.
   z
     .object({
