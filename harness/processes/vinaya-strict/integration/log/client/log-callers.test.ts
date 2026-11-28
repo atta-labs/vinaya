@@ -171,6 +171,13 @@ const LOG_SYNC_PATH = 'harness/kernel/log/client/log-sync.ts'
  */
 const LOG_SINK_FACTORY_PATH = 'harness/processes/vinaya-strict/integration/log/log-sink-factory.ts'
 const LOG_BRANCH_ISSUE_PATH = 'harness/processes/vinaya-strict/integration/log/branch-issue.ts'
+/**
+ * The task tools server serves several tasks from the main checkout, so its
+ * start imports the sink's `setBranchIssueFallback` and turns the
+ * branch-derived Issue fallback off. It calls no `log()`, builds no sink and
+ * never touches the outbox path.
+ */
+const TASK_TOOLS_SERVER_PATH = 'harness/processes/vinaya-strict/integration/server.ts'
 /** Exactly what `DOCTOR_PATH` is allowed to take from the sink module (sorted). */
 const DOCTOR_SINK_IMPORTS = [
   'FolderFallbackRecord',
@@ -211,7 +218,8 @@ const CALLER_ALLOWLIST = new Set([
   CLI_OPERATION_LOG_PATH,
   LOG_SYNC_PATH,
   LOG_SINK_FACTORY_PATH,
-  LOG_BRANCH_ISSUE_PATH
+  LOG_BRANCH_ISSUE_PATH,
+  TASK_TOOLS_SERVER_PATH
 ])
 const OUTBOX_TRUNCATE_ALLOWLIST = new Set([LOG_WEBHOOK_DRAIN_LIB_PATH])
 const OUTBOX_HELD_VERDICT_ALLOWLIST = new Set([
