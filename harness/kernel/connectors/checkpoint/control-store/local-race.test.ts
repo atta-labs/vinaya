@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -10,6 +10,7 @@ import {
   defaultControlStoreDeps,
   listStartedEffectKeys,
   readCurrentOwnership,
+  readRun,
   type AcquireResult
 } from './local'
 
@@ -137,11 +138,8 @@ describe('a newer claim from another process while an older owner is between its
 
       expect(written.paused).toBe(true)
       expect(listed.claim.acquired).toBe(true)
-      const runsOnDisk = existsSync(join(dir, String(task), 'control', 'run'))
-        ? readdirSync(join(dir, String(task), 'control', 'run'))
-            .map((name) => name.slice(0, -'.json'.length))
-            .sort()
-        : []
+      // `r-0` is the one run record any actor here writes.
+      const runsOnDisk = readRun(deps, task, 'r-0').status === 'ok' ? ['r-0'] : []
       expect(runsOnDisk).toEqual(listed.runs)
       expect(listStartedEffectKeys(deps, task).sort()).toEqual(listed.started)
       // The paused write either landed before the claim, and is listed, or was refused.
